@@ -61,6 +61,8 @@ architecture must not be limited to development roles.
   stories, evidence, and committed artifacts.
 - Runtime queues are append-only and inspectable by default, but may use cloud
   queue services for enterprise reliability.
+- Idle role-agent instances can hibernate after a configurable grace period and
+  be restarted automatically when new work, DMs, or connector events arrive.
 - Every deployment emits OpenTelemetry logs, traces, and metrics.
 - Model providers are adapters. The agent runtime must support Codex, OpenAI,
   Anthropic, Claude Code, MiniMax, DeepSeek, and future providers without
@@ -124,6 +126,10 @@ Core containers:
 - `router`: routes messages, handoffs, direct messages, action responses, and
   connector events. It is not an executive agent and does not decide how work
   progresses.
+- `control-plane`: supervises project topology, role-instance lifecycle,
+  hibernation, wake-up, health checks, and configuration reloads. In the open
+  source core this can be a lightweight local service; commercial offerings may
+  provide richer enterprise control-plane capabilities.
 - `agent.<project>.<role>.<instance>`: one container per role-agent instance.
 - `teams-connector`: maps Microsoft Teams teams, channels, messages, DMs, and
   Adaptive Card actions into internal messages and back out.
@@ -259,6 +265,91 @@ Example instance ids:
 Multi-instancing is how a project scales a role. It must not require cloning or
 renaming the role template. Work claiming, leases, and handoff routing must
 support competing consumers for the same role.
+
+## Agent Lifecycle And Hibernation
+
+Agentic Mesh should support queue-aware role-agent hibernation.
+
+The goal is to reduce cost and idle resource usage, especially in cloud-native
+installations, without making role agents feel unavailable to humans or other
+agents.
+
+Lifecycle states:
+
+- `configured`: role instance exists in project configuration but is not
+  running.
+- `starting`: control-plane is creating or waking the container.
+- `idle`: container is running and no active work is claimed.
+- `active`: container has claimed work, is handling a DM, or is processing a
+  connector event.
+- `draining`: container will finish active work but should not claim new work.
+- `hibernating`: container is being stopped after the idle grace period.
+- `hibernated`: role instance is stopped but can be restarted automatically.
+- `failed`: role instance failed health checks or startup.
+
+Wake triggers:
+
+- new role work item enters the role inbox
+- direct message targets the role or a specific role instance
+- collaboration connector event mentions or addresses the role
+- scheduled task becomes due
+- manual operator wake
+- project startup policy requires warm agents
+
+Hibernation rules:
+
+- A role instance may hibernate only when it has no active claim, no active DM
+  exchange, no pending tool call, and no unflushed journal entry.
+- Hibernation uses a configurable grace period, for example 3 to 10 minutes.
+- The control-plane records the last idle time, hibernation reason, and wake
+  reason in the event journal.
+- A hibernated instance keeps its role-instance id, queue lease identity,
+  mounted volume, memory files, and journal.
+- Hibernation must not lose messages. New messages remain in the message store
+  and wake the instance or another eligible instance.
+- Multi-instance roles can hibernate some instances while keeping a minimum
+  warm pool where configured.
+
+Configuration example:
+
+```yaml
+roles:
+  engineering:
+    template: engineering
+    instances: 3
+    lifecycle:
+      min_warm_instances: 1
+      idle_grace_seconds: 300
+      wake_on:
+        - inbox_message
+        - direct_message
+        - mention
+        - scheduled_work
+```
+
+The control-plane is allowed to start, stop, restart, and health-check
+containers. It must not decide product, architecture, implementation, QA, or
+release outcomes.
+
+Open source control-plane scope:
+
+- read Git-backed config
+- start/stop containers locally
+- watch local queues
+- wake hibernated agents
+- expose basic status
+- emit OTEL telemetry
+
+Commercial control-plane opportunities:
+
+- enterprise SSO and RBAC
+- fleet dashboards
+- policy enforcement
+- multi-project topology management
+- cloud autoscaling integrations
+- hosted status and audit views
+- advanced cost controls
+- SLA-backed support workflows
 
 ## Role Agent Runtime
 
@@ -561,6 +652,44 @@ summarized, snapshotted, or committed where useful.
 The future configuration UI must edit config files, validate them, and commit
 changes. It should not become a hidden database-backed configuration authority.
 
+## Open Source And Commercial Model
+
+Agentic Mesh should be an open source project with a commercially sustainable
+offering layered on top.
+
+Open source core should include:
+
+- role template and project override model
+- role-agent runtime
+- worker adapter interface
+- local file-backed storage adapters
+- append-only event journal
+- Docker Compose deployment profile
+- basic control-plane for local lifecycle and hibernation
+- OpenTelemetry instrumentation
+- collaboration connector interface
+- basic Microsoft Teams connector where licensing and platform constraints
+  allow
+- starter role packs, including a BMAD-inspired software delivery pack
+
+Commercial offerings may include:
+
+- supported enterprise deployment packages
+- managed or assisted Azure/AWS deployment
+- advanced control-plane UI
+- SSO integration
+- enterprise RBAC and policy packs
+- premium Teams integration features
+- compliance and audit reporting
+- cost and usage dashboards
+- managed cloud storage/message backends
+- priority support
+- training, onboarding, and role-template customization
+
+Commercial features should enhance enterprise adoption, supportability,
+governance, and operations. The basic ability to run a useful local/project
+agent mesh should remain open source.
+
 ## Observability
 
 Every component emits OpenTelemetry.
@@ -579,6 +708,9 @@ Required span boundaries:
 - approval request
 - action response
 - retry or dead-letter
+- agent hibernate
+- agent wake
+- control-plane health check
 
 Required metric examples:
 
@@ -591,6 +723,9 @@ Required metric examples:
 - retry count
 - dead-letter count
 - connector send failure count
+- hibernated instances by project and role
+- wake latency
+- idle runtime saved where estimable
 
 Required log qualities:
 
@@ -601,6 +736,7 @@ Required log qualities:
 - role instance id
 - connector id
 - external message id where applicable
+- lifecycle state
 - redacted sensitive values
 
 ## Deployment Profiles
@@ -653,6 +789,8 @@ files reference secret names or provider paths, not secret values.
 
 - Should the router be one container per project or a shared multi-project
   service?
+- Should the control-plane be combined with the router in v1, or kept as a
+  separate service from the start?
 - Should each role-agent instance support multiple concurrent claims, or should
   horizontal scale be expressed only by adding more instances of the role?
 - Should the local profile support SQLite as an optional state backend, or
@@ -665,6 +803,8 @@ files reference secret names or provider paths, not secret values.
   slice, per role interval, or by explicit human approval?
 - How should organization-level role template updates be rolled out safely to
   existing projects with local overrides?
+- Which commercial features should be kept separate from the open source core
+  without weakening the usefulness of the open source project?
 
 ## First Implementation Slice
 
@@ -674,11 +814,12 @@ to implement every role.
 Scope:
 
 - Docker Compose project with `router`, `product-manager`, `engineering`, and
-  `otel-collector`.
+  `control-plane`, and `otel-collector`.
 - permanent role template files for Product and Engineering.
 - project override file declaring a test project and two Engineering
   instances.
 - file-backed message, state, artifact, and journal adapters.
+- lifecycle policy with idle hibernation and wake-on-inbox behavior.
 - worker adapter interface with `codex-cli` as the first concrete adapter.
 - Teams connector design stub or minimal local connector if Teams credentials
   are not ready.
@@ -688,6 +829,9 @@ Acceptance criteria:
 
 - `docker compose up` starts the router, OTEL collector, and role-agent
   containers.
+- The control-plane can stop an idle role-agent instance after a grace period.
+- The control-plane can restart a hibernated role-agent instance when a new
+  inbox message arrives.
 - Each agent instance has a distinct mounted volume and role-instance id.
 - Role instances load permanent role template plus project override.
 - A project can run at least two Engineering instances against the same role
@@ -699,5 +843,5 @@ Acceptance criteria:
 - The event journal records receive, claim, run, documentation update, handoff,
   and delivery events.
 - OTEL traces show the same correlation id through routing and agent execution.
+- OTEL traces record hibernate and wake events.
 - All generated docs and decisions are inspectable as files.
-

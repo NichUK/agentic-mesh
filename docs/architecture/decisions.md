@@ -115,3 +115,85 @@ Codex worker adapter, permanent role templates, project overrides, role
 multi-instancing, and OTEL traces before expanding to Teams, additional roles,
 cloud storage, or Service Bus.
 
+## ADR-002 - Queue-Aware Agent Hibernation And Open-Core Direction
+
+Date: 2026-06-02
+
+Status: draft direction
+
+Design document: `docs/architecture/agentic-mesh-design.md`
+
+### Context
+
+Agentic Mesh is intended to run in local and cloud-native environments. A
+container-per-role-instance architecture is clean and governable, but always-on
+containers can waste resources when a role has no work. This matters
+especially for commercial and enterprise cloud installations where projects may
+define many roles, multiple instances per role, and long idle periods.
+
+The project should also be open source while supporting a commercial offering
+that can fund development. The commercial layer should improve enterprise
+support, identity integration, control, compliance, deployment, and operations
+without making the open source core hollow.
+
+### Decision
+
+Add queue-aware lifecycle management as a first-class runtime capability.
+
+Role-agent instances may hibernate after a configurable idle grace period when
+they have no active claim, no active DM exchange, no pending tool call, and no
+unflushed journal entry. The control-plane wakes an eligible hibernated
+instance when new work, direct messages, mentions, scheduled work, or manual
+operator action requires that role.
+
+The control-plane owns lifecycle operations: start, stop, restart, health
+check, hibernate, wake, and status. It must not own product, architecture,
+implementation, QA, or release decisions.
+
+Adopt an open-core product model:
+
+- Open source core includes the runtime, role templates, project overrides,
+  local storage, event journal, Docker Compose deployment, basic lifecycle
+  control, OTEL, worker adapter interface, collaboration connector interface,
+  and starter role packs.
+- Commercial offerings may include advanced control-plane features, enterprise
+  SSO and RBAC, supported cloud deployments, managed storage/message backends,
+  policy packs, audit/compliance reporting, cost dashboards, premium support,
+  onboarding, and role-template customization.
+
+### Consequences
+
+- Agentic Mesh can scale down idle projects and roles without losing durable
+  inbox messages or role state.
+- Multi-instance roles can keep a minimum warm pool while hibernating surplus
+  instances.
+- Wake latency becomes a product metric and should be observable.
+- Local development remains simple because file-backed queues can wake agents
+  through the basic control-plane.
+- Commercial value can focus on enterprise operations rather than hiding core
+  runtime capability.
+
+### Alternatives Considered
+
+- Keep all configured agents always running: rejected for cloud cost and
+  enterprise resource efficiency.
+- Let the queue backend scale agents directly without a product control-plane:
+  deferred because local file-backed queues, project config, and role-instance
+  identity still need a lifecycle owner.
+- Make lifecycle management commercial-only: rejected because open source users
+  also need a usable local runtime and resource efficiency.
+- Make all enterprise integrations open source immediately: deferred because
+  advanced support, SSO, compliance, and managed deployment are plausible
+  commercial funding paths.
+
+### Rollback
+
+Disable hibernation and keep configured role-agent instances always running.
+Retain the control-plane status and health-check functions if they are already
+available. Do not delete role queues, journals, mounted volumes, or state when
+hibernation is disabled.
+
+Commercial rollback is policy-level: if a commercial feature boundary harms
+the usefulness of the open source core, move the disputed basic capability
+into the open source project and reserve support, hosted operations, advanced
+policy, and enterprise integration for the paid offering.
