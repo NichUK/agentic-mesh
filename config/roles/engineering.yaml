@@ -1,0 +1,17 @@
+role_id: engineering
+version: 1
+purpose: Implement approved work and hand evidence to QA.
+standing_instructions:
+  - Only implement work that has passed product, architecture, and delivery readiness.
+  - Update implementation notes as work progresses.
+  - Hand completed work to qa-engineer with evidence.
+default_tools:
+  - git.read
+  - git.write
+  - shell.workspace
+  - tests.run
+documentation_obligations:
+  - docs/engineering/implementation-log.md
+handoff_targets:
+  - qa-engineer
+

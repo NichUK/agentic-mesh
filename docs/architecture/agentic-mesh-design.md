@@ -1,0 +1,703 @@
+# Agentic Mesh Design
+
+Status: draft design
+
+Date: 2026-06-02
+
+Related decision: `ADR-001`
+
+## Working Name
+
+The working name is **Agentic Mesh**.
+
+The name describes the intended product shape: a mesh of role agents,
+collaboration connectors, storage backends, tool adapters, deployment
+profiles, and observable runtime services. It deliberately avoids tying the
+product to software development teams only. The same architecture should be
+able to support broader enterprise agent networks later.
+
+Rejected working names:
+
+- `Enterprise Agent Network`: accurate but too generic and
+  infrastructure-heavy.
+- `DevTeam Mesh`: good for the initial use case, but too narrow for the
+  intended product expansion.
+- `AgentMesh`: concise but less distinctive.
+- `TeamFabric`: good enterprise feel, but less explicit about role-agent
+  execution.
+
+## Purpose
+
+Agentic Mesh replaces the OpenAgents-centered prototype with an enterprise
+runtime designed around long-running role agents.
+
+The product goal is not to build another general agent framework. The goal is
+to provide a deployable, inspectable, observable, project-scoped agent network
+where each role owns work, communicates through enterprise collaboration
+channels, updates documentation as it works, and hands work to other roles
+without requiring a central executive controller.
+
+The first product use case remains an AI software delivery team, but the
+architecture must not be limited to development roles.
+
+## Design Principles
+
+- Role agents are long-running workers with their own identity, storage,
+  configuration, instructions, queue, and tool boundary.
+- Permanent role templates are governed centrally and updated rarely.
+- Projects can override role instructions, tools, write boundaries,
+  connectors, and scaling without mutating the permanent role template.
+- A project may run multiple instances of the same role.
+- Agents communicate through durable messages and visible collaboration
+  channels, not through hidden controller-only state.
+- Humans interact through enterprise collaboration tools first, starting with
+  Microsoft Teams.
+- The runtime is connector-agnostic so Slack and other collaboration surfaces
+  can be added later.
+- Storage is pluggable. Local filesystem storage is the default developer
+  backend; cloud-native storage and messaging backends are supported behind the
+  same ports.
+- Git is the durable source for configuration, documentation, decisions,
+  stories, evidence, and committed artifacts.
+- Runtime queues are append-only and inspectable by default, but may use cloud
+  queue services for enterprise reliability.
+- Every deployment emits OpenTelemetry logs, traces, and metrics.
+- Model providers are adapters. The agent runtime must support Codex, OpenAI,
+  Anthropic, Claude Code, MiniMax, DeepSeek, and future providers without
+  changing product-level workflow semantics.
+
+## Runtime Topology
+
+Each role-agent instance runs in its own container. The container includes the
+role runtime, worker adapter, approved tools, and access to a role-specific
+mounted volume.
+
+Example local topology:
+
+```text
+agentic-mesh-project/
+  docker-compose.yml
+  config/
+    organization.yaml
+    role-templates/
+      product-manager.yaml
+      solution-architect.yaml
+      enterprise-architect.yaml
+      engineering.yaml
+      qa-engineer.yaml
+    projects/
+      quantauma.yaml
+    connectors/
+      teams.yaml
+      slack.yaml
+    storage/
+      local.yaml
+  state/
+    projects/
+      quantauma/
+        product-manager-1/
+          inbox/
+          outbox/
+          journal/
+          memory/
+          instructions/
+        engineering-1/
+          inbox/
+          outbox/
+          journal/
+          workspace/
+        engineering-2/
+          inbox/
+          outbox/
+          journal/
+          workspace/
+  shared/
+    docs/
+    decisions/
+    stories/
+    test-evidence/
+    releases/
+```
+
+Core containers:
+
+- `router`: routes messages, handoffs, direct messages, action responses, and
+  connector events. It is not an executive agent and does not decide how work
+  progresses.
+- `agent.<project>.<role>.<instance>`: one container per role-agent instance.
+- `teams-connector`: maps Microsoft Teams teams, channels, messages, DMs, and
+  Adaptive Card actions into internal messages and back out.
+- `otel-collector`: receives logs, traces, and metrics from every runtime
+  component.
+- `config-ui`: future optional container that edits and validates config files,
+  then commits approved config changes.
+
+Optional enterprise containers or services:
+
+- cloud queue adapters
+- cloud storage adapters
+- secret provider adapters
+- policy enforcement adapters
+- Git synchronization or audit commit service
+
+## Role Template And Project Override Model
+
+Agentic Mesh separates stable role definition from project-specific behavior.
+
+### Role Template
+
+A role template is a permanent or semi-permanent definition maintained by the
+organization or product owner.
+
+It defines:
+
+- role id
+- role purpose
+- baseline standing instructions
+- default input and output contracts
+- default handoff rules
+- default documentation obligations
+- default tool categories
+- default telemetry labels
+- default security posture
+
+Example:
+
+```yaml
+role_id: engineering
+version: 1
+purpose: Implement approved work and hand evidence to QA.
+standing_instructions:
+  - Only implement work that has passed product, architecture, and delivery readiness.
+  - Update implementation notes as work progresses.
+  - Hand completed work to qa-engineer with evidence.
+default_tools:
+  - git.read
+  - git.write
+  - shell.workspace
+  - tests.run
+documentation_obligations:
+  - docs/engineering/implementation-log.md
+handoff_targets:
+  - qa-engineer
+```
+
+### Organization Defaults
+
+Organization defaults apply across projects without changing role templates.
+
+They define:
+
+- approved providers
+- default worker adapter
+- enterprise policy constraints
+- secret provider references
+- telemetry destination
+- default storage backend
+- default connector configuration
+
+### Project Override
+
+A project override specializes a role for one project.
+
+It may define:
+
+- project-specific instructions
+- project-specific constraints
+- allowed repositories or worktrees
+- allowed write paths
+- project documentation paths
+- connector channel mappings
+- storage backend selection
+- worker/model selection
+- instance count
+- tool narrowing or expansion subject to policy
+
+Example:
+
+```yaml
+project_id: quantauma
+roles:
+  engineering:
+    template: engineering
+    instances: 2
+    worker:
+      adapter: codex-cli
+      model: codex
+    instructions:
+      - Follow Quantauma front-office/back-office boundary decisions.
+      - Do not change production deployment files without release approval.
+    write_paths:
+      - repos/quantauma-front-office/**
+      - docs/engineering/**
+    channels:
+      primary: engineering
+      handoff_inbox: engineering
+```
+
+### Role Instance
+
+A role instance is a concrete running worker.
+
+It has:
+
+- stable instance id
+- role template reference
+- project assignment
+- container identity
+- volume path
+- queue lease identity
+- telemetry service name
+- optional specialization
+
+Example instance ids:
+
+- `quantauma.engineering.1`
+- `quantauma.engineering.2`
+- `quantauma.product-manager.1`
+
+Multi-instancing is how a project scales a role. It must not require cloning or
+renaming the role template. Work claiming, leases, and handoff routing must
+support competing consumers for the same role.
+
+## Role Agent Runtime
+
+The runtime owns work lifecycle behavior. The model or CLI behind the agent is
+replaceable.
+
+The runtime is responsible for:
+
+- loading role template, organization defaults, project override, and instance
+  configuration
+- polling or subscribing to the role inbox
+- claiming work atomically
+- ensuring one active claim per instance unless explicitly configured
+- loading project, slice, documentation, and prior-message context
+- enforcing role, organization, project, and slice write policy
+- invoking the selected worker adapter
+- recording status, blockers, handoffs, approvals, documentation updates, and
+  artifacts
+- emitting OpenTelemetry spans, logs, and metrics
+- writing to the role journal and shared documentation areas
+
+The runtime must not assume a particular model provider, collaboration product,
+or storage backend.
+
+## Worker Adapter Abstraction
+
+Worker adapters execute role work. They receive a normalized request and return
+a normalized result.
+
+```text
+WorkerAdapter
+  run(AgentRunRequest) -> AgentRunResult
+```
+
+Supported initial adapters:
+
+- `codex-cli`
+- `openai-api`
+- `anthropic-api`
+- `claude-code`
+- `deepseek-api`
+- `minimax-api`
+- `manual-human`
+
+The runtime must define an internal tool protocol rather than leaking provider
+tool-call formats into the product. Adapters map the internal tool protocol to
+provider-specific capabilities where available.
+
+Normalized request fields:
+
+- agent id, role id, and role instance id
+- role template version
+- organization defaults version
+- project override version
+- role instructions and standing operating contract
+- work item purpose, source, project, slice, and priority
+- prior messages and handoff context
+- allowed tools and write boundaries
+- documentation requirements
+- output contract
+
+Normalized result fields:
+
+- status: `completed`, `blocked`, `needs_clarification`, `failed`
+- human-readable message
+- handoffs
+- documentation updates
+- artifacts
+- approval requests
+- tool calls and evidence
+- provider usage, cost, latency, and failure metadata
+
+## Storage Ports
+
+Storage is abstracted into separate ports so local and cloud-native deployments
+can vary independently.
+
+### Message Store
+
+Purpose:
+
+- role inboxes
+- role outboxes
+- handoffs
+- direct messages
+- action responses
+- retries and dead-letter records
+
+Local backend:
+
+- append-only JSONL or maildir-style folders
+- atomic claim files or leases
+- simple inspectable payloads
+
+Azure backend:
+
+- Azure Service Bus topics/subscriptions for delivery
+- Azure Table Storage or Blob Storage for payload metadata and event journal
+
+AWS backend:
+
+- SQS/SNS or EventBridge for delivery
+- DynamoDB or S3 for metadata and event journal
+
+### State Store
+
+Purpose:
+
+- project state
+- work item state
+- agent status
+- claim leases
+- connector cursors
+- approval state
+
+Local backend:
+
+- YAML or JSON state files
+- optional SQLite only where transactional local behavior is required
+
+Azure backend:
+
+- Azure Table Storage initially
+- Cosmos DB only when richer query, scale, or partitioning requirements justify
+  it
+
+AWS backend:
+
+- DynamoDB
+- S3 metadata where appropriate
+
+### Artifact Store
+
+Purpose:
+
+- documentation
+- product decisions
+- architecture decisions
+- enterprise architecture records
+- feature stories
+- BDD scenarios
+- test evidence
+- release records
+- generated reports
+
+Local backend:
+
+- Git workspace and filesystem
+
+Azure backend:
+
+- Git repository plus Azure Blob Storage for larger or binary artifacts
+
+AWS backend:
+
+- Git repository plus S3 for larger or binary artifacts
+
+### Event Journal
+
+Regardless of queue backend, every deployment must keep an append-only event
+journal.
+
+The journal is the audit and replay source. A queue service such as Azure
+Service Bus may deliver messages, but it is not the historical record by
+itself.
+
+The journal records:
+
+- message accepted
+- message routed
+- work claimed
+- agent run started
+- tool invoked
+- documentation updated
+- handoff emitted
+- approval requested
+- action response received
+- work completed, blocked, failed, or retried
+
+## Service Bus Position
+
+Azure Service Bus is a strong enterprise delivery backend, but it should not be
+the default product assumption.
+
+Advantages:
+
+- reliable delivery
+- competing consumers
+- retries
+- dead-letter queues
+- enterprise operations familiarity
+- scaling multiple instances of the same role
+
+Trade-offs:
+
+- less transparent than local append-only queues
+- harder to debug without an accompanying event journal
+- not a complete audit or replay record by itself
+- cloud dependency for local development
+
+Decision:
+
+- local development defaults to file-backed append-only queues
+- enterprise Azure deployments may use Service Bus for delivery
+- all deployments retain an inspectable append-only event journal
+
+## Collaboration Connector Abstraction
+
+The collaboration connector is broader than a notifier. It is the user-facing
+bridge between enterprise collaboration tools and the internal message model.
+
+```text
+CollaborationConnector
+  receive_message()
+  send_message()
+  send_direct_message()
+  send_action_request()
+  update_action_request()
+  map_identity()
+  map_channel()
+  map_thread()
+```
+
+Initial connector:
+
+- Microsoft Teams
+
+Future connectors:
+
+- Slack
+- web console
+- email
+- CLI
+
+The internal message model must preserve enough metadata for every connector:
+
+- source connector
+- external team/workspace id
+- external channel id
+- thread id
+- message id
+- sender identity
+- mentions
+- attachments
+- action payloads
+- permalink when available
+
+## Microsoft Teams First UI
+
+Teams is the first enterprise UI.
+
+Mapping:
+
+- one Microsoft Team per project
+- one channel per role surface
+- optional `all-agents` channel for cross-role status
+- optional `approvals` channel for approval cards
+- DMs for direct sponsor or role conversations where appropriate
+
+Example:
+
+```text
+Team: Quantauma Project
+  #product
+  #architecture
+  #enterprise-architecture
+  #delivery
+  #engineering
+  #qa
+  #release
+  #approvals
+  #all-agents
+```
+
+Teams approval and action UX should use Adaptive Cards. The internal action
+model must remain generic so Slack can map the same action to Block Kit later.
+
+## Git And Configuration
+
+Git owns:
+
+- permanent role templates
+- organization defaults
+- project overrides
+- role instance declarations
+- connector configuration templates
+- storage backend configuration templates
+- documentation
+- decisions
+- stories
+- test plans
+- test evidence
+- release notes
+- committed audit snapshots
+
+Git should not be used as the only live queue implementation for high-frequency
+runtime messages. Runtime queues are file-backed or cloud-backed, then
+summarized, snapshotted, or committed where useful.
+
+The future configuration UI must edit config files, validate them, and commit
+changes. It should not become a hidden database-backed configuration authority.
+
+## Observability
+
+Every component emits OpenTelemetry.
+
+Required span boundaries:
+
+- connector receive
+- message accepted
+- message routed
+- queue claim
+- agent run
+- worker adapter invocation
+- tool invocation
+- documentation write
+- handoff emit
+- approval request
+- action response
+- retry or dead-letter
+
+Required metric examples:
+
+- queue depth by role and role instance
+- work claim latency
+- agent run duration
+- token/cost by provider, role, and project
+- handoff count
+- blocker count
+- retry count
+- dead-letter count
+- connector send failure count
+
+Required log qualities:
+
+- correlation id
+- project id
+- slice id where applicable
+- role id
+- role instance id
+- connector id
+- external message id where applicable
+- redacted sensitive values
+
+## Deployment Profiles
+
+### Local Developer Profile
+
+- Docker Compose
+- file-backed queues and state
+- Git workspace artifacts
+- local OTEL collector
+- optional local Teams connector emulator or real Teams connector
+
+### Azure Enterprise Profile
+
+- containers on Azure Container Apps, AKS, or App Service for Containers
+- Azure Service Bus for delivery
+- Azure Table Storage for state
+- Azure Blob Storage for large artifacts
+- Git repository for config and documentation
+- OpenTelemetry Collector to Azure Monitor / Application Insights
+- Key Vault for secrets
+- Managed Identity where possible
+
+### AWS Enterprise Profile
+
+- ECS, EKS, or equivalent container runtime
+- SQS/SNS/EventBridge for delivery
+- DynamoDB for state
+- S3 for large artifacts
+- Git repository for config and documentation
+- OpenTelemetry Collector to the enterprise observability stack
+- Secrets Manager or Parameter Store for secrets
+
+## Security And Isolation
+
+Each agent container should have:
+
+- role-specific identity
+- role-instance-specific storage volume
+- least-privilege tool access
+- least-privilege connector permissions
+- least-privilege cloud storage permissions
+- explicit write policy over shared artifacts
+- independent telemetry identity
+
+Secrets must not be stored in role config, project overrides, or Git. Config
+files reference secret names or provider paths, not secret values.
+
+## Open Questions
+
+- Should the router be one container per project or a shared multi-project
+  service?
+- Should each role-agent instance support multiple concurrent claims, or should
+  horizontal scale be expressed only by adding more instances of the role?
+- Should the local profile support SQLite as an optional state backend, or
+  should it stay strictly file-first for transparency?
+- What minimum Teams permissions are required for channel messages, DMs,
+  Adaptive Cards, and channel creation?
+- Should project Teams be created by Agentic Mesh, or should the first version
+  bind to an existing Team created by an administrator?
+- How should generated documentation commits be grouped: per work item, per
+  slice, per role interval, or by explicit human approval?
+- How should organization-level role template updates be rolled out safely to
+  existing projects with local overrides?
+
+## First Implementation Slice
+
+The first Agentic Mesh slice should prove the enterprise spine without trying
+to implement every role.
+
+Scope:
+
+- Docker Compose project with `router`, `product-manager`, `engineering`, and
+  `otel-collector`.
+- permanent role template files for Product and Engineering.
+- project override file declaring a test project and two Engineering
+  instances.
+- file-backed message, state, artifact, and journal adapters.
+- worker adapter interface with `codex-cli` as the first concrete adapter.
+- Teams connector design stub or minimal local connector if Teams credentials
+  are not ready.
+- visible flow from product intake to engineering handoff.
+
+Acceptance criteria:
+
+- `docker compose up` starts the router, OTEL collector, and role-agent
+  containers.
+- Each agent instance has a distinct mounted volume and role-instance id.
+- Role instances load permanent role template plus project override.
+- A project can run at least two Engineering instances against the same role
+  queue without duplicate claims.
+- A product work item can be written to Product's inbox.
+- Product claims the item, records a product decision or story, and emits a
+  handoff.
+- One Engineering instance receives and claims the handoff in its own inbox.
+- The event journal records receive, claim, run, documentation update, handoff,
+  and delivery events.
+- OTEL traces show the same correlation id through routing and agent execution.
+- All generated docs and decisions are inspectable as files.
+
