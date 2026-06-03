@@ -133,6 +133,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -152,6 +153,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -172,6 +174,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -191,6 +194,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -211,6 +215,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -229,6 +234,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -249,6 +255,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -271,6 +278,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -291,6 +299,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -309,6 +318,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -328,6 +338,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -346,6 +357,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -364,6 +376,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: high
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:

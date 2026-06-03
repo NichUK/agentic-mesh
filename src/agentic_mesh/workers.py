@@ -30,7 +30,7 @@ AGENT_RESULT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": ["completed", "blocked", "needs_clarification", "failed"],
         },
-        "message": {"type": "string"},
+        "message": {"type": "string", "minLength": 1},
         "document_updates": {
             "type": "array",
             "items": {
@@ -52,7 +52,11 @@ AGENT_RESULT_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "target_role": {"type": "string"},
                     "message_type": {"type": "string"},
-                    "payload": {"type": "object"},
+                    "payload": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {},
+                    },
                 },
             },
         },
@@ -169,6 +173,9 @@ class CodexCliWorkerAdapter(WorkerAdapter):
             model = instance.override.worker.model
             if model and model != "codex":
                 command.extend(["--model", model])
+            reasoning_effort = instance.override.worker.reasoning_effort
+            if reasoning_effort:
+                command.extend(["-c", f"model_reasoning_effort={reasoning_effort}"])
             command.append("-")
 
             env = os.environ.copy()
@@ -201,7 +208,7 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                 return blocked_result(
                     flow_state,
                     "Codex CLI failed before returning a valid agent result."
-                    + (f"\n\n{detail[:2000]}" if detail else ""),
+                    + (f"\n\n{summarize_worker_failure(detail)}" if detail else ""),
                 )
 
             raw_result = (
@@ -438,6 +445,13 @@ def blocked_result(flow_state: FlowState, reason: str) -> AgentRunResult:
         document_updates=[DocumentUpdate(path=flow_state.artifact_path, content=content)],
         handoffs=[],
     )
+
+
+def summarize_worker_failure(detail: str, max_length: int = 2000) -> str:
+    text = detail.strip()
+    if len(text) <= max_length:
+        return text
+    return f"...\n{text[-max_length:].lstrip()}"
 
 
 def parse_agent_result(raw_result: str) -> dict[str, Any]:

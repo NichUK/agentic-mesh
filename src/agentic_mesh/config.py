@@ -365,6 +365,11 @@ def _project_role_from_dict(
         worker=WorkerConfig(
             adapter=adapter,
             model=str(worker.get("model", "stub")),
+            reasoning_effort=(
+                str(worker["reasoning_effort"])
+                if worker.get("reasoning_effort") is not None
+                else None
+            ),
             auth=_auth_binding_from_dict(
                 role_id,
                 adapter,

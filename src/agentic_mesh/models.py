@@ -82,6 +82,7 @@ class AuthCredential:
 class WorkerConfig:
     adapter: str
     model: str
+    reasoning_effort: str | None = None
     auth: AuthBinding | None = None
 
 

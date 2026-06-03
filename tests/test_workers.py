@@ -6,9 +6,11 @@ from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.models import Message
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh import workers
+from agentic_mesh.workers import AGENT_RESULT_SCHEMA
 from agentic_mesh.workers import ConfiguredWorkerAdapter
 from agentic_mesh.workers import parse_agent_result
 from agentic_mesh.workers import result_from_payload
+from agentic_mesh.workers import summarize_worker_failure
 
 
 def test_parse_agent_result_accepts_structured_worker_json() -> None:
@@ -218,9 +220,30 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert "--ask-for-approval" not in command
     assert "--sandbox" in command
     assert "workspace-write" in command
+    assert "-c" in command
+    assert "model_reasoning_effort=high" in command
     assert captured["env"]["CODEX_HOME"] == str(
         tmp_path / "state" / "worker_mounts" / mount_ref
     )
+
+
+def test_agent_result_schema_is_strict_for_nested_handoff_payload() -> None:
+    handoff_payload_schema = (
+        AGENT_RESULT_SCHEMA["properties"]["handoffs"]["items"]["properties"]["payload"]
+    )
+
+    assert handoff_payload_schema["type"] == "object"
+    assert handoff_payload_schema["additionalProperties"] is False
+
+
+def test_summarize_worker_failure_keeps_error_tail() -> None:
+    detail = "banner\n" + ("prompt\n" * 500) + "ERROR: invalid_json_schema"
+
+    summary = summarize_worker_failure(detail, max_length=80)
+
+    assert summary.startswith("...")
+    assert "ERROR: invalid_json_schema" in summary
+    assert "banner" not in summary
 
 
 def test_build_runtime_uses_configured_worker_adapter(tmp_path: Path) -> None:

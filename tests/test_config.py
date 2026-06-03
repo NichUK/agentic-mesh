@@ -200,6 +200,7 @@ def test_loads_project_roles_and_instances() -> None:
     engineering = mesh_config.instances["agentic-mesh-dev.engineering.1"]
     assert engineering.template.role_id == "engineering"
     assert engineering.override.worker.adapter == "codex-cli"
+    assert engineering.override.worker.reasoning_effort == "high"
     assert engineering.telemetry_service_name == "AM.dev-team.engineering.1"
 
 
