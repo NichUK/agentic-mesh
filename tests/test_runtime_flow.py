@@ -301,7 +301,6 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
                 "work_item_id": "work-adoption",
                 "work_item_type": "directive",
                 "work_mode": "direct_broadcast",
-                "output_path": "docs/requirements/release-manager.md",
             },
             source="test",
         )
@@ -314,7 +313,13 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
 
     assert connector_outbox.pending_count("approvals") == 0
     assert message_store.pending_count("delivery-manager") == 0
-    artifact = tmp_path / "workspace" / "docs" / "requirements" / "release-manager.md"
+    artifact = (
+        tmp_path
+        / "workspace"
+        / "documents"
+        / "requirements"
+        / "release-manager.md"
+    )
     content = artifact.read_text(encoding="utf-8")
     assert "not currently inside the lifecycle flow" in content
     assert "Use the available handoff routes as options, not commands" in content

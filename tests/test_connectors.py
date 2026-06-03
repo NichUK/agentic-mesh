@@ -209,7 +209,7 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     assert message.payload["work_mode"] == "direct_broadcast"
     assert message.payload["source_channel"] == "all-agents"
     assert message.payload["target_role"] == "business-analyst"
-    assert message.payload["output_path"] == "docs/requirements/business-analyst.md"
+    assert message.payload["output_path"] == "documents/requirements/business-analyst.md"
     assert message.payload["teams_from_name"] == "Nich"
     assert "Start an adoption process" in message.payload["summary"]
     assert "<at>" not in message.payload["summary"]
@@ -323,6 +323,100 @@ def test_graph_teams_channel_ingress_routes_all_agents_message(
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_graph_channel_message_received" in event_types
     assert "teams_all_agents_directive_routed" in event_types
+
+
+def test_graph_teams_channel_ingress_skips_all_agents_acknowledgement_echo(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = GraphTeamsChannelIngressAdapter(
+        connector_id="teams-graph-ingress",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        connector_config=teams_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token="token",
+    )
+    ingress._list_channel_messages = lambda channel, max_messages: [
+        {
+            "id": "ack-1",
+            "createdDateTime": "2026-06-03T12:32:24.072Z",
+            "body": {
+                "contentType": "html",
+                "content": (
+                    "<p><strong>Agentic Mesh received:</strong> All-agents "
+                    "directive received. Created direct work item work-1.</p>"
+                ),
+            },
+            "from": {
+                "application": {
+                    "id": "agentic-mesh-bot",
+                    "displayName": "AM-Delivery Manager",
+                },
+            },
+            "mentions": [],
+        }
+    ]
+
+    result = ingress.process_once("all-agents", max_messages=5)
+
+    assert result == {"routed": 0, "skipped": 1, "seen": 1}
+    assert message_store.pending_count("business-analyst") == 0
+    skipped = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "teams_graph_channel_message_skipped"
+    ]
+    assert skipped[0]["reason"] == "connector_echo"
+
+
+def test_graph_teams_channel_ingress_requires_real_all_agents_mention(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = GraphTeamsChannelIngressAdapter(
+        connector_id="teams-graph-ingress",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        connector_config=teams_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token="token",
+    )
+    ingress._list_channel_messages = lambda channel, max_messages: [
+        {
+            "id": "plain-1",
+            "createdDateTime": "2026-06-03T12:32:24.072Z",
+            "body": {
+                "contentType": "html",
+                "content": "<p>all-agents should have received the work item.</p>",
+            },
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [],
+        }
+    ]
+
+    result = ingress.process_once("all-agents", max_messages=5)
+
+    assert result == {"routed": 0, "skipped": 1, "seen": 1}
+    assert message_store.pending_count("business-analyst") == 0
+    skipped = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "teams_graph_channel_message_skipped"
+    ]
+    assert skipped[0]["reason"] == "missing_channel_mention"
 
 
 def test_graph_teams_channel_ingress_cursor_suppresses_duplicates(

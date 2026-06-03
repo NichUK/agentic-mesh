@@ -139,6 +139,7 @@ roles:
     write_paths:
     - docs/business/**
     - docs/implementation-slices/**
+    - documents/requirements/**
     channels:
       primary: business-analysis
       handoff_inbox: business-analysis
@@ -159,6 +160,7 @@ roles:
     write_paths:
     - docs/product/**
     - docs/implementation-slices/**
+    - documents/requirements/**
     channels:
       primary: product
       handoff_inbox: product
@@ -178,6 +180,7 @@ roles:
     write_paths:
     - docs/ux/**
     - docs/implementation-slices/**
+    - documents/requirements/**
     channels:
       primary: ux
       handoff_inbox: ux
@@ -197,6 +200,7 @@ roles:
     write_paths:
     - docs/architecture/**
     - docs/implementation-slices/**
+    - documents/requirements/**
     channels:
       primary: enterprise-architecture
       handoff_inbox: enterprise-architecture
@@ -215,6 +219,7 @@ roles:
     write_paths:
     - docs/architecture/**
     - docs/implementation-slices/**
+    - documents/requirements/**
     channels:
       primary: solution-architecture
       handoff_inbox: solution-architecture
@@ -235,6 +240,7 @@ roles:
     write_paths:
     - docs/security/**
     - docs/architecture/**
+    - documents/requirements/**
     channels:
       primary: security
       handoff_inbox: security
@@ -257,6 +263,7 @@ roles:
     - examples/projects/agentic-mesh-dev/**
     - Dockerfile
     - config/otel/**
+    - documents/requirements/**
     channels:
       primary: platform
       handoff_inbox: platform
@@ -277,6 +284,7 @@ roles:
     - src/**
     - tests/**
     - docs/engineering/**
+    - documents/requirements/**
     channels:
       primary: engineering
       handoff_inbox: engineering
@@ -295,6 +303,7 @@ roles:
     write_paths:
     - docs/qa/**
     - tests/**
+    - documents/requirements/**
     channels:
       primary: qa
       handoff_inbox: qa
@@ -314,6 +323,7 @@ roles:
     - README.md
     - MEMORY.md
     - docs/**
+    - documents/requirements/**
     channels:
       primary: technical-writing
       handoff_inbox: technical-writing
@@ -331,6 +341,7 @@ roles:
     - Keep delivery status tied to work_item_id.
     write_paths:
     - docs/delivery/**
+    - documents/requirements/**
     channels:
       primary: delivery
       handoff_inbox: delivery
@@ -349,6 +360,7 @@ roles:
     write_paths:
     - docs/research/**
     - docs/architecture/**
+    - documents/requirements/**
     channels:
       primary: research
       handoff_inbox: research
@@ -366,6 +378,7 @@ roles:
     - Keep release records linked to work_item_id.
     write_paths:
     - docs/releases/**
+    - documents/requirements/**
     channels:
       primary: release
       handoff_inbox: release

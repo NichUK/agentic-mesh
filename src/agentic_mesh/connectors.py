@@ -1086,7 +1086,7 @@ class TeamsBotIngress:
                 "work_mode": "direct_broadcast",
                 "target_role": role_id,
                 "requested_roles": roles,
-                "output_path": f"docs/requirements/{role_id}.md",
+                "output_path": f"documents/requirements/{role_id}.md",
                 "source_connector": "teams",
                 "source_connector_id": self.connector_id,
                 "source_channel": logical_channel,
@@ -1577,10 +1577,27 @@ class GraphTeamsChannelIngressAdapter:
         if not text:
             self._journal_skipped(channel, graph_message, reason="empty_message")
             return True
+        if self._is_connector_echo(graph_message):
+            self._journal_skipped(channel, graph_message, reason="connector_echo")
+            return True
         if channel == "all-agents" and not self._message_mentions(graph_message, channel):
             self._journal_skipped(channel, graph_message, reason="missing_channel_mention")
             return True
         return False
+
+    def _is_connector_echo(self, graph_message: dict[str, Any]) -> bool:
+        sender = graph_message.get("from") or {}
+        application = sender.get("application") or {}
+        user = sender.get("user") or {}
+        sender_name = str(
+            application.get("displayName") or user.get("displayName") or ""
+        )
+        plain_text = _plain_text(self._message_text(graph_message)).strip()
+        if application:
+            return True
+        if sender_name.casefold().startswith("am-"):
+            return True
+        return plain_text.startswith("Agentic Mesh received:")
 
     def _activity_from_graph_message(
         self,
@@ -1622,7 +1639,10 @@ class GraphTeamsChannelIngressAdapter:
             mention_text = _plain_text(item.get("mentionText")).casefold()
             if mention_text == mention_key:
                 return True
-        return mention_key in _plain_text(self._message_text(graph_message)).casefold().split()
+        html_text = self._message_text(graph_message)
+        if "<at" not in html_text.casefold():
+            return False
+        return mention_key in _plain_text(html_text).casefold().split()
 
     @staticmethod
     def _message_text(graph_message: dict[str, Any]) -> str:
