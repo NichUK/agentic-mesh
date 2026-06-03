@@ -150,6 +150,11 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     state_root = tmp_path / "state"
     journal = EventJournal(state_root, mesh_config.project.project_id)
     message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
     teams_config = mesh_config.project.connectors["teams"]
     ingress = TeamsBotIngress(
         connector_id="teams-bot-listener",
@@ -159,6 +164,7 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
         journal=journal,
         connector_config=teams_config,
         project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
     )
 
     result = ingress.receive_activity(
@@ -185,6 +191,12 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     assert result["lifecycle_state"] is None
     assert result["work_item_id"].startswith("work-")
     assert all(message_store.pending_count(role_id) == 1 for role_id in roles)
+    assert connector_outbox.pending_count("all-agents") == 1
+    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
+    assert acknowledgement is not None
+    assert acknowledgement.type == "sponsor_directive.acknowledged"
+    assert acknowledgement.payload["role_count"] == len(roles)
+    assert acknowledgement.payload["role_id"] == "delivery-manager"
 
     message = message_store.claim_next(
         "business-analyst",
@@ -255,6 +267,11 @@ def test_graph_teams_channel_ingress_routes_all_agents_message(
     state_root = tmp_path / "state"
     journal = EventJournal(state_root, mesh_config.project.project_id)
     message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
     teams_config = mesh_config.project.connectors["teams"]
     ingress = GraphTeamsChannelIngressAdapter(
         connector_id="teams-graph-ingress",
@@ -265,6 +282,7 @@ def test_graph_teams_channel_ingress_routes_all_agents_message(
         journal=journal,
         project_config=mesh_config.project,
         token="token",
+        connector_outbox=connector_outbox,
     )
     ingress._list_channel_messages = lambda channel, max_messages: [
         {
@@ -288,6 +306,7 @@ def test_graph_teams_channel_ingress_routes_all_agents_message(
 
     role_count = len(mesh_config.project.roles)
     assert result == {"routed": role_count, "skipped": 0, "seen": 1}
+    assert connector_outbox.pending_count("all-agents") == 1
     assert message_store.pending_count("business-analyst") == 1
     message = message_store.claim_next(
         "business-analyst",
@@ -509,6 +528,27 @@ def test_bot_connector_attaches_human_response_card() -> None:
     assert card["actions"][0]["data"]["trace_context"] == {
         "trace_id": "1234567890abcdef1234567890abcdef"
     }
+
+
+def test_bot_connector_renders_sponsor_directive_acknowledgement() -> None:
+    message = ConnectorMessage.create(
+        channel="all-agents",
+        message_type="sponsor_directive.acknowledged",
+        payload={
+            "title": "Adopt this project",
+            "work_item_id": "work-adoption",
+            "role_id": "delivery-manager",
+            "role_count": 13,
+            "target_roles": ["business-analyst", "product-manager"],
+        },
+        source="test",
+    )
+
+    rendered = BotFrameworkTeamsConnectorAdapter._render_text(message)
+
+    assert "Agentic Mesh received" in rendered
+    assert "not a lifecycle handoff" in rendered
+    assert "work-adoption" in rendered
 
 
 def test_teams_ingress_human_response_joins_trace_context(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED = "human_response.requested"
 MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED = "human_response.received"
 MESSAGE_TYPE_SDLC_HANDOFF = "sdlc.handoff"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED = "sponsor_directive.requested"
+MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED = "sponsor_directive.acknowledged"
 
 
 def build_human_response_request(

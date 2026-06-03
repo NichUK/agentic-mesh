@@ -12,6 +12,7 @@ from agentic_mesh.config import load_mesh_config
 from agentic_mesh.connectors import TeamsBotIngress
 from agentic_mesh.connectors import FileSecretResolver
 from agentic_mesh.journal import EventJournal
+from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
 
 
@@ -53,6 +54,11 @@ class ReloadableTeamsBotIngress:
             mesh_config.project.project_id,
             journal,
         )
+        connector_outbox = FileConnectorOutbox(
+            self.state_root,
+            mesh_config.project.project_id,
+            journal,
+        )
         ingress = TeamsBotIngress(
             connector_id=self.connector_id,
             project_id=mesh_config.project.project_id,
@@ -62,6 +68,7 @@ class ReloadableTeamsBotIngress:
             connector_config=connector_config,
             project_config=mesh_config.project,
             secrets=FileSecretResolver(self.secret_root),
+            connector_outbox=connector_outbox,
         )
         metadata = {
             "status": "reloaded",

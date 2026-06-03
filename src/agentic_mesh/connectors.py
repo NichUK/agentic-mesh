@@ -16,6 +16,7 @@ from agentic_mesh import telemetry
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SDLC_HANDOFF
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.messaging import build_human_response_received_message
 from agentic_mesh.models import ConnectorMessage
@@ -288,6 +289,8 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
             return render_sdlc_handoff_html(message)
         if message.type == MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED:
             return render_human_response_request_html(message)
+        if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED:
+            return render_sponsor_directive_acknowledgement_html(message)
         return (
             "<p><strong>Agentic Mesh message</strong></p>"
             f"<pre>{html.escape(json.dumps(message.payload, indent=2))}</pre>"
@@ -610,6 +613,8 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
                 f"<code>{gate_id}</code> for response type "
                 f"<code>{response_type}</code>.<br/>{summary}"
             )
+        if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED:
+            return _html_to_teams_xml_text(render_sponsor_directive_acknowledgement_html(message))
         return html.escape(json.dumps(message.payload, indent=2))
 
 
@@ -643,6 +648,32 @@ def render_human_response_request_html(message: ConnectorMessage) -> str:
         f"<p>Work item <code>{work_item_id}</code> is waiting at gate "
         f"<code>{gate_id}</code> for response type <code>{response_type}</code>.</p>"
         f"<p>{summary}</p>"
+    )
+
+
+def render_sponsor_directive_acknowledgement_html(message: ConnectorMessage) -> str:
+    payload = message.payload
+    title = html.escape(str(payload.get("title") or "Directive received"))
+    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    role_count = html.escape(str(payload.get("role_count") or 0))
+    roles = payload.get("target_roles") or []
+    role_text = ", ".join(str(role) for role in roles)
+    role_text = html.escape(role_text)
+    return (
+        f"<p><strong>Agentic Mesh received: {title}</strong></p>"
+        f"<p>Created direct work item <code>{work_item_id}</code> for "
+        f"<strong>{role_count}</strong> roles. This is not a lifecycle handoff "
+        f"and does not require release approval.</p>"
+        f"<p>Roles: {role_text}</p>"
+    )
+
+
+def _html_to_teams_xml_text(value: str) -> str:
+    return (
+        value.replace("<p>", "")
+        .replace("</p>", "<br/>")
+        .replace("<strong>", "<b>")
+        .replace("</strong>", "</b>")
     )
 
 
@@ -831,6 +862,7 @@ class TeamsBotIngress:
         connector_config: ProjectConnectorConfig | None = None,
         project_config: ProjectConfig | None = None,
         secrets: FileSecretResolver | None = None,
+        connector_outbox: FileConnectorOutbox | None = None,
     ) -> None:
         self.connector_id = connector_id
         self.project_id = project_id
@@ -840,6 +872,7 @@ class TeamsBotIngress:
         self.connector_config = connector_config
         self.project_config = project_config
         self.secrets = secrets
+        self.connector_outbox = connector_outbox
 
     def receive_activity(self, activity: dict[str, Any]) -> dict[str, Any]:
         activity_id = self._activity_id(activity)
@@ -1083,7 +1116,63 @@ class TeamsBotIngress:
             work_item_type="directive",
             teams_activity_id=activity.get("id"),
         )
+        self._queue_all_agents_acknowledgement(
+            logical_channel=logical_channel,
+            title=title,
+            text=text,
+            work_item_id=work_item_id,
+            roles=roles,
+            activity=activity,
+        )
         return messages
+
+    def _queue_all_agents_acknowledgement(
+        self,
+        *,
+        logical_channel: str,
+        title: str,
+        text: str,
+        work_item_id: str,
+        roles: list[str],
+        activity: dict[str, Any],
+    ) -> None:
+        if self.connector_outbox is None:
+            self.journal.append(
+                "teams_all_agents_acknowledgement_unroutable",
+                project_id=self.project_id,
+                connector_id=self.connector_id,
+                channel=logical_channel,
+                work_item_id=work_item_id,
+                reason="connector_outbox_not_configured",
+            )
+            return
+        acknowledgement = ConnectorMessage.create(
+            channel=logical_channel,
+            message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED,
+            payload={
+                "project_id": self.project_id,
+                "role_id": "delivery-manager",
+                "title": title,
+                "summary": text,
+                "work_item_id": work_item_id,
+                "work_item_type": "directive",
+                "source_channel": logical_channel,
+                "target_roles": roles,
+                "role_count": len(roles),
+                "teams_activity_id": activity.get("id"),
+            },
+            source=f"teams:{self.connector_id}:{logical_channel}",
+        )
+        self.connector_outbox.enqueue(acknowledgement)
+        self.journal.append(
+            "teams_all_agents_acknowledgement_queued",
+            project_id=self.project_id,
+            connector_id=self.connector_id,
+            channel=logical_channel,
+            connector_message_id=acknowledgement.message_id,
+            work_item_id=work_item_id,
+            role_count=len(roles),
+        )
 
     def _logical_channel_for_activity(self, activity: dict[str, Any]) -> str | None:
         if self.connector_config is None:
@@ -1362,6 +1451,7 @@ class GraphTeamsChannelIngressAdapter:
         journal: EventJournal,
         project_config: ProjectConfig,
         token: str,
+        connector_outbox: FileConnectorOutbox | None = None,
     ) -> None:
         self.connector_id = connector_id
         self.project_id = project_id
@@ -1371,6 +1461,7 @@ class GraphTeamsChannelIngressAdapter:
         self.journal = journal
         self.project_config = project_config
         self.token = token
+        self.connector_outbox = connector_outbox
         self.ingress = TeamsBotIngress(
             connector_id=connector_id,
             project_id=project_id,
@@ -1379,6 +1470,7 @@ class GraphTeamsChannelIngressAdapter:
             journal=journal,
             connector_config=connector_config,
             project_config=project_config,
+            connector_outbox=connector_outbox,
         )
 
     def process_once(self, channel: str, *, max_messages: int = 25) -> dict[str, int]:

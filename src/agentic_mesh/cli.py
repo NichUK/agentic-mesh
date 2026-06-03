@@ -412,7 +412,7 @@ def cmd_teams_graph_connector_loop(args) -> int:
 
 
 def cmd_teams_graph_ingress_once(args) -> int:
-    mesh_config, journal, message_store, _, _, _ = build_runtime(
+    mesh_config, journal, message_store, connector_outbox, _, _ = build_runtime(
         args.config_root,
         args.project_file,
         args.workspace_root,
@@ -437,6 +437,7 @@ def cmd_teams_graph_ingress_once(args) -> int:
         journal=journal,
         project_config=mesh_config.project,
         token=token,
+        connector_outbox=connector_outbox,
     )
     results = {}
     exit_code = 0
