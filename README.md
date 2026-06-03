@@ -8,6 +8,17 @@ service, database, or agent framework. It is designed around replaceable
 adapters for workers, storage, collaboration connectors, and deployment
 profiles.
 
+Project documents:
+
+- `LICENSE`: Apache License 2.0
+- `NOTICE`: project attribution notice
+- `CONTRIBUTING.md`: contribution workflow and DCO sign-off
+- `SECURITY.md`: vulnerability reporting and hardening notes
+- `CODE_OF_CONDUCT.md`: community conduct expectations
+- `GOVERNANCE.md`: maintainer and decision process
+- `TRADEMARKS.md`: project name and mark guidance
+- `THIRD_PARTY_NOTICES.md`: current third-party dependency notices
+
 Current documentation:
 
 - `docs/configuration/project-configuration.md`: human-readable manual for

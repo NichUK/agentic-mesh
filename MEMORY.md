@@ -464,6 +464,10 @@ Current open source and commercial plan:
 - quick commercial wins are design-partner offers, enterprise readiness
   assessments, assisted Teams/Microsoft 365 setup, Azure deployment blueprints,
   support packages, and a read-only control-plane dashboard preview
+- root OSS launch documents now exist: `LICENSE`, `NOTICE`, `CONTRIBUTING.md`,
+  `SECURITY.md`, `CODE_OF_CONDUCT.md`, `GOVERNANCE.md`, `TRADEMARKS.md`, and
+  `THIRD_PARTY_NOTICES.md`; `pyproject.toml` also advertises the Apache-2.0
+  license metadata
 
 ## Recommended Next Slice
 
