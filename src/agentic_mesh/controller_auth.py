@@ -465,6 +465,15 @@ for setup and status instead of carrying secrets in chat.</p>
         credential_id = html.escape(credential["credential"])
         method = credential["method"]
         if method == "codex_oauth_cache":
+            if credential["status"] == "configured":
+                return """
+<button class="status-button" type="button" disabled title="OpenAI sign-in is configured">
+  <svg aria-hidden="true" viewBox="0 0 24 24">
+    <path d="M20 6 9 17l-5-5"></path>
+  </svg>
+  Signed in
+</button>
+"""
             return f"""
 <form method="post" action="/auth/codex/start">
   <input type="hidden" name="credential" value="{credential_id}">
@@ -648,6 +657,8 @@ if (statusEl.textContent === "running") {{
     .login-code {{ display: block; font-size: 2rem; letter-spacing: 0.08em; }}
     .icon-button {{ align-items: center; background: #111827; border: 0; color: white; cursor: pointer; display: inline-flex; height: 2.75rem; justify-content: center; width: 2.75rem; }}
     .icon-button svg {{ fill: none; height: 1.25rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; width: 1.25rem; }}
+    .status-button {{ align-items: center; background: #e9f7ef; border: 1px solid #166534; color: #166534; display: inline-flex; gap: 0.35rem; padding: 0.45rem 0.7rem; }}
+    .status-button svg {{ fill: none; height: 1rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; width: 1rem; }}
     .copy-status {{ color: #166534; min-width: 4rem; }}
   </style>
 </head>
