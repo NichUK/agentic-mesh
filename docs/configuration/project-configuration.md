@@ -1,0 +1,620 @@
+# Project Configuration Manual
+
+Status: draft manual
+
+Date: 2026-06-03
+
+Schema: `config/schemas/project.schema.json`
+
+Examples:
+
+- `examples/projects/agentic-mesh-dev.yaml`
+- `examples/projects/example-project.yaml`
+
+## Purpose
+
+A project configuration file tells Agentic Mesh how to run a specific project.
+It overlays stable organization defaults and role templates with project-level
+choices:
+
+- which project workspace and repositories agents can work in
+- which roles participate and how many instances each role has
+- which worker/model/auth binding each role uses
+- which collaboration connectors, teams, channels, and bot identities to use
+- which documents exist and which role is accountable for each one
+- which flow or flow template governs work items
+- which handoffs, consult routes, gates, and human responses apply
+
+The schema validates the shape. This manual explains how to design the file.
+
+## Minimal Shape
+
+Every project file needs these required top-level fields:
+
+```yaml
+project_id: example-project
+name: Example Project
+workspace: ...
+roles: ...
+flow: ...
+```
+
+Optional top-level fields are:
+
+```yaml
+connectors: ...
+document_accountabilities: ...
+```
+
+Use lowercase kebab-case for `project_id`, for example
+`agentic-mesh-dev`, `customer-portal`, or `finance-ops`.
+
+## Workspace
+
+`workspace` declares the mounted project workspace and repositories agents can
+use for real work.
+
+```yaml
+workspace:
+  root: .
+  default_repository: customer-portal
+  repositories:
+    customer-portal:
+      type: git
+      path: .
+      default_branch: develop
+      remote: git@github.com:example/customer-portal.git
+```
+
+Fields:
+
+- `root`: project workspace root. Relative paths resolve under
+  `AGENTIC_MESH_WORKSPACE_ROOT`. Absolute paths are allowed when the deployment
+  mounts a fixed path.
+- `default_repository`: repository id used for relative artifact paths and role
+  `write_paths` unless a future work item overrides it.
+- `repositories`: one or more repository entries.
+- `repositories.<id>.type`: `git` or `filesystem`.
+- `repositories.<id>.path`: repository root path relative to `workspace.root`,
+  or an absolute mounted path.
+- `repositories.<id>.default_branch`: optional expected branch.
+- `repositories.<id>.remote`: optional repository remote URL.
+
+Multi-repository example:
+
+```yaml
+workspace:
+  root: .
+  default_repository: front-office
+  repositories:
+    front-office:
+      type: git
+      path: repos/front-office
+      default_branch: develop
+    platform:
+      type: git
+      path: repos/platform
+      default_branch: develop
+    evidence:
+      type: filesystem
+      path: evidence
+```
+
+Runtime state and secrets do not belong in `workspace`. They are mounted and
+configured separately by deployment.
+
+## Roles
+
+`roles` declares the role templates used by the project and how each role is
+specialized.
+
+```yaml
+roles:
+  engineering:
+    template: engineering
+    instances: 2
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        method: codex_api_key
+        secret_ref: openai-customer-portal-engineering-key
+    instructions:
+      - Preserve work_item_id and lifecycle_state in all handoffs and evidence.
+      - Do not change deployment files without platform and release approval.
+    write_paths:
+      - src/**
+      - tests/**
+      - docs/engineering/**
+    channels:
+      primary: engineering
+      handoff_inbox: engineering
+```
+
+Fields:
+
+- `template`: role template id from `config/roles/`.
+- `instances`: number of role-agent instances to run for this role.
+- `worker`: model worker configuration for this project role.
+- `instructions`: project-specific standing instructions added to the role.
+- `write_paths`: project workspace paths the role may write to.
+- `channels`: logical channel aliases used by connectors.
+
+`instances` supports parallel workers for the same role. For example,
+Engineering can have two instances competing for the same Engineering queue
+without cloning the role template.
+
+`write_paths` are relative to the effective project workspace. Keep them as
+narrow as possible. Use them to express role accountability, not hidden
+security guarantees; tool adapters and runtime policy should enforce them later
+as the platform matures.
+
+## Worker And Auth
+
+The `worker` block chooses how a role is executed.
+
+```yaml
+worker:
+  adapter: codex-cli
+  model: codex
+  auth:
+    method: codex_access_token
+    secret_ref: codex-customer-portal-product-token
+```
+
+Fields:
+
+- `adapter`: worker adapter, such as `codex-cli`, `openai-api`,
+  `anthropic-api`, `claude-code`, or `manual-human`.
+- `model`: model or execution label used by the adapter.
+- `auth`: optional auth binding.
+
+Auth binding fields:
+
+- `method`: auth method id from `config/auth-methods.yaml`.
+- `secret_ref`: logical secret name. This is a reference, not a secret value.
+- `mount_ref`: logical mounted credential reference.
+- `env`: non-secret adapter hints or env names.
+- `notes`: optional human-readable detail.
+
+Examples:
+
+```yaml
+auth:
+  method: codex_api_key
+  secret_ref: openai-customer-portal-engineering-key
+```
+
+```yaml
+auth:
+  method: codex_oauth_cache
+  mount_ref: local-codex-ux-designer-home
+```
+
+```yaml
+auth:
+  method: manual_human_no_auth
+```
+
+Never place secret values, OAuth tokens, API keys, or credential files in a
+project file.
+
+## Connectors
+
+`connectors` maps project collaboration surfaces into Agentic Mesh logical
+channels. The current schema models Microsoft Teams.
+
+```yaml
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    identity_model: role_bots
+    tenant_id: 00000000-0000-0000-0000-000000000000
+    ingress:
+      public_endpoint: https://example.com/api/messages
+      listen_host: 0.0.0.0
+      listen_port: 3978
+      path: /api/messages
+    team:
+      id: 11111111-1111-1111-1111-111111111111
+      name: dev-team
+    channels:
+      all-agents:
+        id: 19:example@thread.tacv2
+        name: all-agents
+      engineering:
+        id: 19:engineering@example
+        name: engineering
+    role_bots:
+      engineering:
+        display_name: AM-Engineering
+        bot_id_ref: teams-bot-engineering-app-id
+        secret_ref: teams-bot-engineering-secret
+```
+
+Connector fields:
+
+- `adapter`: connector adapter id.
+- `identity_model`: one of `shared_bot`, `role_bots`, or
+  `role_instance_bots`.
+- `tenant_id`: optional tenant id for Microsoft 365/Teams.
+- `ingress`: optional public callback/listener settings.
+- `team`: Teams team id and name.
+- `channels`: logical channel ids and display names.
+- `role_bots`: per-role bot identity references when `identity_model` is
+  `role_bots`.
+
+Ingress fields:
+
+- `public_endpoint`: HTTPS endpoint used by the external service.
+- `listen_host`: container listener host, often `0.0.0.0`.
+- `listen_port`: container listener port.
+- `path`: HTTP path, starting with `/`.
+
+Role bot fields:
+
+- `display_name`: bot display name shown in Teams.
+- `bot_id_ref`: logical secret/config reference for the bot app id.
+- `secret_ref`: logical secret reference for the bot credential.
+
+Connector channel aliases should match role `channels` values. For example,
+if a role says `primary: engineering`, the Teams connector should declare an
+`engineering` channel.
+
+## Document Accountabilities
+
+`document_accountabilities` says which role is accountable for each project
+document. Other roles may contribute, but the owner is accountable for
+existence, completeness, and correctness.
+
+```yaml
+document_accountabilities:
+  docs/product/stories.md:
+    owner_role: product-manager
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+      - problem
+      - target_user
+      - scope
+      - acceptance_criteria
+    contributing_roles:
+      - business-analyst
+      - ux-designer
+      - qa-engineer
+    lifecycle_events:
+      - document.contribution_added
+      - document.owner_review_requested
+      - document.owner_review_completed
+```
+
+Fields:
+
+- `owner_role`: role accountable for the document.
+- `accountability`: accountability label. The current default is
+  `accountable_owner`.
+- `can_edit_contributions`: owner may edit contributions from other roles.
+- `review_on_contribution`: contributions should trigger owner review.
+- `required_sections`: expected document sections.
+- `contributing_roles`: roles expected or allowed to contribute.
+- `lifecycle_events`: document-related events to emit or track.
+
+Document paths are relative to the project workspace.
+
+## Flow
+
+`flow` governs lifecycle states, handoffs, consult routes, gates, artifacts,
+and supported work item types.
+
+You can reference a stock flow template:
+
+```yaml
+flow:
+  template: sdlc
+```
+
+You can also apply a partial overlay to a template:
+
+```yaml
+flow:
+  template: sdlc
+  overrides:
+    work_item_types:
+      - slice
+      - feature
+      - spike
+      - defect
+    states:
+      implementation:
+        purpose: Implement approved work and produce testable evidence.
+```
+
+Or define an inline flow:
+
+```yaml
+flow:
+  flow_id: example-two-role-flow-v0
+  name: Example Two Role Flow
+  entry_state: product_definition
+  work_item_types:
+    - slice
+    - feature
+    - spike
+  states: ...
+```
+
+Template ids resolve to `config/flows/<template>.yaml`.
+
+## Sponsor-Initiated Work
+
+Flows can define what happens when a sponsor starts by talking directly to any
+agent.
+
+```yaml
+sponsor_initiated_work:
+  allow_from_any_state: true
+  default_work_item_type: spike
+  default_intake_state: business_analysis
+  capture_rule: When a sponsor asks any agent a question or asks for work that requires investigation, implementation, decision support, or cross-role input, the contacted agent must create or request a tracked work item before doing invisible side work.
+  routing_rule: The contacted agent may start the work item in its own lifecycle state when it is clearly within that role's accountability, or route it to the default intake state when business framing, scope, priority, or sponsor intent is unclear.
+  completion_rule: Sponsor-originated work must progress through required consult routes, forward handoffs, gates, evidence capture, and release or closure records before it is considered complete.
+```
+
+Fields:
+
+- `allow_from_any_state`: whether sponsor-originated work can start from any
+  lifecycle state.
+- `default_work_item_type`: type used when the request is unclear or
+  investigative.
+- `default_intake_state`: fallback state for unclear business framing, scope,
+  priority, or sponsor intent.
+- `capture_rule`: standing instruction for turning direct requests into
+  tracked work.
+- `routing_rule`: how the contacted agent chooses a start state.
+- `completion_rule`: what must happen before the work is complete.
+
+## Flow States
+
+Each flow state has an owner role, purpose, artifact path, gates, consult
+routes, and handoffs.
+
+```yaml
+states:
+  implementation:
+    owner_role: engineering
+    purpose: Implement the approved work item and collect implementation evidence.
+    artifact_path: docs/engineering/implementation-log.md
+    gates: ...
+    consults: ...
+    handoffs: ...
+```
+
+Fields:
+
+- `owner_role`: role accountable for this lifecycle state.
+- `purpose`: what this state does.
+- `artifact_path`: document or artifact file updated by work in this state.
+- `gates`: required checks or human responses.
+- `consults`: allowed bounded role-to-role requests for help.
+- `handoffs`: lifecycle transitions when state work is complete.
+
+The `owner_role` and all handoff/consult target roles must be configured in
+`roles`.
+
+## Handoffs
+
+`handoffs` advance the work item to another lifecycle state after exit criteria
+are met.
+
+```yaml
+handoffs:
+  completed:
+    target_state: quality_review
+    target_role: qa-engineer
+    message_type: sdlc.quality_review
+```
+
+Fields:
+
+- `target_state`: next lifecycle state.
+- `target_role`: owner role for the next state.
+- `message_type`: optional message type. If omitted, the runtime defaults to
+  `sdlc.<target_state>`.
+
+The key, such as `completed`, is the status used to choose the handoff.
+
+## Consult Routes
+
+`consults` let the current owner ask another role for bounded input without
+moving the work item out of the current lifecycle state.
+
+```yaml
+consults:
+  product_scope:
+    target_state: product_definition
+    target_role: product-manager
+    message_type: sdlc.consult.product_definition
+    purpose: Clarify acceptance criteria, scope, priority, or user-visible behaviour.
+```
+
+Fields:
+
+- `target_state`: lifecycle state context for the consult.
+- `target_role`: role being consulted.
+- `message_type`: optional message type. If omitted, the runtime defaults to
+  `sdlc.consult.<target_state>`.
+- `purpose`: why the current role may consult that target.
+
+Consults may point backwards, forwards, or sideways in the lifecycle graph.
+They do not replace required gates or forward handoffs.
+
+## Gates
+
+`gates` define checks that must be satisfied before a state can complete or
+before a human/external response can be recorded.
+
+Document owner review gate:
+
+```yaml
+gates:
+  - gate_id: product_story_owner_review
+    type: document_owner_review
+    required_documents:
+      - docs/product/stories.md
+    required_review_status: approved
+    reviewer_role: product-manager
+```
+
+Human response gate:
+
+```yaml
+gates:
+  - gate_id: release_decision_response
+    type: human_response
+    response_type: approve_not_approve
+    prompt: Record the final release decision for this work item.
+    requested_from: release-sponsor
+    channel: approvals
+    timeout: PT48H
+    on_timeout: escalate
+    completion_criteria:
+      accepted_values:
+        - approved
+```
+
+Common fields:
+
+- `gate_id`: stable gate id.
+- `type`: gate type, such as `document_owner_review` or `human_response`.
+
+Document review fields:
+
+- `required_documents`: document paths that must be reviewed.
+- `required_review_status`: expected status, such as `approved`.
+- `reviewer_role`: accountable reviewer role.
+
+Human response fields:
+
+- `response_type`: response template id from `config/response-types.yaml`.
+- `prompt`: text shown to the human responder.
+- `requested_from`: logical person, group, role, or authority.
+- `channel`: logical connector channel.
+- `timeout`: ISO-8601 duration, such as `PT48H`.
+- `on_timeout`: timeout action, such as `escalate`.
+- `completion_criteria`: type-specific criteria, such as accepted values.
+
+Response templates currently include approval, yes/no, number, money,
+single-line text, multiline text, document reference, URL, and document-or-URL.
+
+## Complete Small Example
+
+```yaml
+project_id: example-project
+name: Example Project
+workspace:
+  root: .
+  default_repository: example-project
+  repositories:
+    example-project:
+      type: git
+      path: .
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+    instructions:
+      - Keep product output concise and traceable to sponsor intent.
+    write_paths:
+      - docs/product/**
+    channels:
+      primary: product
+      handoff_inbox: product
+  engineering:
+    template: engineering
+    instances: 2
+    worker:
+      adapter: codex-cli
+      model: codex
+    instructions:
+      - Claim work atomically and avoid duplicate implementation.
+    write_paths:
+      - src/**
+      - tests/**
+      - docs/engineering/**
+    channels:
+      primary: engineering
+      handoff_inbox: engineering
+flow:
+  flow_id: example-two-role-sdlc-v0
+  entry_state: product_definition
+  work_item_types:
+    - slice
+    - feature
+    - spike
+  states:
+    product_definition:
+      owner_role: product-manager
+      purpose: Define product intent and acceptance criteria.
+      artifact_path: docs/product/stories.md
+      handoffs:
+        completed:
+          target_state: implementation
+          target_role: engineering
+          message_type: sdlc.implementation
+    implementation:
+      owner_role: engineering
+      purpose: Implement the configured example work item.
+      artifact_path: docs/engineering/implementation-log.md
+      consults:
+        product_scope:
+          target_state: product_definition
+          target_role: product-manager
+          message_type: sdlc.consult.product_definition
+          purpose: Clarify acceptance criteria or scope.
+      handoffs: {}
+```
+
+## Validation
+
+Run:
+
+```powershell
+python -m agentic_mesh.cli validate-config
+```
+
+For alternate files:
+
+```powershell
+python -m agentic_mesh.cli --project-file examples/projects/example-project.yaml validate-config
+```
+
+In containers, the relevant path variables are:
+
+```text
+AGENTIC_MESH_CONFIG_ROOT
+AGENTIC_MESH_PROJECT_FILE
+AGENTIC_MESH_WORKSPACE_ROOT
+AGENTIC_MESH_STATE_ROOT
+```
+
+## Design Checklist
+
+Before using a project file, confirm:
+
+- no secret values are present
+- `project_id` is stable and kebab-case
+- `workspace` points at the mounted project repo or workspace
+- every role `template` exists under `config/roles/`
+- every flow owner, handoff target, and consult target is configured in
+  `roles`
+- every role channel alias maps to a connector channel when connectors are used
+- `write_paths` are narrow enough for the role accountability
+- document owners match the lifecycle state that depends on each document
+- human response gates use response types from `config/response-types.yaml`
+- sponsor-originated work rules are clear enough for direct agent contact
+- parallel slices, features, spikes, defects, or research tasks preserve their
+  own `work_item_id` and `correlation_id`

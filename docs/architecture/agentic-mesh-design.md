@@ -780,6 +780,10 @@ including roles, worker/auth bindings, document accountabilities, and either an
 inline flow or a referenced flow template. `response-types.schema.json`
 documents the reusable response template catalog.
 
+The human-readable companion for the project schema is
+`docs/configuration/project-configuration.md`. Use it when designing or
+reviewing a project YAML file.
+
 ## Open Source And Commercial Model
 
 Agentic Mesh should be an open source project with a commercially sustainable

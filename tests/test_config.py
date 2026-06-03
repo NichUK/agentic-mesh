@@ -6,6 +6,7 @@ from agentic_mesh.config import load_mesh_config
 
 
 def test_project_schema_and_flow_template_files_exist() -> None:
+    readme = (Path.cwd() / "README.md").read_text(encoding="utf-8")
     project = yaml.safe_load(
         (Path.cwd() / "examples" / "projects" / "agentic-mesh-dev.yaml").read_text(
             encoding="utf-8"
@@ -17,6 +18,7 @@ def test_project_schema_and_flow_template_files_exist() -> None:
         )
     )
 
+    assert "docs/configuration/project-configuration.md" in readme
     assert project["flow"] == {"template": "sdlc"}
     assert project["workspace"]["default_repository"] == "agentic-mesh"
     assert schema["title"] == "Agentic Mesh Project Configuration"

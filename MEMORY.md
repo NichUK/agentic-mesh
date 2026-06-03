@@ -314,6 +314,9 @@ Flow collaboration update:
   allowed consults, forward handoffs, gates, evidence, and closure.
 - The dogfood SDLC flow now includes `sponsor_initiated_work` and state-level
   consult routes so each role knows whom it may ask for help.
+- `docs/configuration/project-configuration.md` is the human-readable companion
+  manual for `config/schemas/project.schema.json`, with examples for all
+  current project YAML sections and options.
 
 ## Open Source And Commercial Direction
 

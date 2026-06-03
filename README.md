@@ -10,6 +10,8 @@ profiles.
 
 Current documentation:
 
+- `docs/configuration/project-configuration.md`: human-readable manual for
+  project YAML files and schema options
 - `docs/architecture/agentic-mesh-design.md`: main design document
 - `docs/architecture/repository-topology.md`: system repo and project repo
   boundary
