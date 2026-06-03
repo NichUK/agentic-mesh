@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
+import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -133,9 +137,17 @@ def cmd_validate(args) -> int:
                     )
                 },
                 "roles": sorted(mesh_config.project.roles),
+                "auth_credentials": sorted(mesh_config.project.auth_credentials),
                 "instances": sorted(mesh_config.instances),
                 "role_auth": {
-                    role_id: role.worker.auth.method if role.worker.auth else None
+                    role_id: (
+                        {
+                            "credential_ref": role.worker.auth.credential_ref,
+                            "method": role.worker.auth.method,
+                        }
+                        if role.worker.auth
+                        else None
+                    )
                     for role_id, role in sorted(mesh_config.project.roles.items())
                 },
                 "document_accountabilities": sorted(
@@ -274,6 +286,129 @@ def cmd_auth_plan(args) -> int:
     ]
     print(json.dumps({"auth_plans": plans}, indent=2))
     return 0
+
+
+def _credential_for_cli(args):
+    mesh_config = load_mesh_config(args.config_root, project_file=args.project_file)
+    credential = mesh_config.project.auth_credentials.get(args.credential)
+    if credential is None:
+        raise SystemExit(
+            f"Unknown auth credential `{args.credential}` in project "
+            f"`{mesh_config.project.project_id}`."
+        )
+    method = mesh_config.auth_methods[credential.method]
+    return mesh_config, credential, method
+
+
+def _state_secret_path(state_root: Path, secret_ref: str) -> Path:
+    return state_root / "secrets" / secret_ref
+
+
+def _state_mount_path(state_root: Path, mount_ref: str) -> Path:
+    return state_root / "worker_mounts" / mount_ref
+
+
+def cmd_auth_store_secret(args) -> int:
+    _, credential, method = _credential_for_cli(args)
+    if not method.requires_secret_ref or not credential.secret_ref:
+        raise SystemExit(
+            f"Auth credential `{credential.credential_id}` does not use a secret_ref."
+        )
+
+    if args.value_env:
+        secret_value = os.getenv(args.value_env, "")
+    elif not sys.stdin.isatty():
+        secret_value = sys.stdin.read()
+    else:
+        secret_value = getpass.getpass(
+            f"Secret value for {credential.credential_id}: "
+        )
+    secret_value = secret_value.strip()
+    if not secret_value:
+        raise SystemExit("No secret value was provided.")
+
+    secret_path = _state_secret_path(args.state_root, credential.secret_ref)
+    if secret_path.exists() and not args.overwrite:
+        raise SystemExit(
+            f"Secret `{credential.secret_ref}` already exists. Use --overwrite to replace it."
+        )
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    secret_path.write_text(secret_value, encoding="utf-8")
+    try:
+        secret_path.chmod(0o600)
+    except OSError:
+        pass
+    print(
+        json.dumps(
+            {
+                "credential": credential.credential_id,
+                "method": credential.method,
+                "secret_ref": credential.secret_ref,
+                "path": str(secret_path),
+                "redacted": True,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_codex_auth_login(args) -> int:
+    _, credential, method = _credential_for_cli(args)
+    if method.method_id != "codex_oauth_cache" or not credential.mount_ref:
+        raise SystemExit(
+            "codex-auth-login requires a credential using method "
+            "`codex_oauth_cache` with a mount_ref."
+        )
+    codex_bin = shutil.which("codex")
+    if not codex_bin:
+        raise SystemExit("Codex CLI is not installed or not on PATH.")
+
+    mount_path = _state_mount_path(args.state_root, credential.mount_ref)
+    mount_path.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.update(credential.env)
+    env["CODEX_HOME"] = str(mount_path)
+    command = [codex_bin, "login"]
+    if args.device_auth:
+        command.append("--device-auth")
+    completed = subprocess.run(command, env=env, check=False)
+    if completed.returncode == 0:
+        print(
+            json.dumps(
+                {
+                    "credential": credential.credential_id,
+                    "method": credential.method,
+                    "mount_ref": credential.mount_ref,
+                    "codex_home": str(mount_path),
+                    "redacted": True,
+                },
+                indent=2,
+            )
+        )
+    return completed.returncode
+
+
+def cmd_codex_auth_status(args) -> int:
+    _, credential, method = _credential_for_cli(args)
+    if method.method_id != "codex_oauth_cache" or not credential.mount_ref:
+        raise SystemExit(
+            "codex-auth-status requires a credential using method "
+            "`codex_oauth_cache` with a mount_ref."
+        )
+    codex_bin = shutil.which("codex")
+    if not codex_bin:
+        raise SystemExit("Codex CLI is not installed or not on PATH.")
+
+    mount_path = _state_mount_path(args.state_root, credential.mount_ref)
+    env = os.environ.copy()
+    env.update(credential.env)
+    env["CODEX_HOME"] = str(mount_path)
+    return subprocess.run(
+        [codex_bin, "login", "status"],
+        env=env,
+        check=False,
+    ).returncode
 
 
 def _parse_response_value(value: str):
@@ -568,6 +703,28 @@ def parser() -> argparse.ArgumentParser:
     auth_plan = subcommands.add_parser("auth-plan")
     auth_plan.add_argument("--instance")
     auth_plan.set_defaults(func=cmd_auth_plan)
+
+    auth_store = subcommands.add_parser("auth-store-secret")
+    auth_store.add_argument("--credential", required=True)
+    auth_store.add_argument(
+        "--value-env",
+        help="Read the secret value from this environment variable instead of stdin.",
+    )
+    auth_store.add_argument("--overwrite", action="store_true")
+    auth_store.set_defaults(func=cmd_auth_store_secret)
+
+    codex_login = subcommands.add_parser("codex-auth-login")
+    codex_login.add_argument("--credential", required=True)
+    codex_login.add_argument(
+        "--device-auth",
+        action="store_true",
+        help="Use Codex device authentication for terminals without browser launch.",
+    )
+    codex_login.set_defaults(func=cmd_codex_auth_login)
+
+    codex_status = subcommands.add_parser("codex-auth-status")
+    codex_status.add_argument("--credential", required=True)
+    codex_status.set_defaults(func=cmd_codex_auth_status)
 
     human_response = subcommands.add_parser("record-human-response")
     human_response.add_argument("--work-item-id", required=True)

@@ -22,6 +22,14 @@
         "$ref": "#/$defs/projectRole"
       }
     },
+    "auth_credentials": {
+      "type": "object",
+      "description": "Reusable project-level credential references. Values never contain secret material.",
+      "additionalProperties": {
+        "$ref": "#/$defs/authCredential"
+      },
+      "default": {}
+    },
     "workspace": {
       "$ref": "#/$defs/projectWorkspace"
     },
@@ -242,6 +250,46 @@
       }
     },
     "authBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        { "required": ["credential"] },
+        { "required": ["credential_ref"] },
+        { "required": ["method"] }
+      ],
+      "properties": {
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reusable credential id from top-level auth_credentials."
+        },
+        "credential_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Deprecated alias for credential."
+        },
+        "method": {
+          "type": "string"
+        },
+        "secret_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mount_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {}
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "authCredential": {
       "type": "object",
       "additionalProperties": false,
       "required": ["method"],

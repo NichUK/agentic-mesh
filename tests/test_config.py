@@ -28,6 +28,7 @@ def test_project_schema_and_flow_template_files_exist() -> None:
     assert project["workspace"]["default_repository"] == "agentic-mesh"
     assert schema["title"] == "Agentic Mesh Project Configuration"
     assert "workspace" in schema["required"]
+    assert "authCredential" in schema["$defs"]
     assert "flowConsult" in schema["$defs"]
     assert "sponsorInitiatedWork" in schema["$defs"]
     assert (Path.cwd() / "config" / "flows" / "sdlc.yaml").exists()
@@ -62,6 +63,12 @@ def test_loads_auth_methods_and_role_bindings() -> None:
     assert "codex_access_token" in mesh_config.auth_methods
     assert "claude_code_oauth_token" in mesh_config.auth_methods
     assert "microsoft_graph_app_certificate" in mesh_config.auth_methods
+    assert (
+        mesh_config.project.auth_credentials[
+            "codex-agentic-mesh-dev-product-manager"
+        ].secret_ref
+        == "codex-agentic-mesh-dev-product-manager-token"
+    )
 
     product_auth = mesh_config.project.roles["product-manager"].worker.auth
     engineering_auth = mesh_config.project.roles["engineering"].worker.auth
@@ -70,18 +77,39 @@ def test_loads_auth_methods_and_role_bindings() -> None:
     delivery_auth = mesh_config.project.roles["delivery-manager"].worker.auth
 
     assert product_auth is not None
+    assert product_auth.credential_ref == "codex-agentic-mesh-dev-product-manager"
     assert product_auth.method == "codex_access_token"
     assert product_auth.secret_ref == "codex-agentic-mesh-dev-product-manager-token"
     assert engineering_auth is not None
+    assert engineering_auth.credential_ref == "codex-agentic-mesh-dev-engineering"
     assert engineering_auth.method == "codex_access_token"
     assert security_auth is not None
     assert security_auth.method == "codex_access_token"
     assert ux_auth is not None
+    assert ux_auth.credential_ref == "codex-agentic-mesh-dev-ux-designer"
     assert ux_auth.method == "codex_access_token"
     assert ux_auth.secret_ref == "codex-agentic-mesh-dev-ux-designer-token"
     assert delivery_auth is not None
+    assert delivery_auth.credential_ref == "codex-agentic-mesh-dev-delivery-manager"
     assert delivery_auth.method == "codex_access_token"
     assert delivery_auth.secret_ref == "codex-agentic-mesh-dev-delivery-manager-token"
+
+
+def test_auth_credentials_can_be_reused_across_roles() -> None:
+    mesh_config = load_mesh_config(
+        Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+    )
+
+    product_auth = mesh_config.project.roles["product-manager"].worker.auth
+    engineering_auth = mesh_config.project.roles["engineering"].worker.auth
+
+    assert product_auth is not None
+    assert engineering_auth is not None
+    assert product_auth.credential_ref == "codex-example-shared-api-key"
+    assert engineering_auth.credential_ref == "codex-example-shared-api-key"
+    assert product_auth.method == "codex_api_key"
+    assert engineering_auth.secret_ref == "codex-example-shared-api-key"
 
 
 def test_loads_response_type_templates() -> None:

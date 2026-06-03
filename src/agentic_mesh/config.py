@@ -7,6 +7,7 @@ import yaml
 
 from agentic_mesh.models import (
     AuthBinding,
+    AuthCredential,
     AuthMethod,
     ConnectorChannelConfig,
     ConnectorIngressConfig,
@@ -187,6 +188,67 @@ def _auth_methods_from_dict(data: dict[str, Any], path: Path) -> dict[str, AuthM
     return methods
 
 
+def _validate_auth_binding_fields(
+    *,
+    owner: str,
+    adapter: str,
+    binding: AuthBinding,
+    auth_methods: dict[str, AuthMethod],
+) -> None:
+    if binding.method not in auth_methods:
+        raise ConfigError(f"{owner} references unknown auth method {binding.method}")
+
+    method = auth_methods[binding.method]
+    if adapter not in method.applies_to:
+        raise ConfigError(
+            f"{owner} adapter {adapter} cannot use auth method {binding.method}"
+        )
+    if method.requires_secret_ref and not binding.secret_ref:
+        raise ConfigError(f"{owner} auth method {binding.method} requires secret_ref")
+    if method.requires_mount_ref and not binding.mount_ref:
+        raise ConfigError(f"{owner} auth method {binding.method} requires mount_ref")
+
+
+def _auth_credentials_from_dict(
+    data: dict[str, Any],
+    auth_methods: dict[str, AuthMethod],
+) -> dict[str, AuthCredential]:
+    credentials_data = data.get("auth_credentials", {}) or {}
+    if not isinstance(credentials_data, dict):
+        raise ConfigError("Project auth_credentials must be a mapping")
+
+    credentials: dict[str, AuthCredential] = {}
+    for credential_id, credential_data in credentials_data.items():
+        if not isinstance(credential_data, dict):
+            raise ConfigError(f"Auth credential {credential_id} must be a mapping")
+        method_id = str(credential_data.get("method", ""))
+        if not method_id:
+            raise ConfigError(f"Auth credential {credential_id} must declare method")
+        if method_id not in auth_methods:
+            raise ConfigError(
+                f"Auth credential {credential_id} references unknown auth method {method_id}"
+            )
+        method = auth_methods[method_id]
+        credential = AuthCredential(
+            credential_id=str(credential_id),
+            method=method_id,
+            secret_ref=credential_data.get("secret_ref"),
+            mount_ref=credential_data.get("mount_ref"),
+            env=dict(credential_data.get("env", {})),
+            notes=credential_data.get("notes"),
+        )
+        if method.requires_secret_ref and not credential.secret_ref:
+            raise ConfigError(
+                f"Auth credential {credential_id} method {method_id} requires secret_ref"
+            )
+        if method.requires_mount_ref and not credential.mount_ref:
+            raise ConfigError(
+                f"Auth credential {credential_id} method {method_id} requires mount_ref"
+            )
+        credentials[str(credential_id)] = credential
+    return credentials
+
+
 def _response_types_from_dict(
     data: dict[str, Any],
     path: Path,
@@ -228,21 +290,43 @@ def _auth_binding_from_dict(
     adapter: str,
     data: dict[str, Any] | None,
     auth_methods: dict[str, AuthMethod],
+    auth_credentials: dict[str, AuthCredential],
 ) -> AuthBinding | None:
     if data is None:
         return None
     if not isinstance(data, dict):
         raise ConfigError(f"Role {role_id} worker auth config must be a mapping")
+
+    credential_ref = data.get("credential") or data.get("credential_ref")
+    if credential_ref:
+        credential_id = str(credential_ref)
+        if credential_id not in auth_credentials:
+            raise ConfigError(
+                f"Role {role_id} references unknown auth credential {credential_id}"
+            )
+        credential = auth_credentials[credential_id]
+        env = dict(credential.env)
+        env.update(dict(data.get("env", {})))
+        binding = AuthBinding(
+            method=credential.method,
+            secret_ref=credential.secret_ref,
+            mount_ref=credential.mount_ref,
+            env=env,
+            notes=data.get("notes") or credential.notes,
+            credential_ref=credential_id,
+        )
+        _validate_auth_binding_fields(
+            owner=f"Role {role_id}",
+            adapter=adapter,
+            binding=binding,
+            auth_methods=auth_methods,
+        )
+        return binding
+
     method_id = str(data.get("method", ""))
     if not method_id:
-        raise ConfigError(f"Role {role_id} worker auth config must declare method")
-    if method_id not in auth_methods:
-        raise ConfigError(f"Role {role_id} references unknown auth method {method_id}")
-
-    method = auth_methods[method_id]
-    if adapter not in method.applies_to:
         raise ConfigError(
-            f"Role {role_id} adapter {adapter} cannot use auth method {method_id}"
+            f"Role {role_id} worker auth config must declare method or credential"
         )
 
     binding = AuthBinding(
@@ -252,10 +336,12 @@ def _auth_binding_from_dict(
         env=dict(data.get("env", {})),
         notes=data.get("notes"),
     )
-    if method.requires_secret_ref and not binding.secret_ref:
-        raise ConfigError(f"Role {role_id} auth method {method_id} requires secret_ref")
-    if method.requires_mount_ref and not binding.mount_ref:
-        raise ConfigError(f"Role {role_id} auth method {method_id} requires mount_ref")
+    _validate_auth_binding_fields(
+        owner=f"Role {role_id}",
+        adapter=adapter,
+        binding=binding,
+        auth_methods=auth_methods,
+    )
     return binding
 
 
@@ -263,6 +349,7 @@ def _project_role_from_dict(
     role_id: str,
     data: dict[str, Any],
     auth_methods: dict[str, AuthMethod],
+    auth_credentials: dict[str, AuthCredential],
 ) -> ProjectRoleOverride:
     worker = data.get("worker") or {}
     if not isinstance(worker, dict):
@@ -283,6 +370,7 @@ def _project_role_from_dict(
                 adapter,
                 worker.get("auth"),
                 auth_methods,
+                auth_credentials,
             ),
         ),
         instructions=list(data.get("instructions", [])),
@@ -754,8 +842,14 @@ def load_mesh_config(
     if not isinstance(roles_data, dict) or not roles_data:
         raise ConfigError(f"{project_path} must declare at least one role")
 
+    auth_credentials = _auth_credentials_from_dict(project_data, auth_methods)
     roles = {
-        role_id: _project_role_from_dict(role_id, role_data, auth_methods)
+        role_id: _project_role_from_dict(
+            role_id,
+            role_data,
+            auth_methods,
+            auth_credentials,
+        )
         for role_id, role_data in roles_data.items()
     }
     workspace = _project_workspace_from_dict(project_data, str(project_data["project_id"]))
@@ -774,6 +868,7 @@ def load_mesh_config(
         name=str(project_data.get("name", project_data["project_id"])),
         workspace=workspace,
         roles=roles,
+        auth_credentials=auth_credentials,
         connectors=connectors,
         document_accountabilities=document_accountabilities,
         flow=flow,

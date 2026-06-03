@@ -65,6 +65,17 @@ class AuthBinding:
     mount_ref: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     notes: str | None = None
+    credential_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class AuthCredential:
+    credential_id: str
+    method: str
+    secret_ref: str | None = None
+    mount_ref: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    notes: str | None = None
 
 
 @dataclass(frozen=True)
@@ -246,6 +257,7 @@ class ProjectConfig:
     roles: dict[str, ProjectRoleOverride]
     document_accountabilities: dict[str, DocumentAccountability]
     flow: SdlcFlow
+    auth_credentials: dict[str, AuthCredential] = field(default_factory=dict)
     connectors: dict[str, ProjectConnectorConfig] = field(default_factory=dict)
 
 

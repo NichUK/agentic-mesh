@@ -42,6 +42,7 @@ flow: ...
 Optional top-level fields are:
 
 ```yaml
+auth_credentials: ...
 connectors: ...
 document_accountabilities: ...
 ```
@@ -153,13 +154,24 @@ as the platform matures.
 
 The `worker` block chooses how a role is executed.
 
+Prefer reusable top-level credentials:
+
+```yaml
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+  codex-shared-api-key:
+    method: codex_api_key
+    secret_ref: codex-shared-api-key
+```
+
 ```yaml
 worker:
   adapter: codex-cli
   model: codex
   auth:
-    method: codex_access_token
-    secret_ref: codex-customer-portal-product-token
+    credential: codex-product-oauth
 ```
 
 Fields:
@@ -171,18 +183,28 @@ Fields:
 
 Auth binding fields:
 
-- `method`: auth method id from `config/auth-methods.yaml`.
+- `credential`: reusable credential id from top-level `auth_credentials`.
+- `method`: inline auth method id from `config/auth-methods.yaml`; keep this
+  for compatibility or very small examples.
 - `secret_ref`: logical secret name. This is a reference, not a secret value.
 - `mount_ref`: logical mounted credential reference.
 - `env`: non-secret adapter hints or env names.
 - `notes`: optional human-readable detail.
 
+Reusable credential fields:
+
+- `method`: auth method id from `config/auth-methods.yaml`.
+- `secret_ref`: logical secret name for API keys, access tokens, or bearer
+  tokens.
+- `mount_ref`: logical mounted credential reference for OAuth caches.
+- `env`: non-secret adapter hints.
+- `notes`: optional operator guidance.
+
 Examples:
 
 ```yaml
 auth:
-  method: codex_api_key
-  secret_ref: openai-customer-portal-engineering-key
+  credential: codex-shared-api-key
 ```
 
 ```yaml
@@ -198,6 +220,12 @@ auth:
 
 Never place secret values, OAuth tokens, API keys, or credential files in a
 project file.
+
+Multiple Codex OAuth accounts can be active at the same time by giving each
+account a different reusable credential and `mount_ref`. Multiple API keys or
+access tokens work the same way with different `secret_ref` values. Roles can
+share a credential when they should operate under the same account, or use
+separate credentials when attribution, quota, or governance requires it.
 
 ## Connectors
 
