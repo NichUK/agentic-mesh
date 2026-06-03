@@ -348,6 +348,9 @@
           "minItems": 1,
           "items": { "type": "string" }
         },
+        "sponsor_initiated_work": {
+          "$ref": "#/$defs/sponsorInitiatedWork"
+        },
         "states": {
           "type": "object",
           "minProperties": 1,
@@ -376,11 +379,72 @@
           "items": { "$ref": "#/$defs/flowGate" },
           "default": []
         },
+        "consults": {
+          "type": "object",
+          "description": "Allowed role-to-role consult routes that can move work context backwards or sideways without completing the current lifecycle state.",
+          "additionalProperties": {
+            "$ref": "#/$defs/flowConsult"
+          },
+          "default": {}
+        },
         "handoffs": {
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/flowHandoff"
           }
+        }
+      }
+    },
+    "sponsorInitiatedWork": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allow_from_any_state",
+        "default_work_item_type",
+        "default_intake_state",
+        "capture_rule",
+        "routing_rule",
+        "completion_rule"
+      ],
+      "properties": {
+        "allow_from_any_state": {
+          "type": "boolean"
+        },
+        "default_work_item_type": {
+          "type": "string",
+          "description": "Work item type used when sponsor-originated work is unclear or investigative."
+        },
+        "default_intake_state": {
+          "type": "string",
+          "description": "Lifecycle state used when the contacted agent cannot safely start within its own accountability."
+        },
+        "capture_rule": {
+          "type": "string"
+        },
+        "routing_rule": {
+          "type": "string"
+        },
+        "completion_rule": {
+          "type": "string"
+        }
+      }
+    },
+    "flowConsult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_state", "target_role"],
+      "properties": {
+        "target_state": {
+          "type": "string"
+        },
+        "target_role": {
+          "type": "string"
+        },
+        "message_type": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
         }
       }
     },

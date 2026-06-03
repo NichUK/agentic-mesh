@@ -17,6 +17,8 @@ Current documentation:
   auth model
 - `docs/architecture/document-lifecycle.md`: document accountability,
   contribution events, and owner-review gates
+- `docs/architecture/flow-collaboration.md`: consult routes and
+  sponsor-initiated tracked work
 - `docs/architecture/human-response-gates.md`: structured human response gates
   and reusable response type templates
 - `docs/architecture/decisions.md`: architecture decisions

@@ -33,6 +33,14 @@ class StubCodexWorkerAdapter(WorkerAdapter):
         summary = message.payload.get("summary", message.payload.get("text", ""))
         work_item_id = message.payload.get("work_item_id", message.message_id)
         work_item_type = message.payload.get("work_item_type", "slice")
+        consult_lines = [
+            (
+                f"  - `{consult_id}` -> `{consult.target_role}` "
+                f"at `{consult.target_state}`: {consult.purpose}"
+            )
+            for consult_id, consult in flow_state.consults.items()
+        ]
+        consult_summary = "\n".join(consult_lines) if consult_lines else "  - none"
 
         content = (
             f"\n## {title}\n\n"
@@ -45,6 +53,7 @@ class StubCodexWorkerAdapter(WorkerAdapter):
             f"- Source message: `{message.message_id}`\n"
             f"- Correlation id: `{message.correlation_id}`\n"
             f"- Summary: {summary}\n"
+            f"- Allowed consult routes:\n{consult_summary}\n"
         )
         handoffs: list[Handoff] = []
         transition = flow_state.handoffs.get("completed")

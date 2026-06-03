@@ -8,11 +8,14 @@ import yaml
 from agentic_mesh.models import (
     AuthBinding,
     AuthMethod,
+    ConnectorChannelConfig,
+    ConnectorIngressConfig,
     DocumentAccountability,
-    MeshConfig,
+    FlowConsult,
     FlowHandoff,
     FlowGate,
     FlowState,
+    MeshConfig,
     NamingDefaults,
     OrganizationConfig,
     ProjectConfig,
@@ -24,8 +27,7 @@ from agentic_mesh.models import (
     RoleInstanceConfig,
     RoleTemplate,
     SdlcFlow,
-    ConnectorChannelConfig,
-    ConnectorIngressConfig,
+    SponsorInitiatedWorkPolicy,
     TeamsRoleBotConfig,
     WorkerConfig,
 )
@@ -108,6 +110,7 @@ def _organization_from_dict(data: dict[str, Any], path: Path) -> OrganizationCon
         naming_defaults=naming_defaults,
         documentation_defaults=dict(data.get("documentation_defaults", {})),
         conversation_defaults=dict(data.get("conversation_defaults", {})),
+        work_intake_defaults=dict(data.get("work_intake_defaults", {})),
         handoff_defaults=dict(data.get("handoff_defaults", {})),
         security_defaults=dict(data.get("security_defaults", {})),
     )
@@ -562,6 +565,31 @@ def _flow_from_dict(
                 message_type=str(target_data.get("message_type", f"sdlc.{target_state}")),
             )
 
+        consult_data = state_data.get("consults", {}) or {}
+        if not isinstance(consult_data, dict):
+            raise ConfigError(f"Flow state {state_id} consults must be a mapping")
+        consults: dict[str, FlowConsult] = {}
+        for consult_id, target_data in consult_data.items():
+            if not isinstance(target_data, dict):
+                raise ConfigError(
+                    f"Flow state {state_id} consult {consult_id} must be a mapping"
+                )
+            target_state = str(target_data["target_state"])
+            target_role = str(target_data["target_role"])
+            if target_role not in roles:
+                raise ConfigError(
+                    f"Flow state {state_id} consult {consult_id} targets unconfigured role {target_role}"
+                )
+            consults[str(consult_id)] = FlowConsult(
+                consult_id=str(consult_id),
+                target_state=target_state,
+                target_role=target_role,
+                message_type=str(
+                    target_data.get("message_type", f"sdlc.consult.{target_state}")
+                ),
+                purpose=str(target_data.get("purpose", "")),
+            )
+
         gates_data = state_data.get("gates", []) or []
         if not isinstance(gates_data, list):
             raise ConfigError(f"Flow state {state_id} gates must be a list")
@@ -576,6 +604,7 @@ def _flow_from_dict(
             purpose=str(state_data.get("purpose", "")),
             artifact_path=str(state_data["artifact_path"]),
             handoffs=handoffs,
+            consults=consults,
             gates=gates,
         )
 
@@ -589,12 +618,59 @@ def _flow_from_dict(
                 raise ConfigError(
                     f"Flow state {state.state_id} targets missing state {handoff.target_state}"
                 )
+        for consult in state.consults.values():
+            if consult.target_state not in states:
+                raise ConfigError(
+                    f"Flow state {state.state_id} consults missing state {consult.target_state}"
+                )
+
+    work_item_types = list(flow_data.get("work_item_types", []))
+    sponsor_policy = _sponsor_initiated_work_policy_from_dict(
+        flow_data.get("sponsor_initiated_work"),
+        work_item_types,
+        states,
+    )
 
     return SdlcFlow(
         flow_id=str(flow_data.get("flow_id", "default-sdlc")),
         entry_state=entry_state,
-        work_item_types=list(flow_data.get("work_item_types", [])),
+        work_item_types=work_item_types,
         states=states,
+        sponsor_initiated_work=sponsor_policy,
+    )
+
+
+def _sponsor_initiated_work_policy_from_dict(
+    data: Any,
+    work_item_types: list[str],
+    states: dict[str, FlowState],
+) -> SponsorInitiatedWorkPolicy | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise ConfigError("Project flow sponsor_initiated_work must be a mapping")
+
+    default_work_item_type = str(data.get("default_work_item_type", "spike"))
+    if default_work_item_type not in work_item_types:
+        raise ConfigError(
+            "Project flow sponsor_initiated_work.default_work_item_type "
+            f"{default_work_item_type} is not declared in work_item_types"
+        )
+
+    default_intake_state = str(data.get("default_intake_state", next(iter(states))))
+    if default_intake_state not in states:
+        raise ConfigError(
+            "Project flow sponsor_initiated_work.default_intake_state "
+            f"{default_intake_state} is not declared"
+        )
+
+    return SponsorInitiatedWorkPolicy(
+        allow_from_any_state=bool(data.get("allow_from_any_state", False)),
+        default_work_item_type=default_work_item_type,
+        default_intake_state=default_intake_state,
+        capture_rule=str(data.get("capture_rule", "")),
+        routing_rule=str(data.get("routing_rule", "")),
+        completion_rule=str(data.get("completion_rule", "")),
     )
 
 

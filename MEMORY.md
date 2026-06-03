@@ -301,6 +301,20 @@ runtime should continue treating flow as a per-project overlay, and projects
 must be able to override lifecycle states, owners, handoffs, artifacts, and
 parallel work item types.
 
+Flow collaboration update:
+
+- Flows are collaboration graphs, not simple forward pipelines.
+- `handoffs` advance a work item to another lifecycle state after exit criteria
+  are met.
+- `consults` let the current owner ask another role for bounded input without
+  completing the current state; consult routes may point backwards, forwards,
+  or sideways in the lifecycle.
+- Sponsor-originated questions or requests that create work must be captured as
+  tracked work items and run through the configured project flow, including
+  allowed consults, forward handoffs, gates, evidence, and closure.
+- The dogfood SDLC flow now includes `sponsor_initiated_work` and state-level
+  consult routes so each role knows whom it may ask for help.
+
 ## Open Source And Commercial Direction
 
 The project should be open source with a commercial offering layered on top.

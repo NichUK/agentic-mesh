@@ -29,6 +29,11 @@ conversation_defaults:
   style: direct, collaborative, and evidence-led
   escalation_rule: Ask for clarification only when a safe assumption would change product, architecture, security, cost, or release outcome.
   human_update_rule: Keep human-facing updates short, specific, and tied to work item state.
+work_intake_defaults:
+  sponsor_initiated_work_rule: If a sponsor asks an agent to do work, answer a question that requires work, or investigate a material decision, the agent must capture or request a tracked work item and run it through the configured project flow.
+  direct_agent_contact_rule: A sponsor may start by talking to any role-agent; the contacted agent is accountable for deciding whether the request can start in its own lifecycle state or must be routed to the project's default intake state.
+  consult_route_rule: Agents may ask other roles for input only through configured consult routes or explicit project-approved exceptions; consults do not complete the current lifecycle state or replace required forward handoffs.
+  work_item_identity_rule: Preserve work_item_id, work_item_type, lifecycle_state, and correlation_id across direct sponsor intake, consults, handoffs, gates, and closure unless a separate tracked work item is explicitly created.
 handoff_defaults:
   required_fields:
     - work_item_id

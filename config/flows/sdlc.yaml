@@ -6,11 +6,24 @@ work_item_types:
   - slice
   - feature
   - spike
+sponsor_initiated_work:
+  allow_from_any_state: true
+  default_work_item_type: spike
+  default_intake_state: business_analysis
+  capture_rule: When a sponsor asks any agent a question or asks for work that requires investigation, implementation, decision support, or cross-role input, the contacted agent must create or request a tracked work item before doing invisible side work.
+  routing_rule: The contacted agent may start the work item in its own lifecycle state when it is clearly within that role's accountability, or route it to the default intake state when business framing, scope, priority, or sponsor intent is unclear.
+  completion_rule: Sponsor-originated work must progress through required consult routes, forward handoffs, gates, evidence capture, and release or closure records before it is considered complete.
 states:
   business_analysis:
     owner_role: business-analyst
     purpose: Frame business context, stakeholders, constraints, and outcome measures.
     artifact_path: docs/business/briefs.md
+    consults:
+      research_support:
+        target_state: business_analysis
+        target_role: research-analyst
+        message_type: sdlc.consult.research
+        purpose: Ask for market, enterprise-pattern, stakeholder, or precedent research to support business framing.
     gates:
       - gate_id: business_brief_owner_review
         type: document_owner_review
@@ -27,6 +40,17 @@ states:
     owner_role: product-manager
     purpose: Define product intent, slice boundaries, and acceptance criteria.
     artifact_path: docs/product/stories.md
+    consults:
+      business_context:
+        target_state: business_analysis
+        target_role: business-analyst
+        message_type: sdlc.consult.business_analysis
+        purpose: Clarify sponsor intent, business value, stakeholder needs, constraints, or success measures.
+      research_support:
+        target_state: product_definition
+        target_role: research-analyst
+        message_type: sdlc.consult.research
+        purpose: Ask for discovery, comparative analysis, or product precedent research.
     gates:
       - gate_id: product_story_owner_review
         type: document_owner_review
@@ -43,6 +67,17 @@ states:
     owner_role: ux-designer
     purpose: Define user workflows, interaction requirements, and usability implications.
     artifact_path: docs/ux/design-notes.md
+    consults:
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify acceptance criteria, priority, slice boundaries, or product trade-offs.
+      business_context:
+        target_state: business_analysis
+        target_role: business-analyst
+        message_type: sdlc.consult.business_analysis
+        purpose: Clarify user groups, sponsor intent, operational constraints, or business outcomes.
     gates:
       - gate_id: ux_owner_review
         type: document_owner_review
@@ -59,6 +94,22 @@ states:
     owner_role: enterprise-architect
     purpose: Review enterprise fit, governance implications, integration boundaries, and operating constraints.
     artifact_path: docs/architecture/enterprise-notes.md
+    consults:
+      business_context:
+        target_state: business_analysis
+        target_role: business-analyst
+        message_type: sdlc.consult.business_analysis
+        purpose: Clarify business drivers, governance context, stakeholders, or enterprise constraints.
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify product intent, acceptance criteria, or priority trade-offs.
+      security_context:
+        target_state: security_review
+        target_role: security-architect
+        message_type: sdlc.consult.security_review
+        purpose: Ask for early security, identity, trust boundary, or compliance-sensitive input.
     gates:
       - gate_id: enterprise_architecture_owner_review
         type: document_owner_review
@@ -75,6 +126,27 @@ states:
     owner_role: solution-architect
     purpose: Define design constraints, interfaces, and implementation guidance.
     artifact_path: docs/architecture/solution-notes.md
+    consults:
+      enterprise_context:
+        target_state: enterprise_alignment
+        target_role: enterprise-architect
+        message_type: sdlc.consult.enterprise_alignment
+        purpose: Clarify enterprise architecture constraints, integration boundaries, or governance requirements.
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify product intent, acceptance criteria, or scope trade-offs.
+      platform_context:
+        target_state: platform_readiness
+        target_role: platform-engineer
+        message_type: sdlc.consult.platform_readiness
+        purpose: Ask for deployment, runtime, observability, or operational feasibility input.
+      security_context:
+        target_state: security_review
+        target_role: security-architect
+        message_type: sdlc.consult.security_review
+        purpose: Ask for security and identity constraints before solution choices are locked in.
     gates:
       - gate_id: solution_design_owner_review
         type: document_owner_review
@@ -91,6 +163,22 @@ states:
     owner_role: security-architect
     purpose: Review security, identity, secrets, trust boundaries, and compliance-sensitive concerns.
     artifact_path: docs/security/security-decisions.md
+    consults:
+      solution_context:
+        target_state: solution_design
+        target_role: solution-architect
+        message_type: sdlc.consult.solution_design
+        purpose: Clarify design decisions, interfaces, trust boundaries, or implementation assumptions.
+      enterprise_context:
+        target_state: enterprise_alignment
+        target_role: enterprise-architect
+        message_type: sdlc.consult.enterprise_alignment
+        purpose: Clarify governance, risk, policy, or enterprise compliance context.
+      platform_context:
+        target_state: platform_readiness
+        target_role: platform-engineer
+        message_type: sdlc.consult.platform_readiness
+        purpose: Ask for secret handling, deployment, network, observability, or operations implications.
     gates:
       - gate_id: security_owner_review
         type: document_owner_review
@@ -107,6 +195,22 @@ states:
     owner_role: platform-engineer
     purpose: Confirm local runtime, deployment, observability, and operations implications.
     artifact_path: docs/platform/operations.md
+    consults:
+      solution_context:
+        target_state: solution_design
+        target_role: solution-architect
+        message_type: sdlc.consult.solution_design
+        purpose: Clarify design assumptions, interfaces, and runtime architecture.
+      security_context:
+        target_state: security_review
+        target_role: security-architect
+        message_type: sdlc.consult.security_review
+        purpose: Clarify security, identity, secret, and network requirements.
+      engineering_context:
+        target_state: implementation
+        target_role: engineering
+        message_type: sdlc.consult.implementation
+        purpose: Ask for implementation feasibility, runtime behaviour, or testability input.
     gates:
       - gate_id: platform_owner_review
         type: document_owner_review
@@ -123,6 +227,32 @@ states:
     owner_role: engineering
     purpose: Implement the approved work item and collect implementation evidence.
     artifact_path: docs/engineering/implementation-log.md
+    consults:
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify acceptance criteria, scope, priority, or user-visible behaviour.
+      ux_context:
+        target_state: experience_design
+        target_role: ux-designer
+        message_type: sdlc.consult.experience_design
+        purpose: Clarify interaction behaviour, content, accessibility, or user workflow questions.
+      solution_context:
+        target_state: solution_design
+        target_role: solution-architect
+        message_type: sdlc.consult.solution_design
+        purpose: Clarify design intent, interfaces, boundaries, or implementation constraints.
+      security_context:
+        target_state: security_review
+        target_role: security-architect
+        message_type: sdlc.consult.security_review
+        purpose: Clarify security-sensitive implementation details before proceeding.
+      platform_context:
+        target_state: platform_readiness
+        target_role: platform-engineer
+        message_type: sdlc.consult.platform_readiness
+        purpose: Clarify deployment, runtime, observability, or operations requirements.
     gates:
       - gate_id: implementation_owner_review
         type: document_owner_review
@@ -139,6 +269,22 @@ states:
     owner_role: qa-engineer
     purpose: Validate acceptance criteria and record test evidence.
     artifact_path: docs/qa/test-evidence.md
+    consults:
+      implementation_context:
+        target_state: implementation
+        target_role: engineering
+        message_type: sdlc.consult.implementation
+        purpose: Ask for implementation details, defect triage, or additional evidence.
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify expected behaviour, acceptance criteria, or risk tolerance.
+      ux_context:
+        target_state: experience_design
+        target_role: ux-designer
+        message_type: sdlc.consult.experience_design
+        purpose: Clarify usability, accessibility, content, or interaction expectations.
     gates:
       - gate_id: qa_owner_review
         type: document_owner_review
@@ -155,6 +301,22 @@ states:
     owner_role: technical-writer
     purpose: Validate docs, release notes, diagrams, and terminology for the completed work item.
     artifact_path: docs/technical-writing/documentation-log.md
+    consults:
+      product_context:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify user-facing value, terminology, release note emphasis, or acceptance criteria.
+      implementation_context:
+        target_state: implementation
+        target_role: engineering
+        message_type: sdlc.consult.implementation
+        purpose: Ask for implementation evidence, API details, configuration notes, or limitations.
+      qa_context:
+        target_state: quality_review
+        target_role: qa-engineer
+        message_type: sdlc.consult.quality_review
+        purpose: Ask for validation evidence, known risks, or tested scenarios.
     gates:
       - gate_id: documentation_owner_review
         type: document_owner_review
@@ -171,6 +333,27 @@ states:
     owner_role: delivery-manager
     purpose: Confirm cross-role evidence, blockers, and release readiness before release review.
     artifact_path: docs/delivery/status.md
+    consults:
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify priority, acceptance status, or sponsor-facing delivery expectations.
+      quality_context:
+        target_state: quality_review
+        target_role: qa-engineer
+        message_type: sdlc.consult.quality_review
+        purpose: Ask for test evidence, residual risks, or validation blockers.
+      documentation_context:
+        target_state: documentation_readiness
+        target_role: technical-writer
+        message_type: sdlc.consult.documentation_readiness
+        purpose: Ask for release notes, documentation readiness, or terminology checks.
+      release_context:
+        target_state: release_review
+        target_role: release-manager
+        message_type: sdlc.consult.release_review
+        purpose: Ask for release policy, approval expectations, or scheduling constraints.
     gates:
       - gate_id: delivery_owner_review
         type: document_owner_review
@@ -187,6 +370,27 @@ states:
     owner_role: release-manager
     purpose: Confirm release readiness and record release outcome.
     artifact_path: docs/releases/release-records.md
+    consults:
+      delivery_context:
+        target_state: delivery_readiness
+        target_role: delivery-manager
+        message_type: sdlc.consult.delivery_readiness
+        purpose: Ask for cross-role readiness, open blockers, or delivery evidence.
+      quality_context:
+        target_state: quality_review
+        target_role: qa-engineer
+        message_type: sdlc.consult.quality_review
+        purpose: Ask for test evidence, residual risk, or release-blocking defects.
+      security_context:
+        target_state: security_review
+        target_role: security-architect
+        message_type: sdlc.consult.security_review
+        purpose: Ask for security sign-off or unresolved risk interpretation.
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify sponsor-facing scope, expected outcome, or release trade-off.
     gates:
       - gate_id: release_decision_response
         type: human_response

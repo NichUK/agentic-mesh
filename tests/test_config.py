@@ -21,6 +21,8 @@ def test_project_schema_and_flow_template_files_exist() -> None:
     assert project["workspace"]["default_repository"] == "agentic-mesh"
     assert schema["title"] == "Agentic Mesh Project Configuration"
     assert "workspace" in schema["required"]
+    assert "flowConsult" in schema["$defs"]
+    assert "sponsorInitiatedWork" in schema["$defs"]
     assert (Path.cwd() / "config" / "flows" / "sdlc.yaml").exists()
     assert (Path.cwd() / "config" / "schemas" / "response-types.schema.json").exists()
 
@@ -34,6 +36,12 @@ def test_loads_organization_defaults() -> None:
     assert mesh_config.organization.naming_defaults.brand_prefix == "AM"
     assert mesh_config.organization.naming_defaults.resource_namespace == "agentic-mesh"
     assert "work_item_id" in mesh_config.organization.handoff_defaults["required_fields"]
+    assert "tracked work item" in mesh_config.organization.work_intake_defaults[
+        "sponsor_initiated_work_rule"
+    ]
+    assert "configured consult routes" in mesh_config.organization.work_intake_defaults[
+        "consult_route_rule"
+    ]
     assert (
         mesh_config.organization.security_defaults["secrets_policy"]
         .lower()
@@ -178,6 +186,18 @@ def test_loads_project_sdlc_flow_overlay() -> None:
     assert (
         flow.states["solution_design"].handoffs["completed"].target_role
         == "security-architect"
+    )
+    assert flow.sponsor_initiated_work is not None
+    assert flow.sponsor_initiated_work.allow_from_any_state is True
+    assert flow.sponsor_initiated_work.default_work_item_type == "spike"
+    assert flow.sponsor_initiated_work.default_intake_state == "business_analysis"
+    assert (
+        flow.states["implementation"].consults["product_scope"].target_role
+        == "product-manager"
+    )
+    assert (
+        flow.states["release_review"].consults["security_context"].target_state
+        == "security_review"
     )
 
 

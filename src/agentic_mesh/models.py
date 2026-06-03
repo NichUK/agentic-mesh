@@ -42,6 +42,7 @@ class OrganizationConfig:
     naming_defaults: NamingDefaults
     documentation_defaults: dict[str, Any]
     conversation_defaults: dict[str, Any]
+    work_intake_defaults: dict[str, Any]
     handoff_defaults: dict[str, Any]
     security_defaults: dict[str, Any]
 
@@ -82,6 +83,15 @@ class FlowHandoff:
 
 
 @dataclass(frozen=True)
+class FlowConsult:
+    consult_id: str
+    target_state: str
+    target_role: str
+    message_type: str
+    purpose: str
+
+
+@dataclass(frozen=True)
 class FlowGate:
     gate_id: str
     type: str
@@ -104,7 +114,18 @@ class FlowState:
     purpose: str
     artifact_path: str
     handoffs: dict[str, FlowHandoff]
+    consults: dict[str, FlowConsult] = field(default_factory=dict)
     gates: list[FlowGate] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SponsorInitiatedWorkPolicy:
+    allow_from_any_state: bool
+    default_work_item_type: str
+    default_intake_state: str
+    capture_rule: str
+    routing_rule: str
+    completion_rule: str
 
 
 @dataclass(frozen=True)
@@ -113,6 +134,7 @@ class SdlcFlow:
     entry_state: str
     work_item_types: list[str]
     states: dict[str, FlowState]
+    sponsor_initiated_work: SponsorInitiatedWorkPolicy | None = None
 
 
 @dataclass(frozen=True)

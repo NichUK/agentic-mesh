@@ -755,6 +755,19 @@ describe durable role behavior, while a flow template describes lifecycle
 states, accountable owner roles, handoff targets, artifacts, and gates for a
 class of work.
 
+Flows are collaboration graphs, not only forward pipelines. A state can define
+`handoffs` for lifecycle progression and `consults` for bounded requests to
+other roles. Consults may point backwards, forwards, or sideways in the flow and
+do not complete the current lifecycle state. They give an agent an explicit
+list of roles it may ask for help, context, review, research, or evidence.
+
+Project flows can also define `sponsor_initiated_work`. This policy tells every
+role what to do when a sponsor asks that role a question or request that
+creates work. The agent must capture or request a tracked work item, choose the
+appropriate start state or default intake state, and run the item through
+consult routes, handoffs, gates, evidence, and closure. See
+`docs/architecture/flow-collaboration.md`.
+
 The system repository may provide stock flow templates under `config/flows/`.
 The first template is `config/flows/sdlc.yaml`, which describes the dogfood
 software-delivery lifecycle for slices, features, and spikes. Projects can
