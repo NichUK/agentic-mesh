@@ -469,7 +469,7 @@ for setup and status instead of carrying secrets in chat.</p>
             f"""
 <p>
   <a class="primary" href="{html.escape(session.login_url)}" target="_blank" rel="noopener">
-    Continue to OpenAI
+    Open OpenAI Sign-In
   </a>
 </p>
 """
@@ -477,16 +477,27 @@ for setup and status instead of carrying secrets in chat.</p>
             else "<p>Preparing OpenAI sign-in...</p>"
         )
         code = (
-            f"<p>Code: <code class=\"login-code\">{html.escape(session.user_code)}</code></p>"
+            f"""
+<div class="code-panel">
+  <p>OpenAI will ask for this one-time code:</p>
+  <code class="login-code">{html.escape(session.user_code)}</code>
+</div>
+"""
             if session.user_code
-            else ""
+            else "<p>Waiting for Codex to issue the one-time code...</p>"
+        )
+        instructions = (
+            "<p>OpenAI uses device-code sign-in here: open the sign-in page, "
+            "enter the one-time code below, then return to this tab. Agentic Mesh "
+            "will detect completion and store the credential cache automatically.</p>"
+            if session.status == "running"
+            else "<p>This sign-in session has finished. Return to credentials to check status.</p>"
         )
         body = f"""
 {refresh}
 <p>Status: <strong>{html.escape(session.status)}</strong></p>
 <p>Credential: <code>{html.escape(session.credential_id)}</code></p>
-<p>Press the button, finish the OpenAI sign-in, and return here. Agentic Mesh
-will capture the login for this credential automatically.</p>
+{instructions}
 {openai_button}
 {code}
 <details>
@@ -513,7 +524,8 @@ will capture the login for this credential automatically.</p>
     pre {{ background: #111; color: #eee; padding: 1rem; white-space: pre-wrap; }}
     .notice {{ background: #e9f7ef; border: 1px solid #9bd7ad; padding: 0.75rem; }}
     .primary {{ display: inline-block; background: #111827; color: white; padding: 0.75rem 1rem; text-decoration: none; }}
-    .login-code {{ font-size: 1.25rem; }}
+    .code-panel {{ border: 2px solid #111827; display: inline-block; padding: 1rem 1.25rem; margin: 1rem 0; }}
+    .login-code {{ display: block; font-size: 2rem; letter-spacing: 0.08em; }}
   </style>
 </head>
 <body>
@@ -562,6 +574,7 @@ def serve_controller_auth(
 
 
 def _first_url(text: str) -> str | None:
+    text = _strip_ansi(text)
     match = re.search(r"https?://[^\s)>\"]+", text)
     if not match:
         return None
@@ -569,7 +582,12 @@ def _first_url(text: str) -> str | None:
 
 
 def _first_device_code(text: str) -> str | None:
+    text = _strip_ansi(text)
     match = re.search(r"\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+\b", text)
     if not match:
         return None
     return match.group(0)
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)

@@ -105,9 +105,10 @@ http://127.0.0.1:8100/auth/credentials
 In the dogfood Docker Compose profile the control-plane container exposes this
 page on host port `8100`. It lists reusable credentials and shows a single
 `Sign in with OpenAI` button for Codex OAuth credentials. The controller starts
-the OpenAI login flow, stores the resulting Codex login cache in the isolated
-credential mount, and only shows redacted status. For API keys or access
-tokens, the same page offers a secret-entry form.
+the Codex device-code login flow, shows the OpenAI sign-in link and one-time
+code, stores the resulting Codex login cache in the isolated credential mount,
+and only shows redacted status. For API keys or access tokens, the same page
+offers a secret-entry form.
 
 Teams and Slack apps should link to this controller page, or to a future
 single-use setup session URL, instead of collecting secrets in chat. Chat

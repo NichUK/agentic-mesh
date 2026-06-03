@@ -163,6 +163,21 @@ flow:
     assert session.codex_home == tmp_path / "state" / "worker_mounts" / "codex-product-home"
 
 
+def test_controller_auth_parses_ansi_colored_codex_device_output() -> None:
+    assert (
+        controller_auth._first_url(
+            "   \x1b[94mhttps://auth.openai.com/codex/device\x1b[0m"
+        )
+        == "https://auth.openai.com/codex/device"
+    )
+    assert (
+        controller_auth._first_device_code(
+            "   \x1b[94m2A4N-771S5\x1b[0m"
+        )
+        == "2A4N-771S5"
+    )
+
+
 def test_controller_auth_oauth_page_has_openai_button(
     monkeypatch,
     tmp_path: Path,
