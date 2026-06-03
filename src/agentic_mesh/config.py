@@ -358,6 +358,13 @@ def _project_role_from_dict(
     if instances < 1:
         raise ConfigError(f"Role {role_id} must declare at least one instance")
     adapter = str(worker.get("adapter", "stub"))
+    reasoning_effort = str(worker.get("reasoning_effort", "medium"))
+    allowed_reasoning_efforts = {"none", "minimal", "low", "medium", "high", "xhigh"}
+    if reasoning_effort not in allowed_reasoning_efforts:
+        raise ConfigError(
+            f"Role {role_id} worker reasoning_effort must be one of: "
+            f"{', '.join(sorted(allowed_reasoning_efforts))}"
+        )
     return ProjectRoleOverride(
         role_id=role_id,
         template=str(data.get("template", role_id)),
@@ -365,11 +372,7 @@ def _project_role_from_dict(
         worker=WorkerConfig(
             adapter=adapter,
             model=str(worker.get("model", "stub")),
-            reasoning_effort=(
-                str(worker["reasoning_effort"])
-                if worker.get("reasoning_effort") is not None
-                else None
-            ),
+            reasoning_effort=reasoning_effort,
             auth=_auth_binding_from_dict(
                 role_id,
                 adapter,

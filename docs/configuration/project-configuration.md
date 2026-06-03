@@ -117,6 +117,7 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: medium
       auth:
         method: codex_api_key
         secret_ref: openai-customer-portal-engineering-key
@@ -170,6 +171,7 @@ auth_credentials:
 worker:
   adapter: codex-cli
   model: codex
+  reasoning_effort: medium
   auth:
     credential: codex-product-oauth
 ```
@@ -179,6 +181,9 @@ Fields:
 - `adapter`: worker adapter, such as `codex-cli`, `openai-api`,
   `anthropic-api`, `claude-code`, or `manual-human`.
 - `model`: model or execution label used by the adapter.
+- `reasoning_effort`: optional model reasoning effort hint. Supported values
+  are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. When omitted,
+  Agentic Mesh defaults to `medium`.
 - `auth`: optional auth binding.
 
 Auth binding fields:

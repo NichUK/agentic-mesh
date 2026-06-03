@@ -244,6 +244,12 @@
         "model": {
           "type": "string"
         },
+        "reasoning_effort": {
+          "type": "string",
+          "description": "Model reasoning effort hint passed to worker adapters that support it. Defaults to medium when omitted.",
+          "enum": ["none", "minimal", "low", "medium", "high", "xhigh"],
+          "default": "medium"
+        },
         "auth": {
           "$ref": "#/$defs/authBinding"
         }

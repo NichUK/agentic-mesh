@@ -31,6 +31,9 @@ def test_project_schema_and_flow_template_files_exist() -> None:
     assert "authCredential" in schema["$defs"]
     assert "flowConsult" in schema["$defs"]
     assert "sponsorInitiatedWork" in schema["$defs"]
+    reasoning_effort_schema = schema["$defs"]["worker"]["properties"]["reasoning_effort"]
+    assert reasoning_effort_schema["default"] == "medium"
+    assert "high" in reasoning_effort_schema["enum"]
     assert (Path.cwd() / "config" / "flows" / "sdlc.yaml").exists()
     assert (Path.cwd() / "config" / "schemas" / "response-types.schema.json").exists()
 
@@ -107,6 +110,22 @@ def test_auth_credentials_can_be_reused_across_roles() -> None:
     assert engineering_auth.credential_ref == "codex-example-shared-api-key"
     assert product_auth.method == "codex_api_key"
     assert engineering_auth.secret_ref == "codex-example-shared-api-key"
+
+
+def test_worker_reasoning_effort_defaults_to_medium_when_omitted() -> None:
+    mesh_config = load_mesh_config(
+        Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+    )
+
+    assert (
+        mesh_config.project.roles["product-manager"].worker.reasoning_effort
+        == "medium"
+    )
+    assert (
+        mesh_config.project.roles["engineering"].worker.reasoning_effort
+        == "medium"
+    )
 
 
 def test_loads_response_type_templates() -> None:
