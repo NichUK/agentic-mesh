@@ -312,6 +312,20 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     )
 
     assert connector_outbox.pending_count("approvals") == 0
+    assert connector_outbox.pending_count("release") == 2
+    started = connector_outbox.claim_next("release", "test-connector")
+    assert started is not None
+    assert started.type == "sponsor_directive.started"
+    assert started.payload["role_id"] == "release-manager"
+    assert started.payload["status"] == "started"
+    completed = connector_outbox.claim_next("release", "test-connector")
+    assert completed is not None
+    assert completed.type == "sponsor_directive.completed"
+    assert completed.payload["role_id"] == "release-manager"
+    assert completed.payload["status"] == "completed"
+    assert completed.payload["artifact_paths"] == [
+        "documents/requirements/release-manager.md"
+    ]
     assert message_store.pending_count("delivery-manager") == 0
     artifact = (
         tmp_path
@@ -325,6 +339,7 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     assert "Use the available handoff routes as options, not commands" in content
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "agent_directive_run_started" in event_types
+    assert "directive_status_connector_message_queued" in event_types
     assert "handoff_emitted" not in event_types
     assert "human_response_requested" not in event_types
 

@@ -17,6 +17,8 @@ MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED = "human_response.received"
 MESSAGE_TYPE_SDLC_HANDOFF = "sdlc.handoff"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED = "sponsor_directive.requested"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED = "sponsor_directive.acknowledged"
+MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED = "sponsor_directive.started"
+MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED = "sponsor_directive.completed"
 
 
 def build_human_response_request(
@@ -131,6 +133,44 @@ def build_sdlc_handoff_connector_message(
             "handoff_message_id": handoff_message.message_id,
         },
         source=source_instance_id,
+        correlation_id=source_message.correlation_id,
+        trace_context=source_message.trace_context,
+    )
+
+
+def build_sponsor_directive_status_message(
+    *,
+    channel: str,
+    source_instance: RoleInstanceConfig,
+    source_message: Message,
+    status: str,
+    status_message: str,
+    artifact_paths: list[str] | None = None,
+) -> ConnectorMessage:
+    message_type = (
+        MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED
+        if status == "started"
+        else MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED
+    )
+    return ConnectorMessage.create(
+        channel=channel,
+        message_type=message_type,
+        payload={
+            "project_id": source_instance.project_id,
+            "role_id": source_instance.role_id,
+            "role_instance_id": source_instance.instance_id,
+            "status": status,
+            "status_message": status_message,
+            "artifact_paths": artifact_paths or [],
+            "title": source_message.payload.get("title"),
+            "summary": source_message.payload.get("summary"),
+            "work_item_id": source_message.payload.get("work_item_id"),
+            "work_item_type": source_message.payload.get("work_item_type"),
+            "work_mode": source_message.payload.get("work_mode"),
+            "source_channel": source_message.payload.get("source_channel"),
+            "source_message_id": source_message.message_id,
+        },
+        source=source_instance.instance_id,
         correlation_id=source_message.correlation_id,
         trace_context=source_message.trace_context,
     )

@@ -17,7 +17,9 @@ from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SDLC_HANDOFF
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED
 from agentic_mesh.messaging import build_human_response_received_message
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.models import Message
@@ -124,6 +126,11 @@ class LocalTeamsConnectorAdapter(ConnectorAdapter):
             rendered["adaptive_card"] = build_human_response_card(message)
         if message.type == MESSAGE_TYPE_SDLC_HANDOFF:
             rendered["teams_message"] = render_sdlc_handoff_html(message)
+        if message.type in {
+            MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED,
+            MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
+        }:
+            rendered["teams_message"] = render_sponsor_directive_status_html(message)
         return rendered
 
     def _human_response_card(self, message: ConnectorMessage) -> dict[str, Any]:
@@ -291,6 +298,11 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
             return render_human_response_request_html(message)
         if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED:
             return render_sponsor_directive_acknowledgement_html(message)
+        if message.type in {
+            MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED,
+            MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
+        }:
+            return render_sponsor_directive_status_html(message)
         return (
             "<p><strong>Agentic Mesh message</strong></p>"
             f"<pre>{html.escape(json.dumps(message.payload, indent=2))}</pre>"
@@ -615,6 +627,11 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
             )
         if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED:
             return _html_to_teams_xml_text(render_sponsor_directive_acknowledgement_html(message))
+        if message.type in {
+            MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED,
+            MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
+        }:
+            return _html_to_teams_xml_text(render_sponsor_directive_status_html(message))
         return html.escape(json.dumps(message.payload, indent=2))
 
 
@@ -668,6 +685,33 @@ def render_sponsor_directive_acknowledgement_html(message: ConnectorMessage) -> 
     )
 
 
+def render_sponsor_directive_status_html(message: ConnectorMessage) -> str:
+    payload = message.payload
+    title = html.escape(str(payload.get("title") or "Direct instruction"))
+    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    role_id = html.escape(str(payload.get("role_id") or "unknown"))
+    role_instance_id = html.escape(str(payload.get("role_instance_id") or "unknown"))
+    status = html.escape(str(payload.get("status") or "unknown"))
+    status_message = _truncate(str(payload.get("status_message") or ""), 500)
+    status_message = html.escape(status_message)
+    artifacts = [
+        html.escape(str(path))
+        for path in payload.get("artifact_paths") or []
+        if path
+    ]
+    artifact_text = ", ".join(f"<code>{path}</code>" for path in artifacts)
+    if not artifact_text:
+        artifact_text = "none"
+    verb = "accepted" if str(payload.get("status")) == "started" else "updated"
+    return (
+        f"<p><strong>{role_id}: {status} direct instruction</strong></p>"
+        f"<p><code>{role_instance_id}</code> {verb} work item "
+        f"<code>{work_item_id}</code>: {title}</p>"
+        f"<p>{status_message}</p>"
+        f"<p>Artifacts: {artifact_text}</p>"
+    )
+
+
 def _html_to_teams_xml_text(value: str) -> str:
     return (
         value.replace("<p>", "")
@@ -675,6 +719,12 @@ def _html_to_teams_xml_text(value: str) -> str:
         .replace("<strong>", "<b>")
         .replace("</strong>", "</b>")
     )
+
+
+def _truncate(value: str, max_length: int) -> str:
+    if len(value) <= max_length:
+        return value
+    return f"{value[: max_length - 3].rstrip()}..."
 
 
 def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:

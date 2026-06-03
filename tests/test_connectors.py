@@ -645,6 +645,30 @@ def test_bot_connector_renders_sponsor_directive_acknowledgement() -> None:
     assert "work-adoption" in rendered
 
 
+def test_bot_connector_renders_sponsor_directive_status() -> None:
+    message = ConnectorMessage.create(
+        channel="release",
+        message_type="sponsor_directive.completed",
+        payload={
+            "title": "Adopt this project",
+            "work_item_id": "work-adoption",
+            "role_id": "release-manager",
+            "role_instance_id": "agentic-mesh-dev.release-manager.1",
+            "status": "blocked",
+            "status_message": "Codex CLI failed before returning a valid agent result.",
+            "artifact_paths": ["documents/requirements/release-manager.md"],
+        },
+        source="test",
+    )
+
+    rendered = BotFrameworkTeamsConnectorAdapter._render_text(message)
+
+    assert "release-manager: blocked direct instruction" in rendered
+    assert "work-adoption" in rendered
+    assert "Codex CLI failed" in rendered
+    assert "documents/requirements/release-manager.md" in rendered
+
+
 def test_teams_ingress_human_response_joins_trace_context(tmp_path: Path) -> None:
     sink = telemetry.TelemetryTestSink()
     telemetry.set_test_sink(sink)

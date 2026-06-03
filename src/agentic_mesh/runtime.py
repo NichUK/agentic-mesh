@@ -10,6 +10,7 @@ from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.messaging import build_human_response_request
 from agentic_mesh.messaging import build_sdlc_handoff_connector_message
+from agentic_mesh.messaging import build_sponsor_directive_status_message
 from agentic_mesh.models import FlowState
 from agentic_mesh.models import Message
 from agentic_mesh.models import ProjectConfig
@@ -327,6 +328,16 @@ class AgentRuntime:
                 message_id=message.message_id,
                 correlation_id=message.correlation_id,
             )
+            self._queue_directive_status_connector_message(
+                source_instance=instance_config,
+                source_message=message,
+                status="started",
+                status_message=(
+                    "Instruction received. Running direct role work outside the "
+                    "lifecycle flow."
+                ),
+                artifact_paths=[],
+            )
             with telemetry.start_span(
                 "worker.run",
                 correlation_id=message.correlation_id,
@@ -361,6 +372,13 @@ class AgentRuntime:
                     correlation_id=message.correlation_id,
                     reason="direct_broadcast_does_not_emit_handoffs",
                 )
+            self._queue_directive_status_connector_message(
+                source_instance=instance_config,
+                source_message=message,
+                status=result.status,
+                status_message=result.message,
+                artifact_paths=[update.path for update in result.document_updates],
+            )
             self.message_store.complete(message, result.status)
             return True
 
@@ -468,5 +486,52 @@ class AgentRuntime:
             channel=channel,
             connector_message_id=connector_message.message_id,
             work_item_id=source_message.payload.get("work_item_id"),
+            correlation_id=source_message.correlation_id,
+        )
+
+    def _queue_directive_status_connector_message(
+        self,
+        *,
+        source_instance,
+        source_message: Message,
+        status: str,
+        status_message: str,
+        artifact_paths: list[str],
+    ) -> None:
+        if self.connector_outbox is None:
+            return
+        role_override = self.project.roles[source_instance.role_id]
+        channel = role_override.channels.get("primary")
+        if not channel:
+            self.journal.append(
+                "directive_status_connector_message_unroutable",
+                project_id=source_instance.project_id,
+                role_id=source_instance.role_id,
+                role_instance_id=source_instance.instance_id,
+                work_item_id=source_message.payload.get("work_item_id"),
+                status=status,
+                correlation_id=source_message.correlation_id,
+                reason="role_has_no_primary_channel",
+            )
+            return
+        connector_message = build_sponsor_directive_status_message(
+            channel=channel,
+            source_instance=source_instance,
+            source_message=source_message,
+            status=status,
+            status_message=status_message,
+            artifact_paths=artifact_paths,
+        )
+        self.connector_outbox.enqueue(connector_message)
+        self.journal.append(
+            "directive_status_connector_message_queued",
+            project_id=source_instance.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            channel=channel,
+            connector_message_id=connector_message.message_id,
+            connector_message_type=connector_message.type,
+            work_item_id=source_message.payload.get("work_item_id"),
+            status=status,
             correlation_id=source_message.correlation_id,
         )
