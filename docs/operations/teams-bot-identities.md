@@ -220,6 +220,13 @@ piece is delivery from Teams to the bot, not role-agent processing. The next
 connector slice should add Graph channel read/subscription support for channel
 posts and mentions that Teams does not deliver as bot activities.
 
+After connector channel mappings, role bot references, or project flow config
+change, reload the listener without restarting the container:
+
+```powershell
+curl -X POST http://127.0.0.1:3978/admin/reload-config
+```
+
 ## Graph Installer Path
 
 Azure CLI can create Entra app registrations and Azure Bot resources, but its

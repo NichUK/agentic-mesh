@@ -208,6 +208,10 @@ Routes:
 
 - `GET /healthz`: health check
 - `POST /api/messages`: accepts Teams bot activities
+- `GET /admin/config`: returns the currently loaded project, connector,
+  channels, roles, and config paths
+- `POST /admin/reload-config`: reloads mounted Agentic Mesh config and project
+  config without restarting the container
 
 The listener stores raw Teams activities under runtime state and normalizes:
 
@@ -225,6 +229,22 @@ This depends on Microsoft Teams delivering the channel message to the bot. If
 Teams does not send a bot activity for channel-wide mentions such as
 `@all-agents`, add a Graph channel read/subscription connector next rather than
 manually starting the work item.
+
+## Reloading Listener Configuration
+
+When mounted organization config, flow templates, project config, connector
+channel mappings, or role definitions change, reload the listener in place:
+
+```powershell
+curl -X POST http://127.0.0.1:3978/admin/reload-config
+```
+
+The endpoint rebuilds the listener's project config, connector config, message
+store, journal, and secret resolver from the configured paths. It does not
+restart the container and it does not interrupt the rest of the Compose stack.
+
+Use a container restart only for runtime code or dependency changes that require
+rebuilding `agentic-mesh:local`.
 
 ## Azure Bot Endpoint Update
 

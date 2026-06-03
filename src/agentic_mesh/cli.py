@@ -16,7 +16,6 @@ from agentic_mesh.connectors import BotFrameworkTeamsConnectorAdapter
 from agentic_mesh.connectors import FileSecretResolver
 from agentic_mesh.connectors import GraphTeamsConnectorAdapter
 from agentic_mesh.connectors import LocalTeamsConnectorAdapter
-from agentic_mesh.connectors import TeamsBotIngress
 from agentic_mesh.connectors import load_graph_token
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.lifecycle import LifecycleStore
@@ -26,6 +25,7 @@ from agentic_mesh.models import new_id
 from agentic_mesh.runtime import AgentRuntime
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
+from agentic_mesh.teams_ingress import ReloadableTeamsBotIngress
 from agentic_mesh.teams_ingress import serve_teams_bot_ingress
 from agentic_mesh.workers import StubCodexWorkerAdapter
 
@@ -435,23 +435,15 @@ def cmd_teams_bot_connector_loop(args) -> int:
 
 
 def cmd_teams_bot_listener(args) -> int:
-    mesh_config, journal, message_store, _, _, _ = build_runtime(
-        args.config_root,
-        args.project_file,
-        args.workspace_root,
-        args.state_root,
-    )
+    mesh_config = load_mesh_config(args.config_root, project_file=args.project_file)
     configure_component_telemetry(mesh_config, "teams-bot-listener")
-    connector_config = mesh_config.project.connectors[args.connector]
-    ingress = TeamsBotIngress(
-        connector_id=args.connector_id,
-        project_id=mesh_config.project.project_id,
+    ingress = ReloadableTeamsBotIngress(
+        config_root=args.config_root,
+        project_file=args.project_file,
         state_root=args.state_root,
-        message_store=message_store,
-        journal=journal,
-        connector_config=connector_config,
-        project_config=mesh_config.project,
-        secrets=FileSecretResolver(args.secret_root),
+        connector=args.connector,
+        connector_id=args.connector_id,
+        secret_root=args.secret_root,
     )
     serve_teams_bot_ingress(host=args.host, port=args.port, ingress=ingress)
     return 0
