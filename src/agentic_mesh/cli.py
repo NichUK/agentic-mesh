@@ -450,6 +450,7 @@ def cmd_teams_bot_listener(args) -> int:
         message_store=message_store,
         journal=journal,
         connector_config=connector_config,
+        project_config=mesh_config.project,
         secrets=FileSecretResolver(args.secret_root),
     )
     serve_teams_bot_ingress(host=args.host, port=args.port, ingress=ingress)

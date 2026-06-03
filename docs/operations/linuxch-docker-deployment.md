@@ -209,9 +209,22 @@ Routes:
 - `GET /healthz`: health check
 - `POST /api/messages`: accepts Teams bot activities
 
-The initial listener stores raw Teams activities under runtime state and
-normalizes supported `human_response.submit` Adaptive Card invokes into
-`human_response.received` role queue messages.
+The listener stores raw Teams activities under runtime state and normalizes:
+
+- supported `human_response.submit` Adaptive Card invokes into
+  `human_response.received` role queue messages
+- normal Teams channel `message` activities from mapped project channels into
+  `sponsor_intake.requested` work items at the flow's configured default intake
+  state
+
+For the dogfood SDLC flow, a message delivered from `all-agents` becomes a
+Business Analyst work item in `business_analysis` with the default sponsor
+work item type `spike`.
+
+This depends on Microsoft Teams delivering the channel message to the bot. If
+Teams does not send a bot activity for channel-wide mentions such as
+`@all-agents`, add a Graph channel read/subscription connector next rather than
+manually starting the work item.
 
 ## Azure Bot Endpoint Update
 

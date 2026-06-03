@@ -141,6 +141,108 @@ def test_teams_ingress_records_human_response_submit(tmp_path: Path) -> None:
     assert "human_response_completion_card_returned" in event_types
 
 
+def test_teams_ingress_routes_all_agents_message_to_default_intake(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+    )
+
+    result = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity/adoption",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "<at>all-agents</at> Start an adoption process for Agentic Mesh.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {
+                    "id": teams_config.channels["all-agents"].channel_id,
+                    "name": "all-agents",
+                },
+            },
+        }
+    )
+
+    assert result["routed"] is True
+    assert result["target_role"] == "business-analyst"
+    assert result["lifecycle_state"] == "business_analysis"
+    assert result["work_item_id"].startswith("work-")
+    assert message_store.pending_count("business-analyst") == 1
+
+    message = message_store.claim_next(
+        "business-analyst",
+        "agentic-mesh-dev.business-analyst.1",
+    )
+    assert message is not None
+    assert message.type == "sponsor_intake.requested"
+    assert message.source == "teams:teams-bot-listener:all-agents"
+    assert message.payload["work_item_type"] == "spike"
+    assert message.payload["lifecycle_state"] == "business_analysis"
+    assert message.payload["source_channel"] == "all-agents"
+    assert message.payload["teams_from_name"] == "Nich"
+    assert "Start an adoption process" in message.payload["summary"]
+    assert "<at>" not in message.payload["summary"]
+
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "teams_bot_activity_received" in event_types
+    assert "message_accepted" in event_types
+    assert "teams_channel_message_routed" in event_types
+
+
+def test_teams_ingress_journals_unmapped_channel_message(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=mesh_config.project.connectors["teams"],
+        project_config=mesh_config.project,
+    )
+
+    result = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity/unmapped",
+            "text": "This should not disappear silently.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-unknown"},
+            "channelData": {
+                "channel": {"id": "unknown-channel", "name": "unknown"},
+            },
+        }
+    )
+
+    assert result == {"status": "accepted", "activity_id": "activity_unmapped"}
+    assert message_store.pending_count("business-analyst") == 0
+    ignored = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "teams_channel_message_ignored"
+    ]
+    assert ignored[0]["reason"] == "unmapped_channel"
+
+
 def test_teams_ingress_updates_original_human_response_card(tmp_path: Path) -> None:
     mesh_config = load_mesh_config(Path.cwd())
     state_root = tmp_path / "state"

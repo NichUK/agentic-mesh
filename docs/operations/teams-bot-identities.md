@@ -199,6 +199,27 @@ single disabled button. The runtime journals this as `teams_bot_card_updated`.
 Current limitation: inbound Teams activities still need the permanent public
 `vpn.nixnet.com` route and Bot Framework JWT validation.
 
+## Channel Message Intake
+
+The Teams bot listener also normalizes ordinary Teams channel `message`
+activities from mapped project channels into Agentic Mesh work.
+
+For the dogfood project, a delivered message from `all-agents` is routed to the
+flow's sponsor-initiated default intake:
+
+- message type: `sponsor_intake.requested`
+- target lifecycle state: `business_analysis`
+- target role: `business-analyst`
+- default work item type: `spike`
+
+The generated work payload preserves Teams activity id, conversation id,
+channel id, sender id/name, source channel, and the raw activity path.
+
+If a Teams channel post does not appear in the listener journal, the missing
+piece is delivery from Teams to the bot, not role-agent processing. The next
+connector slice should add Graph channel read/subscription support for channel
+posts and mentions that Teams does not deliver as bot activities.
+
 ## Graph Installer Path
 
 Azure CLI can create Entra app registrations and Azure Bot resources, but its

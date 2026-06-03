@@ -122,6 +122,20 @@ When implementing:
   folders own `agentic-mesh/project.yaml`, `deploy/`, connector/team bindings,
   and ignored local `state/`.
 
+## Collaboration Behaviour
+
+When a human or another agent gives an instruction:
+
+- Acknowledge receipt promptly.
+- Confirm the interpreted intent in plain language.
+- If the instruction starts long-running work, send an initial confirmation
+  before or as the work begins so the sender knows the mesh heard them.
+- Keep the sender updated during long-running work, especially across handoffs,
+  blockers, approval waits, or deployment steps.
+- If the instruction cannot be started because routing, permissions, connector
+  wiring, or required context is missing, say so explicitly and record the
+  blocker instead of silently accepting the message.
+
 ## Documentation Expectations
 
 Update docs as design decisions are made.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,10 @@ from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SDLC_HANDOFF
 from agentic_mesh.messaging import build_human_response_received_message
 from agentic_mesh.models import ConnectorMessage
+from agentic_mesh.models import Message
 from agentic_mesh.models import ProjectConnectorConfig
+from agentic_mesh.models import ProjectConfig
+from agentic_mesh.models import new_id
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.storage import FileConnectorOutbox
 
@@ -766,6 +770,7 @@ class TeamsBotIngress:
         message_store: FileMessageStore,
         journal: EventJournal,
         connector_config: ProjectConnectorConfig | None = None,
+        project_config: ProjectConfig | None = None,
         secrets: FileSecretResolver | None = None,
     ) -> None:
         self.connector_id = connector_id
@@ -774,6 +779,7 @@ class TeamsBotIngress:
         self.message_store = message_store
         self.journal = journal
         self.connector_config = connector_config
+        self.project_config = project_config
         self.secrets = secrets
 
     def receive_activity(self, activity: dict[str, Any]) -> dict[str, Any]:
@@ -837,7 +843,155 @@ class TeamsBotIngress:
                 self._update_original_card(activity, value, response_card, message)
                 return adaptive_card_invoke_response(response_card)
 
+            intake_message = self._record_channel_intake(activity, path)
+            if intake_message is not None:
+                return {
+                    "status": "accepted",
+                    "activity_id": activity_id,
+                    "routed": True,
+                    "message_id": intake_message.message_id,
+                    "target_role": intake_message.role_id,
+                    "work_item_id": intake_message.payload.get("work_item_id"),
+                    "lifecycle_state": intake_message.payload.get("lifecycle_state"),
+                }
+
         return {"status": "accepted", "activity_id": activity_id}
+
+    def _record_channel_intake(
+        self,
+        activity: dict[str, Any],
+        raw_activity_path: Path,
+    ) -> Message | None:
+        if activity.get("type") != "message":
+            return None
+        text = _plain_text(activity.get("text"))
+        if not text:
+            return None
+        if self.project_config is None:
+            self._journal_ignored_channel_message(
+                activity,
+                reason="project_config_not_available",
+            )
+            return None
+        if self.connector_config is None:
+            self._journal_ignored_channel_message(
+                activity,
+                reason="connector_config_not_available",
+            )
+            return None
+
+        logical_channel = self._logical_channel_for_activity(activity)
+        if logical_channel is None:
+            self._journal_ignored_channel_message(
+                activity,
+                reason="unmapped_channel",
+            )
+            return None
+
+        sponsor_policy = self.project_config.flow.sponsor_initiated_work
+        lifecycle_state = (
+            sponsor_policy.default_intake_state
+            if sponsor_policy is not None
+            else self.project_config.flow.entry_state
+        )
+        flow_state = self.project_config.flow.states[lifecycle_state]
+        work_item_type = (
+            sponsor_policy.default_work_item_type
+            if sponsor_policy is not None
+            else (
+                self.project_config.flow.work_item_types[0]
+                if self.project_config.flow.work_item_types
+                else "slice"
+            )
+        )
+        work_item_id = new_id("work")
+        from_user = activity.get("from") or {}
+        channel_data = activity.get("channelData") or {}
+        team = channel_data.get("team") or {}
+        channel = channel_data.get("channel") or {}
+        conversation = activity.get("conversation") or {}
+        payload = {
+            "title": _title_from_text(text),
+            "summary": text,
+            "text": text,
+            "work_item_id": work_item_id,
+            "work_item_type": work_item_type,
+            "lifecycle_state": lifecycle_state,
+            "source_connector": "teams",
+            "source_connector_id": self.connector_id,
+            "source_channel": logical_channel,
+            "teams_activity_id": activity.get("id"),
+            "teams_conversation_id": conversation.get("id"),
+            "teams_channel_id": channel.get("id") or conversation.get("id"),
+            "teams_team_id": team.get("id"),
+            "teams_from_id": from_user.get("id"),
+            "teams_from_name": from_user.get("name"),
+            "raw_activity_path": str(raw_activity_path),
+        }
+        message = Message.create(
+            role_id=flow_state.owner_role,
+            message_type="sponsor_intake.requested",
+            payload=payload,
+            source=f"teams:{self.connector_id}:{logical_channel}",
+        )
+        message = self.message_store.enqueue(message)
+        self.journal.append(
+            "teams_channel_message_routed",
+            project_id=self.project_id,
+            connector_id=self.connector_id,
+            channel=logical_channel,
+            target_role=message.role_id,
+            lifecycle_state=lifecycle_state,
+            work_item_id=work_item_id,
+            work_item_type=work_item_type,
+            message_id=message.message_id,
+            teams_activity_id=activity.get("id"),
+            teams_conversation_id=conversation.get("id"),
+            teams_from_id=from_user.get("id"),
+            correlation_id=message.correlation_id,
+        )
+        return message
+
+    def _logical_channel_for_activity(self, activity: dict[str, Any]) -> str | None:
+        if self.connector_config is None:
+            return None
+        channel_data = activity.get("channelData") or {}
+        channel = channel_data.get("channel") or {}
+        conversation = activity.get("conversation") or {}
+        candidates = {
+            str(value)
+            for value in [
+                channel.get("id"),
+                channel.get("name"),
+                conversation.get("id"),
+            ]
+            if value
+        }
+        for logical_channel, channel_config in self.connector_config.channels.items():
+            if (
+                logical_channel in candidates
+                or channel_config.channel_id in candidates
+                or channel_config.name in candidates
+            ):
+                return logical_channel
+        return None
+
+    def _journal_ignored_channel_message(
+        self,
+        activity: dict[str, Any],
+        *,
+        reason: str,
+    ) -> None:
+        self.journal.append(
+            "teams_channel_message_ignored",
+            project_id=self.project_id,
+            connector_id=self.connector_id,
+            activity_id=activity.get("id"),
+            activity_type=activity.get("type"),
+            conversation_id=(activity.get("conversation") or {}).get("id"),
+            from_id=(activity.get("from") or {}).get("id"),
+            reason=reason,
+        )
 
     def _record_human_response(
         self,
@@ -1059,3 +1213,19 @@ class TeamsBotIngress:
             payload={},
             source="teams",
         ).message_id
+
+
+def _plain_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = re.sub(r"<[^>]+>", " ", value)
+    text = html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _title_from_text(text: str) -> str:
+    if not text:
+        return "Teams message"
+    if len(text) <= 80:
+        return text
+    return f"{text[:77].rstrip()}..."

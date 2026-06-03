@@ -88,6 +88,17 @@ business framing.
 The work then progresses through permitted consult routes, forward handoffs,
 gates, evidence capture, and release or closure records until it is complete.
 
+## Receipt Acknowledgement
+
+When a human or another agent gives an instruction, the receiving role should
+acknowledge receipt and confirm the interpreted intent before or as work
+begins. This is especially important for long-running work, because humans need
+to know whether the mesh heard the instruction.
+
+For collaboration connectors, inbound human messages should be turned into
+tracked work or an explicit blocker. They should not be accepted silently and
+then dropped.
+
 ## Design Consequences
 
 - Flows are collaboration graphs, not simple ordered lists.
