@@ -28,7 +28,7 @@ from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.teams_ingress import ReloadableTeamsBotIngress
 from agentic_mesh.teams_ingress import serve_teams_bot_ingress
-from agentic_mesh.workers import StubCodexWorkerAdapter
+from agentic_mesh.workers import ConfiguredWorkerAdapter
 
 
 def build_runtime(
@@ -57,7 +57,12 @@ def build_runtime(
         artifact_store=artifact_store,
         journal=journal,
         project=mesh_config.project,
-        worker=StubCodexWorkerAdapter(),
+        worker=ConfiguredWorkerAdapter(
+            project=mesh_config.project,
+            auth_methods=mesh_config.auth_methods,
+            workspace_root=effective_workspace_root,
+            state_root=state_root,
+        ),
         connector_outbox=connector_outbox,
         response_types=mesh_config.response_types,
     )

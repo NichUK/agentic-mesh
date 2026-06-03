@@ -58,7 +58,8 @@ Implemented or started:
 - File-backed role inboxes, connector outboxes, claimed/completed folders, and
   inspectable JSON payloads.
 - Append-only JSONL event journal.
-- Deterministic worker adapter stub and `WorkerAdapter` boundary.
+- Configured worker adapter dispatch, real `codex-cli` worker execution, and a
+  deterministic test double for unit tests.
 - Runtime handoff through project-configured flow states.
 - Human response gates and normalized human response messages.
 - Local Teams-style connector that renders Adaptive Cards.
@@ -73,8 +74,8 @@ Implemented or started:
 
 Designed but not yet mature:
 
-- Real `codex-cli`, OpenAI, Anthropic, Claude Code, MiniMax, DeepSeek, and other
-  worker adapters.
+- Real OpenAI, Anthropic, Claude Code, MiniMax, DeepSeek, and other worker
+  adapters beyond the initial Codex CLI path.
 - Production-grade router separated from runtime handoff behavior.
 - Real control-plane service process with health checks, leases, concurrency,
   hibernation grace windows, and restart integration.

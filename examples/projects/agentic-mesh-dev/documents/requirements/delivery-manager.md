@@ -25,15 +25,15 @@ be visibly distinct.
 - Create a smoke-test checklist for local Compose, Teams ingress, all-agents
   direct work, role queue processing, acknowledgements, and no auto-handoff.
 - Add a decision gate for when runtime-generated docs are accepted as product
-  evidence versus considered stub output.
+  evidence versus considered blocked, incomplete, or needing sponsor review.
 - Maintain a public roadmap with near-term OSS hardening, Teams connector,
   worker adapter, control-plane, and deployment targets.
 
 ## Near-Term Slice Candidates
 
 - Fix all-agents mention detection and connector echo suppression.
-- Replace stub worker output for documentation tasks with a real worker
-  adapter or a stricter "stub output is not complete" status.
+- Keep real worker execution visible in delivery status, including blocked
+  runs caused by missing worker credentials or unavailable provider adapters.
 - Add project adoption command/test that creates one work item per role and
   verifies expected artifacts.
 - Implement config reload signal for listener/ingress containers.
@@ -41,9 +41,9 @@ be visibly distinct.
 
 ## Risks And Decisions
 
-- Risk: Dogfood runtime creates evidence-looking files that are not useful.
-  Mitigation: mark stub worker output clearly and fail completion when required
-  artifacts are missing.
+- Risk: Dogfood runtime blocks when worker credentials are missing.
+  Mitigation: surface the exact missing secret or mount in the role artifact
+  and operational status.
 - Risk: Local VM changes drift from Git. Mitigation: deploy only from commits
   or tagged worktrees and record commit id in runtime status.
 - Decision needed: whether every sponsor directive requires a work item record

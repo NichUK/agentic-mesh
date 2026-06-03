@@ -17,8 +17,8 @@ acknowledgements, echoes, plain text, or non-work chatter.
   `all-agents` text without mention, duplicate messages, and empty messages.
 - Add end-to-end smoke test for Teams post to docs artifact creation with no
   lifecycle handoffs and no approvals.
-- Add quality gate that stub worker output cannot satisfy tasks requiring role
-  analysis unless explicitly marked demo-only.
+- Add quality gate that blocked worker runs cannot satisfy tasks requiring role
+  analysis and that completed worker runs include artifact or handoff evidence.
 - Add project build output tests proving generated files remain inside the
   project folder.
 - Add concurrency tests for multiple Engineering instances claiming from the

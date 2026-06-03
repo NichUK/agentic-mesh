@@ -11,10 +11,10 @@ worker system while keeping boundaries testable and provider-neutral.
 
 ## Outstanding Work
 
-- Replace or augment the deterministic worker with real worker adapters:
-  Codex CLI first, then OpenAI API and other providers behind the same port.
-- Make stub worker mode explicit and incapable of marking artifact-heavy work
-  complete unless configured for tests/demo.
+- Extend the real worker adapter set beyond Codex CLI: OpenAI API, Anthropic,
+  Claude Code, MiniMax, DeepSeek, and other providers behind the same port.
+- Keep the deterministic worker available only as a test double and prevent it
+  from being used by the production CLI path.
 - Harden Teams Graph ingress: real mention detection, connector echo
   suppression, bot identity filtering, cursor recovery, retries, and telemetry.
 - Implement config reload signalling for long-running listener containers so

@@ -50,8 +50,9 @@ Git-backed evidence, human gates, observability, and enterprise operations.
 
 ## Risks And Decisions
 
-- Risk: Product appears unfinished because runtime stubs complete work.
-  Mitigation: make demo and stub modes explicit and build one real worker path.
+- Risk: Product appears unavailable when worker credentials are missing.
+  Mitigation: make credential setup and blocked-state recovery explicit in the
+  onboarding path.
 - Risk: Commercial line looks arbitrary. Mitigation: keep OSS useful and charge
   for enterprise adoption, governance, support, and operations.
 - Decision needed: name and packaging for first commercial preview.

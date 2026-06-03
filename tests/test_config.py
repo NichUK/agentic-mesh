@@ -73,15 +73,15 @@ def test_loads_auth_methods_and_role_bindings() -> None:
     assert product_auth.method == "codex_access_token"
     assert product_auth.secret_ref == "codex-agentic-mesh-dev-product-manager-token"
     assert engineering_auth is not None
-    assert engineering_auth.method == "codex_api_key"
+    assert engineering_auth.method == "codex_access_token"
     assert security_auth is not None
-    assert security_auth.method == "claude_code_oauth_token"
+    assert security_auth.method == "codex_access_token"
     assert ux_auth is not None
-    assert ux_auth.method == "codex_oauth_cache"
-    assert ux_auth.mount_ref == "local-codex-ux-designer-home"
+    assert ux_auth.method == "codex_access_token"
+    assert ux_auth.secret_ref == "codex-agentic-mesh-dev-ux-designer-token"
     assert delivery_auth is not None
-    assert delivery_auth.method == "manual_human_no_auth"
-    assert delivery_auth.secret_ref is None
+    assert delivery_auth.method == "codex_access_token"
+    assert delivery_auth.secret_ref == "codex-agentic-mesh-dev-delivery-manager-token"
 
 
 def test_loads_response_type_templates() -> None:

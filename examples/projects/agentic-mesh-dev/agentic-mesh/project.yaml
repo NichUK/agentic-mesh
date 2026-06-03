@@ -171,8 +171,8 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        method: codex_oauth_cache
-        mount_ref: local-codex-ux-designer-home
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-ux-designer-token
     instructions:
     - Define UX implications for control-plane, Teams, and local developer workflows
       when a slice affects human interaction.
@@ -188,10 +188,11 @@ roles:
     template: enterprise-architect
     instances: 1
     worker:
-      adapter: openai-api
-      model: gpt
+      adapter: codex-cli
+      model: codex
       auth:
-        method: azure_openai_entra_id
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-enterprise-architect-token
     instructions:
     - Review system/project repository boundaries, governance, integration, and enterprise
       operating model concerns.
@@ -227,11 +228,11 @@ roles:
     template: security-architect
     instances: 1
     worker:
-      adapter: claude-code
-      model: claude
+      adapter: codex-cli
+      model: codex
       auth:
-        method: claude_code_oauth_token
-        secret_ref: claude-code-agentic-mesh-security-token
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-security-architect-token
     instructions:
     - Review credential handling, connector permissions, container identity, and secret-reference
       design.
@@ -248,11 +249,11 @@ roles:
     template: platform-engineer
     instances: 1
     worker:
-      adapter: claude-code
-      model: claude
+      adapter: codex-cli
+      model: codex
       auth:
-        method: anthropic_api_key
-        secret_ref: anthropic-agentic-mesh-platform-key
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-platform-engineer-token
     instructions:
     - Keep Docker Compose, state paths, telemetry, and local runtime automation aligned
       with the architecture docs.
@@ -274,8 +275,8 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        method: codex_api_key
-        secret_ref: openai-agentic-mesh-engineering-key
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-engineering-token
     instructions:
     - Treat this as a multi-instance role; claim work atomically and avoid duplicate
       implementation.
@@ -311,11 +312,11 @@ roles:
     template: technical-writer
     instances: 1
     worker:
-      adapter: anthropic-api
-      model: claude
+      adapter: codex-cli
+      model: codex
       auth:
-        method: anthropic_api_key
-        secret_ref: anthropic-agentic-mesh-docs-key
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-technical-writer-token
     instructions:
     - Validate documentation clarity before release review.
     - Keep README, architecture, operation, and memory docs aligned.
@@ -331,10 +332,11 @@ roles:
     template: delivery-manager
     instances: 1
     worker:
-      adapter: manual-human
-      model: manual
+      adapter: codex-cli
+      model: codex
       auth:
-        method: manual_human_no_auth
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-delivery-manager-token
     instructions:
     - Track blockers and handoff aging without taking decision ownership from specialist
       roles.
@@ -349,11 +351,11 @@ roles:
     template: research-analyst
     instances: 1
     worker:
-      adapter: openai-api
-      model: gpt
+      adapter: codex-cli
+      model: codex
       auth:
-        method: openai_api_key
-        secret_ref: openai-agentic-mesh-research-key
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-research-analyst-token
     instructions:
     - Research future stock enterprise flow catalogs and cite sources.
     - Hand synthesized findings to Business Analysis, Product, or Enterprise Architecture.

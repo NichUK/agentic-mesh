@@ -42,7 +42,8 @@ completed work should be handed next.
 - Project SDLC flow overlay support for slices, features, and spikes.
 - File-backed local message store using inspectable JSON payloads.
 - Append-only JSONL event journal.
-- Deterministic stub worker adapter standing in for `codex-cli`.
+- Configured worker adapter dispatch with `codex-cli` as the first real worker
+  path and a deterministic worker test double for unit tests.
 - Basic control-plane tick that hibernates idle instances and wakes hibernated
   instances when role inbox work exists.
 - Docker Compose topology for router, control-plane, the configured
