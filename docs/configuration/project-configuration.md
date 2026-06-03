@@ -118,6 +118,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: medium
+      sandbox_mode: workspace-write
       auth:
         method: codex_api_key
         secret_ref: openai-customer-portal-engineering-key
@@ -172,6 +173,7 @@ worker:
   adapter: codex-cli
   model: codex
   reasoning_effort: medium
+  sandbox_mode: workspace-write
   auth:
     credential: codex-product-oauth
 ```
@@ -184,6 +186,10 @@ Fields:
 - `reasoning_effort`: optional model reasoning effort hint. Supported values
   are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. When omitted,
   Agentic Mesh defaults to `medium`.
+- `sandbox_mode`: optional worker command sandbox hint. Supported values are
+  `read-only`, `workspace-write`, and `danger-full-access`. Worker adapters map
+  this generic setting to their own execution controls. When omitted, Agentic
+  Mesh defaults to `workspace-write`.
 - `auth`: optional auth binding.
 
 Auth binding fields:

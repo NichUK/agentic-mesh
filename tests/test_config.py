@@ -34,6 +34,9 @@ def test_project_schema_and_flow_template_files_exist() -> None:
     reasoning_effort_schema = schema["$defs"]["worker"]["properties"]["reasoning_effort"]
     assert reasoning_effort_schema["default"] == "medium"
     assert "high" in reasoning_effort_schema["enum"]
+    sandbox_mode_schema = schema["$defs"]["worker"]["properties"]["sandbox_mode"]
+    assert sandbox_mode_schema["default"] == "workspace-write"
+    assert "danger-full-access" in sandbox_mode_schema["enum"]
     assert (Path.cwd() / "config" / "flows" / "sdlc.yaml").exists()
     assert (Path.cwd() / "config" / "schemas" / "response-types.schema.json").exists()
 
@@ -121,6 +124,10 @@ def test_worker_reasoning_effort_defaults_to_medium_when_omitted() -> None:
     assert (
         mesh_config.project.roles["product-manager"].worker.reasoning_effort
         == "medium"
+    )
+    assert (
+        mesh_config.project.roles["product-manager"].worker.sandbox_mode
+        == "workspace-write"
     )
     assert (
         mesh_config.project.roles["engineering"].worker.reasoning_effort
@@ -220,6 +227,7 @@ def test_loads_project_roles_and_instances() -> None:
     assert engineering.template.role_id == "engineering"
     assert engineering.override.worker.adapter == "codex-cli"
     assert engineering.override.worker.reasoning_effort == "high"
+    assert engineering.override.worker.sandbox_mode == "danger-full-access"
     assert engineering.telemetry_service_name == "AM.dev-team.engineering.1"
 
 

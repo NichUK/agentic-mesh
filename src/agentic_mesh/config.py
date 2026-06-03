@@ -365,6 +365,13 @@ def _project_role_from_dict(
             f"Role {role_id} worker reasoning_effort must be one of: "
             f"{', '.join(sorted(allowed_reasoning_efforts))}"
         )
+    sandbox_mode = str(worker.get("sandbox_mode", "workspace-write"))
+    allowed_sandbox_modes = {"read-only", "workspace-write", "danger-full-access"}
+    if sandbox_mode not in allowed_sandbox_modes:
+        raise ConfigError(
+            f"Role {role_id} worker sandbox_mode must be one of: "
+            f"{', '.join(sorted(allowed_sandbox_modes))}"
+        )
     return ProjectRoleOverride(
         role_id=role_id,
         template=str(data.get("template", role_id)),
@@ -373,6 +380,7 @@ def _project_role_from_dict(
             adapter=adapter,
             model=str(worker.get("model", "stub")),
             reasoning_effort=reasoning_effort,
+            sandbox_mode=sandbox_mode,
             auth=_auth_binding_from_dict(
                 role_id,
                 adapter,

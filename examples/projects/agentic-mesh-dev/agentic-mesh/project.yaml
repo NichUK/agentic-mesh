@@ -134,6 +134,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -154,6 +155,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -175,6 +177,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -195,6 +198,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -216,6 +220,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -235,6 +240,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -256,6 +262,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -279,6 +286,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -300,6 +308,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -319,6 +328,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -339,6 +349,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -358,6 +369,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:
@@ -377,6 +389,7 @@ roles:
       adapter: codex-cli
       model: codex
       reasoning_effort: high
+      sandbox_mode: danger-full-access
       auth:
         credential: codex-agentic-mesh-dev-team
     instructions:

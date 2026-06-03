@@ -219,7 +219,7 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert result.status == "completed"
     assert "--ask-for-approval" not in command
     assert "--sandbox" in command
-    assert "workspace-write" in command
+    assert "danger-full-access" in command
     assert "-c" in command
     assert "model_reasoning_effort=high" in command
     assert captured["env"]["CODEX_HOME"] == str(

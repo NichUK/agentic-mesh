@@ -83,6 +83,7 @@ class WorkerConfig:
     adapter: str
     model: str
     reasoning_effort: str = "medium"
+    sandbox_mode: str = "workspace-write"
     auth: AuthBinding | None = None
 
 

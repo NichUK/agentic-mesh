@@ -162,7 +162,7 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                 "exec",
                 "--skip-git-repo-check",
                 "--sandbox",
-                "workspace-write",
+                instance.override.worker.sandbox_mode,
                 "--output-schema",
                 str(schema_path),
                 "-o",

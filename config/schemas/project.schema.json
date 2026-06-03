@@ -250,6 +250,12 @@
           "enum": ["none", "minimal", "low", "medium", "high", "xhigh"],
           "default": "medium"
         },
+        "sandbox_mode": {
+          "type": "string",
+          "description": "Worker command sandbox mode. Adapters map this generic project intent to their own execution controls. Defaults to workspace-write when omitted.",
+          "enum": ["read-only", "workspace-write", "danger-full-access"],
+          "default": "workspace-write"
+        },
         "auth": {
           "$ref": "#/$defs/authBinding"
         }
