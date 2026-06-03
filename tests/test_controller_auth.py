@@ -248,3 +248,121 @@ flow:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_controller_auth_session_page_polls_without_meta_refresh(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: oauth-example
+name: OAuth Example
+workspace:
+  root: .
+  default_repository: oauth-example
+  repositories:
+    oauth-example:
+      type: git
+      path: .
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        credential: codex-product-oauth
+    instructions: []
+    write_paths: []
+    channels: {}
+flow:
+  flow_id: oauth-example-flow
+  entry_state: product_definition
+  work_item_types:
+    - slice
+  states:
+    product_definition:
+      owner_role: product-manager
+      purpose: Define work.
+      artifact_path: docs/product/stories.md
+      handoffs: {}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    class FakeProcess:
+        stdout = iter(
+            [
+                "Open \x1b[94mhttps://auth.openai.com/codex/device\x1b[0m\n",
+                "Use code \x1b[94m2A4N-771S5\x1b[0m\n",
+            ]
+        )
+
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(controller_auth.shutil, "which", lambda command: "codex")
+    monkeypatch.setattr(
+        controller_auth.subprocess,
+        "Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file=str(project_file),
+        state_root=tmp_path / "state",
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request(
+            "POST",
+            "/auth/codex/start",
+            body=b"credential=codex-product-oauth",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 303
+        location = response.headers["Location"]
+        session_id = location.rsplit("id=", 1)[1]
+
+        deadline = time.time() + 5
+        session = service.session(session_id)
+        assert session is not None
+        while session.status == "running" and time.time() < deadline:
+            time.sleep(0.01)
+
+        connection.request("GET", location)
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "http-equiv=\"refresh\"" not in body
+        assert "id=\"copy-code\"" in body
+        assert "<svg" in body
+        assert "2A4N-771S5" in body
+
+        connection.request("GET", f"/auth/codex/session.json?id={session_id}")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert payload["login_url"] == "https://auth.openai.com/codex/device"
+        assert payload["user_code"] == "2A4N-771S5"
+        assert payload["redacted"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

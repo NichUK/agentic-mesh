@@ -293,6 +293,22 @@ class ControllerAuthService:
         with self._lock:
             return self._sessions.get(session_id)
 
+    def session_payload(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            return {
+                "session_id": session.session_id,
+                "credential_id": session.credential_id,
+                "status": session.status,
+                "login_url": session.login_url,
+                "user_code": session.user_code,
+                "output": "\n".join(session.output),
+                "error": session.error,
+                "redacted": True,
+            }
+
     def _credential(
         self,
         mesh_config: MeshConfig,
@@ -342,6 +358,14 @@ class ControllerAuthHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._send_html(HTTPStatus.OK, self._session_page(session))
+            return
+        if path.path == "/auth/codex/session.json":
+            session_id = parse_qs(path.query).get("id", [""])[0]
+            payload = self.server.service.session_payload(session_id)
+            if payload is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
+            self._send_json(HTTPStatus.OK, payload)
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
@@ -459,52 +483,147 @@ for setup and status instead of carrying secrets in chat.</p>
         return "No setup action"
 
     def _session_page(self, session: OAuthLoginSession) -> str:
-        refresh = (
-            '<meta http-equiv="refresh" content="3">'
-            if session.status == "running"
-            else ""
-        )
         output = "\n".join(session.output) or "Waiting for Codex output..."
         openai_button = (
             f"""
-<p>
-  <a class="primary" href="{html.escape(session.login_url)}" target="_blank" rel="noopener">
+<p id="openai-link-row">
+  <a class="primary" id="openai-link" href="{html.escape(session.login_url)}" target="_blank" rel="noopener">
     Open OpenAI Sign-In
   </a>
 </p>
 """
             if session.login_url
-            else "<p>Preparing OpenAI sign-in...</p>"
+            else '<p id="openai-link-row">Preparing OpenAI sign-in...</p>'
         )
         code = (
             f"""
-<div class="code-panel">
+<div class="code-panel" id="code-panel">
   <p>OpenAI will ask for this one-time code:</p>
-  <code class="login-code">{html.escape(session.user_code)}</code>
+  <div class="code-row">
+    <code class="login-code" id="login-code">{html.escape(session.user_code)}</code>
+    <button class="icon-button" id="copy-code" type="button" title="Copy code" aria-label="Copy code">
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+        <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+      </svg>
+    </button>
+    <span class="copy-status" id="copy-status" aria-live="polite"></span>
+  </div>
 </div>
+<p id="waiting-code" hidden>Waiting for Codex to issue the one-time code...</p>
 """
             if session.user_code
-            else "<p>Waiting for Codex to issue the one-time code...</p>"
+            else """
+<div class="code-panel" id="code-panel" hidden>
+  <p>OpenAI will ask for this one-time code:</p>
+  <div class="code-row">
+    <code class="login-code" id="login-code"></code>
+    <button class="icon-button" id="copy-code" type="button" title="Copy code" aria-label="Copy code">
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+        <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+      </svg>
+    </button>
+    <span class="copy-status" id="copy-status" aria-live="polite"></span>
+  </div>
+</div>
+<p id="waiting-code">Waiting for Codex to issue the one-time code...</p>
+"""
         )
         instructions = (
-            "<p>OpenAI uses device-code sign-in here: open the sign-in page, "
+            "OpenAI uses device-code sign-in here: open the sign-in page, "
             "enter the one-time code below, then return to this tab. Agentic Mesh "
-            "will detect completion and store the credential cache automatically.</p>"
+            "will detect completion and store the credential cache automatically."
             if session.status == "running"
-            else "<p>This sign-in session has finished. Return to credentials to check status.</p>"
+            else "This sign-in session has finished. Return to credentials to check status."
         )
+        script = f"""
+<script>
+const sessionId = {json.dumps(session.session_id)};
+const statusEl = document.getElementById("session-status");
+const instructionsEl = document.getElementById("session-instructions");
+const linkRow = document.getElementById("openai-link-row");
+const codePanel = document.getElementById("code-panel");
+const codeEl = document.getElementById("login-code");
+const waitingCode = document.getElementById("waiting-code");
+const outputEl = document.getElementById("technical-output");
+const copyButton = document.getElementById("copy-code");
+const copyStatus = document.getElementById("copy-status");
+
+function runningInstructions() {{
+  return "OpenAI uses device-code sign-in here: open the sign-in page, enter the one-time code below, then return to this tab. Agentic Mesh will detect completion and store the credential cache automatically.";
+}}
+
+function updateSession(data) {{
+  statusEl.textContent = data.status;
+  instructionsEl.textContent = data.status === "running"
+    ? runningInstructions()
+    : "This sign-in session has finished. Return to credentials to check status.";
+  if (data.login_url) {{
+    linkRow.innerHTML = '<a class="primary" id="openai-link" target="_blank" rel="noopener">Open OpenAI Sign-In</a>';
+    linkRow.querySelector("a").href = data.login_url;
+  }}
+  if (data.user_code) {{
+    codeEl.textContent = data.user_code;
+    codePanel.hidden = false;
+    waitingCode.hidden = true;
+  }}
+  outputEl.textContent = data.output || "Waiting for Codex output...";
+  if (data.status === "running") {{
+    window.setTimeout(pollSession, 3000);
+  }}
+}}
+
+async function pollSession() {{
+  try {{
+    const response = await fetch("/auth/codex/session.json?id=" + encodeURIComponent(sessionId), {{
+      cache: "no-store"
+    }});
+    if (response.ok) {{
+      updateSession(await response.json());
+    }} else {{
+      window.setTimeout(pollSession, 5000);
+    }}
+  }} catch (_error) {{
+    window.setTimeout(pollSession, 5000);
+  }}
+}}
+
+copyButton.addEventListener("click", async () => {{
+  const code = codeEl.textContent.trim();
+  if (!code) {{
+    return;
+  }}
+  try {{
+    await navigator.clipboard.writeText(code);
+    copyStatus.textContent = "Copied";
+  }} catch (_error) {{
+    const range = document.createRange();
+    range.selectNodeContents(codeEl);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    copyStatus.textContent = "Selected";
+  }}
+}});
+
+if (statusEl.textContent === "running") {{
+  window.setTimeout(pollSession, 3000);
+}}
+</script>
+"""
         body = f"""
-{refresh}
-<p>Status: <strong>{html.escape(session.status)}</strong></p>
+<p>Status: <strong id="session-status">{html.escape(session.status)}</strong></p>
 <p>Credential: <code>{html.escape(session.credential_id)}</code></p>
-{instructions}
+<p id="session-instructions">{html.escape(instructions)}</p>
 {openai_button}
 {code}
 <details>
   <summary>Technical output</summary>
-  <pre>{html.escape(output)}</pre>
+  <pre id="technical-output">{html.escape(output)}</pre>
 </details>
 <p><a href="/auth/credentials">Back to credentials</a></p>
+{script}
 """
         return self._layout("Codex OAuth Login", body)
 
@@ -525,7 +644,11 @@ for setup and status instead of carrying secrets in chat.</p>
     .notice {{ background: #e9f7ef; border: 1px solid #9bd7ad; padding: 0.75rem; }}
     .primary {{ display: inline-block; background: #111827; color: white; padding: 0.75rem 1rem; text-decoration: none; }}
     .code-panel {{ border: 2px solid #111827; display: inline-block; padding: 1rem 1.25rem; margin: 1rem 0; }}
+    .code-row {{ align-items: center; display: flex; gap: 0.75rem; }}
     .login-code {{ display: block; font-size: 2rem; letter-spacing: 0.08em; }}
+    .icon-button {{ align-items: center; background: #111827; border: 0; color: white; cursor: pointer; display: inline-flex; height: 2.75rem; justify-content: center; width: 2.75rem; }}
+    .icon-button svg {{ fill: none; height: 1.25rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; width: 1.25rem; }}
+    .copy-status {{ color: #166534; min-width: 4rem; }}
   </style>
 </head>
 <body>
