@@ -27,6 +27,7 @@ Committed architecture decisions:
 
 - `ADR-001`: Agentic Mesh enterprise runtime direction.
 - `ADR-002`: Queue-aware agent hibernation and open-core direction.
+- `ADR-003`: Project-scoped build and deployment outputs.
 
 Core principles:
 
@@ -42,6 +43,8 @@ Core principles:
   profiles are adapter boundaries.
 - Git owns configuration, documentation, decisions, stories, evidence, release
   records, and committed audit snapshots.
+- Project folders own concrete deployment outputs such as Compose, Terraform,
+  Helm, connector/team bindings, and local runtime state boundaries.
 - Runtime queues are inspectable and append-only by default, with optional
   cloud-native backends.
 - Every deployment should emit OpenTelemetry logs, traces, and metrics.
@@ -63,7 +66,8 @@ Current example files:
 
 - `config/roles/product-manager.yaml`
 - `config/roles/engineering.yaml`
-- `config/projects/example-project.yaml`
+- `examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`
+- `examples/projects/example-project/agentic-mesh/project.yaml`
 
 These are starter examples, not final canonical role templates.
 
@@ -113,6 +117,10 @@ When implementing:
 - Make runtime state inspectable.
 - Preserve role-instance identity across hibernation and wake-up.
 - Use clear config files before building a configuration UI.
+- Keep system-repo artifacts separate from project artifacts. The system repo
+  owns reusable runtime code, templates, schemas, and generators. Project
+  folders own `agentic-mesh/project.yaml`, `deploy/`, connector/team bindings,
+  and ignored local `state/`.
 
 ## Documentation Expectations
 
@@ -133,8 +141,43 @@ before coding.
 
 This repo was initialized locally at `C:\Dev\agentic-mesh`.
 
-Current branch is `main`.
+Branch expectations:
 
-Keep commits focused. Do not mix unrelated changes from the old
-`C:\Dev\dev-team-ai` prototype repo into this repository.
+- `main` is the stable branch.
+- `develop` is the daily integration branch.
+- Feature, fix, spike, and documentation branches should normally branch from
+  `develop` and use the `codex/` prefix, for example
+  `codex/project-build-boundary`.
+- Commit directly to `main` only when the user explicitly asks for it or when
+  fast-forwarding a verified `develop` baseline back to `main`.
 
+Before changing files:
+
+- Run `git status --short --branch`.
+- Notice uncommitted user work and avoid reverting it.
+- Prefer `git mv` or normal filesystem moves for renames so history remains
+  understandable.
+- Keep generated runtime state, secrets, tokens, tenant-specific credential
+  files, and local logs out of Git.
+
+Before committing:
+
+- Keep commits focused around one product or implementation slice.
+- Review `git diff --stat` and the staged diff.
+- Run `pytest -q` for code changes.
+- Run `python -m agentic_mesh.cli validate-config` for config or project
+  boundary changes.
+- Run `docker compose ... config --quiet` when Compose outputs change.
+- Update `MEMORY.md` when future agents need the context.
+- Update ADRs or implementation-slice docs when a design decision or accepted
+  boundary changes.
+
+Commit hygiene:
+
+- Use clear imperative commit messages, for example
+  `Move Compose outputs under project folder`.
+- Do not mix unrelated changes from the old `C:\Dev\dev-team-ai` prototype repo
+  into this repository.
+- Do not squash unrelated user changes into your commit.
+- Prefer fast-forward merges between `develop` and `main` when possible so the
+  local history stays easy to inspect.

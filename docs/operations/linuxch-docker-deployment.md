@@ -39,7 +39,7 @@ Deployment was started on `linuxch` under:
 The Compose stack is running with:
 
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.linuxch.yml up -d
+docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml up -d
 ```
 
 Verified from the VM and local network:
@@ -75,13 +75,13 @@ docs/operations/sdlc-teams-smoke-test.md
 Use the base compose file plus the Linux VM overlay:
 
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.linuxch.yml up -d
+docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml up -d
 ```
 
 Build the local dogfood image only when the Agentic Mesh runtime code changes:
 
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.linuxch.yml --profile build-image build runtime-image
+docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml --profile build-image build runtime-image
 ```
 
 That build step must not be required for organization or project configuration
@@ -107,19 +107,18 @@ project files, project repositories, runtime state, and secrets are mounted into
 the container:
 
 ```text
-./config -> /mesh/config:ro
-./examples -> /mesh/examples:ro
-. -> /mesh/workspaces/agentic-mesh
-./state -> /mesh/state
+/mesh/system                    # system repository, read-only
+/mesh/project                   # examples/projects/agentic-mesh-dev
+/mesh/workspaces/agentic-mesh   # dogfood workspace repository
 ```
 
 Runtime path environment variables make those boundaries explicit:
 
 ```text
-AGENTIC_MESH_CONFIG_ROOT=/mesh
-AGENTIC_MESH_PROJECT_FILE=examples/projects/agentic-mesh-dev.yaml
+AGENTIC_MESH_CONFIG_ROOT=/mesh/system
+AGENTIC_MESH_PROJECT_FILE=/mesh/project/agentic-mesh/project.yaml
 AGENTIC_MESH_WORKSPACE_ROOT=/mesh/workspaces/agentic-mesh
-AGENTIC_MESH_STATE_ROOT=/mesh/state
+AGENTIC_MESH_STATE_ROOT=/mesh/project/state
 ```
 
 The project file then declares the workspace/repository shape:
@@ -148,14 +147,14 @@ volumes or repositories without rebuilding the image.
 The Linux overlay also switches the Teams connector to role-bot outbound mode:
 
 ```powershell
-python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/state/secrets --poll-seconds 5
+python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/project/state/secrets --poll-seconds 5
 ```
 
 Role bot app ids and secrets are copied from Key Vault into ignored runtime
 state on the VM:
 
 ```text
-/home/nich/agentic-mesh/state/secrets
+/home/nich/agentic-mesh/examples/projects/agentic-mesh-dev/state/secrets
 ```
 
 The base profile still runs:
@@ -226,7 +225,7 @@ https://vpn.nixnet.com/api/messages
 This endpoint is also captured in:
 
 ```text
-examples/projects/agentic-mesh-dev.yaml
+examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml
 ```
 
 ## Security Notes

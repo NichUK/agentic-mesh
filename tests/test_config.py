@@ -8,9 +8,14 @@ from agentic_mesh.config import load_mesh_config
 def test_project_schema_and_flow_template_files_exist() -> None:
     readme = (Path.cwd() / "README.md").read_text(encoding="utf-8")
     project = yaml.safe_load(
-        (Path.cwd() / "examples" / "projects" / "agentic-mesh-dev.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            Path.cwd()
+            / "examples"
+            / "projects"
+            / "agentic-mesh-dev"
+            / "agentic-mesh"
+            / "project.yaml"
+        ).read_text(encoding="utf-8")
     )
     schema = json.loads(
         (Path.cwd() / "config" / "schemas" / "project.schema.json").read_text(

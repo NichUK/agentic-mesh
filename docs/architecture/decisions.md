@@ -197,3 +197,94 @@ Commercial rollback is policy-level: if a commercial feature boundary harms
 the usefulness of the open source core, move the disputed basic capability
 into the open source project and reserve support, hosted operations, advanced
 policy, and enterprise integration for the paid offering.
+
+## ADR-003 - Project-Scoped Build And Deployment Outputs
+
+Date: 2026-06-03
+
+Status: draft direction
+
+Design documents:
+
+- `docs/architecture/repository-topology.md`
+- `docs/implementation-slices/project-build-outputs-v0.md`
+
+### Context
+
+The initial dogfood Docker Compose files lived in the Agentic Mesh system
+repository root. That made the root look like the deployment boundary for the
+`agentic-mesh-dev` project, even though the project configuration is what
+declares which roles, role instances, connectors, Teams channels, workspace
+mounts, and runtime state belong to a concrete project.
+
+This boundary gets worse when the system itself is used as an example project.
+If the dogfood project is represented under `examples/projects/`, then its
+project overlay, deployment manifests, local runtime state, and future build
+outputs should also live inside or below that project folder.
+
+Agentic Mesh also needs to support enterprise deployment outputs beyond Docker
+Compose, including Terraform, Helm charts, and possibly GitOps bundles. Those
+outputs are project-specific because they depend on the project network, role
+instance topology, connectors, cloud resources, secret references, and
+environment.
+
+### Decision
+
+Treat the project folder as the build and deployment boundary.
+
+A project folder should contain:
+
+- `agentic-mesh/project.yaml`
+- `deploy/compose/`
+- future `deploy/terraform/`
+- future `deploy/helm/`
+- ignored local `state/`
+
+The system repository owns reusable runtime code, image definitions, default
+role templates, flow templates, schemas, generator code, tests, and docs. It
+must not own concrete project deployment manifests at its root.
+
+The current dogfood project now lives at:
+
+```text
+examples/projects/agentic-mesh-dev/
+  agentic-mesh/project.yaml
+  deploy/compose/docker-compose.yml
+  deploy/compose/docker-compose.linuxch.yml
+```
+
+The dogfood Compose output mounts the system repository read-only as
+`/mesh/system`, the project folder as `/mesh/project`, and the system repo
+again as the dogfood work workspace at `/mesh/workspaces/agentic-mesh`.
+
+Future build tooling should write generated outputs under the target project
+folder and refuse to write outside that folder.
+
+### Consequences
+
+- Root-level Compose files are removed from the system repository.
+- A project can be packaged, reviewed, deployed, and audited as a concrete
+  role-agent network.
+- Local state and secret mounts are colocated with the project folder for
+  self-managed deployments, while still ignored by Git.
+- The runtime image remains reusable because project config, workspace repos,
+  state, and secrets are mounted at runtime.
+- Terraform and Helm become project build targets rather than parallel
+  top-level product assumptions.
+
+### Alternatives Considered
+
+- Keep root Compose files for dogfood convenience: rejected because it blurs
+  the system/project boundary and does not scale to multiple projects.
+- Keep example projects as loose YAML files: rejected because a real project
+  also needs deployment outputs, state boundaries, and connector/team binding
+  artifacts.
+- Implement Terraform and Helm immediately: deferred. The boundary is decided
+  now; the generators should be implemented in focused future slices.
+
+### Rollback
+
+Rollback would move the dogfood Compose files back to the system root and use
+the old loose project YAML. Avoid this unless project-scoped build tooling
+proves unusable, because root deployment files obscure which project network is
+being run.

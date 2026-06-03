@@ -24,7 +24,7 @@ It owns:
 
 - runtime source code
 - storage, worker, connector, lifecycle, and telemetry ports
-- Docker images and local Compose profile templates
+- Docker image definitions and reusable deployment templates
 - default role templates
 - default organization policy templates
 - default connector and storage templates
@@ -50,6 +50,8 @@ A project repository or workspace owns a concrete project overlay.
 It may contain:
 
 - `agentic-mesh/project.yaml`
+- `deploy/compose/docker-compose.yml`
+- generated or curated deployment outputs under `deploy/`
 - project SDLC flow template references or overlays
 - project role overrides and instance counts
 - project documentation and evidence
@@ -75,16 +77,20 @@ which snapshots are committed back to a project repo.
 
 ## Example Projects
 
-Example projects live under `examples/projects/`.
+Example projects live under `examples/projects/` as project folders, not as
+loose YAML files.
 
 The current dogfood example is:
 
 ```text
-examples/projects/agentic-mesh-dev.yaml
+examples/projects/agentic-mesh-dev/
+  agentic-mesh/project.yaml
+  deploy/compose/docker-compose.yml
+  deploy/compose/docker-compose.linuxch.yml
 ```
 
 It is safe to keep in the system repository because it contains no credentials
-and only demonstrates project overlay structure.
+and demonstrates project overlay and deployment-output structure.
 
 ## Future Installation Shape
 
@@ -98,11 +104,14 @@ agentic-mesh/                 # system repo
     flows/
     schemas/
   examples/
-  docker-compose.yml
 
 agentic-mesh-projects/
   quantauma/
     agentic-mesh/project.yaml
+    deploy/compose/docker-compose.yml
+    deploy/terraform/
+    deploy/helm/
+    state/                    # ignored local runtime state
     docs/
     evidence/
     releases/
@@ -115,6 +124,30 @@ paths. It loads defaults from the system repo, overlays project configuration
 from each project, and mounts each role instance against the correct project
 workspace and state location.
 
+## Project Build Boundary
+
+A project is the deployment boundary. It declares which role-agent instances
+exist, which collaboration connector/team/channel mapping is used, which
+workspace repositories are mounted, and which runtime state path belongs to the
+project.
+
+Project build outputs belong under the project folder:
+
+```text
+<project-root>/
+  agentic-mesh/project.yaml
+  deploy/
+    compose/
+    terraform/
+    helm/
+  state/
+```
+
+The system repository may provide generator code, schema, and templates, but it
+must not accumulate concrete project deployment files at its root. The current
+dogfood Compose files are intentionally under
+`examples/projects/agentic-mesh-dev/deploy/compose/`.
+
 ## Container Image Boundary
 
 Agentic Mesh containers should not bake organization or project configuration
@@ -125,10 +158,10 @@ secrets are runtime inputs.
 Current dogfood container paths:
 
 ```text
-/mesh/config                    # mounted organization defaults, stock roles, flows, schemas
-/mesh/examples                  # mounted example projects for dogfood only
+/mesh/system                    # mounted system repo, preferably read-only
+/mesh/project                   # mounted project folder with agentic-mesh/project.yaml
 /mesh/workspaces/agentic-mesh   # mounted project repository/workspace
-/mesh/state                     # mounted runtime queues, journals, lifecycle, secrets
+/mesh/project/state             # runtime queues, journals, lifecycle, secrets
 ```
 
 The project file declares the workspace and repository roots that agents use
@@ -177,8 +210,8 @@ repositories, or managed configuration stores.
 
 - Should project overlays use `agentic-mesh/project.yaml` or
   `.agentic-mesh/project.yaml`?
-- Should examples stay as single YAML files or become full example workspaces?
 - Should stock role packs and stock flow packs live under `config/` or
   `packs/`?
-- Should local state be colocated under each project workspace or centralized
-  under the system runtime directory?
+- What project build targets should be generated first after Compose:
+  Terraform, Helm, cloud-specific Compose overlays, or enterprise GitOps
+  bundles?

@@ -79,7 +79,6 @@ Example local topology:
 
 ```text
 agentic-mesh/                    # system/runtime repository
-  docker-compose.yml
   config/
     organization.yaml
     roles/
@@ -94,25 +93,22 @@ agentic-mesh/                    # system/runtime repository
       project.schema.json
   examples/
     projects/
-      agentic-mesh-dev.yaml
-  state/
-    projects/
       agentic-mesh-dev/
-        product-manager-1/
-          inbox/
-          outbox/
-          journal/
-          memory/
-        engineering-1/
-          inbox/
-          outbox/
-          journal/
-      connectors/
-      secrets/
+        agentic-mesh/project.yaml
+        deploy/
+          compose/
+            docker-compose.yml
+            docker-compose.linuxch.yml
+        state/                   # ignored local runtime state
 
 agentic-mesh-projects/
   quantauma/                      # project repository/workspace
     agentic-mesh/project.yaml
+    deploy/
+      compose/
+      terraform/
+      helm/
+    state/
     src/
     tests/
     docs/
@@ -745,8 +741,12 @@ repositories. The system repository owns runtime code, default configuration,
 role templates, reusable flow templates, configuration schemas, examples, and
 product documentation.
 Real projects should live in separate repositories or workspaces that carry
-project overlays, documentation, evidence, and secret references by name. See
-`docs/architecture/repository-topology.md`.
+project overlays, documentation, evidence, deployment outputs, runtime state
+locations, connector/team bindings, and secret references by name. Project
+build outputs such as Compose, Terraform, and Helm belong under the project
+folder, not the system repository root. See
+`docs/architecture/repository-topology.md` and
+`docs/implementation-slices/project-build-outputs-v0.md`.
 
 ## Flow Templates And Schemas
 

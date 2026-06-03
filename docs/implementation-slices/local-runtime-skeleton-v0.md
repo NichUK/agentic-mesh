@@ -30,7 +30,7 @@ completed work should be handed next.
   auth bindings in project config.
 - Central human response type catalog in `config/response-types.yaml`.
 - Agentic Mesh development project configuration in
-  `examples/projects/agentic-mesh-dev.yaml`.
+  `examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`.
 - Reusable SDLC flow template in `config/flows/sdlc.yaml`, referenced by the
   example project instead of embedded in the project overlay.
 - Project configuration schema in `config/schemas/project.schema.json`.

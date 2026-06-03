@@ -726,7 +726,7 @@ def _validate_role_channels(
 
 def load_mesh_config(
     root: Path,
-    project_file: str = "examples/projects/agentic-mesh-dev.yaml",
+    project_file: str = "examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml",
 ) -> MeshConfig:
     root = root.resolve()
     organization = _organization_from_dict(

@@ -40,7 +40,7 @@ Existing and created channels:
 - `release`
 
 The project config maps these channels in
-`examples/projects/agentic-mesh-dev.yaml`.
+`examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`.
 
 ## Provisioned Azure Resources
 
@@ -166,13 +166,13 @@ The `linuxch` runtime stores each role bot app id and secret under ignored
 runtime state:
 
 ```text
-/home/nich/agentic-mesh/state/secrets
+/home/nich/agentic-mesh/examples/projects/agentic-mesh-dev/state/secrets
 ```
 
 The Docker `teams-connector` service now uses:
 
 ```text
-python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/state/secrets --poll-seconds 5
+python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/project/state/secrets --poll-seconds 5
 ```
 
 The SDLC smoke work items `slice-bot-lifecycle-20260602212801`,

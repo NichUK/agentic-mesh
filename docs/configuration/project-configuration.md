@@ -8,8 +8,8 @@ Schema: `config/schemas/project.schema.json`
 
 Examples:
 
-- `examples/projects/agentic-mesh-dev.yaml`
-- `examples/projects/example-project.yaml`
+- `examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`
+- `examples/projects/example-project/agentic-mesh/project.yaml`
 
 ## Purpose
 
@@ -589,7 +589,7 @@ python -m agentic_mesh.cli validate-config
 For alternate files:
 
 ```powershell
-python -m agentic_mesh.cli --project-file examples/projects/example-project.yaml validate-config
+python -m agentic_mesh.cli --project-file examples/projects/example-project/agentic-mesh/project.yaml validate-config
 ```
 
 In containers, the relevant path variables are:

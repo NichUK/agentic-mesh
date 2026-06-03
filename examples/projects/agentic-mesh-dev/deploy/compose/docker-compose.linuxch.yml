@@ -4,9 +4,9 @@ services:
     command: python -m agentic_mesh.cli teams-bot-listener --host 0.0.0.0 --port 3978
     environment:
       AGENTIC_MESH_PUBLIC_BOT_ENDPOINT: https://vpn.nixnet.com/api/messages
-      AGENTIC_MESH_CONFIG_ROOT: /mesh
-      AGENTIC_MESH_PROJECT_FILE: examples/projects/agentic-mesh-dev.yaml
-      AGENTIC_MESH_STATE_ROOT: /mesh/state
+      AGENTIC_MESH_CONFIG_ROOT: /mesh/system
+      AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project.yaml
+      AGENTIC_MESH_STATE_ROOT: /mesh/project/state
       AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
@@ -15,10 +15,9 @@ services:
     ports:
       - "3978:3978"
     volumes:
-      - ./config:/mesh/config:ro
-      - ./examples:/mesh/examples:ro
-      - .:/mesh/workspaces/agentic-mesh
-      - ./state:/mesh/state
+      - ../../../../..:/mesh/system:ro
+      - ../..:/mesh/project
+      - ../../../../..:/mesh/workspaces/agentic-mesh
     working_dir: /mesh/workspaces/agentic-mesh
     restart: unless-stopped
 
@@ -29,7 +28,7 @@ services:
     restart: unless-stopped
 
   teams-connector:
-    command: python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/state/secrets --poll-seconds 5
+    command: python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/project/state/secrets --poll-seconds 5
     restart: unless-stopped
 
   otel-collector:

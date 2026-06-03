@@ -462,7 +462,7 @@ def parser() -> argparse.ArgumentParser:
     state_root = Path(os.getenv("AGENTIC_MESH_STATE_ROOT", workspace_root / "state"))
     project_file = os.getenv(
         "AGENTIC_MESH_PROJECT_FILE",
-        "examples/projects/agentic-mesh-dev.yaml",
+        "examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml",
     )
     parser = argparse.ArgumentParser(prog="agentic-mesh")
     parser.add_argument(

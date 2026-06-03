@@ -13,4 +13,6 @@ build/
 .DS_Store
 Thumbs.db
 state/
+examples/projects/*/state/
+examples/projects/*/build/
 *.log

@@ -254,7 +254,7 @@ roles:
     write_paths:
     - docs/platform/**
     - docs/operations/**
-    - docker-compose.yml
+    - examples/projects/agentic-mesh-dev/**
     - Dockerfile
     - config/otel/**
     channels:

@@ -84,12 +84,15 @@ Uncommitted first development slice:
 - dogfood runtime should run its Docker network on the `linuxch` VM
   (`nich@10.0.0.65`) on `nichserv` (`10.0.0.4`), with external bot ingress
   assumed at `https://vpn.nixnet.com/api/messages`
-- `docker-compose.linuxch.yml` adds a `teams-bot-listener` service on port
-  `3978`; the listener accepts `/api/messages`, journals raw Teams activities,
-  and normalizes `human_response.submit` invokes into role queue messages
-- `docker-compose.linuxch.yml` switches `teams-connector` to
+- `examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml`
+  adds a `teams-bot-listener` service on port `3978`; the listener accepts
+  `/api/messages`, journals raw Teams activities, and normalizes
+  `human_response.submit` invokes into role queue messages
+- `examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml`
+  switches `teams-connector` to
   `teams-bot-connector-loop`, using per-role Bot Framework credentials from
-  ignored runtime files under `/home/nich/agentic-mesh/state/secrets`
+  ignored runtime files under
+  `/home/nich/agentic-mesh/examples/projects/agentic-mesh-dev/state/secrets`
 - the Compose stack has been deployed to `/home/nich/agentic-mesh` on
   `linuxch`; `http://10.0.0.65:3978/healthz` works, but
   `https://vpn.nixnet.com/healthz` was not reachable from the Codex machine, so
@@ -235,7 +238,7 @@ Current role examples in this repo:
 
 Current project config:
 
-- `examples/projects/agentic-mesh-dev.yaml`
+- `examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`
 
 This project config is the current dogfood project for building Agentic Mesh.
 It references the reusable `config/flows/sdlc.yaml` template. The runtime must
@@ -431,11 +434,11 @@ Current container/config boundary:
 - The dogfood Compose profile uses `agentic-mesh:local` for router,
   control-plane, role agents, Teams connector, and Teams bot listener.
 - Build the local dogfood runtime image with
-  `docker compose -f docker-compose.yml -f docker-compose.linuxch.yml --profile build-image build runtime-image`
+  `docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml --profile build-image build runtime-image`
   only when runtime code changes.
-- Runtime inputs are mounted explicitly: `./config:/mesh/config:ro`,
-  `./examples:/mesh/examples:ro`,
-  `.:/mesh/workspaces/agentic-mesh`, and `./state:/mesh/state`.
+- Runtime inputs are mounted explicitly by the project Compose output:
+  system repo to `/mesh/system:ro`, dogfood project folder to `/mesh/project`,
+  and the dogfood work workspace to `/mesh/workspaces/agentic-mesh`.
 - Runtime path selection is controlled by `AGENTIC_MESH_CONFIG_ROOT`,
   `AGENTIC_MESH_PROJECT_FILE`, `AGENTIC_MESH_WORKSPACE_ROOT`, and
   `AGENTIC_MESH_STATE_ROOT`.
@@ -444,6 +447,11 @@ Current container/config boundary:
   dogfood project uses the mounted Agentic Mesh repo as
   `/mesh/workspaces/agentic-mesh`, and role `write_paths` plus flow
   `artifact_path` values are relative to that workspace.
+- Project build/deployment outputs now belong under the project folder. The
+  dogfood Compose files live under
+  `examples/projects/agentic-mesh-dev/deploy/compose/`, and future Terraform
+  and Helm outputs are tracked in
+  `docs/implementation-slices/project-build-outputs-v0.md`.
 - Rebuilding containers is only for runtime image changes. Configuration,
   project, documentation, state, and secret changes should become live through
   mounted external paths or service restarts, not image rebuilds.

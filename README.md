@@ -55,6 +55,8 @@ Current documentation:
   connector outbox, and human response message slice
 - `docs/implementation-slices/local-teams-connector-v0.md`: local Teams-style
   connector adapter and Adaptive Card rendering slice
+- `docs/implementation-slices/project-build-outputs-v0.md`: backlog slice for
+  per-project Compose, Terraform, Helm, and future build outputs
 
 Initial direction:
 
@@ -129,6 +131,12 @@ The default local example project is `agentic-mesh-dev`. It references the
 stock SDLC flow template in `config/flows/sdlc.yaml`; role templates do not
 hard-code the handoff graph. Project YAML shape is documented in
 `config/schemas/project.schema.json`.
+
+The dogfood project lives under
+`examples/projects/agentic-mesh-dev/`. Its project overlay is
+`examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`, and its
+project-scoped Compose files live under
+`examples/projects/agentic-mesh-dev/deploy/compose/`.
 
 Each project YAML declares a `workspace` block with the mounted project root
 and repository entries agents can work in. Role `write_paths` and flow
