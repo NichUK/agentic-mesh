@@ -5,6 +5,7 @@ from agentic_mesh import telemetry
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.connectors import BotFrameworkTeamsConnectorAdapter
 from agentic_mesh.connectors import LocalTeamsConnectorAdapter
+from agentic_mesh.connectors import GraphTeamsChannelIngressAdapter
 from agentic_mesh.connectors import TeamsBotIngress
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.journal import EventJournal
@@ -241,6 +242,99 @@ def test_teams_ingress_journals_unmapped_channel_message(
         if event["event_type"] == "teams_channel_message_ignored"
     ]
     assert ignored[0]["reason"] == "unmapped_channel"
+
+
+def test_graph_teams_channel_ingress_routes_all_agents_message(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = GraphTeamsChannelIngressAdapter(
+        connector_id="teams-graph-ingress",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        connector_config=teams_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token="token",
+    )
+    ingress._list_channel_messages = lambda channel, max_messages: [
+        {
+            "id": "1780489884072",
+            "createdDateTime": "2026-06-03T12:31:24.072Z",
+            "subject": "Adopt this project",
+            "body": {
+                "contentType": "html",
+                "content": (
+                    "<div><at id=\"0\">all-agents</at> Start an adoption "
+                    "process for Agentic Mesh.</div>"
+                ),
+            },
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [{"id": 0, "mentionText": "all-agents"}],
+            "webUrl": "https://teams.example/message/1780489884072",
+        }
+    ]
+
+    result = ingress.process_once("all-agents", max_messages=5)
+
+    assert result == {"routed": 1, "skipped": 0, "seen": 1}
+    assert message_store.pending_count("business-analyst") == 1
+    message = message_store.claim_next(
+        "business-analyst",
+        "agentic-mesh-dev.business-analyst.1",
+    )
+    assert message is not None
+    assert message.type == "sponsor_intake.requested"
+    assert message.source == "teams:teams-graph-ingress:all-agents"
+    assert message.payload["work_item_type"] == "spike"
+    assert message.payload["source_channel"] == "all-agents"
+    assert message.payload["teams_activity_id"] == "1780489884072"
+    assert message.payload["teams_from_name"] == "Nich"
+
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "teams_graph_channel_message_received" in event_types
+    assert "teams_channel_message_routed" in event_types
+
+
+def test_graph_teams_channel_ingress_cursor_suppresses_duplicates(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = GraphTeamsChannelIngressAdapter(
+        connector_id="teams-graph-ingress",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        connector_config=teams_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token="token",
+    )
+    graph_messages = [
+        {
+            "id": "message-1",
+            "createdDateTime": "2026-06-03T12:31:24.072Z",
+            "body": {
+                "content": "<at id=\"0\">all-agents</at> Adopt the project.",
+            },
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [{"id": 0, "mentionText": "all-agents"}],
+        }
+    ]
+    ingress._list_channel_messages = lambda channel, max_messages: graph_messages
+
+    assert ingress.process_once("all-agents")["routed"] == 1
+    assert ingress.process_once("all-agents")["routed"] == 0
+    assert message_store.pending_count("business-analyst") == 1
 
 
 def test_teams_ingress_updates_original_human_response_card(tmp_path: Path) -> None:

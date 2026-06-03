@@ -1215,6 +1215,262 @@ class TeamsBotIngress:
         ).message_id
 
 
+class GraphTeamsChannelIngressAdapter:
+    """Reads Teams channel messages through Graph and routes them into intake."""
+
+    def __init__(
+        self,
+        *,
+        connector_id: str,
+        project_id: str,
+        state_root: Path,
+        connector_config: ProjectConnectorConfig,
+        message_store: FileMessageStore,
+        journal: EventJournal,
+        project_config: ProjectConfig,
+        token: str,
+    ) -> None:
+        self.connector_id = connector_id
+        self.project_id = project_id
+        self.state_root = state_root
+        self.connector_config = connector_config
+        self.message_store = message_store
+        self.journal = journal
+        self.project_config = project_config
+        self.token = token
+        self.ingress = TeamsBotIngress(
+            connector_id=connector_id,
+            project_id=project_id,
+            state_root=state_root,
+            message_store=message_store,
+            journal=journal,
+            connector_config=connector_config,
+            project_config=project_config,
+        )
+
+    def process_once(self, channel: str, *, max_messages: int = 25) -> dict[str, int]:
+        seen = self._seen_message_ids(channel)
+        routed = 0
+        skipped = 0
+        new_seen = set(seen)
+
+        messages = sorted(
+            self._list_channel_messages(channel, max_messages=max_messages),
+            key=lambda item: str(item.get("createdDateTime") or item.get("id") or ""),
+        )
+        unseen_messages = [
+            graph_message
+            for graph_message in messages
+            if str(graph_message.get("id") or "")
+            and str(graph_message.get("id") or "") not in seen
+        ]
+        latest_by_fingerprint = {
+            fingerprint: str(graph_message.get("id"))
+            for graph_message in unseen_messages
+            if (fingerprint := self._message_fingerprint(graph_message))
+        }
+
+        for graph_message in unseen_messages:
+            graph_message_id = str(graph_message.get("id") or "")
+            fingerprint = self._message_fingerprint(graph_message)
+            if (
+                fingerprint
+                and latest_by_fingerprint.get(fingerprint) != graph_message_id
+            ):
+                self._journal_skipped(
+                    channel,
+                    graph_message,
+                    reason="duplicate_message_superseded",
+                )
+                skipped += 1
+                new_seen.add(graph_message_id)
+                continue
+
+            raw_path = self._raw_graph_message_path(channel, graph_message_id)
+            self._write_json(raw_path, graph_message)
+            self.journal.append(
+                "teams_graph_channel_message_received",
+                project_id=self.project_id,
+                connector_id=self.connector_id,
+                channel=channel,
+                teams_message_id=graph_message_id,
+                teams_channel_id=self.connector_config.channels[channel].channel_id,
+                teams_team_id=self.connector_config.team_id,
+                raw_message_path=str(raw_path),
+            )
+
+            if self._should_skip_message(channel, graph_message):
+                skipped += 1
+                new_seen.add(graph_message_id)
+                continue
+
+            activity = self._activity_from_graph_message(channel, graph_message)
+            message = self.ingress._record_channel_intake(activity, raw_path)
+            if message is None:
+                skipped += 1
+            else:
+                routed += 1
+            new_seen.add(graph_message_id)
+
+        self._write_cursor(channel, new_seen)
+        return {"routed": routed, "skipped": skipped, "seen": len(new_seen)}
+
+    def _message_fingerprint(self, graph_message: dict[str, Any]) -> str:
+        text = _plain_text(self._message_text(graph_message)).casefold()
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _list_channel_messages(
+        self,
+        channel: str,
+        *,
+        max_messages: int,
+    ) -> list[dict[str, Any]]:
+        channel_config = self.connector_config.channels[channel]
+        url = (
+            "https://graph.microsoft.com/v1.0/teams/"
+            f"{quote(self.connector_config.team_id, safe='')}/channels/"
+            f"{quote(channel_config.channel_id, safe='')}/messages?"
+            f"{urlencode({'$top': max_messages})}"
+        )
+        req = request.Request(
+            url,
+            method="GET",
+            headers={"Authorization": f"Bearer {self.token}"},
+        )
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                response_body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            error_body = exc.read().decode("utf-8")
+            raise RuntimeError(f"Graph returned {exc.code}: {error_body}") from exc
+        payload = json.loads(response_body) if response_body else {}
+        value = payload.get("value") if isinstance(payload, dict) else None
+        return [item for item in value or [] if isinstance(item, dict)]
+
+    def _should_skip_message(self, channel: str, graph_message: dict[str, Any]) -> bool:
+        text = self._message_text(graph_message)
+        if not text:
+            self._journal_skipped(channel, graph_message, reason="empty_message")
+            return True
+        if channel == "all-agents" and not self._message_mentions(graph_message, channel):
+            self._journal_skipped(channel, graph_message, reason="missing_channel_mention")
+            return True
+        return False
+
+    def _activity_from_graph_message(
+        self,
+        channel: str,
+        graph_message: dict[str, Any],
+    ) -> dict[str, Any]:
+        channel_config = self.connector_config.channels[channel]
+        user = ((graph_message.get("from") or {}).get("user") or {})
+        application = ((graph_message.get("from") or {}).get("application") or {})
+        from_identity = user or application
+        return {
+            "type": "message",
+            "id": graph_message.get("id"),
+            "serviceUrl": "graph://microsoft-teams",
+            "timestamp": graph_message.get("createdDateTime"),
+            "text": self._message_text(graph_message),
+            "from": {
+                "id": from_identity.get("id"),
+                "name": from_identity.get("displayName"),
+            },
+            "conversation": {"id": channel_config.channel_id},
+            "channelData": {
+                "team": {"id": self.connector_config.team_id},
+                "channel": {"id": channel_config.channel_id, "name": channel_config.name},
+            },
+            "graph": {
+                "message_id": graph_message.get("id"),
+                "web_url": graph_message.get("webUrl"),
+                "mentions": graph_message.get("mentions") or [],
+            },
+        }
+
+    def _message_mentions(self, graph_message: dict[str, Any], mention: str) -> bool:
+        mention_key = mention.casefold()
+        mentions = graph_message.get("mentions") or []
+        for item in mentions:
+            if not isinstance(item, dict):
+                continue
+            mention_text = _plain_text(item.get("mentionText")).casefold()
+            if mention_text == mention_key:
+                return True
+        return mention_key in _plain_text(self._message_text(graph_message)).casefold().split()
+
+    @staticmethod
+    def _message_text(graph_message: dict[str, Any]) -> str:
+        body = graph_message.get("body") or {}
+        content = body.get("content") if isinstance(body, dict) else None
+        if isinstance(content, str) and content.strip():
+            return content
+        subject = graph_message.get("subject")
+        return subject if isinstance(subject, str) else ""
+
+    def _journal_skipped(
+        self,
+        channel: str,
+        graph_message: dict[str, Any],
+        *,
+        reason: str,
+    ) -> None:
+        self.journal.append(
+            "teams_graph_channel_message_skipped",
+            project_id=self.project_id,
+            connector_id=self.connector_id,
+            channel=channel,
+            teams_message_id=graph_message.get("id"),
+            reason=reason,
+        )
+
+    def _cursor_path(self, channel: str) -> Path:
+        return (
+            self.state_root
+            / "projects"
+            / self.project_id
+            / "connectors"
+            / "teams"
+            / "graph_ingress"
+            / channel
+            / "cursor.json"
+        )
+
+    def _raw_graph_message_path(self, channel: str, graph_message_id: str) -> Path:
+        safe_id = graph_message_id.replace("/", "_").replace("\\", "_")
+        return (
+            self.state_root
+            / "projects"
+            / self.project_id
+            / "connectors"
+            / "teams"
+            / "graph_ingress"
+            / channel
+            / "incoming"
+            / f"{safe_id}.json"
+        )
+
+    def _seen_message_ids(self, channel: str) -> set[str]:
+        path = self._cursor_path(channel)
+        if not path.exists():
+            return set()
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        seen = data.get("seen_message_ids") if isinstance(data, dict) else None
+        return {str(item) for item in seen or []}
+
+    def _write_cursor(self, channel: str, seen_message_ids: set[str]) -> None:
+        path = self._cursor_path(channel)
+        self._write_json(path, {"seen_message_ids": sorted(seen_message_ids)[-500:]})
+
+    @staticmethod
+    def _write_json(path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+
+
 def _plain_text(value: Any) -> str:
     if not isinstance(value, str):
         return ""

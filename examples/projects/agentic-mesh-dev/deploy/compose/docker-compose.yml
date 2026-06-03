@@ -39,6 +39,10 @@ services:
     <<: *agentic-mesh-service
     command: python -m agentic_mesh.cli teams-connector-loop --channel approvals --poll-seconds 5
 
+  teams-graph-ingress:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli teams-graph-ingress-loop --connector teams --channel all-agents --token-file /mesh/project/state/secrets/graph-delegated-token --poll-seconds 10
+
   business-analyst:
     <<: *agentic-mesh-service
     command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.business-analyst.1 --poll-seconds 5

@@ -14,6 +14,7 @@ from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.connectors import BotFrameworkTeamsConnectorAdapter
 from agentic_mesh.connectors import FileSecretResolver
+from agentic_mesh.connectors import GraphTeamsChannelIngressAdapter
 from agentic_mesh.connectors import GraphTeamsConnectorAdapter
 from agentic_mesh.connectors import LocalTeamsConnectorAdapter
 from agentic_mesh.connectors import load_graph_token
@@ -403,6 +404,54 @@ def cmd_teams_graph_connector_loop(args) -> int:
         time.sleep(args.poll_seconds)
 
 
+def cmd_teams_graph_ingress_once(args) -> int:
+    mesh_config, journal, message_store, _, _, _ = build_runtime(
+        args.config_root,
+        args.project_file,
+        args.workspace_root,
+        args.state_root,
+    )
+    configure_component_telemetry(mesh_config, "teams-ingress")
+    connector_config = mesh_config.project.connectors[args.connector]
+    token = load_graph_token(args.token, args.token_file)
+    ingress = GraphTeamsChannelIngressAdapter(
+        connector_id=args.connector_id,
+        project_id=mesh_config.project.project_id,
+        state_root=args.state_root,
+        connector_config=connector_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token=token,
+    )
+    results = {}
+    exit_code = 0
+    for channel in _connector_channels(mesh_config, args.connector, args.channel):
+        try:
+            results[channel] = ingress.process_once(
+                channel,
+                max_messages=args.max_messages,
+            )
+        except Exception as exc:
+            journal.append(
+                "teams_graph_ingress_failed",
+                project_id=mesh_config.project.project_id,
+                connector_id=args.connector_id,
+                channel=channel,
+                error=str(exc),
+            )
+            results[channel] = {"error": str(exc)}
+            exit_code = 1
+    print(json.dumps({"connector_id": args.connector_id, "results": results}))
+    return exit_code
+
+
+def cmd_teams_graph_ingress_loop(args) -> int:
+    while True:
+        cmd_teams_graph_ingress_once(args)
+        time.sleep(args.poll_seconds)
+
+
 def cmd_teams_bot_connector_once(args) -> int:
     mesh_config, journal, _, connector_outbox, _, _ = build_runtime(
         args.config_root,
@@ -554,6 +603,25 @@ def parser() -> argparse.ArgumentParser:
     teams_graph_loop.add_argument("--token-file", type=Path)
     teams_graph_loop.add_argument("--poll-seconds", type=int, default=5)
     teams_graph_loop.set_defaults(func=cmd_teams_graph_connector_loop)
+
+    teams_graph_ingress_once = subcommands.add_parser("teams-graph-ingress-once")
+    teams_graph_ingress_once.add_argument("--connector", default="teams")
+    teams_graph_ingress_once.add_argument("--channel", default="all-agents")
+    teams_graph_ingress_once.add_argument("--connector-id", default="teams-graph-ingress")
+    teams_graph_ingress_once.add_argument("--token")
+    teams_graph_ingress_once.add_argument("--token-file", type=Path)
+    teams_graph_ingress_once.add_argument("--max-messages", type=int, default=25)
+    teams_graph_ingress_once.set_defaults(func=cmd_teams_graph_ingress_once)
+
+    teams_graph_ingress_loop = subcommands.add_parser("teams-graph-ingress-loop")
+    teams_graph_ingress_loop.add_argument("--connector", default="teams")
+    teams_graph_ingress_loop.add_argument("--channel", default="all-agents")
+    teams_graph_ingress_loop.add_argument("--connector-id", default="teams-graph-ingress")
+    teams_graph_ingress_loop.add_argument("--token")
+    teams_graph_ingress_loop.add_argument("--token-file", type=Path)
+    teams_graph_ingress_loop.add_argument("--max-messages", type=int, default=25)
+    teams_graph_ingress_loop.add_argument("--poll-seconds", type=int, default=10)
+    teams_graph_ingress_loop.set_defaults(func=cmd_teams_graph_ingress_loop)
 
     teams_bot_once = subcommands.add_parser("teams-bot-connector-once")
     teams_bot_once.add_argument("--connector", default="teams")
