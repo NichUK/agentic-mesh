@@ -41,6 +41,15 @@ class StubCodexWorkerAdapter(WorkerAdapter):
             for consult_id, consult in flow_state.consults.items()
         ]
         consult_summary = "\n".join(consult_lines) if consult_lines else "  - none"
+        runtime_instructions = message.payload.get("runtime_instructions") or {}
+        handoff_lines = [
+            (
+                f"  - `{option.get('status')}` -> `{option.get('target_role')}` "
+                f"at `{option.get('target_state')}`"
+            )
+            for option in runtime_instructions.get("available_handoffs", [])
+        ]
+        handoff_summary = "\n".join(handoff_lines) if handoff_lines else "  - none"
 
         content = (
             f"\n## {title}\n\n"
@@ -53,10 +62,18 @@ class StubCodexWorkerAdapter(WorkerAdapter):
             f"- Source message: `{message.message_id}`\n"
             f"- Correlation id: `{message.correlation_id}`\n"
             f"- Summary: {summary}\n"
+            f"- Runtime scope: {runtime_instructions.get('scope', 'not provided')}\n"
+            f"- Handoff guidance: {runtime_instructions.get('handoff_guidance', 'not provided')}\n"
+            f"- Available handoff routes:\n{handoff_summary}\n"
+            f"- Error guidance: {runtime_instructions.get('error_guidance', 'not provided')}\n"
             f"- Allowed consult routes:\n{consult_summary}\n"
         )
         handoffs: list[Handoff] = []
-        transition = flow_state.handoffs.get("completed")
+        transition = (
+            flow_state.handoffs.get("completed")
+            if message.payload.get("auto_handoff") is True
+            else None
+        )
         if transition:
             handoffs.append(
                 Handoff(
@@ -70,6 +87,7 @@ class StubCodexWorkerAdapter(WorkerAdapter):
                         "previous_lifecycle_state": flow_state.state_id,
                         "lifecycle_state": transition.target_state,
                         "source_message_id": message.message_id,
+                        "auto_handoff": True,
                     },
                 )
             )

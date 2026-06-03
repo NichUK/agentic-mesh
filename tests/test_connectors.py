@@ -143,7 +143,7 @@ def test_teams_ingress_records_human_response_submit(tmp_path: Path) -> None:
     assert "human_response_completion_card_returned" in event_types
 
 
-def test_teams_ingress_routes_all_agents_message_to_default_intake(
+def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     tmp_path: Path,
 ) -> None:
     mesh_config = load_mesh_config(Path.cwd())
@@ -180,21 +180,24 @@ def test_teams_ingress_routes_all_agents_message_to_default_intake(
     )
 
     assert result["routed"] is True
-    assert result["target_role"] == "business-analyst"
-    assert result["lifecycle_state"] == "business_analysis"
+    roles = sorted(mesh_config.project.roles)
+    assert result["target_roles"] == roles
+    assert result["lifecycle_state"] is None
     assert result["work_item_id"].startswith("work-")
-    assert message_store.pending_count("business-analyst") == 1
+    assert all(message_store.pending_count(role_id) == 1 for role_id in roles)
 
     message = message_store.claim_next(
         "business-analyst",
         "agentic-mesh-dev.business-analyst.1",
     )
     assert message is not None
-    assert message.type == "sponsor_intake.requested"
+    assert message.type == "sponsor_directive.requested"
     assert message.source == "teams:teams-bot-listener:all-agents"
-    assert message.payload["work_item_type"] == "spike"
-    assert message.payload["lifecycle_state"] == "business_analysis"
+    assert message.payload["work_item_type"] == "directive"
+    assert message.payload["work_mode"] == "direct_broadcast"
     assert message.payload["source_channel"] == "all-agents"
+    assert message.payload["target_role"] == "business-analyst"
+    assert message.payload["output_path"] == "docs/requirements/business-analyst.md"
     assert message.payload["teams_from_name"] == "Nich"
     assert "Start an adoption process" in message.payload["summary"]
     assert "<at>" not in message.payload["summary"]
@@ -202,7 +205,7 @@ def test_teams_ingress_routes_all_agents_message_to_default_intake(
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_bot_activity_received" in event_types
     assert "message_accepted" in event_types
-    assert "teams_channel_message_routed" in event_types
+    assert "teams_all_agents_directive_routed" in event_types
 
 
 def test_teams_ingress_journals_unmapped_channel_message(
@@ -283,23 +286,24 @@ def test_graph_teams_channel_ingress_routes_all_agents_message(
 
     result = ingress.process_once("all-agents", max_messages=5)
 
-    assert result == {"routed": 1, "skipped": 0, "seen": 1}
+    role_count = len(mesh_config.project.roles)
+    assert result == {"routed": role_count, "skipped": 0, "seen": 1}
     assert message_store.pending_count("business-analyst") == 1
     message = message_store.claim_next(
         "business-analyst",
         "agentic-mesh-dev.business-analyst.1",
     )
     assert message is not None
-    assert message.type == "sponsor_intake.requested"
+    assert message.type == "sponsor_directive.requested"
     assert message.source == "teams:teams-graph-ingress:all-agents"
-    assert message.payload["work_item_type"] == "spike"
+    assert message.payload["work_item_type"] == "directive"
     assert message.payload["source_channel"] == "all-agents"
     assert message.payload["teams_activity_id"] == "1780489884072"
     assert message.payload["teams_from_name"] == "Nich"
 
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_graph_channel_message_received" in event_types
-    assert "teams_channel_message_routed" in event_types
+    assert "teams_all_agents_directive_routed" in event_types
 
 
 def test_graph_teams_channel_ingress_cursor_suppresses_duplicates(
@@ -333,7 +337,7 @@ def test_graph_teams_channel_ingress_cursor_suppresses_duplicates(
     ]
     ingress._list_channel_messages = lambda channel, max_messages: graph_messages
 
-    assert ingress.process_once("all-agents")["routed"] == 1
+    assert ingress.process_once("all-agents")["routed"] == len(mesh_config.project.roles)
     assert ingress.process_once("all-agents")["routed"] == 0
     assert message_store.pending_count("business-analyst") == 1
 

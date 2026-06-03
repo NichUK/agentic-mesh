@@ -16,6 +16,7 @@ from agentic_mesh import telemetry
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SDLC_HANDOFF
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.messaging import build_human_response_received_message
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.models import Message
@@ -901,16 +902,22 @@ class TeamsBotIngress:
                 self._update_original_card(activity, value, response_card, message)
                 return adaptive_card_invoke_response(response_card)
 
-            intake_message = self._record_channel_intake(activity, path)
-            if intake_message is not None:
+            intake_messages = self._record_channel_intake(activity, path)
+            if intake_messages:
+                if isinstance(intake_messages, Message):
+                    messages = [intake_messages]
+                else:
+                    messages = intake_messages
                 return {
                     "status": "accepted",
                     "activity_id": activity_id,
                     "routed": True,
-                    "message_id": intake_message.message_id,
-                    "target_role": intake_message.role_id,
-                    "work_item_id": intake_message.payload.get("work_item_id"),
-                    "lifecycle_state": intake_message.payload.get("lifecycle_state"),
+                    "message_id": messages[0].message_id,
+                    "message_ids": [message.message_id for message in messages],
+                    "target_role": messages[0].role_id,
+                    "target_roles": [message.role_id for message in messages],
+                    "work_item_id": messages[0].payload.get("work_item_id"),
+                    "lifecycle_state": messages[0].payload.get("lifecycle_state"),
                 }
 
         return {"status": "accepted", "activity_id": activity_id}
@@ -919,7 +926,7 @@ class TeamsBotIngress:
         self,
         activity: dict[str, Any],
         raw_activity_path: Path,
-    ) -> Message | None:
+    ) -> Message | list[Message] | None:
         if activity.get("type") != "message":
             return None
         text = _plain_text(activity.get("text"))
@@ -945,6 +952,13 @@ class TeamsBotIngress:
                 reason="unmapped_channel",
             )
             return None
+        if logical_channel == "all-agents":
+            return self._record_all_agents_directive(
+                activity,
+                raw_activity_path,
+                logical_channel=logical_channel,
+                text=text,
+            )
 
         sponsor_policy = self.project_config.flow.sponsor_initiated_work
         lifecycle_state = (
@@ -1009,6 +1023,67 @@ class TeamsBotIngress:
             correlation_id=message.correlation_id,
         )
         return message
+
+    def _record_all_agents_directive(
+        self,
+        activity: dict[str, Any],
+        raw_activity_path: Path,
+        *,
+        logical_channel: str,
+        text: str,
+    ) -> list[Message]:
+        assert self.project_config is not None
+        assert self.connector_config is not None
+        work_item_id = new_id("work")
+        title = _title_from_text(text)
+        from_user = activity.get("from") or {}
+        channel_data = activity.get("channelData") or {}
+        team = channel_data.get("team") or {}
+        channel = channel_data.get("channel") or {}
+        conversation = activity.get("conversation") or {}
+        roles = sorted(self.project_config.roles)
+        messages: list[Message] = []
+        for role_id in roles:
+            payload = {
+                "title": title,
+                "summary": text,
+                "text": text,
+                "work_item_id": work_item_id,
+                "work_item_type": "directive",
+                "work_mode": "direct_broadcast",
+                "target_role": role_id,
+                "requested_roles": roles,
+                "output_path": f"docs/requirements/{role_id}.md",
+                "source_connector": "teams",
+                "source_connector_id": self.connector_id,
+                "source_channel": logical_channel,
+                "teams_activity_id": activity.get("id"),
+                "teams_conversation_id": conversation.get("id"),
+                "teams_channel_id": channel.get("id") or conversation.get("id"),
+                "teams_team_id": team.get("id"),
+                "teams_from_id": from_user.get("id"),
+                "teams_from_name": from_user.get("name"),
+                "raw_activity_path": str(raw_activity_path),
+            }
+            message = Message.create(
+                role_id=role_id,
+                message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+                payload=payload,
+                source=f"teams:{self.connector_id}:{logical_channel}",
+            )
+            messages.append(self.message_store.enqueue(message))
+        self.journal.append(
+            "teams_all_agents_directive_routed",
+            project_id=self.project_id,
+            connector_id=self.connector_id,
+            channel=logical_channel,
+            target_roles=roles,
+            role_count=len(roles),
+            work_item_id=work_item_id,
+            work_item_type="directive",
+            teams_activity_id=activity.get("id"),
+        )
+        return messages
 
     def _logical_channel_for_activity(self, activity: dict[str, Any]) -> str | None:
         if self.connector_config is None:
@@ -1363,11 +1438,11 @@ class GraphTeamsChannelIngressAdapter:
                 continue
 
             activity = self._activity_from_graph_message(channel, graph_message)
-            message = self.ingress._record_channel_intake(activity, raw_path)
-            if message is None:
+            messages = self.ingress._record_channel_intake(activity, raw_path)
+            if messages is None:
                 skipped += 1
             else:
-                routed += 1
+                routed += 1 if isinstance(messages, Message) else len(messages)
             new_seen.add(graph_message_id)
 
         self._write_cursor(channel, new_seen)

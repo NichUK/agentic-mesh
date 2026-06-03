@@ -144,6 +144,7 @@ def test_runtime_flow_creates_trace_spans_and_propagates_context(tmp_path: Path)
                     "work_item_id": "slice-telemetry",
                     "work_item_type": "slice",
                     "lifecycle_state": "business_analysis",
+                    "auto_handoff": True,
                 },
                 source="test",
                 correlation_id="corr-1234567890abcdef1234567890abcdef",

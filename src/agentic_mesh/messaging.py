@@ -15,6 +15,7 @@ from agentic_mesh.models import new_id
 MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED = "human_response.requested"
 MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED = "human_response.received"
 MESSAGE_TYPE_SDLC_HANDOFF = "sdlc.handoff"
+MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED = "sponsor_directive.requested"
 
 
 def build_human_response_request(

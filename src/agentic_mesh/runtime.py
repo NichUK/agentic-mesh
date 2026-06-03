@@ -7,8 +7,10 @@ from agentic_mesh import telemetry
 from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.messaging import build_human_response_request
 from agentic_mesh.messaging import build_sdlc_handoff_connector_message
+from agentic_mesh.models import FlowState
 from agentic_mesh.models import Message
 from agentic_mesh.models import ProjectConfig
 from agentic_mesh.models import ResponseTypeTemplate
@@ -40,6 +42,8 @@ class AgentRuntime:
         message = self.message_store.claim_next(instance_config.role_id, instance_id)
         if message is None:
             return False
+        if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED:
+            return self._run_direct_directive(instance_id, instance_config, message)
         state_id = message.payload.get("lifecycle_state", self.project.flow.entry_state)
         flow_state = self.project.flow.states[state_id]
         if flow_state.owner_role != instance_config.role_id:
@@ -68,6 +72,11 @@ class AgentRuntime:
             attributes=agent_attrs,
         ) as agent_trace_context:
             message = replace(message, trace_context=agent_trace_context)
+            message = self._with_runtime_instructions(
+                message,
+                flow_state,
+                direct_work=False,
+            )
             self.journal.append(
                 "agent_run_started",
                 project_id=instance_config.project_id,
@@ -265,6 +274,153 @@ class AgentRuntime:
 
             self.message_store.complete(message, result.status)
             return True
+
+    def _run_direct_directive(self, instance_id: str, instance_config, message: Message) -> bool:
+        direct_state = FlowState(
+            state_id=str(message.payload.get("work_mode") or "direct_instruction"),
+            owner_role=instance_config.role_id,
+            purpose=(
+                "Direct sponsor instruction addressed to this role. "
+                "Use the loaded project context and lifecycle flow as reference only."
+            ),
+            artifact_path=str(
+                message.payload.get("output_path")
+                or f"docs/requirements/{instance_config.role_id}.md"
+            ),
+            handoffs={},
+            consults={},
+            gates=[],
+        )
+        attrs = telemetry.span_attributes(
+            project_id=instance_config.project_id,
+            role_id=instance_config.role_id,
+            role_instance_id=instance_id,
+            work_item_id=message.payload.get("work_item_id"),
+            work_item_type=message.payload.get("work_item_type"),
+            lifecycle_state=direct_state.state_id,
+            message_id=message.message_id,
+            correlation_id=message.correlation_id,
+            worker_adapter=instance_config.override.worker.adapter,
+            worker_model=instance_config.override.worker.model,
+        )
+        started = time.perf_counter()
+        with telemetry.start_span(
+            "agent.run",
+            correlation_id=message.correlation_id,
+            trace_context=message.trace_context,
+            attributes=attrs,
+        ) as trace_context:
+            message = replace(message, trace_context=trace_context)
+            message = self._with_runtime_instructions(
+                message,
+                direct_state,
+                direct_work=True,
+            )
+            self.journal.append(
+                "agent_directive_run_started",
+                project_id=instance_config.project_id,
+                role_id=instance_config.role_id,
+                role_instance_id=instance_id,
+                work_item_id=message.payload.get("work_item_id"),
+                work_item_type=message.payload.get("work_item_type"),
+                work_mode=message.payload.get("work_mode"),
+                message_id=message.message_id,
+                correlation_id=message.correlation_id,
+            )
+            with telemetry.start_span(
+                "worker.run",
+                correlation_id=message.correlation_id,
+                trace_context=message.trace_context,
+                attributes=attrs,
+            ):
+                result = self.worker.run(instance_config, message, direct_state)
+            for update in result.document_updates:
+                self.artifact_store.write_update(
+                    update=update,
+                    role_id=instance_config.role_id,
+                    role_instance_id=instance_id,
+                    correlation_id=message.correlation_id,
+                    work_item_id=message.payload.get("work_item_id"),
+                    work_item_type=message.payload.get("work_item_type"),
+                    lifecycle_state=direct_state.state_id,
+                    trace_context=message.trace_context,
+                )
+            telemetry.record_duration(
+                "agentic_mesh.agent.run.duration",
+                time.perf_counter() - started,
+                attrs,
+            )
+            for handoff in result.handoffs:
+                self.journal.append(
+                    "directive_handoff_ignored",
+                    project_id=instance_config.project_id,
+                    role_id=instance_config.role_id,
+                    role_instance_id=instance_id,
+                    target_role=handoff.target_role,
+                    work_item_id=message.payload.get("work_item_id"),
+                    correlation_id=message.correlation_id,
+                    reason="direct_broadcast_does_not_emit_handoffs",
+                )
+            self.message_store.complete(message, result.status)
+            return True
+
+    def _with_runtime_instructions(
+        self,
+        message: Message,
+        flow_state: FlowState,
+        *,
+        direct_work: bool,
+    ) -> Message:
+        handoff_options = [
+            {
+                "status": status,
+                "target_role": handoff.target_role,
+                "target_state": handoff.target_state,
+                "message_type": handoff.message_type,
+            }
+            for status, handoff in sorted(flow_state.handoffs.items())
+        ]
+        consult_options = [
+            {
+                "consult_id": consult_id,
+                "target_role": consult.target_role,
+                "target_state": consult.target_state,
+                "message_type": consult.message_type,
+                "purpose": consult.purpose,
+            }
+            for consult_id, consult in sorted(flow_state.consults.items())
+        ]
+        if direct_work:
+            scope = (
+                "This work was addressed directly to this role and is not currently "
+                "inside the lifecycle flow."
+            )
+        else:
+            scope = (
+                f"This work is currently in lifecycle state `{flow_state.state_id}`, "
+                f"owned by `{flow_state.owner_role}`."
+            )
+        payload = dict(message.payload)
+        payload["runtime_instructions"] = {
+            "scope": scope,
+            "lifecycle_state": None if direct_work else flow_state.state_id,
+            "state_purpose": flow_state.purpose,
+            "artifact_path": flow_state.artifact_path,
+            "handoff_guidance": (
+                "Use the available handoff routes as options, not commands. "
+                "Only emit a handoff when you decide your work is complete or "
+                "blocked in a way that another role should own next."
+            ),
+            "available_handoffs": handoff_options,
+            "available_consults": consult_options,
+            "error_guidance": (
+                "If you cannot complete the work, return a blocked, "
+                "needs_clarification, or failed result with the reason, evidence, "
+                "and any specific role or human input needed. Do not create a "
+                "handoff just to hide an error."
+            ),
+        }
+        return replace(message, payload=payload)
 
     def _queue_handoff_connector_message(
         self,

@@ -3,6 +3,7 @@ from pathlib import Path
 from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.journal import EventJournal
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.models import Message
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.runtime import AgentRuntime
@@ -33,6 +34,7 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
                 "work_item_id": "slice-local-runtime",
                 "work_item_type": "slice",
                 "lifecycle_state": "business_analysis",
+                "auto_handoff": True,
             },
             source="test",
         )
@@ -113,6 +115,7 @@ def test_parallel_work_items_keep_independent_lifecycle_context(tmp_path: Path) 
                     "work_item_id": work_item_id,
                     "work_item_type": work_item_type,
                     "lifecycle_state": "business_analysis",
+                    "auto_handoff": True,
                 },
                 source="test",
             )
@@ -242,6 +245,7 @@ def test_sdlc_handoff_queues_connector_message(tmp_path: Path) -> None:
                 "work_item_id": "slice-teams-smoke",
                 "work_item_type": "slice",
                 "lifecycle_state": "business_analysis",
+                "auto_handoff": True,
             },
             source="test",
         )
@@ -259,6 +263,65 @@ def test_sdlc_handoff_queues_connector_message(tmp_path: Path) -> None:
     assert handoff.payload["source_role"] == "business-analyst"
     assert handoff.payload["target_role"] == "product-manager"
     assert handoff.payload["target_lifecycle_state"] == "product_definition"
+
+
+def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        StubCodexWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+
+    message_store.enqueue(
+        Message.create(
+            role_id="release-manager",
+            message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+            payload={
+                "title": "Adopt this project",
+                "summary": "Analyse the repo from your release perspective.",
+                "work_item_id": "work-adoption",
+                "work_item_type": "directive",
+                "work_mode": "direct_broadcast",
+                "output_path": "docs/requirements/release-manager.md",
+            },
+            source="test",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.release-manager.1",
+        mesh_config.instances["agentic-mesh-dev.release-manager.1"],
+    )
+
+    assert connector_outbox.pending_count("approvals") == 0
+    assert message_store.pending_count("delivery-manager") == 0
+    artifact = tmp_path / "workspace" / "docs" / "requirements" / "release-manager.md"
+    content = artifact.read_text(encoding="utf-8")
+    assert "not currently inside the lifecycle flow" in content
+    assert "Use the available handoff routes as options, not commands" in content
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "agent_directive_run_started" in event_types
+    assert "handoff_emitted" not in event_types
+    assert "human_response_requested" not in event_types
 
 
 def test_human_response_received_completes_release_review(tmp_path: Path) -> None:
