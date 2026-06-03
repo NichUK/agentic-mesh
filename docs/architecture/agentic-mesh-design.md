@@ -44,6 +44,7 @@ architecture must not be limited to development roles.
 
 - Role agents are long-running workers with their own identity, storage,
   configuration, instructions, queue, and tool boundary.
+- Role templates use functional role titles, not hard-coded named personas.
 - Permanent role templates are governed centrally and updated rarely.
 - Projects can override role instructions, tools, write boundaries,
   connectors, and scaling without mutating the permanent role template.
@@ -77,47 +78,45 @@ mounted volume.
 Example local topology:
 
 ```text
-agentic-mesh-project/
+agentic-mesh/                    # system/runtime repository
   docker-compose.yml
   config/
     organization.yaml
-    role-templates/
+    roles/
       product-manager.yaml
       solution-architect.yaml
       enterprise-architect.yaml
       engineering.yaml
       qa-engineer.yaml
+    flows/
+      sdlc.yaml
+    schemas/
+      project.schema.json
+  examples/
     projects/
-      quantauma.yaml
-    connectors/
-      teams.yaml
-      slack.yaml
-    storage/
-      local.yaml
+      agentic-mesh-dev.yaml
   state/
     projects/
-      quantauma/
+      agentic-mesh-dev/
         product-manager-1/
           inbox/
           outbox/
           journal/
           memory/
-          instructions/
         engineering-1/
           inbox/
           outbox/
           journal/
-          workspace/
-        engineering-2/
-          inbox/
-          outbox/
-          journal/
-          workspace/
-  shared/
+      connectors/
+      secrets/
+
+agentic-mesh-projects/
+  quantauma/                      # project repository/workspace
+    agentic-mesh/project.yaml
+    src/
+    tests/
     docs/
-    decisions/
-    stories/
-    test-evidence/
+    evidence/
     releases/
 ```
 
@@ -194,6 +193,9 @@ Organization defaults apply across projects without changing role templates.
 
 They define:
 
+- global language and locale for conversations, documents, generated
+  artifacts, and handoffs
+- authentication method catalog for workers, connectors, and tool adapters
 - approved providers
 - default worker adapter
 - enterprise policy constraints
@@ -201,6 +203,10 @@ They define:
 - telemetry destination
 - default storage backend
 - default connector configuration
+- documentation standards
+- conversation standards
+- handoff standards
+- security defaults
 
 ### Project Override
 
@@ -216,6 +222,8 @@ It may define:
 - connector channel mappings
 - storage backend selection
 - worker/model selection
+- worker authentication binding by method id and secret or mount reference
+- document accountabilities and owner-review expectations
 - instance count
 - tool narrowing or expansion subject to policy
 
@@ -223,6 +231,14 @@ Example:
 
 ```yaml
 project_id: quantauma
+workspace:
+  root: .
+  default_repository: quantauma
+  repositories:
+    quantauma:
+      type: git
+      path: .
+      default_branch: main
 roles:
   engineering:
     template: engineering
@@ -230,16 +246,26 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      auth:
+        method: codex_access_token
+        secret_ref: codex-quantauma-engineering-token
     instructions:
       - Follow Quantauma front-office/back-office boundary decisions.
       - Do not change production deployment files without release approval.
     write_paths:
-      - repos/quantauma-front-office/**
+      - src/**
+      - tests/**
       - docs/engineering/**
     channels:
       primary: engineering
       handoff_inbox: engineering
 ```
+
+`workspace.root` is resolved under `AGENTIC_MESH_WORKSPACE_ROOT` unless it is
+absolute. Role `write_paths` and flow `artifact_path` values are relative to
+that effective project workspace. This is the boundary that lets role agents
+do real work in source, test, documentation, evidence, and release files while
+the runtime image remains reusable and configuration/state stay external.
 
 ### Role Instance
 
@@ -265,6 +291,37 @@ Example instance ids:
 Multi-instancing is how a project scales a role. It must not require cloning or
 renaming the role template. Work claiming, leases, and handoff routing must
 support competing consumers for the same role.
+
+### Naming And Telemetry Identity
+
+Organization defaults define runtime naming and branding policy. The open-source
+dogfood default is:
+
+```yaml
+naming_defaults:
+  brand_prefix: AM
+  service_name_template: "{brand_prefix}.{team_slug}.{role_id}.{ordinal}"
+  bot_display_name_template: "{brand_prefix}-{role_display_name}"
+  resource_namespace: agentic-mesh
+```
+
+Role-agent telemetry service names use the configured template. For the
+`dev-team` dogfood project, Engineering instance 1 emits:
+
+```text
+service.name = AM.dev-team.engineering.1
+```
+
+The `team_slug` is derived from the primary collaboration connector team name.
+If a project has no collaboration team configured, it falls back to
+`project_id`. This keeps similarly named roles in different enterprise teams
+distinguishable in observability tools, for example
+`AM.dev-team.engineering.1` versus `AM.accounting.engineering.1`.
+
+Microsoft Teams bot display names should also follow the naming policy unless a
+connector-specific override is required. Current dogfood app registrations keep
+explicit `AM-*` display names, but those names are generated from the same
+branding convention.
 
 ## Agent Lifecycle And Hibernation
 
@@ -397,6 +454,37 @@ Supported initial adapters:
 The runtime must define an internal tool protocol rather than leaking provider
 tool-call formats into the product. Adapters map the internal tool protocol to
 provider-specific capabilities where available.
+
+Worker authentication is configured separately from role semantics. A project
+selects an auth method from the system catalog in `config/auth-methods.yaml`
+and provides only `secret_ref`, `mount_ref`, or non-secret hints. See
+`docs/architecture/authentication.md`.
+
+## Human Response Gates
+
+Human gates are structured response contracts, not just approval requests. A
+flow gate can require a human or external authority to provide a response
+before handoff continues.
+
+Reusable response type templates live in `config/response-types.yaml`. Stock
+templates include approve/not approve, yes/no, number, money, single-line text,
+multiline text, document reference, URL, and document-or-URL responses. Flow
+gates reference these templates with `response_type` and define gate-specific
+completion criteria.
+
+Connector adapters such as Teams Adaptive Cards, Slack modals, email replies,
+local CLI prompts, and future control-plane forms should render the same
+response contract into their own UX. The core runtime stores and evaluates the
+normalized response, not the connector-specific payload. See
+`docs/architecture/human-response-gates.md`.
+
+## Document Lifecycle
+
+Projects can declare document accountabilities. The accountable owner ensures a
+document exists, is complete, and remains correct, but other roles may
+contribute. Contributions should emit document lifecycle events and can trigger
+owner review before downstream handoff gates pass. See
+`docs/architecture/document-lifecycle.md`.
 
 Normalized request fields:
 
@@ -652,6 +740,33 @@ summarized, snapshotted, or committed where useful.
 The future configuration UI must edit config files, validate them, and commit
 changes. It should not become a hidden database-backed configuration authority.
 
+Agentic Mesh should distinguish the system repository from project
+repositories. The system repository owns runtime code, default configuration,
+role templates, reusable flow templates, configuration schemas, examples, and
+product documentation.
+Real projects should live in separate repositories or workspaces that carry
+project overlays, documentation, evidence, and secret references by name. See
+`docs/architecture/repository-topology.md`.
+
+## Flow Templates And Schemas
+
+Flow is project configuration layered over role instructions. Role templates
+describe durable role behavior, while a flow template describes lifecycle
+states, accountable owner roles, handoff targets, artifacts, and gates for a
+class of work.
+
+The system repository may provide stock flow templates under `config/flows/`.
+The first template is `config/flows/sdlc.yaml`, which describes the dogfood
+software-delivery lifecycle for slices, features, and spikes. Projects can
+reference a template and apply project-specific overrides without copying the
+whole graph into every project YAML file.
+
+Project configuration schemas live under `config/schemas/`. The initial
+`project.schema.json` documents the expected shape for project overlays,
+including roles, worker/auth bindings, document accountabilities, and either an
+inline flow or a referenced flow template. `response-types.schema.json`
+documents the reusable response template catalog.
+
 ## Open Source And Commercial Model
 
 Agentic Mesh should be an open source project with a commercially sustainable
@@ -671,6 +786,7 @@ Open source core should include:
 - basic Microsoft Teams connector where licensing and platform constraints
   allow
 - starter role packs, including a BMAD-inspired software delivery pack
+  expressed as functional role templates rather than named agents
 
 Commercial offerings may include:
 
@@ -785,6 +901,32 @@ Each agent container should have:
 Secrets must not be stored in role config, project overrides, or Git. Config
 files reference secret names or provider paths, not secret values.
 
+## Future Flow Catalogs
+
+Project flow overlays let each project define its own lifecycle graph. Agentic
+Mesh should eventually provide optional stock flow catalogs based on common
+enterprise delivery and operating patterns.
+
+This should be treated as research-backed product work, not an assumption in
+the core runtime. When a Research Analyst role is added, it should own an
+initial research task to identify candidate stock flows, document the
+enterprise patterns they come from, and propose which should become starter
+flow templates.
+
+Potential research areas:
+
+- software delivery lifecycle variants
+- enterprise architecture review flows
+- security and compliance review flows
+- procurement and vendor assessment flows
+- data governance and analytics delivery flows
+- incident, support, and operations flows
+- change advisory and release governance flows
+
+Stock flows should remain optional templates. Projects must still be able to
+override lifecycle states, owners, handoffs, artifacts, and parallel work item
+types.
+
 ## Open Questions
 
 - Should the router be one container per project or a shared multi-project
@@ -813,17 +955,18 @@ to implement every role.
 
 Scope:
 
-- Docker Compose project with `router`, `product-manager`, `engineering`, and
-  `control-plane`, and `otel-collector`.
-- permanent role template files for Product and Engineering.
-- project override file declaring a test project and two Engineering
-  instances.
+- Docker Compose project with `router`, `control-plane`, configured role-agent
+  containers, and `otel-collector`.
+- permanent role template files for the starter SDLC roles.
+- project override file declaring the `agentic-mesh-dev` project, configured
+  role instances, and the project-specific SDLC flow overlay.
 - file-backed message, state, artifact, and journal adapters.
 - lifecycle policy with idle hibernation and wake-on-inbox behavior.
 - worker adapter interface with `codex-cli` as the first concrete adapter.
 - Teams connector design stub or minimal local connector if Teams credentials
   are not ready.
-- visible flow from product intake to engineering handoff.
+- visible flow through project-configured lifecycle states without hard-coding
+  the handoff graph into role templates or worker adapters.
 
 Acceptance criteria:
 
@@ -836,10 +979,13 @@ Acceptance criteria:
 - Role instances load permanent role template plus project override.
 - A project can run at least two Engineering instances against the same role
   queue without duplicate claims.
-- A product work item can be written to Product's inbox.
-- Product claims the item, records a product decision or story, and emits a
-  handoff.
-- One Engineering instance receives and claims the handoff in its own inbox.
+- A project flow overlay declares SDLC lifecycle states, state owner roles,
+  allowed work item types, and handoff targets.
+- Work item messages carry `work_item_id`, `work_item_type`, and
+  `lifecycle_state` so slices, features, and spikes can progress in parallel.
+- A work item can be written to the role that owns the configured entry state.
+- Each role claims work for the lifecycle state it owns, records configured
+  artifacts, and emits the configured next-state handoff.
 - The event journal records receive, claim, run, documentation update, handoff,
   and delivery events.
 - OTEL traces show the same correlation id through routing and agent execution.

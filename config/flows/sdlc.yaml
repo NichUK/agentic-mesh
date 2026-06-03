@@ -1,0 +1,208 @@
+flow_id: agentic-mesh-sdlc-v0
+name: Agentic Mesh SDLC
+description: Enterprise-oriented software delivery lifecycle template with accountable document owner-review gates.
+entry_state: business_analysis
+work_item_types:
+  - slice
+  - feature
+  - spike
+states:
+  business_analysis:
+    owner_role: business-analyst
+    purpose: Frame business context, stakeholders, constraints, and outcome measures.
+    artifact_path: docs/business/briefs.md
+    gates:
+      - gate_id: business_brief_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/business/briefs.md
+        required_review_status: approved
+        reviewer_role: business-analyst
+    handoffs:
+      completed:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.product_definition
+  product_definition:
+    owner_role: product-manager
+    purpose: Define product intent, slice boundaries, and acceptance criteria.
+    artifact_path: docs/product/stories.md
+    gates:
+      - gate_id: product_story_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/product/stories.md
+        required_review_status: approved
+        reviewer_role: product-manager
+    handoffs:
+      completed:
+        target_state: experience_design
+        target_role: ux-designer
+        message_type: sdlc.experience_design
+  experience_design:
+    owner_role: ux-designer
+    purpose: Define user workflows, interaction requirements, and usability implications.
+    artifact_path: docs/ux/design-notes.md
+    gates:
+      - gate_id: ux_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/ux/design-notes.md
+        required_review_status: approved
+        reviewer_role: ux-designer
+    handoffs:
+      completed:
+        target_state: enterprise_alignment
+        target_role: enterprise-architect
+        message_type: sdlc.enterprise_alignment
+  enterprise_alignment:
+    owner_role: enterprise-architect
+    purpose: Review enterprise fit, governance implications, integration boundaries, and operating constraints.
+    artifact_path: docs/architecture/enterprise-notes.md
+    gates:
+      - gate_id: enterprise_architecture_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/architecture/enterprise-notes.md
+        required_review_status: approved
+        reviewer_role: enterprise-architect
+    handoffs:
+      completed:
+        target_state: solution_design
+        target_role: solution-architect
+        message_type: sdlc.solution_design
+  solution_design:
+    owner_role: solution-architect
+    purpose: Define design constraints, interfaces, and implementation guidance.
+    artifact_path: docs/architecture/solution-notes.md
+    gates:
+      - gate_id: solution_design_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/architecture/solution-notes.md
+        required_review_status: approved
+        reviewer_role: solution-architect
+    handoffs:
+      completed:
+        target_state: security_review
+        target_role: security-architect
+        message_type: sdlc.security_review
+  security_review:
+    owner_role: security-architect
+    purpose: Review security, identity, secrets, trust boundaries, and compliance-sensitive concerns.
+    artifact_path: docs/security/security-decisions.md
+    gates:
+      - gate_id: security_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/security/security-decisions.md
+        required_review_status: approved
+        reviewer_role: security-architect
+    handoffs:
+      completed:
+        target_state: platform_readiness
+        target_role: platform-engineer
+        message_type: sdlc.platform_readiness
+  platform_readiness:
+    owner_role: platform-engineer
+    purpose: Confirm local runtime, deployment, observability, and operations implications.
+    artifact_path: docs/platform/operations.md
+    gates:
+      - gate_id: platform_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/platform/operations.md
+        required_review_status: approved
+        reviewer_role: platform-engineer
+    handoffs:
+      completed:
+        target_state: implementation
+        target_role: engineering
+        message_type: sdlc.implementation
+  implementation:
+    owner_role: engineering
+    purpose: Implement the approved work item and collect implementation evidence.
+    artifact_path: docs/engineering/implementation-log.md
+    gates:
+      - gate_id: implementation_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/engineering/implementation-log.md
+        required_review_status: approved
+        reviewer_role: engineering
+    handoffs:
+      completed:
+        target_state: quality_review
+        target_role: qa-engineer
+        message_type: sdlc.quality_review
+  quality_review:
+    owner_role: qa-engineer
+    purpose: Validate acceptance criteria and record test evidence.
+    artifact_path: docs/qa/test-evidence.md
+    gates:
+      - gate_id: qa_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/qa/test-evidence.md
+        required_review_status: approved
+        reviewer_role: qa-engineer
+    handoffs:
+      completed:
+        target_state: documentation_readiness
+        target_role: technical-writer
+        message_type: sdlc.documentation_readiness
+  documentation_readiness:
+    owner_role: technical-writer
+    purpose: Validate docs, release notes, diagrams, and terminology for the completed work item.
+    artifact_path: docs/technical-writing/documentation-log.md
+    gates:
+      - gate_id: documentation_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/technical-writing/documentation-log.md
+        required_review_status: approved
+        reviewer_role: technical-writer
+    handoffs:
+      completed:
+        target_state: delivery_readiness
+        target_role: delivery-manager
+        message_type: sdlc.delivery_readiness
+  delivery_readiness:
+    owner_role: delivery-manager
+    purpose: Confirm cross-role evidence, blockers, and release readiness before release review.
+    artifact_path: docs/delivery/status.md
+    gates:
+      - gate_id: delivery_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/delivery/status.md
+        required_review_status: approved
+        reviewer_role: delivery-manager
+    handoffs:
+      completed:
+        target_state: release_review
+        target_role: release-manager
+        message_type: sdlc.release_review
+  release_review:
+    owner_role: release-manager
+    purpose: Confirm release readiness and record release outcome.
+    artifact_path: docs/releases/release-records.md
+    gates:
+      - gate_id: release_decision_response
+        type: human_response
+        response_type: approve_not_approve
+        prompt: Record the final release decision for this work item.
+        requested_from: release-sponsor
+        channel: approvals
+        timeout: PT48H
+        on_timeout: escalate
+        completion_criteria:
+          accepted_values:
+            - approved
+      - gate_id: release_owner_review
+        type: document_owner_review
+        required_documents:
+          - docs/releases/release-records.md
+        required_review_status: approved
+        reviewer_role: release-manager
+    handoffs: {}

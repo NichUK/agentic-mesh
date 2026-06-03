@@ -1,0 +1,455 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-mesh.local/schemas/project.schema.json",
+  "title": "Agentic Mesh Project Configuration",
+  "description": "Schema for project.yaml files and example project overlays.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project_id", "name", "workspace", "roles", "flow"],
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "roles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/projectRole"
+      }
+    },
+    "workspace": {
+      "$ref": "#/$defs/projectWorkspace"
+    },
+    "connectors": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/projectConnector"
+      },
+      "default": {}
+    },
+    "document_accountabilities": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/documentAccountability"
+      },
+      "default": {}
+    },
+    "flow": {
+      "$ref": "#/$defs/flow"
+    }
+  },
+  "$defs": {
+    "projectWorkspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "default_repository", "repositories"],
+      "description": "Declares the mounted project workspace and repository roots agents may use for work.",
+      "properties": {
+        "root": {
+          "type": "string",
+          "description": "Project workspace root. Relative paths are resolved under AGENTIC_MESH_WORKSPACE_ROOT."
+        },
+        "default_repository": {
+          "type": "string",
+          "description": "Repository id used for relative flow artifacts and role write paths unless a future work item overrides it."
+        },
+        "repositories": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/projectRepository"
+          }
+        }
+      }
+    },
+    "projectRepository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["git", "filesystem"]
+        },
+        "path": {
+          "type": "string",
+          "description": "Repository root path relative to workspace.root, or an absolute mounted path."
+        },
+        "default_branch": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        }
+      }
+    },
+    "projectRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template", "instances", "worker", "instructions", "write_paths", "channels"],
+      "properties": {
+        "template": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "instances": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "worker": {
+          "$ref": "#/$defs/worker"
+        },
+        "instructions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "write_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "channels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {}
+        }
+      }
+    },
+    "projectConnector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "identity_model", "team", "channels"],
+      "properties": {
+        "adapter": {
+          "type": "string"
+        },
+        "identity_model": {
+          "type": "string",
+          "enum": ["shared_bot", "role_bots", "role_instance_bots"]
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "ingress": {
+          "$ref": "#/$defs/connectorIngress"
+        },
+        "team": {
+          "$ref": "#/$defs/teamsTeam"
+        },
+        "channels": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/teamsChannel"
+          }
+        },
+        "role_bots": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/teamsRoleBot"
+          },
+          "default": {}
+        }
+      }
+    },
+    "connectorIngress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["public_endpoint", "listen_host", "listen_port", "path"],
+      "properties": {
+        "public_endpoint": {
+          "type": "string",
+          "format": "uri"
+        },
+        "listen_host": {
+          "type": "string",
+          "default": "0.0.0.0"
+        },
+        "listen_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 3978
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    },
+    "teamsTeam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "teamsChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "teamsRoleBot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_name", "bot_id_ref", "secret_ref"],
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "bot_id_ref": {
+          "type": "string"
+        },
+        "secret_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "model"],
+      "properties": {
+        "adapter": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "auth": {
+          "$ref": "#/$defs/authBinding"
+        }
+      }
+    },
+    "authBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method"],
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "secret_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mount_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {}
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "documentAccountability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner_role"],
+      "properties": {
+        "owner_role": {
+          "type": "string"
+        },
+        "accountability": {
+          "type": "string",
+          "default": "accountable_owner"
+        },
+        "can_edit_contributions": {
+          "type": "boolean",
+          "default": true
+        },
+        "review_on_contribution": {
+          "type": "boolean",
+          "default": false
+        },
+        "required_sections": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "contributing_roles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "lifecycle_events": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+    "flow": {
+      "oneOf": [
+        { "$ref": "#/$defs/templateFlow" },
+        { "$ref": "#/$defs/inlineFlow" }
+      ]
+    },
+    "templateFlow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template"],
+      "properties": {
+        "template": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "overrides": {
+          "description": "Partial deep-merge overlay applied to the referenced flow template.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "inlineFlow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["flow_id", "entry_state", "work_item_types", "states"],
+      "properties": {
+        "flow_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "entry_state": {
+          "type": "string"
+        },
+        "work_item_types": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "states": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/flowState"
+          }
+        }
+      }
+    },
+    "flowState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner_role", "purpose", "artifact_path", "handoffs"],
+      "properties": {
+        "owner_role": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "artifact_path": {
+          "type": "string"
+        },
+        "gates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/flowGate" },
+          "default": []
+        },
+        "handoffs": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/flowHandoff"
+          }
+        }
+      }
+    },
+    "flowGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate_id", "type"],
+      "properties": {
+        "gate_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "required_documents": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "required_review_status": {
+          "type": "string"
+        },
+        "reviewer_role": {
+          "type": "string"
+        },
+        "response_type": {
+          "type": "string",
+          "description": "Response type template id from config/response-types.yaml."
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "requested_from": {
+          "type": "string",
+          "description": "Logical human, group, role, or external authority asked to respond."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Logical connector channel for the request, such as approvals."
+        },
+        "timeout": {
+          "type": "string",
+          "description": "ISO-8601 duration before timeout handling applies."
+        },
+        "on_timeout": {
+          "type": "string"
+        },
+        "completion_criteria": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        }
+      }
+    },
+    "flowHandoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_state", "target_role"],
+      "properties": {
+        "target_state": {
+          "type": "string"
+        },
+        "target_role": {
+          "type": "string"
+        },
+        "message_type": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

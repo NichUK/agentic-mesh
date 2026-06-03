@@ -1,0 +1,628 @@
+project_id: agentic-mesh-dev
+name: Agentic Mesh Development
+flow:
+  template: sdlc
+workspace:
+  root: .
+  default_repository: agentic-mesh
+  repositories:
+    agentic-mesh:
+      type: git
+      path: .
+      default_branch: main
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    identity_model: role_bots
+    tenant_id: 564b667c-5b1a-4bbc-bb43-918b0b765a9b
+    ingress:
+      public_endpoint: https://vpn.nixnet.com/api/messages
+      listen_host: 0.0.0.0
+      listen_port: 3978
+      path: /api/messages
+    role_bots:
+      business-analyst:
+        display_name: AM-Business Analyst
+        bot_id_ref: teams-bot-business-analyst-app-id
+        secret_ref: teams-bot-business-analyst-secret
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: teams-bot-product-manager-app-id
+        secret_ref: teams-bot-product-manager-secret
+      ux-designer:
+        display_name: AM-UX Designer
+        bot_id_ref: teams-bot-ux-designer-app-id
+        secret_ref: teams-bot-ux-designer-secret
+      enterprise-architect:
+        display_name: AM-Enterprise Architect
+        bot_id_ref: teams-bot-enterprise-architect-app-id
+        secret_ref: teams-bot-enterprise-architect-secret
+      solution-architect:
+        display_name: AM-Solution Architect
+        bot_id_ref: teams-bot-solution-architect-app-id
+        secret_ref: teams-bot-solution-architect-secret
+      security-architect:
+        display_name: AM-Security Architect
+        bot_id_ref: teams-bot-security-architect-app-id
+        secret_ref: teams-bot-security-architect-secret
+      platform-engineer:
+        display_name: AM-Platform Engineer
+        bot_id_ref: teams-bot-platform-engineer-app-id
+        secret_ref: teams-bot-platform-engineer-secret
+      engineering:
+        display_name: AM-Engineering
+        bot_id_ref: teams-bot-engineering-app-id
+        secret_ref: teams-bot-engineering-secret
+      qa-engineer:
+        display_name: AM-QA Engineer
+        bot_id_ref: teams-bot-qa-engineer-app-id
+        secret_ref: teams-bot-qa-engineer-secret
+      technical-writer:
+        display_name: AM-Technical Writer
+        bot_id_ref: teams-bot-technical-writer-app-id
+        secret_ref: teams-bot-technical-writer-secret
+      delivery-manager:
+        display_name: AM-Delivery Manager
+        bot_id_ref: teams-bot-delivery-manager-app-id
+        secret_ref: teams-bot-delivery-manager-secret
+      research-analyst:
+        display_name: AM-Research Analyst
+        bot_id_ref: teams-bot-research-analyst-app-id
+        secret_ref: teams-bot-research-analyst-secret
+      release-manager:
+        display_name: AM-Release Manager
+        bot_id_ref: teams-bot-release-manager-app-id
+        secret_ref: teams-bot-release-manager-secret
+    team:
+      id: 37a58a51-c42b-417b-8733-608afda205fc
+      name: dev-team
+    channels:
+      all-agents:
+        id: 19:f8Jv56Jp0J1svuc4x89d4yyj3X--8SQLiCrCPYrgJTA1@thread.tacv2
+        name: all-agents
+      approvals:
+        id: 19:0aee6a530977440a9e063eba2153bdbf@thread.tacv2
+        name: approvals
+      business-analysis:
+        id: 19:0df460a94e064d0fbc9aabeece5be107@thread.tacv2
+        name: business-analysis
+      product:
+        id: 19:92b5e7c93838476cb4442ca2099d5ceb@thread.tacv2
+        name: product
+      ux:
+        id: 19:c3c5525c6d934b3b98c53a3d6d975cb8@thread.tacv2
+        name: ux
+      enterprise-architecture:
+        id: 19:a31823f688034986b4c7d476cbaf805a@thread.tacv2
+        name: enterprise-architecture
+      solution-architecture:
+        id: 19:769ef8c6305d4f839a42647f6631e1d9@thread.tacv2
+        name: solution-architecture
+      security:
+        id: 19:08f7f86b9ee04be1a40ae3a511b50c4a@thread.tacv2
+        name: security
+      platform:
+        id: 19:ef8409c0a8ac4ae885b1a73396f5a568@thread.tacv2
+        name: platform
+      engineering:
+        id: 19:0e7d391966254bd78a574222837c0def@thread.tacv2
+        name: engineering
+      qa:
+        id: 19:ca1ddf4932f1411696997e5fd17561f8@thread.tacv2
+        name: qa
+      technical-writing:
+        id: 19:924c83e2bdca4873be49765e4e6869b3@thread.tacv2
+        name: technical-writing
+      delivery:
+        id: 19:6e4f216142954b8db535b4b8c6ba4c88@thread.tacv2
+        name: delivery
+      research:
+        id: 19:c533aa99fb1445039f130130cb7d08e0@thread.tacv2
+        name: research
+      release:
+        id: 19:0abfe2b5e6a645438860c8ab22361fc1@thread.tacv2
+        name: release
+roles:
+  business-analyst:
+    template: business-analyst
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-business-analyst-token
+    instructions:
+    - Frame Agentic Mesh work in terms of enterprise users, operating constraints,
+      and measurable outcomes.
+    - Produce business context before Product defines implementation slices.
+    write_paths:
+    - docs/business/**
+    - docs/implementation-slices/**
+    channels:
+      primary: business-analysis
+      handoff_inbox: business-analysis
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-product-manager-token
+    instructions:
+    - Define product intent, slice boundaries, and acceptance criteria before downstream
+      work.
+    - Treat slices, features, and spikes as separate work items that can progress
+      independently.
+    write_paths:
+    - docs/product/**
+    - docs/implementation-slices/**
+    channels:
+      primary: product
+      handoff_inbox: product
+  ux-designer:
+    template: ux-designer
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        method: codex_oauth_cache
+        mount_ref: local-codex-ux-designer-home
+    instructions:
+    - Define UX implications for control-plane, Teams, and local developer workflows
+      when a slice affects human interaction.
+    - Keep UX artifacts lightweight until a UI surface is actually in scope.
+    write_paths:
+    - docs/ux/**
+    - docs/implementation-slices/**
+    channels:
+      primary: ux
+      handoff_inbox: ux
+  enterprise-architect:
+    template: enterprise-architect
+    instances: 1
+    worker:
+      adapter: openai-api
+      model: gpt
+      auth:
+        method: azure_openai_entra_id
+    instructions:
+    - Review system/project repository boundaries, governance, integration, and enterprise
+      operating model concerns.
+    - Keep architecture recommendations compatible with open-core and adapter-boundary
+      decisions.
+    write_paths:
+    - docs/architecture/**
+    - docs/implementation-slices/**
+    channels:
+      primary: enterprise-architecture
+      handoff_inbox: enterprise-architecture
+  solution-architect:
+    template: solution-architect
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-solution-architect-token
+    instructions:
+    - Keep architecture guidance grounded in Agentic Mesh runtime boundaries.
+    - Prefer local-first interfaces before cloud-specific backends.
+    write_paths:
+    - docs/architecture/**
+    - docs/implementation-slices/**
+    channels:
+      primary: solution-architecture
+      handoff_inbox: solution-architecture
+  security-architect:
+    template: security-architect
+    instances: 1
+    worker:
+      adapter: claude-code
+      model: claude
+      auth:
+        method: claude_code_oauth_token
+        secret_ref: claude-code-agentic-mesh-security-token
+    instructions:
+    - Review credential handling, connector permissions, container identity, and secret-reference
+      design.
+    - Require explicit evidence that no credentials are committed to example or project
+      config.
+    write_paths:
+    - docs/security/**
+    - docs/architecture/**
+    channels:
+      primary: security
+      handoff_inbox: security
+  platform-engineer:
+    template: platform-engineer
+    instances: 1
+    worker:
+      adapter: claude-code
+      model: claude
+      auth:
+        method: anthropic_api_key
+        secret_ref: anthropic-agentic-mesh-platform-key
+    instructions:
+    - Keep Docker Compose, state paths, telemetry, and local runtime automation aligned
+      with the architecture docs.
+    - Preserve cloud deployment options behind adapters.
+    write_paths:
+    - docs/platform/**
+    - docs/operations/**
+    - docker-compose.yml
+    - Dockerfile
+    - config/otel/**
+    channels:
+      primary: platform
+      handoff_inbox: platform
+  engineering:
+    template: engineering
+    instances: 2
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        method: codex_api_key
+        secret_ref: openai-agentic-mesh-engineering-key
+    instructions:
+    - Treat this as a multi-instance role; claim work atomically and avoid duplicate
+      implementation.
+    - Preserve work_item_id and lifecycle_state in all handoffs and evidence.
+    write_paths:
+    - src/**
+    - tests/**
+    - docs/engineering/**
+    channels:
+      primary: engineering
+      handoff_inbox: engineering
+  qa-engineer:
+    template: qa-engineer
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-qa-token
+    instructions:
+    - Validate each slice independently so parallel work streams remain inspectable.
+    - Record evidence against the originating work_item_id.
+    write_paths:
+    - docs/qa/**
+    - tests/**
+    channels:
+      primary: qa
+      handoff_inbox: qa
+  technical-writer:
+    template: technical-writer
+    instances: 1
+    worker:
+      adapter: anthropic-api
+      model: claude
+      auth:
+        method: anthropic_api_key
+        secret_ref: anthropic-agentic-mesh-docs-key
+    instructions:
+    - Validate documentation clarity before release review.
+    - Keep README, architecture, operation, and memory docs aligned.
+    write_paths:
+    - README.md
+    - MEMORY.md
+    - docs/**
+    channels:
+      primary: technical-writing
+      handoff_inbox: technical-writing
+  delivery-manager:
+    template: delivery-manager
+    instances: 1
+    worker:
+      adapter: manual-human
+      model: manual
+      auth:
+        method: manual_human_no_auth
+    instructions:
+    - Track blockers and handoff aging without taking decision ownership from specialist
+      roles.
+    - Keep delivery status tied to work_item_id.
+    write_paths:
+    - docs/delivery/**
+    channels:
+      primary: delivery
+      handoff_inbox: delivery
+  research-analyst:
+    template: research-analyst
+    instances: 1
+    worker:
+      adapter: openai-api
+      model: gpt
+      auth:
+        method: openai_api_key
+        secret_ref: openai-agentic-mesh-research-key
+    instructions:
+    - Research future stock enterprise flow catalogs and cite sources.
+    - Hand synthesized findings to Business Analysis, Product, or Enterprise Architecture.
+    write_paths:
+    - docs/research/**
+    - docs/architecture/**
+    channels:
+      primary: research
+      handoff_inbox: research
+  release-manager:
+    template: release-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        method: codex_access_token
+        secret_ref: codex-agentic-mesh-dev-release-token
+    instructions:
+    - Close only work items with product, architecture, implementation, and QA evidence.
+    - Keep release records linked to work_item_id.
+    write_paths:
+    - docs/releases/**
+    channels:
+      primary: release
+      handoff_inbox: release
+document_accountabilities:
+  docs/business/briefs.md:
+    owner_role: business-analyst
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - business_context
+    - stakeholders
+    - outcomes
+    - constraints
+    - assumptions
+    - open_questions
+    contributing_roles:
+    - research-analyst
+    - product-manager
+    - enterprise-architect
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/product/stories.md:
+    owner_role: product-manager
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - problem
+    - target_user
+    - scope
+    - non_goals
+    - acceptance_criteria
+    - success_signals
+    contributing_roles:
+    - business-analyst
+    - ux-designer
+    - solution-architect
+    - qa-engineer
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/ux/design-notes.md:
+    owner_role: ux-designer
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - user_journey
+    - interaction_states
+    - accessibility
+    - design_risks
+    contributing_roles:
+    - product-manager
+    - engineering
+    - technical-writer
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/architecture/enterprise-notes.md:
+    owner_role: enterprise-architect
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - capability_fit
+    - system_boundaries
+    - governance
+    - integration_impacts
+    - decision_candidates
+    contributing_roles:
+    - business-analyst
+    - solution-architect
+    - security-architect
+    - platform-engineer
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/architecture/solution-notes.md:
+    owner_role: solution-architect
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - design_summary
+    - interfaces
+    - data_contracts
+    - adapter_boundaries
+    - risks
+    contributing_roles:
+    - enterprise-architect
+    - security-architect
+    - platform-engineer
+    - engineering
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/security/security-decisions.md:
+    owner_role: security-architect
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - trust_boundaries
+    - sensitive_data
+    - credentials
+    - controls
+    - residual_risks
+    contributing_roles:
+    - solution-architect
+    - platform-engineer
+    - engineering
+    - qa-engineer
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/platform/operations.md:
+    owner_role: platform-engineer
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - topology
+    - state_paths
+    - secrets_and_mounts
+    - telemetry
+    - rollback
+    contributing_roles:
+    - solution-architect
+    - security-architect
+    - engineering
+    - release-manager
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/engineering/implementation-log.md:
+    owner_role: engineering
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - files_changed
+    - implementation_notes
+    - tests
+    - evidence
+    - known_limitations
+    contributing_roles:
+    - solution-architect
+    - platform-engineer
+    - qa-engineer
+    - technical-writer
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/qa/test-evidence.md:
+    owner_role: qa-engineer
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - test_scope
+    - test_cases
+    - results
+    - defects
+    - residual_risk
+    contributing_roles:
+    - engineering
+    - product-manager
+    - release-manager
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/technical-writing/documentation-log.md:
+    owner_role: technical-writer
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - docs_reviewed
+    - terminology
+    - gaps
+    - release_note_inputs
+    contributing_roles:
+    - product-manager
+    - engineering
+    - qa-engineer
+    - release-manager
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/delivery/status.md:
+    owner_role: delivery-manager
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - current_state
+    - blockers
+    - owners
+    - aging_handoffs
+    - next_actions
+    contributing_roles:
+    - product-manager
+    - engineering
+    - qa-engineer
+    - release-manager
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/research/findings.md:
+    owner_role: research-analyst
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - question
+    - sources
+    - findings
+    - confidence
+    - recommendation
+    contributing_roles:
+    - business-analyst
+    - product-manager
+    - enterprise-architect
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/releases/release-records.md:
+    owner_role: release-manager
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - release_scope
+    - evidence
+    - approvals
+    - risks
+    - rollback
+    contributing_roles:
+    - delivery-manager
+    - qa-engineer
+    - technical-writer
+    - engineering
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed

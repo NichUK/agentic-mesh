@@ -1,0 +1,60 @@
+project_id: example-project
+name: Example Project
+workspace:
+  root: .
+  default_repository: example-project
+  repositories:
+    example-project:
+      type: git
+      path: .
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+    instructions:
+      - Keep product output concise and traceable to sponsor intent.
+    write_paths:
+      - docs/product/**
+    channels:
+      primary: product
+      handoff_inbox: product
+  engineering:
+    template: engineering
+    instances: 2
+    worker:
+      adapter: codex-cli
+      model: codex
+    instructions:
+      - Treat this as a multi-instance role; claim work atomically and avoid duplicate implementation.
+    write_paths:
+      - src/**
+      - tests/**
+      - docs/engineering/**
+    channels:
+      primary: engineering
+      handoff_inbox: engineering
+flow:
+  flow_id: example-two-role-sdlc-v0
+  entry_state: product_definition
+  work_item_types:
+    - slice
+    - feature
+    - spike
+  states:
+    product_definition:
+      owner_role: product-manager
+      purpose: Define product intent and acceptance criteria for this example project.
+      artifact_path: docs/product/stories.md
+      handoffs:
+        completed:
+          target_state: implementation
+          target_role: engineering
+          message_type: sdlc.implementation
+    implementation:
+      owner_role: engineering
+      purpose: Implement the configured example work item.
+      artifact_path: docs/engineering/implementation-log.md
+      handoffs: {}

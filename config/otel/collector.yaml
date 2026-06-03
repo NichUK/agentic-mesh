@@ -1,0 +1,33 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  debug:
+    verbosity: basic
+  otlp/observability-gateway:
+    endpoint: 10.0.0.65:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/observability-gateway]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/observability-gateway]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/observability-gateway]

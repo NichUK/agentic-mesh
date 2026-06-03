@@ -1,6 +1,7 @@
 .pytest_cache/
 __pycache__/
 *.pyc
+*.egg-info/
 .venv/
 venv/
 .env
@@ -13,4 +14,3 @@ build/
 Thumbs.db
 state/
 *.log
-

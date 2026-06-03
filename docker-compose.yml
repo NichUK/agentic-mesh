@@ -1,0 +1,106 @@
+x-agentic-mesh-env: &agentic-mesh-env
+  AGENTIC_MESH_CONFIG_ROOT: /mesh
+  AGENTIC_MESH_PROJECT_FILE: examples/projects/agentic-mesh-dev.yaml
+  AGENTIC_MESH_STATE_ROOT: /mesh/state
+  AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
+  OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=dogfood
+
+x-agentic-mesh-volumes: &agentic-mesh-volumes
+  - ./config:/mesh/config:ro
+  - ./examples:/mesh/examples:ro
+  - .:/mesh/workspaces/agentic-mesh
+  - ./state:/mesh/state
+
+x-agentic-mesh-service: &agentic-mesh-service
+  image: agentic-mesh:local
+  environment: *agentic-mesh-env
+  volumes: *agentic-mesh-volumes
+  working_dir: /mesh/workspaces/agentic-mesh
+
+services:
+  runtime-image:
+    image: agentic-mesh:local
+    build: .
+    command: python -m agentic_mesh.cli status
+    profiles:
+      - build-image
+
+  router:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli router-loop --poll-seconds 10
+
+  control-plane:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli control-plane-loop --idle-grace-seconds 300 --poll-seconds 5
+
+  teams-connector:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli teams-connector-loop --channel approvals --poll-seconds 5
+
+  business-analyst:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.business-analyst.1 --poll-seconds 5
+
+  product-manager:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.product-manager.1 --poll-seconds 5
+
+  ux-designer:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.ux-designer.1 --poll-seconds 5
+
+  enterprise-architect:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.enterprise-architect.1 --poll-seconds 5
+
+  solution-architect:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.solution-architect.1 --poll-seconds 5
+
+  security-architect:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.security-architect.1 --poll-seconds 5
+
+  platform-engineer:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.platform-engineer.1 --poll-seconds 5
+
+  engineering-1:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.engineering.1 --poll-seconds 5
+
+  engineering-2:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.engineering.2 --poll-seconds 5
+
+  qa-engineer:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.qa-engineer.1 --poll-seconds 5
+
+  release-manager:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.release-manager.1 --poll-seconds 5
+
+  technical-writer:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.technical-writer.1 --poll-seconds 5
+
+  delivery-manager:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.delivery-manager.1 --poll-seconds 5
+
+  research-analyst:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.research-analyst.1 --poll-seconds 5
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.101.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./config/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"

@@ -2,9 +2,16 @@ role_id: engineering
 version: 1
 purpose: Implement approved work and hand evidence to QA.
 standing_instructions:
-  - Only implement work that has passed product, architecture, and delivery readiness.
-  - Update implementation notes as work progresses.
-  - Hand completed work to qa-engineer with evidence.
+  - Use the configured global language and documentation standards for implementation notes and handoffs.
+  - Only implement work that has passed the configured readiness states for the project flow.
+  - Honour role write paths, tool boundaries, project constraints, and security requirements exactly.
+  - Prefer small, testable slices that preserve adapter boundaries and avoid unrelated refactors.
+  - Read relevant docs and existing code before changing files; preserve user or generated changes you did not make.
+  - Add or update focused tests when behaviour changes, and record verification commands and outcomes.
+  - Update implementation notes with files changed, decisions made during implementation, test evidence, and unresolved risks.
+  - Hand completed work to QA with acceptance criteria, evidence paths, test output, and known limitations.
+  - Mark work blocked instead of bypassing missing product, architecture, security, platform, or approval prerequisites.
+  - Preserve work_item_id, work_item_type, lifecycle_state, correlation_id, and evidence paths in every handoff.
 default_tools:
   - git.read
   - git.write
@@ -14,4 +21,3 @@ documentation_obligations:
   - docs/engineering/implementation-log.md
 handoff_targets:
   - qa-engineer
-

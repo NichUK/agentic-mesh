@@ -1,0 +1,205 @@
+version: 1
+methods:
+  codex_access_token:
+    category: access_token
+    applies_to:
+      - codex-cli
+    env_vars:
+      - CODEX_ACCESS_TOKEN
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: ChatGPT Business or Enterprise Codex access token for trusted non-interactive Codex local workflows.
+  codex_oauth_cache:
+    category: oauth_cache
+    applies_to:
+      - codex-cli
+    env_vars:
+      - CODEX_HOME
+    requires_secret_ref: false
+    requires_mount_ref: true
+    description: File-based Codex login cache under a role-specific CODEX_HOME volume for trusted local development.
+  codex_api_key:
+    category: api_key
+    applies_to:
+      - codex-cli
+    env_vars:
+      - OPENAI_API_KEY
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: OpenAI API key authentication for Codex CLI automation when ChatGPT workspace identity is not required.
+  openai_api_key:
+    category: api_key
+    applies_to:
+      - openai-api
+    env_vars:
+      - OPENAI_API_KEY
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: OpenAI API key sent as a bearer token.
+  azure_openai_api_key:
+    category: api_key
+    applies_to:
+      - openai-api
+    env_vars:
+      - AZURE_OPENAI_API_KEY
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Azure OpenAI API key, typically sent in the api-key header by SDKs or gateways.
+  azure_openai_entra_id:
+    category: managed_identity_or_oauth
+    applies_to:
+      - openai-api
+    env_vars: []
+    requires_secret_ref: false
+    requires_mount_ref: false
+    description: Microsoft Entra ID or managed identity authentication for Azure OpenAI deployments.
+  anthropic_api_key:
+    category: api_key
+    applies_to:
+      - anthropic-api
+      - claude-code
+    env_vars:
+      - ANTHROPIC_API_KEY
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Anthropic API key, used directly by Anthropic SDKs and supported by Claude Code terminal sessions.
+  anthropic_auth_token:
+    category: bearer_token
+    applies_to:
+      - anthropic-api
+      - claude-code
+    env_vars:
+      - ANTHROPIC_AUTH_TOKEN
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Bearer token for Anthropic-compatible gateways or proxies.
+  claude_code_oauth_token:
+    category: oauth_token
+    applies_to:
+      - claude-code
+    env_vars:
+      - CLAUDE_CODE_OAUTH_TOKEN
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Long-lived Claude Code OAuth token generated for CI, scripts, or headless automation.
+  claude_code_oauth_cache:
+    category: oauth_cache
+    applies_to:
+      - claude-code
+    env_vars:
+      - CLAUDE_CONFIG_DIR
+    requires_secret_ref: false
+    requires_mount_ref: true
+    description: Claude Code credential cache directory mounted into a trusted role container.
+  claude_code_api_key_helper:
+    category: dynamic_secret_helper
+    applies_to:
+      - claude-code
+    env_vars:
+      - CLAUDE_CODE_API_KEY_HELPER_TTL_MS
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Claude Code apiKeyHelper script or command that obtains dynamic credentials from a vault.
+  claude_code_bedrock:
+    category: cloud_provider_identity
+    applies_to:
+      - claude-code
+    env_vars:
+      - CLAUDE_CODE_USE_BEDROCK
+      - AWS_REGION
+    requires_secret_ref: false
+    requires_mount_ref: false
+    description: Claude Code using Amazon Bedrock credentials from the container or cloud environment.
+  claude_code_vertex:
+    category: cloud_provider_identity
+    applies_to:
+      - claude-code
+    env_vars:
+      - CLAUDE_CODE_USE_VERTEX
+      - GOOGLE_APPLICATION_CREDENTIALS
+    requires_secret_ref: false
+    requires_mount_ref: false
+    description: Claude Code using Google Vertex AI credentials from the container or cloud environment.
+  claude_code_foundry:
+    category: cloud_provider_identity
+    applies_to:
+      - claude-code
+    env_vars:
+      - CLAUDE_CODE_USE_FOUNDRY
+    requires_secret_ref: false
+    requires_mount_ref: false
+    description: Claude Code using Microsoft Foundry credentials from the container or cloud environment.
+  deepseek_api_key:
+    category: api_key
+    applies_to:
+      - deepseek-api
+    env_vars:
+      - DEEPSEEK_API_KEY
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: DeepSeek API key sent as an HTTP bearer token to the OpenAI-compatible DeepSeek endpoint.
+  minimax_api_key:
+    category: api_key
+    applies_to:
+      - minimax-api
+    env_vars:
+      - MINIMAX_API_KEY
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: MiniMax API key from the MiniMax platform.
+  microsoft_graph_delegated_oauth:
+    category: delegated_oauth
+    applies_to:
+      - teams-connector
+      - outlook-connector
+    env_vars: []
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Microsoft Graph delegated OAuth flow where the app acts on behalf of a signed-in user.
+  microsoft_graph_app_client_secret:
+    category: client_credentials
+    applies_to:
+      - teams-connector
+      - outlook-connector
+    env_vars: []
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Microsoft Graph app-only OAuth client credentials using a client secret.
+  microsoft_graph_app_certificate:
+    category: certificate_credentials
+    applies_to:
+      - teams-connector
+      - outlook-connector
+    env_vars: []
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Microsoft Graph app-only OAuth client credentials using a certificate.
+  microsoft_graph_federated_identity:
+    category: federated_identity
+    applies_to:
+      - teams-connector
+      - outlook-connector
+    env_vars: []
+    requires_secret_ref: false
+    requires_mount_ref: false
+    description: Microsoft Graph app-only access using federated identity credentials.
+  microsoft_teams_bot_app_secret:
+    category: bot_framework_app_secret
+    applies_to:
+      - teams-bot-connector
+    env_vars:
+      - MICROSOFT_APP_ID
+      - MICROSOFT_APP_PASSWORD
+      - MICROSOFT_APP_TYPE
+      - MICROSOFT_APP_TENANT_ID
+    requires_secret_ref: true
+    requires_mount_ref: false
+    description: Microsoft Teams bot identity using Bot Framework app id and app password or client secret.
+  manual_human_no_auth:
+    category: no_auth
+    applies_to:
+      - manual-human
+    env_vars: []
+    requires_secret_ref: false
+    requires_mount_ref: false
+    description: Manual human worker adapter with no model-provider credential.
