@@ -126,19 +126,20 @@ The project file then declares the workspace/repository shape:
 
 ```yaml
 workspace:
-  root: .
+  root: examples/projects/agentic-mesh-dev
   default_repository: agentic-mesh
   repositories:
     agentic-mesh:
       type: git
-      path: .
-      default_branch: main
+      path: ../../..
+      default_branch: develop
 ```
 
 Role `write_paths` and flow `artifact_path` values are relative to that project
-workspace. This is how role agents get access to real project files such as
-`src/**`, `tests/**`, and `docs/**` without those files being baked into the
-runtime image.
+workspace. Dogfood project artifacts such as `documents/requirements/*.md`
+therefore land under `examples/projects/agentic-mesh-dev/`, while the system
+repository remains available through the configured `agentic-mesh` repository
+path.
 
 For production or multi-project deployments, replace `agentic-mesh:local` with
 a centrally published image such as `registry.example.com/agentic-mesh/runtime`.

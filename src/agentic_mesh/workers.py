@@ -312,11 +312,32 @@ class CodexCliWorkerAdapter(WorkerAdapter):
         runtime_instructions = message.payload.get("runtime_instructions") or {}
         available_handoffs = runtime_instructions.get("available_handoffs", [])
         available_consults = runtime_instructions.get("available_consults", [])
+        repositories = {
+            repository_id: {
+                "type": repository.type,
+                "path": repository.path,
+                "absolute_path": str(
+                    Path(repository.path)
+                    if Path(repository.path).is_absolute()
+                    else (self.workspace_root / repository.path).resolve()
+                ),
+                "default_branch": repository.default_branch,
+            }
+            for repository_id, repository in self.project.workspace.repositories.items()
+        }
         return f"""
 You are the `{instance.role_id}` role agent for Agentic Mesh project `{instance.project_id}`.
 
 Role purpose:
 {instance.template.purpose}
+
+Project workspace:
+{json.dumps({
+            "current_working_directory": str(self.workspace_root),
+            "workspace_root": self.project.workspace.root,
+            "default_repository": self.project.workspace.default_repository,
+            "repositories": repositories,
+        }, indent=2)}
 
 Standing role instructions:
 {json.dumps(instance.template.standing_instructions, indent=2)}

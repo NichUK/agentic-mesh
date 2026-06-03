@@ -185,12 +185,12 @@ def test_loads_teams_connector_role_bot_mapping() -> None:
 def test_loads_project_roles_and_instances() -> None:
     mesh_config = load_mesh_config(Path.cwd())
 
-    assert mesh_config.project.workspace.root == "."
+    assert mesh_config.project.workspace.root == "examples/projects/agentic-mesh-dev"
     assert mesh_config.project.workspace.default_repository == "agentic-mesh"
-    assert mesh_config.project.workspace.repositories["agentic-mesh"].path == "."
+    assert mesh_config.project.workspace.repositories["agentic-mesh"].path == "../../.."
     assert (
         mesh_config.project.workspace.repositories["agentic-mesh"].default_branch
-        == "main"
+        == "develop"
     )
     assert sorted(mesh_config.project.roles) == [
         "business-analyst",

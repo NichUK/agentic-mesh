@@ -3,13 +3,13 @@ name: Agentic Mesh Development
 flow:
   template: sdlc
 workspace:
-  root: .
+  root: examples/projects/agentic-mesh-dev
   default_repository: agentic-mesh
   repositories:
     agentic-mesh:
       type: git
-      path: .
-      default_branch: main
+      path: ../../..
+      default_branch: develop
 auth_credentials:
   codex-agentic-mesh-dev-team:
     method: codex_oauth_cache

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agentic_mesh.cli import build_runtime
+from agentic_mesh.cli import project_workspace_root
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.models import Message
@@ -170,6 +171,7 @@ def test_configured_worker_uses_current_codex_exec_flags(
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["env"] = kwargs["env"]
+        captured["prompt"] = kwargs["input"]
         output_path = Path(command[command.index("-o") + 1])
         output_path.write_text(
             """
@@ -225,6 +227,11 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert captured["env"]["CODEX_HOME"] == str(
         tmp_path / "state" / "worker_mounts" / mount_ref
     )
+    prompt = str(captured["prompt"])
+    assert "Project workspace:" in prompt
+    assert '"workspace_root": "examples/projects/agentic-mesh-dev"' in prompt
+    assert '"default_repository": "agentic-mesh"' in prompt
+    assert '"path": "../../.."' in prompt
 
 
 def test_agent_result_schema_is_strict_for_nested_handoff_payload() -> None:
@@ -247,7 +254,7 @@ def test_summarize_worker_failure_keeps_error_tail() -> None:
 
 
 def test_build_runtime_uses_configured_worker_adapter(tmp_path: Path) -> None:
-    _, _, message_store, _, _, runtime = build_runtime(
+    mesh_config, _, message_store, _, _, runtime = build_runtime(
         Path.cwd(),
         "examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml",
         tmp_path / "workspace",
@@ -256,3 +263,9 @@ def test_build_runtime_uses_configured_worker_adapter(tmp_path: Path) -> None:
 
     assert isinstance(runtime.worker, ConfiguredWorkerAdapter)
     assert isinstance(message_store, FileMessageStore)
+    assert project_workspace_root(tmp_path / "workspace", mesh_config) == (
+        tmp_path / "workspace" / "examples" / "projects" / "agentic-mesh-dev"
+    ).resolve()
+    assert runtime.artifact_store.workspace_root == (
+        tmp_path / "workspace" / "examples" / "projects" / "agentic-mesh-dev"
+    ).resolve()

@@ -263,6 +263,11 @@ that effective project workspace. This is the boundary that lets role agents
 do real work in source, test, documentation, evidence, and release files while
 the runtime image remains reusable and configuration/state stay external.
 
+For dogfood projects nested inside a system repository, set `workspace.root` to
+the project folder and configure the system repository as a repository path
+inside that workspace. Project artifacts then stay under the project folder
+while agents can still inspect or work against the system repository.
+
 ### Role Instance
 
 A role instance is a concrete running worker.

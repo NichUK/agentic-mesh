@@ -169,13 +169,13 @@ for real work:
 
 ```yaml
 workspace:
-  root: .
+  root: examples/projects/agentic-mesh-dev
   default_repository: agentic-mesh
   repositories:
     agentic-mesh:
       type: git
-      path: .
-      default_branch: main
+      path: ../../..
+      default_branch: develop
 ```
 
 `workspace.root` is resolved under `AGENTIC_MESH_WORKSPACE_ROOT` unless it is
