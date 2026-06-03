@@ -152,6 +152,77 @@ flow:
     assert "https://mesh.example/auth/credentials?credential=codex-product-oauth" in result.message
 
 
+def test_configured_worker_uses_current_codex_exec_flags(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(workers.shutil, "which", lambda command: "codex")
+    mesh_config = load_mesh_config(Path.cwd())
+    instance = mesh_config.instances["agentic-mesh-dev.product-manager.1"]
+    mount_ref = instance.override.worker.auth.mount_ref
+    assert mount_ref is not None
+    (tmp_path / "state" / "worker_mounts" / mount_ref).mkdir(parents=True)
+    (tmp_path / "workspace").mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            """
+{
+  "status": "completed",
+  "message": "Smoke passed.",
+  "document_updates": [
+    {
+      "path": "documents/requirements/product-manager.md",
+      "content": "# Smoke passed"
+    }
+  ],
+  "handoffs": []
+}
+""".strip(),
+            encoding="utf-8",
+        )
+
+        class Completed:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return Completed()
+
+    monkeypatch.setattr(workers.subprocess, "run", fake_run)
+    worker = ConfiguredWorkerAdapter(
+        project=mesh_config.project,
+        auth_methods=mesh_config.auth_methods,
+        workspace_root=tmp_path / "workspace",
+        state_root=tmp_path / "state",
+    )
+    message = Message.create(
+        role_id="product-manager",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"title": "Smoke", "summary": "Check command flags."},
+        source="test",
+    )
+
+    result = worker.run(
+        instance,
+        message,
+        mesh_config.project.flow.states["product_definition"],
+    )
+
+    command = captured["command"]
+    assert result.status == "completed"
+    assert "--ask-for-approval" not in command
+    assert "--sandbox" in command
+    assert "workspace-write" in command
+    assert captured["env"]["CODEX_HOME"] == str(
+        tmp_path / "state" / "worker_mounts" / mount_ref
+    )
+
+
 def test_build_runtime_uses_configured_worker_adapter(tmp_path: Path) -> None:
     _, _, message_store, _, _, runtime = build_runtime(
         Path.cwd(),

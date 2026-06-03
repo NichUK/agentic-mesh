@@ -159,8 +159,6 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                 "--skip-git-repo-check",
                 "--sandbox",
                 "workspace-write",
-                "--ask-for-approval",
-                "never",
                 "--output-schema",
                 str(schema_path),
                 "-o",
