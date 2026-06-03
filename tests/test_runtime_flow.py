@@ -301,6 +301,16 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
                 "work_item_id": "work-adoption",
                 "work_item_type": "directive",
                 "work_mode": "direct_broadcast",
+                "requested_roles": ["release-manager"],
+                "output_path": "documents/requirements/release-manager.md",
+                "source_channel": "all-agents",
+                "git_branch": "codex/work-adoption-adopt-this-project",
+                "publication": {
+                    "mode": "git_branch",
+                    "branch": "codex/work-adoption-adopt-this-project",
+                    "status": "open",
+                    "commit_policy": "commit_and_push_after_all_roles_terminal",
+                },
             },
             source="test",
         )
@@ -313,6 +323,7 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
 
     assert connector_outbox.pending_count("approvals") == 0
     assert connector_outbox.pending_count("release") == 2
+    assert connector_outbox.pending_count("all-agents") == 1
     started = connector_outbox.claim_next("release", "test-connector")
     assert started is not None
     assert started.type == "sponsor_directive.started"
@@ -324,6 +335,14 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     assert completed.payload["role_id"] == "release-manager"
     assert completed.payload["status"] == "completed"
     assert completed.payload["artifact_paths"] == [
+        "documents/requirements/release-manager.md"
+    ]
+    assert completed.payload["git_branch"] == "codex/work-adoption-adopt-this-project"
+    publish_ready = connector_outbox.claim_next("all-agents", "test-connector")
+    assert publish_ready is not None
+    assert publish_ready.type == "sponsor_directive.publish_ready"
+    assert publish_ready.payload["publication"]["status"] == "ready_to_commit_and_push"
+    assert publish_ready.payload["artifact_paths"] == [
         "documents/requirements/release-manager.md"
     ]
     assert message_store.pending_count("delivery-manager") == 0
@@ -340,6 +359,7 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "agent_directive_run_started" in event_types
     assert "directive_status_connector_message_queued" in event_types
+    assert "directive_publish_ready_connector_message_queued" in event_types
     assert "handoff_emitted" not in event_types
     assert "human_response_requested" not in event_types
 

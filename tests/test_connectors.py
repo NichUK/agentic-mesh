@@ -197,6 +197,11 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     assert acknowledgement.type == "sponsor_directive.acknowledged"
     assert acknowledgement.payload["role_count"] == len(roles)
     assert acknowledgement.payload["role_id"] == "delivery-manager"
+    assert acknowledgement.payload["git_branch"].startswith("codex/")
+    assert (
+        acknowledgement.payload["publication"]["commit_policy"]
+        == "commit_and_push_after_all_roles_terminal"
+    )
 
     message = message_store.claim_next(
         "business-analyst",
@@ -209,6 +214,8 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     assert message.payload["work_mode"] == "direct_broadcast"
     assert message.payload["source_channel"] == "all-agents"
     assert message.payload["target_role"] == "business-analyst"
+    assert message.payload["git_branch"] == acknowledgement.payload["git_branch"]
+    assert message.payload["publication"]["mode"] == "git_branch"
     assert message.payload["output_path"] == "documents/requirements/business-analyst.md"
     assert message.payload["teams_from_name"] == "Nich"
     assert "Start an adoption process" in message.payload["summary"]
@@ -631,6 +638,7 @@ def test_bot_connector_renders_sponsor_directive_acknowledgement() -> None:
         payload={
             "title": "Adopt this project",
             "work_item_id": "work-adoption",
+            "git_branch": "codex/work-adoption-adopt-this-project",
             "role_id": "delivery-manager",
             "role_count": 13,
             "target_roles": ["business-analyst", "product-manager"],
@@ -643,6 +651,7 @@ def test_bot_connector_renders_sponsor_directive_acknowledgement() -> None:
     assert "Agentic Mesh received" in rendered
     assert "not a lifecycle handoff" in rendered
     assert "work-adoption" in rendered
+    assert "codex/work-adoption-adopt-this-project" in rendered
 
 
 def test_bot_connector_renders_sponsor_directive_status() -> None:
@@ -652,6 +661,7 @@ def test_bot_connector_renders_sponsor_directive_status() -> None:
         payload={
             "title": "Adopt this project",
             "work_item_id": "work-adoption",
+            "git_branch": "codex/work-adoption-adopt-this-project",
             "role_id": "release-manager",
             "role_instance_id": "agentic-mesh-dev.release-manager.1",
             "status": "blocked",
@@ -667,6 +677,27 @@ def test_bot_connector_renders_sponsor_directive_status() -> None:
     assert "work-adoption" in rendered
     assert "Codex CLI failed" in rendered
     assert "documents/requirements/release-manager.md" in rendered
+    assert "codex/work-adoption-adopt-this-project" in rendered
+
+
+def test_bot_connector_renders_sponsor_directive_publish_ready() -> None:
+    message = ConnectorMessage.create(
+        channel="all-agents",
+        message_type="sponsor_directive.publish_ready",
+        payload={
+            "title": "Adopt this project",
+            "work_item_id": "work-adoption",
+            "git_branch": "codex/work-adoption-adopt-this-project",
+            "artifact_paths": ["documents/requirements/release-manager.md"],
+        },
+        source="test",
+    )
+
+    rendered = BotFrameworkTeamsConnectorAdapter._render_text(message)
+
+    assert "ready to publish" in rendered
+    assert "work-adoption" in rendered
+    assert "codex/work-adoption-adopt-this-project" in rendered
 
 
 def test_teams_ingress_human_response_joins_trace_context(tmp_path: Path) -> None:

@@ -19,6 +19,7 @@ MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED = "sponsor_directive.requested"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED = "sponsor_directive.acknowledged"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED = "sponsor_directive.started"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED = "sponsor_directive.completed"
+MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY = "sponsor_directive.publish_ready"
 
 
 def build_human_response_request(
@@ -167,6 +168,8 @@ def build_sponsor_directive_status_message(
             "work_item_id": source_message.payload.get("work_item_id"),
             "work_item_type": source_message.payload.get("work_item_type"),
             "work_mode": source_message.payload.get("work_mode"),
+            "git_branch": source_message.payload.get("git_branch"),
+            "publication": source_message.payload.get("publication"),
             "source_channel": source_message.payload.get("source_channel"),
             "source_message_id": source_message.message_id,
         },

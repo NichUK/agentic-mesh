@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from agentic_mesh import telemetry
 from agentic_mesh.journal import EventJournal
@@ -152,6 +153,59 @@ class FileMessageStore:
 
     def pending_count(self, role_id: str) -> int:
         return len(list(self._pending_dir(role_id).glob("*.json")))
+
+    def work_item_summary(
+        self,
+        work_item_id: str,
+        roles: list[str],
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            role_id: {
+                "pending": 0,
+                "claimed": 0,
+                "completed": 0,
+                "artifact_paths": [],
+            }
+            for role_id in roles
+        }
+        for role_id in roles:
+            for state, paths in [
+                ("pending", self._pending_dir(role_id).glob("*.json")),
+                ("completed", self._completed_dir(role_id).glob("*.json")),
+            ]:
+                for path in paths:
+                    message = self._read_message(path)
+                    if message.payload.get("work_item_id") != work_item_id:
+                        continue
+                    summary[role_id][state] += 1
+                    output_path = message.payload.get("output_path")
+                    if output_path:
+                        summary[role_id]["artifact_paths"].append(output_path)
+            claimed_parent = self.root / role_id / "claimed"
+            for path in claimed_parent.glob("*/*.json"):
+                message = self._read_message(path)
+                if message.payload.get("work_item_id") != work_item_id:
+                    continue
+                summary[role_id]["claimed"] += 1
+                output_path = message.payload.get("output_path")
+                if output_path:
+                    summary[role_id]["artifact_paths"].append(output_path)
+        return summary
+
+    def mark_work_item_publish_ready(
+        self,
+        work_item_id: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        path = self.root.parent / "work_items" / work_item_id / "publish-ready.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("x", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            return True
+        except FileExistsError:
+            return False
 
     def _pending_dir(self, role_id: str) -> Path:
         return self.root / role_id / "pending"

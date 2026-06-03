@@ -7,10 +7,12 @@ from agentic_mesh import telemetry
 from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.messaging import build_human_response_request
 from agentic_mesh.messaging import build_sdlc_handoff_connector_message
 from agentic_mesh.messaging import build_sponsor_directive_status_message
+from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.models import FlowState
 from agentic_mesh.models import Message
 from agentic_mesh.models import ProjectConfig
@@ -380,6 +382,10 @@ class AgentRuntime:
                 artifact_paths=[update.path for update in result.document_updates],
             )
             self.message_store.complete(message, result.status)
+            self._queue_directive_publish_ready_if_complete(
+                source_instance=instance_config,
+                source_message=message,
+            )
             return True
 
     def _with_runtime_instructions(
@@ -424,6 +430,8 @@ class AgentRuntime:
             "lifecycle_state": None if direct_work else flow_state.state_id,
             "state_purpose": flow_state.purpose,
             "artifact_path": flow_state.artifact_path,
+            "git_branch": payload.get("git_branch"),
+            "publication": payload.get("publication"),
             "handoff_guidance": (
                 "Use the available handoff routes as options, not commands. "
                 "Only emit a handoff when you decide your work is complete or "
@@ -533,5 +541,80 @@ class AgentRuntime:
             connector_message_type=connector_message.type,
             work_item_id=source_message.payload.get("work_item_id"),
             status=status,
+            correlation_id=source_message.correlation_id,
+        )
+
+    def _queue_directive_publish_ready_if_complete(
+        self,
+        *,
+        source_instance,
+        source_message: Message,
+    ) -> None:
+        if self.connector_outbox is None:
+            return
+        work_item_id = source_message.payload.get("work_item_id")
+        if not work_item_id:
+            return
+        requested_roles = [
+            str(role_id)
+            for role_id in source_message.payload.get("requested_roles") or []
+            if role_id
+        ]
+        if not requested_roles:
+            return
+        summary = self.message_store.work_item_summary(work_item_id, requested_roles)
+        if any(data["pending"] or data["claimed"] for data in summary.values()):
+            return
+        if any(data["completed"] == 0 for data in summary.values()):
+            return
+
+        artifact_paths = sorted(
+            {
+                path
+                for data in summary.values()
+                for path in data["artifact_paths"]
+                if path
+            }
+        )
+        payload = {
+            "project_id": source_instance.project_id,
+            "role_id": "delivery-manager",
+            "title": source_message.payload.get("title"),
+            "summary": source_message.payload.get("summary"),
+            "work_item_id": work_item_id,
+            "work_item_type": source_message.payload.get("work_item_type"),
+            "work_mode": source_message.payload.get("work_mode"),
+            "source_channel": source_message.payload.get("source_channel"),
+            "target_roles": requested_roles,
+            "role_count": len(requested_roles),
+            "git_branch": source_message.payload.get("git_branch"),
+            "publication": {
+                **(source_message.payload.get("publication") or {}),
+                "status": "ready_to_commit_and_push",
+            },
+            "artifact_paths": artifact_paths,
+        }
+        if not self.message_store.mark_work_item_publish_ready(work_item_id, payload):
+            return
+        channel = str(source_message.payload.get("source_channel") or "all-agents")
+        connector_message = ConnectorMessage.create(
+            channel=channel,
+            message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY,
+            payload=payload,
+            source=source_instance.instance_id,
+            correlation_id=source_message.correlation_id,
+            trace_context=source_message.trace_context,
+        )
+        self.connector_outbox.enqueue(connector_message)
+        self.journal.append(
+            "directive_publish_ready_connector_message_queued",
+            project_id=source_instance.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            channel=channel,
+            connector_message_id=connector_message.message_id,
+            work_item_id=work_item_id,
+            git_branch=source_message.payload.get("git_branch"),
+            artifact_paths=artifact_paths,
             correlation_id=source_message.correlation_id,
         )

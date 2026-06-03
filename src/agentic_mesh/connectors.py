@@ -18,6 +18,7 @@ from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SDLC_HANDOFF
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED
 from agentic_mesh.messaging import build_human_response_received_message
@@ -131,6 +132,8 @@ class LocalTeamsConnectorAdapter(ConnectorAdapter):
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
         }:
             rendered["teams_message"] = render_sponsor_directive_status_html(message)
+        if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY:
+            rendered["teams_message"] = render_sponsor_directive_publish_ready_html(message)
         return rendered
 
     def _human_response_card(self, message: ConnectorMessage) -> dict[str, Any]:
@@ -632,6 +635,8 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
         }:
             return _html_to_teams_xml_text(render_sponsor_directive_status_html(message))
+        if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY:
+            return _html_to_teams_xml_text(render_sponsor_directive_publish_ready_html(message))
         return html.escape(json.dumps(message.payload, indent=2))
 
 
@@ -672,6 +677,7 @@ def render_sponsor_directive_acknowledgement_html(message: ConnectorMessage) -> 
     payload = message.payload
     title = html.escape(str(payload.get("title") or "Directive received"))
     work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    branch = html.escape(str(payload.get("git_branch") or "not assigned"))
     role_count = html.escape(str(payload.get("role_count") or 0))
     roles = payload.get("target_roles") or []
     role_text = ", ".join(str(role) for role in roles)
@@ -681,6 +687,7 @@ def render_sponsor_directive_acknowledgement_html(message: ConnectorMessage) -> 
         f"<p>Created direct work item <code>{work_item_id}</code> for "
         f"<strong>{role_count}</strong> roles. This is not a lifecycle handoff "
         f"and does not require release approval.</p>"
+        f"<p>Publication branch: <code>{branch}</code></p>"
         f"<p>Roles: {role_text}</p>"
     )
 
@@ -689,6 +696,7 @@ def render_sponsor_directive_status_html(message: ConnectorMessage) -> str:
     payload = message.payload
     title = html.escape(str(payload.get("title") or "Direct instruction"))
     work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    branch = html.escape(str(payload.get("git_branch") or "not assigned"))
     role_id = html.escape(str(payload.get("role_id") or "unknown"))
     role_instance_id = html.escape(str(payload.get("role_instance_id") or "unknown"))
     status = html.escape(str(payload.get("status") or "unknown"))
@@ -708,6 +716,29 @@ def render_sponsor_directive_status_html(message: ConnectorMessage) -> str:
         f"<p><code>{role_instance_id}</code> {verb} work item "
         f"<code>{work_item_id}</code>: {title}</p>"
         f"<p>{status_message}</p>"
+        f"<p>Publication branch: <code>{branch}</code></p>"
+        f"<p>Artifacts: {artifact_text}</p>"
+    )
+
+
+def render_sponsor_directive_publish_ready_html(message: ConnectorMessage) -> str:
+    payload = message.payload
+    title = html.escape(str(payload.get("title") or "Direct instruction"))
+    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    branch = html.escape(str(payload.get("git_branch") or "not assigned"))
+    artifacts = [
+        html.escape(str(path))
+        for path in payload.get("artifact_paths") or []
+        if path
+    ]
+    artifact_text = ", ".join(f"<code>{path}</code>" for path in artifacts)
+    if not artifact_text:
+        artifact_text = "none"
+    return (
+        f"<p><strong>Direct work item ready to publish: {title}</strong></p>"
+        f"<p>All requested roles have reached a terminal result for "
+        f"<code>{work_item_id}</code>.</p>"
+        f"<p>Publication branch: <code>{branch}</code></p>"
         f"<p>Artifacts: {artifact_text}</p>"
     )
 
@@ -1119,6 +1150,13 @@ class TeamsBotIngress:
         assert self.connector_config is not None
         work_item_id = new_id("work")
         title = _title_from_text(text)
+        git_branch = _direct_work_branch_name(work_item_id, title)
+        publication = {
+            "mode": "git_branch",
+            "branch": git_branch,
+            "status": "open",
+            "commit_policy": "commit_and_push_after_all_roles_terminal",
+        }
         from_user = activity.get("from") or {}
         channel_data = activity.get("channelData") or {}
         team = channel_data.get("team") or {}
@@ -1134,6 +1172,8 @@ class TeamsBotIngress:
                 "work_item_id": work_item_id,
                 "work_item_type": "directive",
                 "work_mode": "direct_broadcast",
+                "git_branch": git_branch,
+                "publication": publication,
                 "target_role": role_id,
                 "requested_roles": roles,
                 "output_path": f"documents/requirements/{role_id}.md",
@@ -1163,6 +1203,8 @@ class TeamsBotIngress:
             target_roles=roles,
             role_count=len(roles),
             work_item_id=work_item_id,
+            git_branch=git_branch,
+            publication=publication,
             work_item_type="directive",
             teams_activity_id=activity.get("id"),
         )
@@ -1171,6 +1213,8 @@ class TeamsBotIngress:
             title=title,
             text=text,
             work_item_id=work_item_id,
+            git_branch=git_branch,
+            publication=publication,
             roles=roles,
             activity=activity,
         )
@@ -1183,6 +1227,8 @@ class TeamsBotIngress:
         title: str,
         text: str,
         work_item_id: str,
+        git_branch: str,
+        publication: dict[str, Any],
         roles: list[str],
         activity: dict[str, Any],
     ) -> None:
@@ -1206,6 +1252,8 @@ class TeamsBotIngress:
                 "summary": text,
                 "work_item_id": work_item_id,
                 "work_item_type": "directive",
+                "git_branch": git_branch,
+                "publication": publication,
                 "source_channel": logical_channel,
                 "target_roles": roles,
                 "role_count": len(roles),
@@ -1780,3 +1828,10 @@ def _title_from_text(text: str) -> str:
     if len(text) <= 80:
         return text
     return f"{text[:77].rstrip()}..."
+
+
+def _direct_work_branch_name(work_item_id: str, title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    slug = slug[:40].strip("-") or "direct-work"
+    suffix = work_item_id.removeprefix("work-")[:12] or work_item_id[:12]
+    return f"codex/{suffix}-{slug}"
