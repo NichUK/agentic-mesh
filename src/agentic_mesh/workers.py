@@ -254,15 +254,23 @@ class CodexCliWorkerAdapter(WorkerAdapter):
             if not binding.mount_ref:
                 return blocked_result(
                     flow_state,
-                    f"Worker auth method `{method.method_id}` requires mount_ref.",
+                    self._auth_setup_message(
+                        binding,
+                        method.method_id,
+                        f"Worker auth method `{method.method_id}` requires mount_ref.",
+                    ),
                 )
             mount_path = self.state_root / "worker_mounts" / binding.mount_ref
             if not mount_path.exists():
                 return blocked_result(
                     flow_state,
-                    (
-                        f"Worker auth mount `{binding.mount_ref}` is missing at "
-                        f"`{mount_path}`."
+                    self._auth_setup_message(
+                        binding,
+                        method.method_id,
+                        (
+                            f"Worker auth mount `{binding.mount_ref}` is missing at "
+                            f"`{mount_path}`."
+                        ),
                     ),
                 )
             for env_var in method.env_vars:
@@ -270,6 +278,25 @@ class CodexCliWorkerAdapter(WorkerAdapter):
 
         env.update(binding.env)
         return env
+
+    def _auth_setup_message(
+        self,
+        binding,
+        method_id: str,
+        fallback: str,
+    ) -> str:
+        if method_id != "codex_oauth_cache":
+            return fallback
+        setup_url = os.environ.get(
+            "AGENTIC_MESH_AUTH_ADMIN_URL",
+            "http://127.0.0.1:8100/auth/credentials",
+        )
+        if binding.credential_ref:
+            setup_url = f"{setup_url}?credential={binding.credential_ref}"
+        return (
+            "Codex OAuth login is required before this agent can work. "
+            f"Open {setup_url} and press `Sign in with OpenAI` for this credential."
+        )
 
     def _prompt(
         self,

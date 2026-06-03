@@ -11,45 +11,9 @@ workspace:
       path: .
       default_branch: main
 auth_credentials:
-  codex-agentic-mesh-dev-business-analyst:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-business-analyst-token
-  codex-agentic-mesh-dev-product-manager:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-product-manager-token
-  codex-agentic-mesh-dev-ux-designer:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-ux-designer-token
-  codex-agentic-mesh-dev-enterprise-architect:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-enterprise-architect-token
-  codex-agentic-mesh-dev-solution-architect:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-solution-architect-token
-  codex-agentic-mesh-dev-security-architect:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-security-architect-token
-  codex-agentic-mesh-dev-platform-engineer:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-platform-engineer-token
-  codex-agentic-mesh-dev-engineering:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-engineering-token
-  codex-agentic-mesh-dev-qa-engineer:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-qa-token
-  codex-agentic-mesh-dev-technical-writer:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-technical-writer-token
-  codex-agentic-mesh-dev-delivery-manager:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-delivery-manager-token
-  codex-agentic-mesh-dev-research-analyst:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-research-analyst-token
-  codex-agentic-mesh-dev-release-manager:
-    method: codex_access_token
-    secret_ref: codex-agentic-mesh-dev-release-token
+  codex-agentic-mesh-dev-team:
+    method: codex_oauth_cache
+    mount_ref: codex-agentic-mesh-dev-team-home
 connectors:
   teams:
     adapter: teams-bot-connector
@@ -170,7 +134,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-business-analyst
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Frame Agentic Mesh work in terms of enterprise users, operating constraints,
       and measurable outcomes.
@@ -189,7 +153,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-product-manager
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Define product intent, slice boundaries, and acceptance criteria before downstream
       work.
@@ -209,7 +173,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-ux-designer
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Define UX implications for control-plane, Teams, and local developer workflows
       when a slice affects human interaction.
@@ -228,7 +192,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-enterprise-architect
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Review system/project repository boundaries, governance, integration, and enterprise
       operating model concerns.
@@ -248,7 +212,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-solution-architect
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Keep architecture guidance grounded in Agentic Mesh runtime boundaries.
     - Prefer local-first interfaces before cloud-specific backends.
@@ -266,7 +230,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-security-architect
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Review credential handling, connector permissions, container identity, and secret-reference
       design.
@@ -286,7 +250,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-platform-engineer
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Keep Docker Compose, state paths, telemetry, and local runtime automation aligned
       with the architecture docs.
@@ -308,7 +272,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-engineering
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Treat this as a multi-instance role; claim work atomically and avoid duplicate
       implementation.
@@ -328,7 +292,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-qa-engineer
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Validate each slice independently so parallel work streams remain inspectable.
     - Record evidence against the originating work_item_id.
@@ -346,7 +310,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-technical-writer
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Validate documentation clarity before release review.
     - Keep README, architecture, operation, and memory docs aligned.
@@ -365,7 +329,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-delivery-manager
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Track blockers and handoff aging without taking decision ownership from specialist
       roles.
@@ -383,7 +347,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-research-analyst
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Research future stock enterprise flow catalogs and cite sources.
     - Hand synthesized findings to Business Analysis, Product, or Enterprise Architecture.
@@ -401,7 +365,7 @@ roles:
       adapter: codex-cli
       model: codex
       auth:
-        credential: codex-agentic-mesh-dev-release-manager
+        credential: codex-agentic-mesh-dev-team
     instructions:
     - Close only work items with product, architecture, implementation, and QA evidence.
     - Keep release records linked to work_item_id.

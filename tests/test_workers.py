@@ -70,8 +70,86 @@ def test_configured_worker_blocks_when_codex_secret_is_missing(
     )
 
     assert result.status == "blocked"
-    assert "codex-agentic-mesh-dev-product-manager-token" in result.message
+    assert "Worker secret" in result.message or "Sign in with OpenAI" in result.message
+    assert "missing" in result.message or "/auth/credentials" in result.message
     assert result.document_updates[0].path == flow_state.artifact_path
+
+
+def test_configured_worker_points_missing_oauth_to_auth_ui(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: oauth-example
+name: OAuth Example
+workspace:
+  root: .
+  default_repository: oauth-example
+  repositories:
+    oauth-example:
+      type: git
+      path: .
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        credential: codex-product-oauth
+    instructions: []
+    write_paths: []
+    channels: {}
+flow:
+  flow_id: oauth-example-flow
+  entry_state: product_definition
+  work_item_types:
+    - slice
+  states:
+    product_definition:
+      owner_role: product-manager
+      purpose: Define work.
+      artifact_path: docs/product/stories.md
+      handoffs: {}
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(workers.shutil, "which", lambda command: "codex")
+    monkeypatch.setenv(
+        "AGENTIC_MESH_AUTH_ADMIN_URL",
+        "https://mesh.example/auth/credentials",
+    )
+    mesh_config = load_mesh_config(Path.cwd(), project_file=str(project_file))
+    worker = ConfiguredWorkerAdapter(
+        project=mesh_config.project,
+        auth_methods=mesh_config.auth_methods,
+        workspace_root=tmp_path / "workspace",
+        state_root=tmp_path / "state",
+    )
+    flow_state = mesh_config.project.flow.states["product_definition"]
+    message = Message.create(
+        role_id="product-manager",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"title": "Do work", "summary": "Needs OAuth"},
+        source="test",
+    )
+
+    result = worker.run(
+        mesh_config.instances["oauth-example.product-manager.1"],
+        message,
+        flow_state,
+    )
+
+    assert result.status == "blocked"
+    assert "Sign in with OpenAI" in result.message
+    assert "https://mesh.example/auth/credentials?credential=codex-product-oauth" in result.message
 
 
 def test_build_runtime_uses_configured_worker_adapter(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -34,6 +35,8 @@ class OAuthLoginSession:
     output: list[str] = field(default_factory=list)
     returncode: int | None = None
     error: str | None = None
+    login_url: str | None = None
+    user_code: str | None = None
 
     @property
     def status(self) -> str:
@@ -147,13 +150,13 @@ class ControllerAuthService:
         if mount_path is None:
             return "missing", "OAuth credential has no mount_ref."
         if not mount_path.exists():
-            return "missing", "Codex OAuth CODEX_HOME mount is missing."
+            return "missing", "OpenAI sign-in has not been completed."
         codex_bin = shutil.which("codex")
         if not codex_bin:
             auth_json = mount_path / "auth.json"
             if auth_json.exists():
-                return "unknown", "Codex CLI is missing; auth.json exists."
-            return "missing", "Codex CLI is missing and no auth.json exists."
+                return "unknown", "OpenAI sign-in appears to be configured."
+            return "missing", "OpenAI sign-in has not been completed."
         env = os.environ.copy()
         env.update(credential.env)
         env["CODEX_HOME"] = str(mount_path)
@@ -174,8 +177,8 @@ class ControllerAuthService:
             if part and part.strip()
         )
         if completed.returncode == 0:
-            return "configured", output or "Codex reports this login is configured."
-        return "missing", output or "Codex reports this login is not configured."
+            return "configured", output or "OpenAI sign-in is configured."
+        return "missing", output or "OpenAI sign-in has not been completed."
 
     def store_secret(
         self,
@@ -277,6 +280,12 @@ class ControllerAuthService:
         with self._lock:
             session = self._sessions[session_id]
             session.output.append(line)
+            url = _first_url(line)
+            if url:
+                session.login_url = url
+            code = _first_device_code(line)
+            if code:
+                session.user_code = code
             if len(session.output) > 200:
                 session.output = session.output[-200:]
 
@@ -381,13 +390,20 @@ class ControllerAuthHandler(BaseHTTPRequestHandler):
 
     def _credentials_page(self) -> str:
         path = urlparse(self.path)
-        notice = parse_qs(path.query).get("notice", [""])[0]
+        query = parse_qs(path.query)
+        notice = query.get("notice", [""])[0]
+        selected = query.get("credential", [""])[0]
         rows = []
         for credential in self.server.service.credential_statuses():
             roles = ", ".join(credential["roles"]) or "No roles"
             action = self._credential_action(credential)
+            row_class = (
+                ' class="selected"'
+                if selected and selected == credential["credential"]
+                else ""
+            )
             rows.append(
-                "<tr>"
+                f"<tr id=\"credential-{html.escape(credential['credential'])}\"{row_class}>"
                 f"<td><code>{html.escape(credential['credential'])}</code></td>"
                 f"<td>{html.escape(credential['method'])}</td>"
                 f"<td>{html.escape(credential['status'])}</td>"
@@ -428,7 +444,7 @@ for setup and status instead of carrying secrets in chat.</p>
             return f"""
 <form method="post" action="/auth/codex/start">
   <input type="hidden" name="credential" value="{credential_id}">
-  <button type="submit">Start Codex OAuth</button>
+  <button type="submit">Sign in with OpenAI</button>
 </form>
 """
         if credential["secret_ref"]:
@@ -449,12 +465,34 @@ for setup and status instead of carrying secrets in chat.</p>
             else ""
         )
         output = "\n".join(session.output) or "Waiting for Codex output..."
+        openai_button = (
+            f"""
+<p>
+  <a class="primary" href="{html.escape(session.login_url)}" target="_blank" rel="noopener">
+    Continue to OpenAI
+  </a>
+</p>
+"""
+            if session.login_url
+            else "<p>Preparing OpenAI sign-in...</p>"
+        )
+        code = (
+            f"<p>Code: <code class=\"login-code\">{html.escape(session.user_code)}</code></p>"
+            if session.user_code
+            else ""
+        )
         body = f"""
 {refresh}
 <p>Status: <strong>{html.escape(session.status)}</strong></p>
 <p>Credential: <code>{html.escape(session.credential_id)}</code></p>
-<p>CODEX_HOME: <code>{html.escape(str(session.codex_home))}</code></p>
-<pre>{html.escape(output)}</pre>
+<p>Press the button, finish the OpenAI sign-in, and return here. Agentic Mesh
+will capture the login for this credential automatically.</p>
+{openai_button}
+{code}
+<details>
+  <summary>Technical output</summary>
+  <pre>{html.escape(output)}</pre>
+</details>
 <p><a href="/auth/credentials">Back to credentials</a></p>
 """
         return self._layout("Codex OAuth Login", body)
@@ -470,9 +508,12 @@ for setup and status instead of carrying secrets in chat.</p>
     table {{ border-collapse: collapse; width: 100%; }}
     th, td {{ border: 1px solid #d4d4d4; padding: 0.5rem; vertical-align: top; }}
     th {{ background: #f4f4f4; text-align: left; }}
+    tr.selected {{ outline: 3px solid #6aa1ff; }}
     input[type=password] {{ min-width: 18rem; }}
     pre {{ background: #111; color: #eee; padding: 1rem; white-space: pre-wrap; }}
     .notice {{ background: #e9f7ef; border: 1px solid #9bd7ad; padding: 0.75rem; }}
+    .primary {{ display: inline-block; background: #111827; color: white; padding: 0.75rem 1rem; text-decoration: none; }}
+    .login-code {{ font-size: 1.25rem; }}
   </style>
 </head>
 <body>
@@ -518,3 +559,17 @@ def serve_controller_auth(
 ) -> None:
     server = ControllerAuthServer((host, port), ControllerAuthHandler, service)
     server.serve_forever()
+
+
+def _first_url(text: str) -> str | None:
+    match = re.search(r"https?://[^\s)>\"]+", text)
+    if not match:
+        return None
+    return match.group(0).rstrip(".,")
+
+
+def _first_device_code(text: str) -> str | None:
+    match = re.search(r"\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+\b", text)
+    if not match:
+        return None
+    return match.group(0)

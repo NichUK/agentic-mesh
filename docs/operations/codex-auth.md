@@ -103,15 +103,17 @@ http://127.0.0.1:8100/auth/credentials
 ```
 
 In the dogfood Docker Compose profile the control-plane container exposes this
-page on host port `8100`. It lists reusable credentials, shows redacted setup
-status, stores API keys or access tokens, and starts Codex OAuth device-login
-sessions with an isolated `CODEX_HOME` for the selected credential.
+page on host port `8100`. It lists reusable credentials and shows a single
+`Sign in with OpenAI` button for Codex OAuth credentials. The controller starts
+the OpenAI login flow, stores the resulting Codex login cache in the isolated
+credential mount, and only shows redacted status. For API keys or access
+tokens, the same page offers a secret-entry form.
 
 Teams and Slack apps should link to this controller page, or to a future
 single-use setup session URL, instead of collecting secrets in chat. Chat
-surfaces can show status cards and buttons such as "Log in", "Replace secret",
-or "Check status"; the controller remains the owner of credential setup,
-storage, and audit.
+surfaces can show status cards and buttons such as "Sign in with OpenAI",
+"Replace secret", or "Check status"; the controller remains the owner of
+credential setup, storage, and audit.
 
 For OAuth, create one reusable credential per Codex account and give each one a
 different `mount_ref`:
@@ -133,7 +135,7 @@ python -m agentic_mesh.cli codex-auth-login --credential codex-product-oauth
 python -m agentic_mesh.cli codex-auth-login --credential codex-engineering-oauth
 ```
 
-Or use the controller UI to start the same device-auth flow from a browser.
+Or press `Sign in with OpenAI` in the controller UI.
 
 For terminals that cannot launch a browser, use device auth:
 

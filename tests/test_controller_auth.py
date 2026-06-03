@@ -157,5 +157,79 @@ flow:
         time.sleep(0.01)
 
     assert session.status == "completed"
+    assert session.login_url == "https://example/device"
+    assert session.user_code == "ABCD-EFGH"
     assert session.output == ["Open https://example/device", "Use code ABCD-EFGH"]
     assert session.codex_home == tmp_path / "state" / "worker_mounts" / "codex-product-home"
+
+
+def test_controller_auth_oauth_page_has_openai_button(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: oauth-example
+name: OAuth Example
+workspace:
+  root: .
+  default_repository: oauth-example
+  repositories:
+    oauth-example:
+      type: git
+      path: .
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        credential: codex-product-oauth
+    instructions: []
+    write_paths: []
+    channels: {}
+flow:
+  flow_id: oauth-example-flow
+  entry_state: product_definition
+  work_item_types:
+    - slice
+  states:
+    product_definition:
+      owner_role: product-manager
+      purpose: Define work.
+      artifact_path: docs/product/stories.md
+      handoffs: {}
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller_auth.shutil, "which", lambda command: None)
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file=str(project_file),
+        state_root=tmp_path / "state",
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request("GET", "/auth/credentials")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "Sign in with OpenAI" in body
+        assert "CODEX_HOME" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
