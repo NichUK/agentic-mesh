@@ -382,7 +382,14 @@ def cmd_teams_graph_connector_once(args) -> int:
     )
     configure_component_telemetry(mesh_config, "teams-connector")
     connector_config = mesh_config.project.connectors[args.connector]
-    token = load_graph_token(args.token, args.token_file)
+    token = load_graph_token(
+        args.token,
+        args.token_file,
+        tenant_id=args.tenant_id,
+        client_id=args.client_id,
+        client_secret=args.client_secret,
+        client_secret_file=args.client_secret_file,
+    )
     connector = GraphTeamsConnectorAdapter(
         connector_id=args.connector_id,
         project_id=mesh_config.project.project_id,
@@ -413,7 +420,14 @@ def cmd_teams_graph_ingress_once(args) -> int:
     )
     configure_component_telemetry(mesh_config, "teams-ingress")
     connector_config = mesh_config.project.connectors[args.connector]
-    token = load_graph_token(args.token, args.token_file)
+    token = load_graph_token(
+        args.token,
+        args.token_file,
+        tenant_id=args.tenant_id,
+        client_id=args.client_id,
+        client_secret=args.client_secret,
+        client_secret_file=args.client_secret_file,
+    )
     ingress = GraphTeamsChannelIngressAdapter(
         connector_id=args.connector_id,
         project_id=mesh_config.project.project_id,
@@ -593,6 +607,10 @@ def parser() -> argparse.ArgumentParser:
     teams_graph_once.add_argument("--connector-id", default="teams-graph-connector")
     teams_graph_once.add_argument("--token")
     teams_graph_once.add_argument("--token-file", type=Path)
+    teams_graph_once.add_argument("--tenant-id")
+    teams_graph_once.add_argument("--client-id")
+    teams_graph_once.add_argument("--client-secret")
+    teams_graph_once.add_argument("--client-secret-file", type=Path)
     teams_graph_once.set_defaults(func=cmd_teams_graph_connector_once)
 
     teams_graph_loop = subcommands.add_parser("teams-graph-connector-loop")
@@ -601,6 +619,10 @@ def parser() -> argparse.ArgumentParser:
     teams_graph_loop.add_argument("--connector-id", default="teams-graph-connector")
     teams_graph_loop.add_argument("--token")
     teams_graph_loop.add_argument("--token-file", type=Path)
+    teams_graph_loop.add_argument("--tenant-id")
+    teams_graph_loop.add_argument("--client-id")
+    teams_graph_loop.add_argument("--client-secret")
+    teams_graph_loop.add_argument("--client-secret-file", type=Path)
     teams_graph_loop.add_argument("--poll-seconds", type=int, default=5)
     teams_graph_loop.set_defaults(func=cmd_teams_graph_connector_loop)
 
@@ -610,6 +632,10 @@ def parser() -> argparse.ArgumentParser:
     teams_graph_ingress_once.add_argument("--connector-id", default="teams-graph-ingress")
     teams_graph_ingress_once.add_argument("--token")
     teams_graph_ingress_once.add_argument("--token-file", type=Path)
+    teams_graph_ingress_once.add_argument("--tenant-id")
+    teams_graph_ingress_once.add_argument("--client-id")
+    teams_graph_ingress_once.add_argument("--client-secret")
+    teams_graph_ingress_once.add_argument("--client-secret-file", type=Path)
     teams_graph_ingress_once.add_argument("--max-messages", type=int, default=25)
     teams_graph_ingress_once.set_defaults(func=cmd_teams_graph_ingress_once)
 
@@ -619,6 +645,10 @@ def parser() -> argparse.ArgumentParser:
     teams_graph_ingress_loop.add_argument("--connector-id", default="teams-graph-ingress")
     teams_graph_ingress_loop.add_argument("--token")
     teams_graph_ingress_loop.add_argument("--token-file", type=Path)
+    teams_graph_ingress_loop.add_argument("--tenant-id")
+    teams_graph_ingress_loop.add_argument("--client-id")
+    teams_graph_ingress_loop.add_argument("--client-secret")
+    teams_graph_ingress_loop.add_argument("--client-secret-file", type=Path)
     teams_graph_ingress_loop.add_argument("--max-messages", type=int, default=25)
     teams_graph_ingress_loop.add_argument("--poll-seconds", type=int, default=10)
     teams_graph_ingress_loop.set_defaults(func=cmd_teams_graph_ingress_loop)

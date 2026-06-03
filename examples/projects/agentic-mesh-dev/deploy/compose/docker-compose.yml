@@ -41,7 +41,7 @@ services:
 
   teams-graph-ingress:
     <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli teams-graph-ingress-loop --connector teams --channel all-agents --token-file /mesh/project/state/secrets/graph-delegated-token --poll-seconds 10
+    command: python -m agentic_mesh.cli teams-graph-ingress-loop --connector teams --channel all-agents --tenant-id 564b667c-5b1a-4bbc-bb43-918b0b765a9b --client-id 9c96d713-3ae4-4da9-998a-1a4a758f2763 --client-secret-file /mesh/project/state/secrets/graph-channel-read-client-secret --poll-seconds 10
 
   business-analyst:
     <<: *agentic-mesh-service

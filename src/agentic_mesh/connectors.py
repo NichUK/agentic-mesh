@@ -293,7 +293,15 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
         )
 
 
-def load_graph_token(token: str | None, token_file: Path | None) -> str:
+def load_graph_token(
+    token: str | None,
+    token_file: Path | None,
+    *,
+    tenant_id: str | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    client_secret_file: Path | None = None,
+) -> str:
     if token:
         return token
     if token_file and token_file.exists():
@@ -304,7 +312,57 @@ def load_graph_token(token: str | None, token_file: Path | None) -> str:
     env_token_file = os.getenv("AGENTIC_MESH_GRAPH_TOKEN_FILE")
     if env_token_file:
         return Path(env_token_file).read_text(encoding="utf-8").strip()
-    raise ValueError("Graph Teams connector requires a token or token file")
+    tenant_id = tenant_id or os.getenv("AGENTIC_MESH_GRAPH_TENANT_ID")
+    client_id = client_id or os.getenv("AGENTIC_MESH_GRAPH_CLIENT_ID")
+    client_secret = client_secret or os.getenv("AGENTIC_MESH_GRAPH_CLIENT_SECRET")
+    env_secret_file = os.getenv("AGENTIC_MESH_GRAPH_CLIENT_SECRET_FILE")
+    client_secret_file = client_secret_file or (
+        Path(env_secret_file) if env_secret_file else None
+    )
+    if client_secret is None and client_secret_file and client_secret_file.exists():
+        client_secret = client_secret_file.read_text(encoding="utf-8").strip()
+    if tenant_id and client_id and client_secret:
+        return graph_client_credentials_token(
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+    raise ValueError(
+        "Graph Teams connector requires a token, token file, or client credentials"
+    )
+
+
+def graph_client_credentials_token(
+    *,
+    tenant_id: str,
+    client_id: str,
+    client_secret: str,
+) -> str:
+    token_url = (
+        "https://login.microsoftonline.com/"
+        f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+    )
+    data = urlencode(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+            "scope": "https://graph.microsoft.com/.default",
+        }
+    ).encode("utf-8")
+    req = request.Request(
+        token_url,
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with request.urlopen(req, timeout=30) as response:
+            token_response = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        error_body = exc.read().decode("utf-8")
+        raise RuntimeError(f"Graph token request returned {exc.code}: {error_body}") from exc
+    return str(token_response["access_token"])
 
 
 class FileSecretResolver:

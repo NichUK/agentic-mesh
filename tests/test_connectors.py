@@ -7,6 +7,7 @@ from agentic_mesh.connectors import BotFrameworkTeamsConnectorAdapter
 from agentic_mesh.connectors import LocalTeamsConnectorAdapter
 from agentic_mesh.connectors import GraphTeamsChannelIngressAdapter
 from agentic_mesh.connectors import TeamsBotIngress
+from agentic_mesh.connectors import load_graph_token
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import build_human_response_request
@@ -335,6 +336,48 @@ def test_graph_teams_channel_ingress_cursor_suppresses_duplicates(
     assert ingress.process_once("all-agents")["routed"] == 1
     assert ingress.process_once("all-agents")["routed"] == 0
     assert message_store.pending_count("business-analyst") == 1
+
+
+def test_load_graph_token_supports_client_credentials(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured = {}
+    secret_file = tmp_path / "graph-client-secret"
+    secret_file.write_text("secret-value", encoding="utf-8")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        @staticmethod
+        def read():
+            return b'{"access_token":"graph-token"}'
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["body"] = req.data.decode("utf-8")
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("agentic_mesh.connectors.request.urlopen", fake_urlopen)
+
+    token = load_graph_token(
+        None,
+        None,
+        tenant_id="tenant-id",
+        client_id="client-id",
+        client_secret_file=secret_file,
+    )
+
+    assert token == "graph-token"
+    assert "/tenant-id/oauth2/v2.0/token" in captured["url"]
+    assert "grant_type=client_credentials" in captured["body"]
+    assert "client_id=client-id" in captured["body"]
+    assert "client_secret=secret-value" in captured["body"]
 
 
 def test_teams_ingress_updates_original_human_response_card(tmp_path: Path) -> None:
