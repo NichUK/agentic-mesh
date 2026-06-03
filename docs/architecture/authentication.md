@@ -119,6 +119,13 @@ The local profile can support:
 Credential cache mounts must be role-specific and must not mount a developer's
 entire home directory or full global agent state.
 
+The controller auth UI is the preferred local setup surface. It runs with the
+control-plane, lists reusable credential status, stores secret-backed
+credentials, and launches Codex OAuth device-auth sessions with
+`CODEX_HOME=state/worker_mounts/<mount_ref>`. Collaboration connectors such as
+Teams and Slack should link users into this controller-owned setup flow rather
+than accepting tokens, API keys, or OAuth codes in chat messages.
+
 ## Enterprise Profile
 
 Enterprise profiles should prefer:

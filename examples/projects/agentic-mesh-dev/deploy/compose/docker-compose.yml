@@ -33,7 +33,9 @@ services:
 
   control-plane:
     <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli control-plane-loop --idle-grace-seconds 300 --poll-seconds 5
+    command: python -m agentic_mesh.cli control-plane-loop --idle-grace-seconds 300 --poll-seconds 5 --auth-admin-host 0.0.0.0 --auth-admin-port 8080
+    ports:
+      - "8100:8080"
 
   teams-connector:
     <<: *agentic-mesh-service

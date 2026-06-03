@@ -8,9 +8,9 @@ import shutil
 import subprocess
 import sys
 import time
-from pathlib import Path
-
 from dataclasses import asdict
+from pathlib import Path
+from threading import Thread
 
 from agentic_mesh import telemetry
 from agentic_mesh.auth import AuthResolver
@@ -22,6 +22,8 @@ from agentic_mesh.connectors import GraphTeamsChannelIngressAdapter
 from agentic_mesh.connectors import GraphTeamsConnectorAdapter
 from agentic_mesh.connectors import LocalTeamsConnectorAdapter
 from agentic_mesh.connectors import load_graph_token
+from agentic_mesh.controller_auth import ControllerAuthService
+from agentic_mesh.controller_auth import serve_controller_auth
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.lifecycle import LifecycleStore
 from agentic_mesh.messaging import build_human_response_received_message
@@ -459,9 +461,37 @@ def cmd_agent_loop(args) -> int:
 
 
 def cmd_control_plane_loop(args) -> int:
+    if getattr(args, "auth_admin_port", 0):
+        service = ControllerAuthService(
+            config_root=args.config_root,
+            project_file=args.project_file,
+            state_root=args.state_root,
+        )
+        thread = Thread(
+            target=serve_controller_auth,
+            kwargs={
+                "host": args.auth_admin_host,
+                "port": args.auth_admin_port,
+                "service": service,
+            },
+            daemon=True,
+        )
+        thread.start()
     while True:
         cmd_control_plane_tick(args)
         time.sleep(args.poll_seconds)
+
+
+def cmd_auth_admin_server(args) -> int:
+    mesh_config = load_mesh_config(args.config_root, project_file=args.project_file)
+    configure_component_telemetry(mesh_config, "auth-admin")
+    service = ControllerAuthService(
+        config_root=args.config_root,
+        project_file=args.project_file,
+        state_root=args.state_root,
+    )
+    serve_controller_auth(host=args.host, port=args.port, service=service)
+    return 0
 
 
 def cmd_router_loop(args) -> int:
@@ -747,7 +777,14 @@ def parser() -> argparse.ArgumentParser:
     control_loop = subcommands.add_parser("control-plane-loop")
     control_loop.add_argument("--idle-grace-seconds", type=int, default=300)
     control_loop.add_argument("--poll-seconds", type=int, default=5)
+    control_loop.add_argument("--auth-admin-host", default="127.0.0.1")
+    control_loop.add_argument("--auth-admin-port", type=int, default=0)
     control_loop.set_defaults(func=cmd_control_plane_loop)
+
+    auth_admin = subcommands.add_parser("auth-admin-server")
+    auth_admin.add_argument("--host", default="127.0.0.1")
+    auth_admin.add_argument("--port", type=int, default=8080)
+    auth_admin.set_defaults(func=cmd_auth_admin_server)
 
     router_loop = subcommands.add_parser("router-loop")
     router_loop.add_argument("--poll-seconds", type=int, default=10)

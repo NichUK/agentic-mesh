@@ -90,6 +90,7 @@ changes.
 The overlay adds:
 
 - `teams-bot-listener`, exposing host port `3978`
+- `control-plane`, exposing the controller auth UI on host port `8100`
 - restart policies for the runtime services
 - `AGENTIC_MESH_PUBLIC_BOT_ENDPOINT=https://vpn.nixnet.com/api/messages`
 
