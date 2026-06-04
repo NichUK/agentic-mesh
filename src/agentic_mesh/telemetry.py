@@ -193,6 +193,7 @@ def _create_metric_instruments() -> None:
     for name in [
         "agentic_mesh.role_queue.pending",
         "agentic_mesh.connector_outbox.pending",
+        "agentic_mesh.work_queue.depth",
     ]:
         _meter.create_observable_gauge(
             name,
@@ -450,6 +451,12 @@ def _metric_attrs(**fields: Any) -> dict[str, Any]:
         "gate_id",
         "response_value",
         "work_item_type",
+        "queue_item_id",
+        "queue_status",
+        "owner_role",
+        "connector_type",
+        "source_anchor_ref",
+        "schema_version",
     }
     return {
         key: value

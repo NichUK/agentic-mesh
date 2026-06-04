@@ -58,6 +58,8 @@ def build_human_response_request(
         "requested_at": source_message.created_at,
         "title": source_message.payload.get("title"),
         "summary": source_message.payload.get("summary"),
+        "queue_item_id": source_message.payload.get("queue_item_id"),
+        "source_anchor": source_message.payload.get("source_anchor"),
     }
     if approval_context:
         payload["approval_context"] = approval_context
@@ -65,13 +67,31 @@ def build_human_response_request(
         payload["response_template"] = asdict(response_type)
 
     return ConnectorMessage.create(
-        channel=gate.channel,
+        channel=_human_response_channel(gate=gate, source_message=source_message),
         message_type=MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED,
         payload=payload,
         source=source_instance.instance_id,
         correlation_id=source_message.correlation_id,
         trace_context=source_message.trace_context,
     )
+
+
+def _human_response_channel(*, gate: FlowGate, source_message: Message) -> str:
+    channel = gate.channel
+    if not channel:
+        raise ValueError(f"Gate {gate.gate_id} does not declare channel")
+    if "clarification" not in gate.gate_id:
+        return channel
+    source_anchor = source_message.payload.get("source_anchor")
+    if not source_message.payload.get("queue_item_id") or not isinstance(
+        source_anchor,
+        dict,
+    ):
+        return channel
+    source_scope = source_anchor.get("source_scope")
+    if not source_scope:
+        return channel
+    return str(source_scope)
 
 
 def build_human_response_received_message(
@@ -135,6 +155,8 @@ def build_sdlc_handoff_connector_message(
             "summary": source_message.payload.get("summary"),
             "source_message_id": source_message.message_id,
             "handoff_message_id": handoff_message.message_id,
+            "queue_item_id": source_message.payload.get("queue_item_id"),
+            "source_anchor": source_message.payload.get("source_anchor"),
         },
         source=source_instance_id,
         correlation_id=source_message.correlation_id,
@@ -175,6 +197,8 @@ def build_sponsor_directive_status_message(
             "publication": source_message.payload.get("publication"),
             "source_channel": source_message.payload.get("source_channel"),
             "source_message_id": source_message.message_id,
+            "queue_item_id": source_message.payload.get("queue_item_id"),
+            "source_anchor": source_message.payload.get("source_anchor"),
         },
         source=source_instance.instance_id,
         correlation_id=source_message.correlation_id,

@@ -217,6 +217,54 @@ def test_runtime_normalises_worker_handoff_payload_from_flow(tmp_path: Path) -> 
     assert handoff_events[0]["target_lifecycle_state"] == "product_definition"
 
 
+def test_runtime_preserves_queue_provenance_in_handoff_payload(tmp_path: Path) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(tmp_path / "state", mesh_config.project.project_id, journal)
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        IncompleteHandoffWorker(),
+    )
+
+    message_store.enqueue(
+        Message.create(
+            role_id="business-analyst",
+            message_type="sdlc.business_analysis",
+            payload={
+                "title": "Work Queue V0",
+                "summary": "Create the project work queue abstraction.",
+                "work_item_id": "work-queue-v0",
+                "work_item_type": "slice",
+                "lifecycle_state": "business_analysis",
+                "queue_item_id": "queue-123",
+                "source_anchor": {
+                    "connector_type": "teams",
+                    "connector_id": "teams-bot-listener",
+                    "source_scope": "all-agents",
+                    "source_anchor_ref": "source:abc123",
+                    "display_label": "Nich in all-agents",
+                    "received_at": "2026-06-04T10:00:00+00:00",
+                },
+            },
+            source="work-queue:queue-123",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.business-analyst.1",
+        mesh_config.instances["agentic-mesh-dev.business-analyst.1"],
+    )
+
+    product_message = message_store.claim_next("product-manager", "test-product")
+    assert product_message is not None
+    assert product_message.payload["queue_item_id"] == "queue-123"
+    assert product_message.payload["source_anchor"]["source_anchor_ref"] == "source:abc123"
+
+
 def test_runtime_allows_reasoned_out_of_flow_handoff(tmp_path: Path) -> None:
     mesh_config = load_mesh_config(Path.cwd())
     journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
@@ -557,6 +605,88 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     assert "directive_publish_ready_connector_message_queued" in event_types
     assert "handoff_emitted" not in event_types
     assert "human_response_requested" not in event_types
+
+
+def test_queue_originated_publish_ready_targets_source_anchor(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        StubCodexWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+
+    message_store.enqueue(
+        Message.create(
+            role_id="release-manager",
+            message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+            payload={
+                "title": "Queue-originated publication",
+                "summary": "Publish-ready should return to the queue source.",
+                "work_item_id": "work-queue-publish",
+                "work_item_type": "directive",
+                "work_mode": "direct_targeted",
+                "requested_roles": ["release-manager"],
+                "output_path": "documents/analysis/release-manager.md",
+                "queue_item_id": "queue-publish",
+                "source_anchor": {
+                    "connector_type": "teams",
+                    "connector_id": "teams-bot-listener",
+                    "source_scope": "sponsor-requests",
+                    "source_anchor_ref": "source:publish",
+                    "display_label": "Nich in sponsor-requests",
+                    "received_at": "2026-06-04T10:00:00+00:00",
+                },
+                "source_channel": "all-agents",
+                "git_branch": "codex/work-queue-publish",
+                "publication": {
+                    "mode": "git_branch",
+                    "branch": "codex/work-queue-publish",
+                    "status": "open",
+                    "commit_policy": "commit_and_push_after_all_roles_terminal",
+                },
+            },
+            source="work-queue:queue-publish",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.release-manager.1",
+        mesh_config.instances["agentic-mesh-dev.release-manager.1"],
+    )
+
+    assert connector_outbox.pending_count("all-agents") == 0
+    assert connector_outbox.pending_count("sponsor-requests") == 1
+    publish_ready = connector_outbox.claim_next("sponsor-requests", "test-connector")
+    assert publish_ready is not None
+    assert publish_ready.type == "sponsor_directive.publish_ready"
+    assert publish_ready.payload["queue_item_id"] == "queue-publish"
+    assert publish_ready.payload["source_anchor"]["source_anchor_ref"] == "source:publish"
+    assert publish_ready.payload["publication"]["status"] == "ready_to_commit_and_push"
+
+    publish_events = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "directive_publish_ready_connector_message_queued"
+    ]
+    assert publish_events[0]["channel"] == "sponsor-requests"
 
 
 class BlockedDirectiveWorkerAdapter(WorkerAdapter):

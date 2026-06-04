@@ -11,6 +11,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 from threading import Thread
+from typing import Any
 
 from agentic_mesh import telemetry
 from agentic_mesh.auth import AuthResolver
@@ -39,6 +40,9 @@ from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.teams_ingress import ReloadableTeamsBotIngress
 from agentic_mesh.teams_ingress import serve_teams_bot_ingress
+from agentic_mesh.work_queue import FileWorkQueueStore
+from agentic_mesh.work_queue import SourceAnchor
+from agentic_mesh.work_queue import WorkQueueError
 from agentic_mesh.workers import ConfiguredWorkerAdapter
 
 
@@ -271,6 +275,19 @@ def cmd_status(args) -> int:
             connector_outbox.pending_count(channel),
             {"project_id": mesh_config.project.project_id, "channel": channel},
         )
+    work_queue = FileWorkQueueStore(args.state_root, mesh_config.project.project_id, journal)
+    work_queue_counts = work_queue.status_counts()
+    for owner_role, statuses in work_queue_counts.items():
+        for queue_status, count in statuses.items():
+            telemetry.set_gauge(
+                "agentic_mesh.work_queue.depth",
+                count,
+                {
+                    "project_id": mesh_config.project.project_id,
+                    "owner_role": owner_role,
+                    "queue_status": queue_status,
+                },
+            )
     status = {
         "organization_id": mesh_config.organization.organization_id,
         "global_language": mesh_config.organization.global_language,
@@ -295,6 +312,7 @@ def cmd_status(args) -> int:
             channel: connector_outbox.pending_count(channel)
             for channel in ["approvals"]
         },
+        "work_queue": work_queue_counts,
         "journal_path": str(journal.path),
     }
     print(json.dumps(status, indent=2))
@@ -739,6 +757,167 @@ def cmd_teams_bot_listener(args) -> int:
     return 0
 
 
+def _work_queue_store(args) -> tuple[Any, EventJournal, FileMessageStore, FileWorkQueueStore]:
+    mesh_config, journal, message_store, _, _, _ = build_runtime(
+        args.config_root,
+        args.project_file,
+        args.workspace_root,
+        args.state_root,
+    )
+    configure_component_telemetry(mesh_config, "cli")
+    return (
+        mesh_config,
+        journal,
+        message_store,
+        FileWorkQueueStore(args.state_root, mesh_config.project.project_id, journal),
+    )
+
+
+def cmd_work_queue_capture(args) -> int:
+    _, _, _, work_queue = _work_queue_store(args)
+    anchor = SourceAnchor(
+        connector_type=args.connector_type,
+        connector_id=args.connector_id,
+        source_scope=args.source_scope,
+        source_message_id=args.source_message_id,
+        actor=args.actor,
+        received_at=args.received_at or _now_for_cli(),
+        display_label=args.display_label or args.source_scope,
+        external_url=args.external_url,
+    )
+    raw_payload = json.loads(args.raw_payload) if args.raw_payload else None
+    item = work_queue.capture(
+        title=args.title,
+        summary=args.summary,
+        owner_role=args.owner_role,
+        source_anchor=anchor,
+        recommended_work_item_type=args.work_item_type,
+        idempotency_key=args.idempotency_key,
+        raw_payload=raw_payload,
+        retain_raw_payload=args.retain_raw_payload,
+        metadata={"source": "cli"},
+    )
+    print(json.dumps(item.redacted_summary(), indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_work_queue_list(args) -> int:
+    _, _, _, work_queue = _work_queue_store(args)
+    items = [
+        item.redacted_summary()
+        for item in work_queue.list_items()
+        if (args.status is None or item.status == args.status)
+        and (args.owner_role is None or item.owner_role == args.owner_role)
+    ]
+    print(json.dumps({"items": items}, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_work_queue_show(args) -> int:
+    _, _, _, work_queue = _work_queue_store(args)
+    item = work_queue.get(args.queue_item_id)
+    if item is None:
+        raise SystemExit(f"Unknown queue item `{args.queue_item_id}`")
+    if args.support:
+        try:
+            result = work_queue.support_read(
+                args.queue_item_id,
+                actor=args.actor or "",
+                reason=args.reason or "",
+                correlation_id=args.correlation_id or "",
+            )
+        except WorkQueueError as exc:
+            print(
+                json.dumps({"error": str(exc)}, indent=2, sort_keys=True),
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        result = item.redacted_summary()
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_work_queue_transition(args) -> int:
+    _, _, _, work_queue = _work_queue_store(args)
+    try:
+        item = work_queue.transition(
+            args.queue_item_id,
+            args.status,
+            actor_role=args.actor_role,
+            reason=args.reason,
+            correlation_id=args.correlation_id,
+        )
+    except WorkQueueError as exc:
+        print(json.dumps({"error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+    print(json.dumps(item.redacted_summary(), indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_work_queue_readiness(args) -> int:
+    _, _, _, work_queue = _work_queue_store(args)
+    evidence = json.loads(args.evidence)
+    try:
+        item = work_queue.mark_readiness(
+            args.queue_item_id,
+            actor_role=args.actor_role,
+            evidence=evidence,
+            correlation_id=args.correlation_id,
+        )
+    except WorkQueueError as exc:
+        print(json.dumps({"error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+    print(json.dumps(item.redacted_summary(), indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_work_queue_promote(args) -> int:
+    mesh_config, _, message_store, work_queue = _work_queue_store(args)
+    lifecycle_state = args.lifecycle_state or mesh_config.project.flow.entry_state
+    target_role = args.target_role or mesh_config.project.flow.states[lifecycle_state].owner_role
+    try:
+        promotion = work_queue.promote(
+            args.queue_item_id,
+            actor_role=args.actor_role,
+            message_store=message_store,
+            target_role=target_role,
+            lifecycle_state=lifecycle_state,
+            work_item_id=args.work_item_id,
+            work_item_type=args.work_item_type,
+            message_type=args.message_type,
+            idempotency_key=args.idempotency_key,
+        )
+    except WorkQueueError as exc:
+        print(json.dumps({"error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+    print(json.dumps(asdict(promotion), indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_work_queue_purge(args) -> int:
+    _, _, _, work_queue = _work_queue_store(args)
+    try:
+        result = work_queue.purge_raw(
+            queue_item_id=args.queue_item_id,
+            dry_run=not args.execute,
+            actor=args.actor,
+            reason=args.reason,
+            correlation_id=args.correlation_id,
+        )
+    except WorkQueueError as exc:
+        print(json.dumps({"error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def _now_for_cli() -> str:
+    from agentic_mesh.models import utc_now_iso
+
+    return utc_now_iso()
+
+
 def parser() -> argparse.ArgumentParser:
     root = Path(os.getenv("AGENTIC_MESH_CONFIG_ROOT", Path.cwd()))
     workspace_root = Path(os.getenv("AGENTIC_MESH_WORKSPACE_ROOT", root))
@@ -785,6 +964,74 @@ def parser() -> argparse.ArgumentParser:
 
     status = subcommands.add_parser("status")
     status.set_defaults(func=cmd_status)
+
+    work_queue = subcommands.add_parser("work-queue")
+    work_queue_commands = work_queue.add_subparsers(required=True)
+
+    queue_capture = work_queue_commands.add_parser("capture")
+    queue_capture.add_argument("--title", required=True)
+    queue_capture.add_argument("--summary", required=True)
+    queue_capture.add_argument("--owner-role", required=True)
+    queue_capture.add_argument("--work-item-type", default="spike")
+    queue_capture.add_argument("--connector-type", default="cli")
+    queue_capture.add_argument("--connector-id", default="local-cli")
+    queue_capture.add_argument("--source-scope", default="cli")
+    queue_capture.add_argument("--source-message-id")
+    queue_capture.add_argument("--actor")
+    queue_capture.add_argument("--received-at")
+    queue_capture.add_argument("--display-label")
+    queue_capture.add_argument("--external-url")
+    queue_capture.add_argument("--idempotency-key")
+    queue_capture.add_argument("--raw-payload")
+    queue_capture.add_argument("--retain-raw-payload", action="store_true")
+    queue_capture.set_defaults(func=cmd_work_queue_capture)
+
+    queue_list = work_queue_commands.add_parser("list")
+    queue_list.add_argument("--status")
+    queue_list.add_argument("--owner-role")
+    queue_list.set_defaults(func=cmd_work_queue_list)
+
+    queue_show = work_queue_commands.add_parser("show")
+    queue_show.add_argument("--queue-item-id", required=True)
+    queue_show.add_argument("--support", action="store_true")
+    queue_show.add_argument("--actor")
+    queue_show.add_argument("--reason")
+    queue_show.add_argument("--correlation-id")
+    queue_show.set_defaults(func=cmd_work_queue_show)
+
+    queue_transition = work_queue_commands.add_parser("transition")
+    queue_transition.add_argument("--queue-item-id", required=True)
+    queue_transition.add_argument("--status", required=True)
+    queue_transition.add_argument("--actor-role", required=True)
+    queue_transition.add_argument("--reason")
+    queue_transition.add_argument("--correlation-id")
+    queue_transition.set_defaults(func=cmd_work_queue_transition)
+
+    queue_readiness = work_queue_commands.add_parser("readiness")
+    queue_readiness.add_argument("--queue-item-id", required=True)
+    queue_readiness.add_argument("--actor-role", required=True)
+    queue_readiness.add_argument("--evidence", required=True)
+    queue_readiness.add_argument("--correlation-id")
+    queue_readiness.set_defaults(func=cmd_work_queue_readiness)
+
+    queue_promote = work_queue_commands.add_parser("promote")
+    queue_promote.add_argument("--queue-item-id", required=True)
+    queue_promote.add_argument("--actor-role", default="promotion-service")
+    queue_promote.add_argument("--target-role")
+    queue_promote.add_argument("--lifecycle-state")
+    queue_promote.add_argument("--work-item-id")
+    queue_promote.add_argument("--work-item-type")
+    queue_promote.add_argument("--message-type", default="sdlc.intake")
+    queue_promote.add_argument("--idempotency-key")
+    queue_promote.set_defaults(func=cmd_work_queue_promote)
+
+    queue_purge = work_queue_commands.add_parser("purge")
+    queue_purge.add_argument("--queue-item-id")
+    queue_purge.add_argument("--execute", action="store_true")
+    queue_purge.add_argument("--actor")
+    queue_purge.add_argument("--reason")
+    queue_purge.add_argument("--correlation-id")
+    queue_purge.set_defaults(func=cmd_work_queue_purge)
 
     document_manifest = subcommands.add_parser("document-manifest")
     document_manifest.add_argument("--write", action="store_true")

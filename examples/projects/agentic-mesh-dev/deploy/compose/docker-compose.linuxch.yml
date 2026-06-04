@@ -32,6 +32,10 @@ services:
     command: python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/project/state/secrets --poll-seconds 5
     restart: unless-stopped
 
+  teams-graph-ingress:
+    profiles:
+      - graph-ingress
+
   otel-collector:
     ports: !reset []
     networks:

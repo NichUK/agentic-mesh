@@ -11,11 +11,14 @@ from agentic_mesh.connectors import build_human_response_card
 from agentic_mesh.connectors import load_graph_token
 from agentic_mesh.connectors import render_human_response_request_html
 from agentic_mesh.models import ConnectorMessage
+from agentic_mesh.models import FlowGate
+from agentic_mesh.models import FlowState
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import build_human_response_request
 from agentic_mesh.models import Message
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
+from agentic_mesh.work_queue import FileWorkQueueStore
 
 
 def test_local_teams_connector_renders_human_response_card(tmp_path: Path) -> None:
@@ -285,6 +288,324 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     assert "teams_bot_activity_received" in event_types
     assert "message_accepted" in event_types
     assert "teams_all_agents_directive_routed" in event_types
+
+
+def test_teams_ingress_captures_work_queue_before_direct_role_work(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+    )
+
+    ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity/work-queue-capture",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "<at>all-agents</at> Please inspect the work queue design.",
+            "from": {"id": "raw-user-id", "name": "Nich"},
+            "conversation": {"id": "raw-conversation-id"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {
+                    "id": teams_config.channels["all-agents"].channel_id,
+                    "name": "all-agents",
+                },
+            },
+        }
+    )
+
+    events = journal.read_all()
+    event_types = [event["event_type"] for event in events]
+    assert event_types.index("queue_item_created") < event_types.index("message_accepted")
+    message = message_store.claim_next(
+        "business-analyst",
+        "agentic-mesh-dev.business-analyst.1",
+    )
+    assert message is not None
+    assert message.payload["queue_item_id"].startswith("queue-")
+    assert message.payload["source_anchor"]["source_anchor_ref"].startswith("source:")
+    rendered = json.dumps(message.payload["source_anchor"])
+    assert "raw-user-id" not in rendered
+    assert "raw-conversation-id" not in rendered
+
+
+def test_targeted_delivery_slice_request_enters_lifecycle_queue(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+
+    result = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity/mermaid-slice",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": (
+                "<at>AM-Delivery Manager</at> Please create and run a small "
+                "implementation slice for a Mermaid lifecycle chart export."
+            ),
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {
+                    "id": teams_config.channels["all-agents"].channel_id,
+                    "name": "all-agents",
+                },
+            },
+            "entities": [
+                {
+                    "type": "mention",
+                    "text": "<at>AM-Delivery Manager</at>",
+                    "mentioned": {"name": "AM-Delivery Manager"},
+                }
+            ],
+        }
+    )
+
+    assert result["routed"] is True
+    assert result["target_roles"] == ["business-analyst"]
+    assert message_store.pending_count("delivery-manager") == 0
+    assert message_store.pending_count("business-analyst") == 1
+    message = message_store.claim_next(
+        "business-analyst",
+        "agentic-mesh-dev.business-analyst.1",
+    )
+    assert message is not None
+    assert message.type == "sponsor_intake.requested"
+    assert message.payload["work_item_type"] == "slice"
+    assert message.payload["queue_item_id"].startswith("queue-")
+    queue_item = work_queue.get(message.payload["queue_item_id"])
+    assert queue_item is not None
+    assert queue_item.metadata["intake"] == "targeted_delivery_slice_request"
+
+    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
+    assert acknowledgement is not None
+    assert acknowledgement.type == "sponsor_directive.acknowledged"
+    assert acknowledgement.payload["intake_mode"] == "queued_sponsor_intake"
+    assert acknowledgement.payload["teams_reply_to_activity_id"] == "activity/mermaid-slice"
+    rendered = BotFrameworkTeamsConnectorAdapter._render_text(acknowledgement)
+    assert "Agentic Mesh queued" in rendered
+    assert "Created lifecycle work item" in rendered
+    assert "direct role-only instruction" in rendered
+
+
+def test_cross_connector_duplicate_intake_is_ignored(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+
+    def ingress(connector_id: str) -> TeamsBotIngress:
+        return TeamsBotIngress(
+            connector_id=connector_id,
+            project_id=mesh_config.project.project_id,
+            state_root=state_root,
+            message_store=message_store,
+            journal=journal,
+            connector_config=teams_config,
+            project_config=mesh_config.project,
+            connector_outbox=connector_outbox,
+            work_queue=work_queue,
+        )
+
+    activity = {
+        "type": "message",
+        "id": "activity/duplicate",
+        "serviceUrl": "https://smba.trafficmanager.net/uk/",
+        "text": "<at>AM-Delivery Manager</at> Please create and run a small slice.",
+        "from": {"id": "user-1", "name": "Nich"},
+        "conversation": {"id": "conversation-1"},
+        "channelData": {
+            "team": {"id": teams_config.team_id},
+            "channel": {
+                "id": teams_config.channels["all-agents"].channel_id,
+                "name": "all-agents",
+            },
+        },
+        "entities": [
+            {
+                "type": "mention",
+                "text": "<at>AM-Delivery Manager</at>",
+                "mentioned": {"name": "AM-Delivery Manager"},
+            }
+        ],
+    }
+
+    first = ingress("teams-bot-listener").receive_activity(activity)
+    second = ingress("teams-graph-ingress").receive_activity(activity)
+
+    assert first["routed"] is True
+    assert second == {"status": "accepted", "activity_id": "activity_duplicate"}
+    assert len(work_queue.list_items()) == 1
+    assert message_store.pending_count("business-analyst") == 1
+    assert connector_outbox.pending_count("all-agents") == 1
+    ignored = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "teams_channel_message_ignored"
+    ]
+    assert ignored[-1]["reason"] == "duplicate_source_already_queued"
+
+
+def test_teams_ingress_informational_message_remains_unqueued(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+
+    result = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity/informational",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "FYI: the previous queue command completed.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {
+                    "id": teams_config.channels["all-agents"].channel_id,
+                    "name": "all-agents",
+                },
+            },
+        }
+    )
+
+    assert result == {"status": "accepted", "activity_id": "activity_informational"}
+    assert work_queue.list_items() == []
+    assert all(
+        message_store.pending_count(role_id) == 0
+        for role_id in mesh_config.project.roles
+    )
+    assert connector_outbox.pending_count("all-agents") == 0
+    ignored = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "teams_channel_message_ignored"
+    ]
+    assert ignored[0]["reason"] == "missing_all_agents_or_role_mention"
+
+
+def test_queue_clarification_request_targets_source_anchor() -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    source_message = Message.create(
+        role_id="product-manager",
+        message_type="sdlc.product_definition",
+        payload={
+            "title": "Work Queue V0",
+            "summary": "Clarify queue source routing.",
+            "work_item_id": "work-queue-v0",
+            "work_item_type": "slice",
+            "lifecycle_state": "product_definition",
+            "queue_item_id": "queue-clarify",
+            "source_anchor": {
+                "connector_type": "teams",
+                "connector_id": "teams-bot-listener",
+                "source_scope": "sponsor-requests",
+                "source_anchor_ref": "source:clarify",
+                "display_label": "Nich in sponsor-requests",
+                "received_at": "2026-06-04T10:00:00+00:00",
+            },
+        },
+        source="work-queue:queue-clarify",
+    )
+    gate = FlowGate(
+        gate_id="queue_clarification_response",
+        type="human_response",
+        response_type="multiline_text",
+        prompt="What outcome should this queue item produce?",
+        requested_from="requester",
+        channel="all-agents",
+    )
+    flow_state = FlowState(
+        state_id="product_definition",
+        owner_role="product-manager",
+        purpose="Define product intent.",
+        artifact_path="work-items/{work_item_id}/20-product-definition.md",
+        handoffs={},
+        gates=[gate],
+    )
+
+    request = build_human_response_request(
+        gate=gate,
+        response_type=None,
+        source_message=source_message,
+        source_instance=mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+        flow_state=flow_state,
+    )
+
+    assert request.channel == "sponsor-requests"
+    assert request.channel != "all-agents"
+    assert request.payload["queue_item_id"] == "queue-clarify"
+    assert request.payload["source_anchor"]["source_anchor_ref"] == "source:clarify"
 
 
 def test_teams_ingress_routes_named_role_mention_in_all_agents_channel(
@@ -585,28 +906,29 @@ def test_graph_teams_channel_ingress_routes_leading_role_address_without_metadat
     result = ingress.process_once("all-agents", max_messages=5)
 
     assert result == {"routed": 1, "skipped": 0, "seen": 1}
-    assert message_store.pending_count("delivery-manager") == 1
+    assert message_store.pending_count("delivery-manager") == 0
+    assert message_store.pending_count("business-analyst") == 1
     assert all(
         message_store.pending_count(role_id) == 0
         for role_id in mesh_config.project.roles
-        if role_id != "delivery-manager"
+        if role_id not in {"business-analyst", "delivery-manager"}
     )
     acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
     assert acknowledgement is not None
-    assert acknowledgement.payload["role_id"] == "delivery-manager"
-    assert acknowledgement.payload["role_count"] == 1
-    assert acknowledgement.payload["target_roles"] == ["delivery-manager"]
+    assert acknowledgement.payload["role_id"] == "business-analyst"
+    assert acknowledgement.payload["intake_mode"] == "queued_sponsor_intake"
     message = message_store.claim_next(
-        "delivery-manager",
-        "agentic-mesh-dev.delivery-manager.1",
+        "business-analyst",
+        "agentic-mesh-dev.business-analyst.1",
     )
     assert message is not None
-    assert message.payload["work_mode"] == "direct_targeted"
-    assert message.payload["target_role"] == "delivery-manager"
-    assert message.payload["output_path"] == "documents/analysis/delivery-manager.md"
+    assert message.type == "sponsor_intake.requested"
+    assert message.payload["work_item_type"] == "slice"
+    assert message.payload["lifecycle_state"] == "business_analysis"
 
     event_types = [event["event_type"] for event in journal.read_all()]
-    assert "teams_targeted_directive_routed" in event_types
+    assert "teams_channel_message_routed" in event_types
+    assert "teams_targeted_directive_routed" not in event_types
     assert "teams_all_agents_directive_routed" not in event_types
 
 
@@ -935,6 +1257,43 @@ def test_bot_connector_renders_sponsor_directive_acknowledgement() -> None:
     assert "not a lifecycle handoff" in rendered
     assert "work-adoption" in rendered
     assert "codex/work-adoption-adopt-this-project" in rendered
+
+
+def test_bot_connector_uses_thread_reply_url_when_source_reference_exists(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    outbox = FileConnectorOutbox(state_root, mesh_config.project.project_id, journal)
+    connector = BotFrameworkTeamsConnectorAdapter(
+        connector_id="teams-bot-connector",
+        project_id=mesh_config.project.project_id,
+        connector_config=mesh_config.project.connectors["teams"],
+        outbox=outbox,
+        journal=journal,
+        secrets=object(),  # type: ignore[arg-type]
+    )
+    message = ConnectorMessage.create(
+        channel="all-agents",
+        message_type="sponsor_directive.acknowledged",
+        payload={
+            "title": "Queued slice",
+            "work_item_id": "work-threaded",
+            "role_id": "business-analyst",
+            "role_count": 1,
+            "target_roles": ["business-analyst"],
+            "teams_service_url": "https://smba.trafficmanager.net/uk/",
+            "teams_conversation_id": "19:conversation@thread.tacv2",
+            "teams_reply_to_activity_id": "1780500000000",
+        },
+        source="test",
+    )
+
+    assert connector._thread_reply_url(message) == (
+        "https://smba.trafficmanager.net/uk/v3/conversations/"
+        "19%3Aconversation%40thread.tacv2/activities/1780500000000"
+    )
 
 
 def test_bot_connector_renders_sponsor_directive_status() -> None:

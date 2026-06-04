@@ -351,6 +351,10 @@ class AgentRuntime:
         payload.setdefault("summary", source_message.payload.get("summary"))
         payload["work_item_id"] = source_message.payload.get("work_item_id")
         payload["work_item_type"] = source_message.payload.get("work_item_type")
+        if source_message.payload.get("queue_item_id"):
+            payload["queue_item_id"] = source_message.payload.get("queue_item_id")
+        if source_message.payload.get("source_anchor"):
+            payload["source_anchor"] = source_message.payload.get("source_anchor")
         payload["previous_lifecycle_state"] = flow_state.state_id
         payload["source_message_id"] = source_message.message_id
         return replace(handoff, payload=payload)
@@ -799,6 +803,8 @@ class AgentRuntime:
             "summary": source_message.payload.get("summary"),
             "work_item_id": work_item_id,
             "work_item_type": source_message.payload.get("work_item_type"),
+            "queue_item_id": source_message.payload.get("queue_item_id"),
+            "source_anchor": source_message.payload.get("source_anchor"),
             "work_mode": source_message.payload.get("work_mode"),
             "source_channel": source_message.payload.get("source_channel"),
             "target_roles": requested_roles,
@@ -815,7 +821,12 @@ class AgentRuntime:
         }
         if not self.message_store.mark_work_item_publish_ready(work_item_id, payload):
             return
-        channel = str(source_message.payload.get("source_channel") or "all-agents")
+        source_anchor = source_message.payload.get("source_anchor") or {}
+        channel = str(
+            source_anchor.get("source_scope")
+            or source_message.payload.get("source_channel")
+            or "all-agents"
+        )
         connector_message = ConnectorMessage.create(
             channel=channel,
             message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY,
