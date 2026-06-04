@@ -216,7 +216,7 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     assert message.payload["target_role"] == "business-analyst"
     assert message.payload["git_branch"] == acknowledgement.payload["git_branch"]
     assert message.payload["publication"]["mode"] == "git_branch"
-    assert message.payload["output_path"] == "documents/requirements/business-analyst.md"
+    assert message.payload["output_path"] == "documents/analysis/business-analyst.md"
     assert message.payload["teams_from_name"] == "Nich"
     assert "Start an adoption process" in message.payload["summary"]
     assert "<at>" not in message.payload["summary"]
@@ -666,7 +666,7 @@ def test_bot_connector_renders_sponsor_directive_status() -> None:
             "role_instance_id": "agentic-mesh-dev.release-manager.1",
             "status": "blocked",
             "status_message": "Codex CLI failed before returning a valid agent result.",
-            "artifact_paths": ["documents/requirements/release-manager.md"],
+            "artifact_paths": ["documents/analysis/release-manager.md"],
         },
         source="test",
     )
@@ -676,7 +676,7 @@ def test_bot_connector_renders_sponsor_directive_status() -> None:
     assert "release-manager: blocked direct instruction" in rendered
     assert "work-adoption" in rendered
     assert "Codex CLI failed" in rendered
-    assert "documents/requirements/release-manager.md" in rendered
+    assert "documents/analysis/release-manager.md" in rendered
     assert "codex/work-adoption-adopt-this-project" in rendered
 
 
@@ -688,7 +688,7 @@ def test_bot_connector_renders_sponsor_directive_publish_ready() -> None:
             "title": "Adopt this project",
             "work_item_id": "work-adoption",
             "git_branch": "codex/work-adoption-adopt-this-project",
-            "artifact_paths": ["documents/requirements/release-manager.md"],
+            "artifact_paths": ["documents/analysis/release-manager.md"],
         },
         source="test",
     )

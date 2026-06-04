@@ -75,7 +75,7 @@ The effective project workspace is:
 /mesh/workspaces/agentic-mesh/examples/projects/agentic-mesh-dev
 ```
 
-Generated project artifacts such as `documents/requirements/*.md` must land
+Generated project artifacts such as `documents/analysis/*.md` must land
 inside that effective project workspace. The system repository remains
 available to dogfood agents through the configured `agentic-mesh` repository
 path.

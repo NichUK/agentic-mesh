@@ -15,4 +15,6 @@ Thumbs.db
 state/
 examples/projects/*/state/
 examples/projects/*/build/
+examples/projects/*/documents/analysis/
+documents/analysis/
 *.log

@@ -288,7 +288,7 @@ class AgentRuntime:
             ),
             artifact_path=str(
                 message.payload.get("output_path")
-                or f"documents/requirements/{instance_config.role_id}.md"
+                or f"documents/analysis/{instance_config.role_id}.md"
             ),
             handoffs={},
             consults={},

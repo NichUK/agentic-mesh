@@ -144,7 +144,7 @@ roles:
     write_paths:
     - docs/business/**
     - docs/implementation-slices/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: business-analysis
       handoff_inbox: business-analysis
@@ -166,7 +166,7 @@ roles:
     write_paths:
     - docs/product/**
     - docs/implementation-slices/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: product
       handoff_inbox: product
@@ -187,7 +187,7 @@ roles:
     write_paths:
     - docs/ux/**
     - docs/implementation-slices/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: ux
       handoff_inbox: ux
@@ -209,7 +209,7 @@ roles:
     write_paths:
     - docs/architecture/**
     - docs/implementation-slices/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: enterprise-architecture
       handoff_inbox: enterprise-architecture
@@ -229,7 +229,7 @@ roles:
     write_paths:
     - docs/architecture/**
     - docs/implementation-slices/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: solution-architecture
       handoff_inbox: solution-architecture
@@ -251,7 +251,7 @@ roles:
     write_paths:
     - docs/security/**
     - docs/architecture/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: security
       handoff_inbox: security
@@ -275,7 +275,7 @@ roles:
     - examples/projects/agentic-mesh-dev/**
     - Dockerfile
     - config/otel/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: platform
       handoff_inbox: platform
@@ -297,7 +297,7 @@ roles:
     - src/**
     - tests/**
     - docs/engineering/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: engineering
       handoff_inbox: engineering
@@ -317,7 +317,7 @@ roles:
     write_paths:
     - docs/qa/**
     - tests/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: qa
       handoff_inbox: qa
@@ -338,7 +338,7 @@ roles:
     - README.md
     - MEMORY.md
     - docs/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: technical-writing
       handoff_inbox: technical-writing
@@ -358,7 +358,7 @@ roles:
     - Keep delivery status tied to work_item_id.
     write_paths:
     - docs/delivery/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: delivery
       handoff_inbox: delivery
@@ -378,7 +378,7 @@ roles:
     write_paths:
     - docs/research/**
     - docs/architecture/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: research
       handoff_inbox: research
@@ -397,7 +397,7 @@ roles:
     - Keep release records linked to work_item_id.
     write_paths:
     - docs/releases/**
-    - documents/requirements/**
+    - documents/analysis/**
     channels:
       primary: release
       handoff_inbox: release

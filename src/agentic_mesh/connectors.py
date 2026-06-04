@@ -1176,7 +1176,7 @@ class TeamsBotIngress:
                 "publication": publication,
                 "target_role": role_id,
                 "requested_roles": roles,
-                "output_path": f"documents/requirements/{role_id}.md",
+                "output_path": f"documents/analysis/{role_id}.md",
                 "source_connector": "teams",
                 "source_connector_id": self.connector_id,
                 "source_channel": logical_channel,

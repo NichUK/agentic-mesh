@@ -302,7 +302,7 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
                 "work_item_type": "directive",
                 "work_mode": "direct_broadcast",
                 "requested_roles": ["release-manager"],
-                "output_path": "documents/requirements/release-manager.md",
+                "output_path": "documents/analysis/release-manager.md",
                 "source_channel": "all-agents",
                 "git_branch": "codex/work-adoption-adopt-this-project",
                 "publication": {
@@ -335,7 +335,7 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     assert completed.payload["role_id"] == "release-manager"
     assert completed.payload["status"] == "completed"
     assert completed.payload["artifact_paths"] == [
-        "documents/requirements/release-manager.md"
+        "documents/analysis/release-manager.md"
     ]
     assert completed.payload["git_branch"] == "codex/work-adoption-adopt-this-project"
     publish_ready = connector_outbox.claim_next("all-agents", "test-connector")
@@ -343,14 +343,14 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     assert publish_ready.type == "sponsor_directive.publish_ready"
     assert publish_ready.payload["publication"]["status"] == "ready_to_commit_and_push"
     assert publish_ready.payload["artifact_paths"] == [
-        "documents/requirements/release-manager.md"
+        "documents/analysis/release-manager.md"
     ]
     assert message_store.pending_count("delivery-manager") == 0
     artifact = (
         tmp_path
         / "workspace"
         / "documents"
-        / "requirements"
+        / "analysis"
         / "release-manager.md"
     )
     content = artifact.read_text(encoding="utf-8")

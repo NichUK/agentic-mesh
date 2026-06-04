@@ -136,7 +136,7 @@ workspace:
 ```
 
 Role `write_paths` and flow `artifact_path` values are relative to that project
-workspace. Dogfood project artifacts such as `documents/requirements/*.md`
+workspace. Dogfood project artifacts such as `documents/analysis/*.md`
 therefore land under `examples/projects/agentic-mesh-dev/`, while the system
 repository remains available through the configured `agentic-mesh` repository
 path.

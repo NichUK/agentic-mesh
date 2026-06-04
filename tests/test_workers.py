@@ -26,7 +26,7 @@ def test_parse_agent_result_accepts_structured_worker_json() -> None:
               "message": "Analysed the project.",
               "document_updates": [
                 {
-                  "path": "documents/requirements/business-analyst.md",
+                  "path": "documents/analysis/business-analyst.md",
                   "content": "# Business Analyst Worklist\\n\\nActual analysis."
                 }
               ],
@@ -38,7 +38,7 @@ def test_parse_agent_result_accepts_structured_worker_json() -> None:
     )
 
     assert result.status == "completed"
-    assert result.document_updates[0].path == "documents/requirements/business-analyst.md"
+    assert result.document_updates[0].path == "documents/analysis/business-analyst.md"
 
 
 def test_configured_worker_blocks_when_codex_secret_is_missing(
@@ -180,7 +180,7 @@ def test_configured_worker_uses_current_codex_exec_flags(
   "message": "Smoke passed.",
   "document_updates": [
     {
-      "path": "documents/requirements/product-manager.md",
+      "path": "documents/analysis/product-manager.md",
       "content": "# Smoke passed"
     }
   ],
