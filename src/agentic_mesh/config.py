@@ -23,6 +23,7 @@ from agentic_mesh.models import (
     OrganizationConfig,
     ProjectConfig,
     ProjectConnectorConfig,
+    ProjectGoalConfig,
     ProjectMeshConfig,
     ProjectRepositoryConfig,
     ProjectRoleOverride,
@@ -605,6 +606,24 @@ def _role_memory_from_dict(data: dict[str, Any]) -> RoleMemoryConfig:
     )
 
 
+def _project_goal_from_dict(data: dict[str, Any]) -> ProjectGoalConfig:
+    goal_data = data.get("goal", {}) or {}
+    if not isinstance(goal_data, dict):
+        raise ConfigError("Project goal must be a mapping")
+    for key in ("success_measures", "constraints", "guidance"):
+        value = goal_data.get(key, []) or []
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ConfigError(f"Project goal.{key} must be a list of strings")
+    return ProjectGoalConfig(
+        description=str(goal_data.get("description", goal_data.get("outcome", ""))),
+        success_measures=[
+            str(item) for item in goal_data.get("success_measures", []) or []
+        ],
+        constraints=[str(item) for item in goal_data.get("constraints", []) or []],
+        guidance=[str(item) for item in goal_data.get("guidance", []) or []],
+    )
+
+
 def _project_meshes_from_dict(
     data: dict[str, Any],
     roles: dict[str, ProjectRoleOverride],
@@ -1101,6 +1120,7 @@ def load_mesh_config(
         for role_id, role_data in roles_data.items()
     }
     workspace = _project_workspace_from_dict(project_data, str(project_data["project_id"]))
+    goal = _project_goal_from_dict(project_data)
     document_library = _document_library_from_dict(project_data)
     role_memory = _role_memory_from_dict(project_data)
     meshes = _project_meshes_from_dict(project_data, roles)
@@ -1119,6 +1139,7 @@ def load_mesh_config(
         name=str(project_data.get("name", project_data["project_id"])),
         workspace=workspace,
         roles=roles,
+        goal=goal,
         auth_credentials=auth_credentials,
         connectors=connectors,
         document_accountabilities=document_accountabilities,

@@ -138,6 +138,8 @@ def test_worker_reasoning_effort_defaults_to_medium_when_omitted() -> None:
         project_file="examples/projects/example-project/agentic-mesh/project.yaml",
     )
 
+    assert mesh_config.project.goal.description == ""
+    assert mesh_config.project.goal.success_measures == []
     assert (
         mesh_config.project.roles["product-manager"].worker.reasoning_effort
         == "medium"
@@ -266,6 +268,21 @@ def test_loads_project_roles_and_instances() -> None:
         mesh_config.project.document_library.index_path
         == "docs/00-index/document-library-manifest.json"
     )
+    assert mesh_config.project.goal.description.startswith("Build Agentic Mesh")
+    assert "pluggable connectors" in mesh_config.project.goal.description
+    assert any(
+        "smallest appropriate set of roles" in measure
+        for measure in mesh_config.project.goal.success_measures
+    )
+    assert any(
+        "clarifying questions" in measure
+        for measure in mesh_config.project.goal.success_measures
+    )
+    assert any(
+        "Do not create documents just to record failure" in constraint
+        for constraint in mesh_config.project.goal.constraints
+    )
+    assert mesh_config.project.goal.guidance
     assert mesh_config.project.role_memory.enabled is True
     assert mesh_config.project.role_memory.provenance_required is True
     assert sorted(mesh_config.project.meshes) == ["governance", "sdlc"]

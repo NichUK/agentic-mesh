@@ -332,6 +332,14 @@ You are the `{instance.role_id}` role agent for Agentic Mesh project `{instance.
 Role purpose:
 {instance.template.purpose}
 
+Project goal:
+{json.dumps({
+            "description": self.project.goal.description,
+            "success_measures": self.project.goal.success_measures,
+            "constraints": self.project.goal.constraints,
+            "guidance": self.project.goal.guidance,
+        }, indent=2)}
+
 Project workspace:
 {json.dumps({
             "current_working_directory": str(self.workspace_root),
@@ -396,6 +404,11 @@ You must do the actual role work. Inspect the repository and project documents
 from your role's perspective before answering. Do not produce generic template
 output. If you cannot complete the work because credentials, tools, context, or
 permissions are missing, return status `blocked` with a precise reason.
+Keep every action aligned to the project goal. Ask necessary clarifying
+questions, propose explicit assumptions when appropriate, and work with other
+roles through the configured flow to advance the goal. If a task, handoff,
+artifact, or recommendation does not advance the goal or reduce a meaningful
+risk to it, say so and keep the work scoped.
 
 Return only the final JSON object required by the provided schema. Put all
 document changes in `document_updates`; do not rely on unreported filesystem

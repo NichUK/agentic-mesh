@@ -256,6 +256,14 @@ class ProjectWorkspaceConfig:
 
 
 @dataclass(frozen=True)
+class ProjectGoalConfig:
+    description: str = ""
+    success_measures: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    guidance: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ConnectorChannelConfig:
     channel_id: str
     name: str
@@ -313,6 +321,7 @@ class ProjectConfig:
     roles: dict[str, ProjectRoleOverride]
     document_accountabilities: dict[str, DocumentAccountability]
     flow: SdlcFlow
+    goal: ProjectGoalConfig = field(default_factory=ProjectGoalConfig)
     document_library: DocumentLibraryConfig = field(default_factory=DocumentLibraryConfig)
     role_memory: RoleMemoryConfig = field(default_factory=RoleMemoryConfig)
     meshes: dict[str, ProjectMeshConfig] = field(default_factory=dict)

@@ -228,6 +228,10 @@ def test_configured_worker_uses_current_codex_exec_flags(
         tmp_path / "state" / "worker_mounts" / mount_ref
     )
     prompt = str(captured["prompt"])
+    assert "Project goal:" in prompt
+    assert "Build Agentic Mesh into an open-core" in prompt
+    assert "pluggable connectors" in prompt
+    assert "current_focus" not in prompt
     assert "Project workspace:" in prompt
     assert '"workspace_root": "examples/projects/agentic-mesh-dev"' in prompt
     assert '"default_repository": "agentic-mesh"' in prompt

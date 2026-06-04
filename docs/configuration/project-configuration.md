@@ -42,6 +42,7 @@ flow: ...
 Optional top-level fields are:
 
 ```yaml
+goal: ...
 auth_credentials: ...
 connectors: ...
 document_library: ...
@@ -52,6 +53,41 @@ document_accountabilities: ...
 
 Use lowercase kebab-case for `project_id`, for example
 `agentic-mesh-dev`, `customer-portal`, or `finance-ops`.
+
+## Goal
+
+`goal` is the project north star. Agentic Mesh passes it to every role-agent so
+plans, handoffs, blocker reports, and artifacts stay tied to a focused project
+goal rather than drifting into generic role activity.
+
+```yaml
+goal:
+  description: Build Agentic Mesh into an open-core enterprise role-agent runtime
+    with pluggable connectors for messaging, work intake, repositories, and
+    delivery systems.
+  success_measures:
+    - Work is routed to the smallest appropriate set of roles.
+    - Agents ask necessary clarifying questions before acting on ambiguity.
+    - Agents acknowledge, plan, execute, and report blockers visibly.
+  constraints:
+    - Do not create documents just to record failure or status.
+    - Preserve specialist decision ownership.
+  guidance:
+    - Every action should advance the current focus, reduce a meaningful risk,
+      or clearly explain why progress is blocked.
+```
+
+Fields:
+
+- `description`: durable project goal or mission the mesh is trying to achieve.
+- `success_measures`: observable signs that work is staying on track.
+- `constraints`: project-specific guardrails that role agents must respect.
+- `guidance`: additional steering language for plans, handoffs, and blockers.
+
+The goal is not a hidden controller decision. It is shared context for the
+agents, similar to a sponsor brief or project charter. Roles may still disagree
+or push back, but their reasoning should explain how the proposal advances the
+goal or protects it from risk.
 
 ## Workspace
 
