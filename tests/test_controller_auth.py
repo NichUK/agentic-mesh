@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from http.client import HTTPConnection
 from pathlib import Path
 from threading import Thread
+from unittest.mock import patch
 
 from agentic_mesh import controller_auth
 from agentic_mesh.controller_auth import ControllerAuthHandler
@@ -119,6 +121,11 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert "product_definition" in body
         assert "work-items/work-queue-v0/20-product-definition.md" in body
         assert (
+            "/artifact-viewer/work-items%2Fwork-queue-v0%2F20-product-definition.md"
+            in body
+        )
+        assert 'target="_blank"' in body
+        assert (
             "/artifacts/work-items%2Fwork-queue-v0%2F20-product-definition.md"
             in body
         )
@@ -132,6 +139,74 @@ def test_controller_work_item_status_page_shows_claimed_slice(
 
         assert response.status == 200
         assert "Visible artifact content." in artifact_body
+
+        connection.request(
+            "GET",
+            "/artifact-viewer/work-items%2Fwork-queue-v0%2F20-product-definition.md",
+        )
+        response = connection.getresponse()
+        viewer_body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "marked.min.js" in viewer_body
+        assert "mermaid.esm.min.mjs" in viewer_body
+        assert "Visible artifact content." in viewer_body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_artifact_viewer_redirects_to_configured_renderer(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    artifact_path = (
+        tmp_path
+        / "docs"
+        / "work-items"
+        / "work-queue-v0"
+        / "20-product-definition.md"
+    )
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("# Stories\n", encoding="utf-8")
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+        workspace_root=tmp_path,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+        with patch.dict(
+            os.environ,
+            {
+                "AGENTIC_MESH_ARTIFACT_RENDERER_URL_TEMPLATE": (
+                    "https://renderer.example/view?url={artifact_url}&path={artifact_path}"
+                )
+            },
+        ):
+            connection.request(
+                "GET",
+                "/artifact-viewer/work-items%2Fwork-queue-v0%2F20-product-definition.md",
+                headers={"Host": f"{host}:{port}"},
+            )
+            response = connection.getresponse()
+            response.read()
+
+        assert response.status == 303
+        location = response.headers["Location"]
+        assert location.startswith("https://renderer.example/view?url=http://")
+        assert (
+            "artifacts/work-items%2Fwork-queue-v0%2F20-product-definition.md"
+            in location
+        )
+        assert "path=work-items%2Fwork-queue-v0%2F20-product-definition.md" in location
     finally:
         server.shutdown()
         server.server_close()

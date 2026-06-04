@@ -408,6 +408,10 @@ class ControllerAuthService:
             return None
         return path
 
+    @staticmethod
+    def artifact_renderer_url_template() -> str | None:
+        return os.environ.get("AGENTIC_MESH_ARTIFACT_RENDERER_URL_TEMPLATE")
+
     def _effective_workspace_root(self, mesh_config: MeshConfig) -> Path:
         configured_root = Path(mesh_config.project.workspace.root)
         if configured_root.is_absolute():
@@ -558,6 +562,21 @@ class ControllerAuthHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path)
         if path.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"status": "ok"})
+            return
+        if path.path.startswith("/artifact-viewer/"):
+            artifact_path = unquote(path.path.removeprefix("/artifact-viewer/"))
+            file_path = self.server.service.resolve_artifact_path(artifact_path)
+            if file_path is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
+            renderer_url = self._artifact_renderer_url(artifact_path)
+            if renderer_url:
+                self._redirect(renderer_url)
+                return
+            self._send_html(
+                HTTPStatus.OK,
+                self._artifact_viewer_page(artifact_path, file_path),
+            )
             return
         if path.path.startswith("/artifacts/"):
             artifact_path = unquote(path.path.removeprefix("/artifacts/"))
@@ -919,7 +938,12 @@ if (statusEl.textContent === "running") {{
                 "</tr>"
             )
         artifact_items = "".join(
-            f"<li><a href=\"/artifacts/{quote(path, safe='')}\"><code>{html.escape(path)}</code></a></li>"
+            "<li>"
+            f"<a href=\"/artifact-viewer/{quote(path, safe='')}\" target=\"_blank\" rel=\"noopener noreferrer\">"
+            f"<code>{html.escape(path)}</code>"
+            "</a>"
+            f" <a class=\"source-link\" href=\"/artifacts/{quote(path, safe='')}\" target=\"_blank\" rel=\"noopener noreferrer\">source</a>"
+            "</li>"
             for path in payload["artifacts"]
         ) or "<li>None recorded</li>"
         teams_items = "".join(
@@ -980,6 +1004,113 @@ if (statusEl.textContent === "running") {{
         title = f"Work Item {payload['work_item_id']}"
         return self._layout(title, body)
 
+    def _artifact_viewer_page(self, artifact_path: str, file_path: Path) -> str:
+        raw_href = "/artifacts/" + quote(artifact_path, safe="")
+        suffix = file_path.suffix.lower()
+        content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        title = f"Artifact {artifact_path}"
+        if suffix in {".md", ".markdown"}:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+            markdown_json = json.dumps(content).replace("</", "<\\/")
+            body = f"""
+<p class="artifact-meta">
+  <code>{html.escape(artifact_path)}</code>
+  <a class="source-link" href="{html.escape(raw_href)}" target="_blank" rel="noopener noreferrer">source</a>
+</p>
+<article id="markdown-rendered" class="markdown-body"></article>
+<script type="application/json" id="artifact-markdown">{markdown_json}</script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.esm.min.mjs";
+
+const sourceEl = document.getElementById("artifact-markdown");
+const targetEl = document.getElementById("markdown-rendered");
+const markdown = JSON.parse(sourceEl.textContent || '""');
+mermaid.initialize({{ startOnLoad: false, securityLevel: "strict" }});
+targetEl.innerHTML = marked.parse(markdown, {{ mangle: false, headerIds: true }});
+const diagrams = targetEl.querySelectorAll("pre code.language-mermaid, code.language-mermaid");
+diagrams.forEach((node, index) => {{
+  const container = document.createElement("div");
+  container.className = "mermaid";
+  container.textContent = node.textContent || "";
+  container.id = `mermaid-artifact-${{index}}`;
+  const pre = node.closest("pre");
+  if (pre) {{
+    pre.replaceWith(container);
+  }} else {{
+    node.replaceWith(container);
+  }}
+}});
+await mermaid.run({{ querySelector: ".mermaid" }});
+</script>
+"""
+        elif content_type.startswith("text/") or suffix in {".json", ".yaml", ".yml", ".toml", ".log"}:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+            body = f"""
+<p class="artifact-meta">
+  <code>{html.escape(artifact_path)}</code>
+  <a class="source-link" href="{html.escape(raw_href)}" target="_blank" rel="noopener noreferrer">source</a>
+</p>
+<pre class="artifact-source">{html.escape(content)}</pre>
+"""
+        elif content_type.startswith("image/"):
+            body = f"""
+<p class="artifact-meta">
+  <code>{html.escape(artifact_path)}</code>
+  <a class="source-link" href="{html.escape(raw_href)}" target="_blank" rel="noopener noreferrer">source</a>
+</p>
+<img class="artifact-image" src="{html.escape(raw_href)}" alt="{html.escape(artifact_path)}">
+"""
+        elif content_type == "application/pdf":
+            body = f"""
+<p class="artifact-meta">
+  <code>{html.escape(artifact_path)}</code>
+  <a class="source-link" href="{html.escape(raw_href)}" target="_blank" rel="noopener noreferrer">source</a>
+</p>
+<iframe class="artifact-frame" src="{html.escape(raw_href)}" title="{html.escape(artifact_path)}"></iframe>
+"""
+        else:
+            body = f"""
+<p class="artifact-meta">
+  <code>{html.escape(artifact_path)}</code>
+</p>
+<p>This artifact type is best opened by the configured browser renderer or downloaded as source.</p>
+<p><a href="{html.escape(raw_href)}" target="_blank" rel="noopener noreferrer">Open source artifact</a></p>
+"""
+        return self._layout(title, body)
+
+    def _artifact_renderer_url(self, artifact_path: str) -> str | None:
+        template = self.server.service.artifact_renderer_url_template()
+        if not template:
+            return None
+        artifact_url = self._absolute_url(
+            "/artifacts/" + quote(artifact_path, safe="")
+        )
+        replacements = {
+            "artifact_url": quote(artifact_url, safe=":/?#[]@!$&'()*+,;=%"),
+            "artifact_path": quote(artifact_path, safe=""),
+        }
+        if "{artifact_url}" in template or "{artifact_path}" in template:
+            return template.format(**replacements)
+        separator = "&" if "?" in template else "?"
+        return (
+            template
+            + separator
+            + urlencode(
+                {
+                    "artifact_url": artifact_url,
+                    "artifact_path": artifact_path,
+                }
+            )
+        )
+
+    def _absolute_url(self, path: str) -> str:
+        host = self.headers.get("Host") or (
+            f"{self.server.server_address[0]}:{self.server.server_address[1]}"
+        )
+        scheme = self.headers.get("X-Forwarded-Proto") or "http"
+        return f"{scheme}://{host}{path}"
+
     def _layout(self, title: str, body: str) -> str:
         return f"""<!doctype html>
 <html lang="en">
@@ -1006,6 +1137,14 @@ if (statusEl.textContent === "running") {{
     .status-button {{ align-items: center; background: #e9f7ef; border: 1px solid #166534; color: #166534; display: inline-flex; gap: 0.35rem; padding: 0.45rem 0.7rem; }}
     .status-button svg {{ fill: none; height: 1rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; width: 1rem; }}
     .copy-status {{ color: #166534; min-width: 4rem; }}
+    .source-link {{ color: #4b5563; font-size: 0.85rem; margin-left: 0.5rem; }}
+    .artifact-meta {{ background: #f8fafc; border-left: 4px solid #2563eb; padding: 1rem; }}
+    .artifact-source {{ overflow: auto; padding: 1rem; white-space: pre-wrap; }}
+    .artifact-image {{ height: auto; max-width: 100%; }}
+    .artifact-frame {{ border: 1px solid #d4d4d4; height: 80vh; width: 100%; }}
+    .markdown-body {{ max-width: 72rem; }}
+    .markdown-body table {{ display: block; max-width: 100%; overflow-x: auto; width: max-content; }}
+    .markdown-body pre {{ overflow: auto; padding: 1rem; }}
   </style>
 </head>
 <body>

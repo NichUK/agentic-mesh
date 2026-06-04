@@ -478,6 +478,25 @@ Fields:
 
 Document paths are relative to the project workspace.
 
+## Artifact Viewing
+
+The control-plane status page links each artifact through
+`/artifact-viewer/{artifact_path}` and opens it in a new browser tab. Raw source
+remains available at `/artifacts/{artifact_path}`.
+
+By default, the artifact viewer renders Markdown in-browser and enables Mermaid
+diagrams. Deployments with a richer browser/document renderer, such as a
+SeerSys D8Aroom-style browser plugin, should set:
+
+```text
+AGENTIC_MESH_ARTIFACT_RENDERER_URL_TEMPLATE=https://renderer.example/view?url={artifact_url}&path={artifact_path}
+```
+
+The template may use `{artifact_url}` for the absolute raw artifact URL and
+`{artifact_path}` for the encoded project-relative artifact path. If the
+template has no placeholders, Agentic Mesh appends both values as query
+parameters.
+
 ## Flow
 
 `flow` governs lifecycle states, handoffs, consult routes, gates, artifacts,
