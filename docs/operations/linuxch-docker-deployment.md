@@ -138,6 +138,14 @@ useful for watching generated project files from the parent host without moving
 runtime queues, Teams raw activities, OAuth caches, or role secrets onto the
 share.
 
+When this CIFS workspace is active, treat the mounted repository as the live
+document library. Do not refresh it with a broad `rsync --delete` from the VM
+checkout: agents may have generated untracked `work-items/...` artifacts on the
+CIFS share that are still referenced by the event journal, and a destructive
+sync can remove them. Prefer updating both checkouts with Git, or use a
+non-destructive bootstrap sync that explicitly preserves generated document
+library paths such as `work-items/`.
+
 Teams messages use `AGENTIC_MESH_STATUS_BASE_URL` for sponsor-facing work item
 links. On `linuxch`, set this in the same `.env` file when the control-plane
 port is routed externally:

@@ -339,7 +339,7 @@ class ControllerAuthService:
         ]
 
         current = self._current_work_item_state(events, active_claims, pending)
-        artifacts = sorted(
+        artifact_paths = sorted(
             {
                 str(event.get("path"))
                 for event in events
@@ -350,7 +350,15 @@ class ControllerAuthService:
         for event in events:
             for path in event.get("artifact_paths") or []:
                 if path:
-                    artifacts.append(str(path))
+                    artifact_paths.append(str(path))
+        artifacts = sorted(set(artifact_paths))
+        artifact_records = [
+            {
+                "path": artifact_path,
+                "exists": self.resolve_artifact_path(artifact_path) is not None,
+            }
+            for artifact_path in artifacts
+        ]
         teams_messages = [
             {
                 "timestamp": event.get("timestamp"),
@@ -384,7 +392,11 @@ class ControllerAuthService:
                 ),
             },
             "queue_entries": queue_entries,
-            "artifacts": sorted(set(artifacts)),
+            "artifacts": artifacts,
+            "artifact_records": artifact_records,
+            "missing_artifacts": [
+                record["path"] for record in artifact_records if not record["exists"]
+            ],
             "teams_messages": teams_messages,
             "timeline": events,
         }
@@ -937,15 +949,29 @@ if (statusEl.textContent === "running") {{
                 f"<td>{html.escape(str(detail))}</td>"
                 "</tr>"
             )
-        artifact_items = "".join(
-            "<li>"
-            f"<a href=\"/artifact-viewer/{quote(path, safe='')}\" target=\"_blank\" rel=\"noopener noreferrer\">"
-            f"<code>{html.escape(path)}</code>"
-            "</a>"
-            f" <a class=\"source-link\" href=\"/artifacts/{quote(path, safe='')}\" target=\"_blank\" rel=\"noopener noreferrer\">source</a>"
-            "</li>"
-            for path in payload["artifacts"]
-        ) or "<li>None recorded</li>"
+        artifact_items_parts = []
+        artifact_records = payload.get("artifact_records") or [
+            {"path": path, "exists": True} for path in payload["artifacts"]
+        ]
+        for record in artifact_records:
+            path = str(record.get("path") or "")
+            if record.get("exists"):
+                artifact_items_parts.append(
+                    "<li>"
+                    f"<a href=\"/artifact-viewer/{quote(path, safe='')}\" target=\"_blank\" rel=\"noopener noreferrer\">"
+                    f"<code>{html.escape(path)}</code>"
+                    "</a>"
+                    f" <a class=\"source-link\" href=\"/artifacts/{quote(path, safe='')}\" target=\"_blank\" rel=\"noopener noreferrer\">source</a>"
+                    "</li>"
+                )
+            else:
+                artifact_items_parts.append(
+                    "<li class=\"missing-artifact\">"
+                    f"<code>{html.escape(path)}</code>"
+                    ' <span class="warning">missing from document library</span>'
+                    "</li>"
+                )
+        artifact_items = "".join(artifact_items_parts) or "<li>None recorded</li>"
         teams_items = "".join(
             "<li>"
             f"{html.escape(str(item.get('timestamp') or ''))} "
@@ -1128,6 +1154,8 @@ await mermaid.run({{ querySelector: ".mermaid" }});
     h2 {{ margin-top: 2rem; }}
     .notice {{ background: #e9f7ef; border: 1px solid #9bd7ad; padding: 0.75rem; }}
     .summary {{ background: #f8fafc; border: 1px solid #cbd5e1; padding: 1rem; }}
+    .warning {{ color: #92400e; font-weight: 600; }}
+    .missing-artifact {{ background: #fffbeb; border-left: 4px solid #f59e0b; padding: 0.5rem 0.75rem; }}
     .primary {{ display: inline-block; background: #111827; color: white; padding: 0.75rem 1rem; text-decoration: none; }}
     .code-panel {{ border: 2px solid #111827; display: inline-block; padding: 1rem 1.25rem; margin: 1rem 0; }}
     .code-row {{ align-items: center; display: flex; gap: 0.75rem; }}

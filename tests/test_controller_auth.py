@@ -111,6 +111,13 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert payload["artifacts"] == [
             "work-items/work-queue-v0/20-product-definition.md"
         ]
+        assert payload["artifact_records"] == [
+            {
+                "path": "work-items/work-queue-v0/20-product-definition.md",
+                "exists": True,
+            }
+        ]
+        assert payload["missing_artifacts"] == []
 
         connection.request("GET", "/work-items/work-queue-v0")
         response = connection.getresponse()
@@ -151,6 +158,66 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert "marked.min.js" in viewer_body
         assert "mermaid.esm.min.mjs" in viewer_body
         assert "Visible artifact content." in viewer_body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_controller_work_item_status_page_marks_missing_artifacts(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, project_id)
+    journal.append(
+        "documentation_updated",
+        project_id=project_id,
+        role_id="business-analyst",
+        role_instance_id="example-project.business-analyst.1",
+        work_item_id="work-missing-artifact",
+        work_item_type="slice",
+        lifecycle_state="business_analysis",
+        path="work-items/work-missing-artifact/10-business-brief.md",
+    )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+        workspace_root=tmp_path,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request("GET", "/work-items/work-missing-artifact.json")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert payload["artifact_records"] == [
+            {
+                "path": "work-items/work-missing-artifact/10-business-brief.md",
+                "exists": False,
+            }
+        ]
+        assert payload["missing_artifacts"] == [
+            "work-items/work-missing-artifact/10-business-brief.md"
+        ]
+
+        connection.request("GET", "/work-items/work-missing-artifact")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "missing from document library" in body
+        assert (
+            "/artifact-viewer/work-items%2Fwork-missing-artifact%2F10-business-brief.md"
+            not in body
+        )
     finally:
         server.shutdown()
         server.server_close()
