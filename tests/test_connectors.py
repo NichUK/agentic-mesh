@@ -480,6 +480,76 @@ def test_graph_teams_channel_ingress_routes_named_role_mention(
     assert "teams_all_agents_directive_routed" not in event_types
 
 
+def test_graph_teams_channel_ingress_routes_leading_role_address_without_metadata(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = GraphTeamsChannelIngressAdapter(
+        connector_id="teams-graph-ingress",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        connector_config=teams_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token="token",
+        connector_outbox=connector_outbox,
+    )
+    ingress._list_channel_messages = lambda channel, max_messages: [
+        {
+            "id": "plain-role-address-1",
+            "createdDateTime": "2026-06-04T10:47:32.895Z",
+            "subject": "Mermaid flow diagram",
+            "body": {
+                "contentType": "html",
+                "content": (
+                    "<div>@AM-Delivery Manager Please create and run a small "
+                    "implementation slice to add a CLI command.</div>"
+                ),
+            },
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [],
+            "webUrl": "https://teams.example/message/plain-role-address-1",
+        }
+    ]
+
+    result = ingress.process_once("all-agents", max_messages=5)
+
+    assert result == {"routed": 1, "skipped": 0, "seen": 1}
+    assert message_store.pending_count("delivery-manager") == 1
+    assert all(
+        message_store.pending_count(role_id) == 0
+        for role_id in mesh_config.project.roles
+        if role_id != "delivery-manager"
+    )
+    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
+    assert acknowledgement is not None
+    assert acknowledgement.payload["role_id"] == "delivery-manager"
+    assert acknowledgement.payload["role_count"] == 1
+    assert acknowledgement.payload["target_roles"] == ["delivery-manager"]
+    message = message_store.claim_next(
+        "delivery-manager",
+        "agentic-mesh-dev.delivery-manager.1",
+    )
+    assert message is not None
+    assert message.payload["work_mode"] == "direct_targeted"
+    assert message.payload["target_role"] == "delivery-manager"
+    assert message.payload["output_path"] == "documents/analysis/delivery-manager.md"
+
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "teams_targeted_directive_routed" in event_types
+    assert "teams_all_agents_directive_routed" not in event_types
+
+
 def test_graph_teams_channel_ingress_skips_all_agents_acknowledgement_echo(
     tmp_path: Path,
 ) -> None:

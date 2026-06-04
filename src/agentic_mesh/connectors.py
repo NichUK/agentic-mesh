@@ -1354,8 +1354,14 @@ class TeamsBotIngress:
 
     def _mentioned_role_ids(self, activity: dict[str, Any]) -> list[str]:
         assert self.connector_config is not None
-        return _role_ids_for_mentions(
+        mentioned_roles = _role_ids_for_mentions(
             _mention_texts_from_activity(activity),
+            self.connector_config,
+        )
+        if mentioned_roles:
+            return mentioned_roles
+        return _role_ids_for_leading_address(
+            _plain_text(activity.get("text")),
             self.connector_config,
         )
 
@@ -1834,9 +1840,15 @@ class GraphTeamsChannelIngressAdapter:
         return mention_key in _plain_text(html_text).casefold().split()
 
     def _message_mentions_role(self, graph_message: dict[str, Any]) -> bool:
+        mentioned_roles = _role_ids_for_mentions(
+            _mention_texts_from_graph_message(graph_message),
+            self.connector_config,
+        )
+        if mentioned_roles:
+            return True
         return bool(
-            _role_ids_for_mentions(
-                _mention_texts_from_graph_message(graph_message),
+            _role_ids_for_leading_address(
+                self._message_text(graph_message),
                 self.connector_config,
             )
         )
@@ -1971,18 +1983,57 @@ def _role_ids_for_mentions(
     mention_keys = {_normalise_mention_text(text) for text in mention_texts}
     matched: list[str] = []
     for role_id in sorted(connector_config.role_bots):
-        role_bot = connector_config.role_bots[role_id]
-        aliases = {
-            role_id,
-            role_id.replace("-", " "),
-            role_bot.display_name,
-        }
-        if role_bot.display_name.casefold().startswith("am-"):
-            aliases.add(role_bot.display_name[3:])
-        alias_keys = {_normalise_mention_text(alias) for alias in aliases}
+        alias_keys = _role_alias_keys(role_id, connector_config)
         if mention_keys & alias_keys:
             matched.append(role_id)
     return matched
+
+
+def _role_ids_for_leading_address(
+    text: str,
+    connector_config: ProjectConnectorConfig,
+) -> list[str]:
+    plain_text = _normalise_leading_address_text(text)
+    if not plain_text:
+        return []
+    matched: list[str] = []
+    for role_id in sorted(connector_config.role_bots):
+        for alias_key in _role_alias_keys(role_id, connector_config):
+            if _leading_address_matches(plain_text, alias_key):
+                matched.append(role_id)
+                break
+    return matched
+
+
+def _role_alias_keys(
+    role_id: str,
+    connector_config: ProjectConnectorConfig,
+) -> set[str]:
+    role_bot = connector_config.role_bots[role_id]
+    aliases = {
+        role_id,
+        role_id.replace("-", " "),
+        role_bot.display_name,
+    }
+    if role_bot.display_name.casefold().startswith("am-"):
+        aliases.add(role_bot.display_name[3:])
+    return {_normalise_mention_text(alias) for alias in aliases}
+
+
+def _normalise_leading_address_text(text: str) -> str:
+    text = _plain_text(text)
+    text = text.strip()
+    text = re.sub(r"^[@\s]+", "", text)
+    return re.sub(r"\s+", " ", text).casefold()
+
+
+def _leading_address_matches(text: str, alias_key: str) -> bool:
+    if text == alias_key:
+        return True
+    return any(
+        text.startswith(f"{alias_key}{separator}")
+        for separator in (" ", ":", ",", ".", "\n", "\t")
+    )
 
 
 def _title_from_text(text: str) -> str:
