@@ -671,12 +671,49 @@ def render_human_response_request_html(message: ConnectorMessage) -> str:
     gate_id = html.escape(str(payload.get("gate_id") or "unknown"))
     response_type = html.escape(str(payload.get("response_type") or "unknown"))
     summary = html.escape(str(payload.get("summary") or ""))
+    approval_context = payload.get("approval_context") or {}
+    work_summary = html.escape(
+        _truncate(str(approval_context.get("work_performed_summary") or summary), 900)
+    )
+    completed_roles = [
+        html.escape(str(role))
+        for role in approval_context.get("completed_roles") or []
+        if role
+    ]
+    blocked_roles = [
+        html.escape(str(role))
+        for role in approval_context.get("blocked_roles") or []
+        if role
+    ]
+    artifacts = [
+        html.escape(str(path))
+        for path in approval_context.get("artifact_paths") or []
+        if path
+    ]
+    completed_text = ", ".join(completed_roles) if completed_roles else "none recorded"
+    blocked_text = ", ".join(blocked_roles) if blocked_roles else "none"
+    artifact_text = ", ".join(f"<code>{path}</code>" for path in artifacts[:8])
+    if len(artifacts) > 8:
+        artifact_text += f", and {len(artifacts) - 8} more"
+    if not artifact_text:
+        artifact_text = "none recorded"
     status_link = _work_item_status_link_html(raw_work_item_id, paragraph=True)
+    test_url = approval_context.get("test_url") or approval_context.get("status_url")
+    test_link = (
+        f'<p><a href="{html.escape(str(test_url))}">'
+        f'{html.escape(str(approval_context.get("test_url_label") or "Review and test"))}</a></p>'
+        if test_url
+        else ""
+    )
     return (
         f"<p><strong>{prompt}</strong></p>"
         f"<p>Work item <code>{work_item_id}</code> is waiting at gate "
         f"<code>{gate_id}</code> for response type <code>{response_type}</code>.</p>"
-        f"<p>{summary}</p>"
+        f"<p><strong>Work performed:</strong> {work_summary}</p>"
+        f"<p><strong>Completed roles:</strong> {completed_text}</p>"
+        f"<p><strong>Blocked roles:</strong> {blocked_text}</p>"
+        f"<p><strong>Artifacts:</strong> {artifact_text}</p>"
+        f"{test_link}"
         f"{status_link}"
     )
 
@@ -821,6 +858,25 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
     payload = message.payload
     response_template = payload.get("response_template") or {}
     input_mode = response_template.get("input_mode")
+    approval_context = payload.get("approval_context") or {}
+    work_summary = _truncate(
+        str(approval_context.get("work_performed_summary") or payload.get("summary") or ""),
+        900,
+    )
+    completed_roles = ", ".join(
+        str(role) for role in approval_context.get("completed_roles") or [] if role
+    ) or "none recorded"
+    blocked_roles = ", ".join(
+        str(role) for role in approval_context.get("blocked_roles") or [] if role
+    ) or "none"
+    artifact_paths = [
+        str(path) for path in approval_context.get("artifact_paths") or [] if path
+    ]
+    artifact_text = "\n".join(f"- {path}" for path in artifact_paths[:8])
+    if len(artifact_paths) > 8:
+        artifact_text += f"\n- and {len(artifact_paths) - 8} more"
+    if not artifact_text:
+        artifact_text = "none recorded"
     body = [
         {
             "type": "TextBlock",
@@ -830,7 +886,7 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
         },
         {
             "type": "TextBlock",
-            "text": payload.get("summary") or "",
+            "text": f"Work performed: {work_summary}",
             "wrap": True,
         },
         {
@@ -840,7 +896,14 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
                 {"title": "Lifecycle", "value": payload.get("lifecycle_state") or ""},
                 {"title": "Gate", "value": payload.get("gate_id") or ""},
                 {"title": "Response type", "value": payload.get("response_type") or ""},
+                {"title": "Completed roles", "value": completed_roles},
+                {"title": "Blocked roles", "value": blocked_roles},
             ],
+        },
+        {
+            "type": "TextBlock",
+            "text": f"Artifacts:\n{artifact_text}",
+            "wrap": True,
         },
     ]
     card: dict[str, Any] = {
@@ -850,30 +913,41 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
         "body": body,
         "actions": [],
     }
-    if input_mode == "choice":
-        card["actions"] = [
+    test_url = approval_context.get("test_url") or approval_context.get("status_url")
+    if test_url:
+        card["actions"].append(
             {
-                "type": "Action.Submit",
-                "title": str(option["label"]),
-                "msTeams": {"feedback": {"hide": True}},
-                "data": human_response_submit_data(
-                    payload,
-                    response_value=option["value"],
-                ),
+                "type": "Action.OpenUrl",
+                "title": str(approval_context.get("test_url_label") or "Review and test"),
+                "url": str(test_url),
             }
-            for option in response_template.get("options", [])
-        ]
+        )
+    if input_mode == "choice":
+        card["actions"].extend(
+            [
+                {
+                    "type": "Action.Submit",
+                    "title": str(option["label"]),
+                    "msTeams": {"feedback": {"hide": True}},
+                    "data": human_response_submit_data(
+                        payload,
+                        response_value=option["value"],
+                    ),
+                }
+                for option in response_template.get("options", [])
+            ]
+        )
         return card
 
     card["body"].append(input_for_template(response_template))
-    card["actions"] = [
+    card["actions"].append(
         {
             "type": "Action.Submit",
             "title": "Submit",
             "msTeams": {"feedback": {"hide": True}},
             "data": human_response_submit_data(payload),
         }
-    ]
+    )
     return card
 
 

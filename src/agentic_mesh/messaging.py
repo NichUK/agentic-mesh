@@ -29,6 +29,7 @@ def build_human_response_request(
     source_message: Message,
     source_instance: RoleInstanceConfig,
     flow_state: FlowState,
+    approval_context: dict[str, Any] | None = None,
 ) -> ConnectorMessage:
     if not gate.response_type:
         raise ValueError(f"Gate {gate.gate_id} does not declare response_type")
@@ -58,6 +59,8 @@ def build_human_response_request(
         "title": source_message.payload.get("title"),
         "summary": source_message.payload.get("summary"),
     }
+    if approval_context:
+        payload["approval_context"] = approval_context
     if response_type is not None:
         payload["response_template"] = asdict(response_type)
 

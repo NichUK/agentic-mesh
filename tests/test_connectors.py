@@ -7,7 +7,9 @@ from agentic_mesh.connectors import BotFrameworkTeamsConnectorAdapter
 from agentic_mesh.connectors import LocalTeamsConnectorAdapter
 from agentic_mesh.connectors import GraphTeamsChannelIngressAdapter
 from agentic_mesh.connectors import TeamsBotIngress
+from agentic_mesh.connectors import build_human_response_card
 from agentic_mesh.connectors import load_graph_token
+from agentic_mesh.connectors import render_human_response_request_html
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import build_human_response_request
@@ -84,6 +86,64 @@ def test_local_teams_connector_renders_human_response_card(tmp_path: Path) -> No
         "teams_connector_message_prepared",
         "connector_message_completed",
     ]
+
+
+def test_human_response_rendering_includes_approval_context() -> None:
+    message = ConnectorMessage.create(
+        channel="approvals",
+        message_type="human_response.requested",
+        payload={
+            "response_request_id": "human-response-1",
+            "gate_id": "release_decision_response",
+            "response_type": "approve_not_approve",
+            "prompt": "Approve release?",
+            "project_id": "agentic-mesh-dev",
+            "role_id": "release-manager",
+            "role_instance_id": "agentic-mesh-dev.release-manager.1",
+            "work_item_id": "work-queue-v0",
+            "work_item_type": "slice",
+            "lifecycle_state": "release_review",
+            "source_message_id": "msg-release",
+            "correlation_id": "corr-release",
+            "requested_at": "2026-06-04T10:00:00+00:00",
+            "title": "Work Queue V0",
+            "summary": "Old short summary.",
+            "approval_context": {
+                "work_performed_summary": "Implemented queue capture and QA evidence.",
+                "completed_roles": ["engineering", "qa-engineer"],
+                "blocked_roles": [],
+                "artifact_paths": [
+                    "work-items/work-queue-v0/100-implementation-log.md",
+                    "work-items/work-queue-v0/110-quality-evidence.md",
+                ],
+                "status_url": "http://controller.local/work-items/work-queue-v0",
+                "test_url": "http://controller.local/work-items/work-queue-v0",
+                "test_url_label": "Review and test this work item",
+            },
+            "response_template": {
+                "input_mode": "choice",
+                "options": [
+                    {"label": "Approve", "value": "approved"},
+                    {"label": "Not Approve", "value": "not_approved"},
+                ],
+            },
+        },
+        source="agentic-mesh-dev.release-manager.1",
+    )
+
+    html = render_human_response_request_html(message)
+    card = build_human_response_card(message)
+
+    assert "Implemented queue capture and QA evidence." in html
+    assert "engineering, qa-engineer" in html
+    assert "work-items/work-queue-v0/110-quality-evidence.md" in html
+    assert "Review and test this work item" in html
+    assert card["actions"][0]["type"] == "Action.OpenUrl"
+    assert card["actions"][0]["url"] == "http://controller.local/work-items/work-queue-v0"
+    assert card["actions"][1]["type"] == "Action.Submit"
+    rendered_card = json.dumps(card)
+    assert "Implemented queue capture and QA evidence." in rendered_card
+    assert "work-items/work-queue-v0/110-quality-evidence.md" in rendered_card
 
 
 def test_teams_ingress_records_human_response_submit(tmp_path: Path) -> None:

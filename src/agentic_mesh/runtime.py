@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import replace
+from urllib.parse import quote
 
 from agentic_mesh import telemetry
 from agentic_mesh.artifacts import ArtifactStore
@@ -209,6 +211,10 @@ class AgentRuntime:
                             source_message=replace(message, trace_context=response_trace_context),
                             source_instance=instance_config,
                             flow_state=flow_state,
+                            approval_context=self._build_approval_context(
+                                source_message=message,
+                                flow_state=flow_state,
+                            ),
                         )
                         request = self.connector_outbox.enqueue(request)
                         self.journal.append(
@@ -574,6 +580,75 @@ class AgentRuntime:
             role_id=role_id,
         )
         return replace(update, path=path)
+
+    def _build_approval_context(
+        self,
+        *,
+        source_message: Message,
+        flow_state: FlowState,
+    ) -> dict[str, Any]:
+        work_item_id = source_message.payload.get("work_item_id")
+        role_ids = sorted(self.project.roles)
+        summary = (
+            self.message_store.work_item_summary(str(work_item_id), role_ids)
+            if work_item_id
+            else {}
+        )
+        completed_roles = [
+            role_id
+            for role_id, role_summary in summary.items()
+            if role_summary.get("completed", 0) > 0
+        ]
+        blocked_roles = sorted(
+            {
+                role_id
+                for role_id, role_summary in summary.items()
+                for status in role_summary.get("completion_statuses", [])
+                if status not in {"completed", "waiting_for_human_response"}
+            }
+        )
+        artifact_paths = sorted(
+            {
+                path
+                for role_summary in summary.values()
+                for path in role_summary.get("artifact_paths", [])
+                if path
+            }
+        )
+        journal_artifacts = {
+            str(event.get("path"))
+            for event in self.journal.read_all()
+            if event.get("event_type") == "documentation_updated"
+            and event.get("work_item_id") == work_item_id
+            and event.get("path")
+        }
+        artifact_paths = sorted(set(artifact_paths) | journal_artifacts)
+        context: dict[str, Any] = {
+            "work_performed_summary": source_message.payload.get("summary") or "",
+            "approval_reason": flow_state.purpose,
+            "completed_roles": completed_roles,
+            "blocked_roles": blocked_roles,
+            "artifact_paths": artifact_paths,
+            "artifact_count": len(artifact_paths),
+        }
+        status_url = self._work_item_status_url(str(work_item_id)) if work_item_id else None
+        if status_url:
+            context["status_url"] = status_url
+            if source_message.payload.get("work_item_type") in {"slice", "subslice", "feature"}:
+                context["test_url"] = status_url
+                context["test_url_label"] = "Review and test this work item"
+        return context
+
+    @staticmethod
+    def _work_item_status_url(work_item_id: str) -> str | None:
+        base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
+        if not base_url:
+            auth_url = os.environ.get("AGENTIC_MESH_AUTH_ADMIN_URL")
+            if auth_url:
+                base_url = auth_url.split("/auth/", 1)[0]
+        if not base_url:
+            return None
+        return f"{base_url.rstrip('/')}/work-items/{quote(work_item_id, safe='')}"
 
     def _queue_handoff_connector_message(
         self,

@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.config import load_mesh_config
@@ -361,10 +362,16 @@ def test_human_response_gate_queues_connector_message(tmp_path: Path) -> None:
         )
     )
 
-    assert runtime.run_once(
-        "agentic-mesh-dev.release-manager.1",
-        mesh_config.instances["agentic-mesh-dev.release-manager.1"],
-    )
+    with patch.dict(
+        "os.environ",
+        {
+            "AGENTIC_MESH_STATUS_BASE_URL": "http://controller.local",
+        },
+    ):
+        assert runtime.run_once(
+            "agentic-mesh-dev.release-manager.1",
+            mesh_config.instances["agentic-mesh-dev.release-manager.1"],
+        )
 
     assert connector_outbox.pending_count("approvals") == 1
     request = connector_outbox.claim_next("approvals", "local-connector")
@@ -373,6 +380,18 @@ def test_human_response_gate_queues_connector_message(tmp_path: Path) -> None:
     assert request.payload["gate_id"] == "release_decision_response"
     assert request.payload["response_type"] == "approve_not_approve"
     assert request.payload["response_template"]["value_type"] == "string"
+    assert request.payload["approval_context"]["work_performed_summary"] == (
+        "Confirm release readiness."
+    )
+    assert request.payload["approval_context"]["status_url"] == (
+        "http://controller.local/work-items/slice-release"
+    )
+    assert request.payload["approval_context"]["test_url"] == (
+        "http://controller.local/work-items/slice-release"
+    )
+    assert request.payload["approval_context"]["artifact_paths"] == [
+        "work-items/slice-release/140-release-record.md"
+    ]
 
     events = journal.read_all()
     assert "human_response_requested" in [
