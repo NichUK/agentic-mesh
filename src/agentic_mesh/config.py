@@ -12,19 +12,23 @@ from agentic_mesh.models import (
     ConnectorChannelConfig,
     ConnectorIngressConfig,
     DocumentAccountability,
+    DocumentLibraryConfig,
     FlowConsult,
     FlowHandoff,
     FlowGate,
     FlowState,
+    FlowVisualizationConfig,
     MeshConfig,
     NamingDefaults,
     OrganizationConfig,
     ProjectConfig,
     ProjectConnectorConfig,
+    ProjectMeshConfig,
     ProjectRepositoryConfig,
     ProjectRoleOverride,
     ProjectWorkspaceConfig,
     ResponseTypeTemplate,
+    RoleMemoryConfig,
     RoleInstanceConfig,
     RoleTemplate,
     SdlcFlow,
@@ -447,6 +451,110 @@ def _project_workspace_from_dict(data: dict[str, Any], project_id: str) -> Proje
     )
 
 
+def _document_library_from_dict(data: dict[str, Any]) -> DocumentLibraryConfig:
+    library_data = data.get("document_library", {}) or {}
+    if not isinstance(library_data, dict):
+        raise ConfigError("Project document_library must be a mapping")
+
+    backend = str(library_data.get("backend", "filesystem"))
+    allowed_backends = {"git", "filesystem", "onedrive", "sharepoint"}
+    if backend not in allowed_backends:
+        raise ConfigError(
+            "Project document_library.backend must be one of: "
+            f"{', '.join(sorted(allowed_backends))}"
+        )
+
+    return DocumentLibraryConfig(
+        backend=backend,
+        root=str(library_data.get("root", "docs")),
+        structure_policy=str(library_data.get("structure_policy", "togaf-sdlc-v1")),
+        index_path=str(
+            library_data.get("index_path", "00-index/document-library-manifest.json")
+        ),
+        review_log_standard=str(
+            library_data.get(
+                "review_log_standard",
+                "same-document-review-log-v1",
+            )
+        ),
+        versioning=str(library_data.get("versioning", "backend")),
+        retention_policy=(
+            str(library_data["retention_policy"])
+            if library_data.get("retention_policy") is not None
+            else None
+        ),
+    )
+
+
+def _role_memory_from_dict(data: dict[str, Any]) -> RoleMemoryConfig:
+    memory_data = data.get("role_memory", {}) or {}
+    if not isinstance(memory_data, dict):
+        raise ConfigError("Project role_memory must be a mapping")
+
+    backend = str(memory_data.get("backend", "filesystem"))
+    allowed_backends = {"filesystem", "git"}
+    if backend not in allowed_backends:
+        raise ConfigError(
+            "Project role_memory.backend must be one of: "
+            f"{', '.join(sorted(allowed_backends))}"
+        )
+
+    return RoleMemoryConfig(
+        enabled=bool(memory_data.get("enabled", True)),
+        backend=backend,
+        root=str(memory_data.get("root", "memory/roles")),
+        provenance_required=bool(memory_data.get("provenance_required", True)),
+        refresh_from_document_library=bool(
+            memory_data.get("refresh_from_document_library", True)
+        ),
+        team_overlay_root=str(
+            memory_data.get("team_overlay_root", "memory/team-overlays")
+        ),
+    )
+
+
+def _project_meshes_from_dict(
+    data: dict[str, Any],
+    roles: dict[str, ProjectRoleOverride],
+) -> dict[str, ProjectMeshConfig]:
+    meshes_data = data.get("meshes", {}) or {}
+    if not isinstance(meshes_data, dict):
+        raise ConfigError("Project meshes must be a mapping")
+
+    meshes: dict[str, ProjectMeshConfig] = {}
+    for mesh_id, mesh_data in meshes_data.items():
+        if not isinstance(mesh_data, dict):
+            raise ConfigError(f"Project mesh {mesh_id} must be a mapping")
+        mesh_roles = [str(role_id) for role_id in mesh_data.get("roles", [])]
+        if not mesh_roles:
+            raise ConfigError(f"Project mesh {mesh_id} must declare roles")
+        for role_id in mesh_roles:
+            if role_id not in roles:
+                raise ConfigError(
+                    f"Project mesh {mesh_id} references unconfigured role {role_id}"
+                )
+        parent_mesh = mesh_data.get("parent_mesh")
+        meshes[str(mesh_id)] = ProjectMeshConfig(
+            mesh_id=str(mesh_id),
+            name=str(mesh_data.get("name", mesh_id)),
+            flow=str(mesh_data.get("flow", "sdlc")),
+            roles=mesh_roles,
+            parent_mesh=str(parent_mesh) if parent_mesh is not None else None,
+            purpose=(
+                str(mesh_data["purpose"])
+                if mesh_data.get("purpose") is not None
+                else None
+            ),
+        )
+
+    for mesh in meshes.values():
+        if mesh.parent_mesh is not None and mesh.parent_mesh not in meshes:
+            raise ConfigError(
+                f"Project mesh {mesh.mesh_id} parent_mesh {mesh.parent_mesh} is not declared"
+            )
+    return meshes
+
+
 def _project_connectors_from_dict(
     data: dict[str, Any],
     roles: dict[str, ProjectRoleOverride],
@@ -606,12 +714,25 @@ def _flow_gate_from_dict(
                 f"Flow state {state_id} gate {gate_id} references unknown "
                 f"response_type {response_type}"
             )
+    affected_roles = [str(role_id) for role_id in gate_data.get("affected_roles", [])]
+    for role_id in affected_roles:
+        if role_id not in roles:
+            raise ConfigError(
+                f"Flow state {state_id} gate {gate_id} affected_role {role_id} is not configured"
+            )
     return FlowGate(
         gate_id=gate_id,
         type=gate_type,
         required_documents=required_documents,
         required_review_status=gate_data.get("required_review_status"),
         reviewer_role=reviewer_role,
+        affected_roles=affected_roles,
+        review_outcomes=list(gate_data.get("review_outcomes", [])),
+        max_resolution_loops=(
+            int(gate_data["max_resolution_loops"])
+            if gate_data.get("max_resolution_loops") is not None
+            else None
+        ),
         response_type=response_type,
         prompt=gate_data.get("prompt"),
         requested_from=gate_data.get("requested_from"),
@@ -667,6 +788,12 @@ def _flow_from_dict(
                 target_state=target_state,
                 target_role=target_role,
                 message_type=str(target_data.get("message_type", f"sdlc.{target_state}")),
+                target_mesh=(
+                    str(target_data["target_mesh"])
+                    if target_data.get("target_mesh") is not None
+                    else None
+                ),
+                create_work_item=bool(target_data.get("create_work_item", False)),
             )
 
         consult_data = state_data.get("consults", {}) or {}
@@ -741,6 +868,19 @@ def _flow_from_dict(
         work_item_types=work_item_types,
         states=states,
         sponsor_initiated_work=sponsor_policy,
+        visualization=_flow_visualization_from_dict(flow_data.get("visualization")),
+    )
+
+
+def _flow_visualization_from_dict(data: Any) -> FlowVisualizationConfig:
+    if data is None:
+        return FlowVisualizationConfig()
+    if not isinstance(data, dict):
+        raise ConfigError("Project flow visualization must be a mapping")
+    return FlowVisualizationConfig(
+        enabled=bool(data.get("enabled", True)),
+        default_format=str(data.get("default_format", "mermaid")),
+        group_by=list(data.get("group_by", ["mesh", "role"])),
     )
 
 
@@ -869,6 +1009,9 @@ def load_mesh_config(
         for role_id, role_data in roles_data.items()
     }
     workspace = _project_workspace_from_dict(project_data, str(project_data["project_id"]))
+    document_library = _document_library_from_dict(project_data)
+    role_memory = _role_memory_from_dict(project_data)
+    meshes = _project_meshes_from_dict(project_data, roles)
     connectors = _project_connectors_from_dict(project_data, roles)
     _validate_role_channels(roles, connectors)
     document_accountabilities = _document_accountabilities_from_dict(project_data, roles)
@@ -888,6 +1031,9 @@ def load_mesh_config(
         connectors=connectors,
         document_accountabilities=document_accountabilities,
         flow=flow,
+        document_library=document_library,
+        role_memory=role_memory,
+        meshes=meshes,
     )
 
     instances: dict[str, RoleInstanceConfig] = {}

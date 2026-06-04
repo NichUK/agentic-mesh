@@ -8,10 +8,17 @@ from agentic_mesh.models import DocumentUpdate
 
 
 class ArtifactStore:
-    def __init__(self, workspace_root: Path, project_id: str, journal: EventJournal) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        project_id: str,
+        journal: EventJournal,
+        document_library_root: Path | None = None,
+    ) -> None:
         self.workspace_root = workspace_root
         self.project_id = project_id
         self.journal = journal
+        self.document_library_root = document_library_root or workspace_root
 
     def write_update(
         self,
@@ -40,10 +47,11 @@ class ArtifactStore:
             trace_context=trace_context,
             attributes=attrs,
         ):
-            path = (self.workspace_root / update.path).resolve()
-            workspace = self.workspace_root.resolve()
-            if workspace not in path.parents and path != workspace:
-                raise ValueError(f"Artifact path escapes workspace: {update.path}")
+            root = self._root_for_update(update)
+            path = (root / update.path).resolve()
+            resolved_root = root.resolve()
+            if resolved_root not in path.parents and path != resolved_root:
+                raise ValueError(f"Artifact path escapes artifact root: {update.path}")
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(update.content.rstrip() + "\n")
@@ -59,3 +67,8 @@ class ArtifactStore:
                 correlation_id=correlation_id,
             )
             return path
+
+    def _root_for_update(self, update: DocumentUpdate) -> Path:
+        if update.path.startswith("documents/analysis/"):
+            return self.workspace_root
+        return self.document_library_root

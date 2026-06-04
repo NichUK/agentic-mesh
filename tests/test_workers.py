@@ -232,6 +232,9 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert '"workspace_root": "examples/projects/agentic-mesh-dev"' in prompt
     assert '"default_repository": "agentic-mesh"' in prompt
     assert '"path": "../../.."' in prompt
+    assert "Document library and role memory:" in prompt
+    assert "Configured role tools and skills:" in prompt
+    assert "document-library.read" in prompt
 
 
 def test_agent_result_schema_is_strict_for_nested_handoff_payload() -> None:

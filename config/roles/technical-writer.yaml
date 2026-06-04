@@ -12,6 +12,10 @@ standing_instructions:
 default_tools:
   - docs.read
   - docs.write
+  - document-library.read
+  - document-library.write
+  - review-log.write
+  - role-memory.read
   - git.read
 documentation_obligations:
   - docs/technical-writing/documentation-log.md

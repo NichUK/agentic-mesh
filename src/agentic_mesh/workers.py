@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from agentic_mesh.document_library import document_library_context
 from agentic_mesh.models import (
     AgentRunResult,
     AuthMethod,
@@ -339,8 +340,14 @@ Project workspace:
             "repositories": repositories,
         }, indent=2)}
 
+Document library and role memory:
+{json.dumps(document_library_context(self.workspace_root, self.project), indent=2)}
+
 Standing role instructions:
 {json.dumps(instance.template.standing_instructions, indent=2)}
+
+Configured role tools and skills:
+{json.dumps(instance.template.default_tools, indent=2)}
 
 Project role instructions:
 {json.dumps(instance.override.instructions, indent=2)}
@@ -356,6 +363,17 @@ Current flow state:
             "state_id": flow_state.state_id,
             "purpose": flow_state.purpose,
             "artifact_path": flow_state.artifact_path,
+            "gates": [
+                {
+                    "gate_id": gate.gate_id,
+                    "type": gate.type,
+                    "required_documents": gate.required_documents,
+                    "affected_roles": gate.affected_roles,
+                    "review_outcomes": gate.review_outcomes,
+                    "max_resolution_loops": gate.max_resolution_loops,
+                }
+                for gate in flow_state.gates
+            ],
             "available_handoffs": available_handoffs,
             "available_consults": available_consults,
         }, indent=2)}
@@ -369,6 +387,13 @@ Return only the final JSON object required by the provided schema. Put all
 document changes in `document_updates`; do not rely on unreported filesystem
 edits. For direct broadcast work, use the requested artifact path and do not
 emit handoffs unless the prompt explicitly asks for one.
+
+Use the document library as the canonical project memory. Use role memory only
+as a concise, source-linked accelerator, and include provenance links when you
+update it. For plan or document review gates, write visible `## Review Log`
+entries with stable review ids, concrete required changes, dispositions, and
+linked sub-slices where needed. Resolve disagreement through written review
+loops first; request mediation only after the configured resolution loop limit.
 """.strip()
 
 

@@ -1,0 +1,427 @@
+{
+  "document_library": {
+    "backend": "git",
+    "index_path": "docs/00-index/document-library-manifest.json",
+    "retention_policy": null,
+    "review_log_standard": "same-document-review-log-v1",
+    "root": "../../..",
+    "structure_policy": "togaf-sdlc-v1",
+    "versioning": "backend"
+  },
+  "documents": [
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "business-analyst",
+        "solution-architect",
+        "security-architect",
+        "platform-engineer"
+      ],
+      "lifecycle_states": [
+        "enterprise_alignment"
+      ],
+      "owner_role": "enterprise-architect",
+      "path": "docs/architecture/enterprise-notes.md",
+      "required_sections": [
+        "capability_fit",
+        "system_boundaries",
+        "governance",
+        "integration_impacts",
+        "decision_candidates"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "enterprise-architect",
+        "security-architect",
+        "platform-engineer",
+        "engineering"
+      ],
+      "lifecycle_states": [
+        "solution_design"
+      ],
+      "owner_role": "solution-architect",
+      "path": "docs/architecture/solution-notes.md",
+      "required_sections": [
+        "design_summary",
+        "interfaces",
+        "data_contracts",
+        "adapter_boundaries",
+        "risks"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "research-analyst",
+        "product-manager",
+        "enterprise-architect"
+      ],
+      "lifecycle_states": [
+        "business_analysis"
+      ],
+      "owner_role": "business-analyst",
+      "path": "docs/business/briefs.md",
+      "required_sections": [
+        "business_context",
+        "stakeholders",
+        "outcomes",
+        "constraints",
+        "assumptions",
+        "open_questions"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "engineering",
+        "qa-engineer",
+        "release-manager"
+      ],
+      "lifecycle_states": [
+        "delivery_readiness"
+      ],
+      "owner_role": "delivery-manager",
+      "path": "docs/delivery/status.md",
+      "required_sections": [
+        "current_state",
+        "blockers",
+        "owners",
+        "aging_handoffs",
+        "next_actions"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "solution-architect",
+        "platform-engineer",
+        "qa-engineer",
+        "technical-writer"
+      ],
+      "lifecycle_states": [
+        "implementation"
+      ],
+      "owner_role": "engineering",
+      "path": "docs/engineering/implementation-log.md",
+      "required_sections": [
+        "files_changed",
+        "implementation_notes",
+        "tests",
+        "evidence",
+        "known_limitations"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "solution-architect",
+        "security-architect",
+        "platform-engineer",
+        "qa-engineer",
+        "technical-writer"
+      ],
+      "lifecycle_states": [
+        "implementation_planning"
+      ],
+      "owner_role": "engineering",
+      "path": "docs/engineering/implementation-plan.md",
+      "required_sections": [
+        "build_scope",
+        "affected_roles",
+        "implementation_sequence",
+        "risks",
+        "test_hooks",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "solution-architect",
+        "security-architect",
+        "engineering",
+        "release-manager"
+      ],
+      "lifecycle_states": [
+        "platform_readiness"
+      ],
+      "owner_role": "platform-engineer",
+      "path": "docs/platform/operations.md",
+      "required_sections": [
+        "topology",
+        "state_paths",
+        "secrets_and_mounts",
+        "telemetry",
+        "rollback"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "business-analyst",
+        "ux-designer",
+        "solution-architect",
+        "qa-engineer"
+      ],
+      "lifecycle_states": [
+        "product_definition"
+      ],
+      "owner_role": "product-manager",
+      "path": "docs/product/stories.md",
+      "required_sections": [
+        "problem",
+        "target_user",
+        "scope",
+        "non_goals",
+        "acceptance_criteria",
+        "success_signals"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "engineering",
+        "product-manager",
+        "release-manager"
+      ],
+      "lifecycle_states": [
+        "quality_review"
+      ],
+      "owner_role": "qa-engineer",
+      "path": "docs/qa/test-evidence.md",
+      "required_sections": [
+        "test_scope",
+        "test_cases",
+        "results",
+        "defects",
+        "residual_risk"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "ux-designer",
+        "engineering",
+        "release-manager"
+      ],
+      "lifecycle_states": [
+        "quality_planning"
+      ],
+      "owner_role": "qa-engineer",
+      "path": "docs/qa/test-plan.md",
+      "required_sections": [
+        "bdd_scenarios",
+        "unit_tests",
+        "integration_tests",
+        "end_to_end_tests",
+        "evidence_plan",
+        "residual_risk",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "delivery-manager",
+        "qa-engineer",
+        "technical-writer",
+        "engineering"
+      ],
+      "lifecycle_states": [
+        "release_review"
+      ],
+      "owner_role": "release-manager",
+      "path": "docs/releases/release-records.md",
+      "required_sections": [
+        "release_scope",
+        "evidence",
+        "approvals",
+        "risks",
+        "rollback"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "business-analyst",
+        "product-manager",
+        "enterprise-architect"
+      ],
+      "lifecycle_states": [],
+      "owner_role": "research-analyst",
+      "path": "docs/research/findings.md",
+      "required_sections": [
+        "question",
+        "sources",
+        "findings",
+        "confidence",
+        "recommendation"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "solution-architect",
+        "platform-engineer",
+        "engineering",
+        "qa-engineer"
+      ],
+      "lifecycle_states": [
+        "security_review"
+      ],
+      "owner_role": "security-architect",
+      "path": "docs/security/security-decisions.md",
+      "required_sections": [
+        "trust_boundaries",
+        "sensitive_data",
+        "credentials",
+        "controls",
+        "residual_risks"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "engineering",
+        "qa-engineer",
+        "release-manager"
+      ],
+      "lifecycle_states": [
+        "documentation_readiness"
+      ],
+      "owner_role": "technical-writer",
+      "path": "docs/technical-writing/documentation-log.md",
+      "required_sections": [
+        "docs_reviewed",
+        "terminology",
+        "gaps",
+        "release_note_inputs"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "engineering",
+        "technical-writer"
+      ],
+      "lifecycle_states": [
+        "experience_design"
+      ],
+      "owner_role": "ux-designer",
+      "path": "docs/ux/design-notes.md",
+      "required_sections": [
+        "user_journey",
+        "interaction_states",
+        "accessibility",
+        "design_risks"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    }
+  ],
+  "flow": {
+    "entry_state": "business_analysis",
+    "flow_id": "agentic-mesh-sdlc-v0",
+    "states": [
+      "business_analysis",
+      "product_definition",
+      "experience_design",
+      "enterprise_alignment",
+      "solution_design",
+      "security_review",
+      "platform_readiness",
+      "implementation_planning",
+      "quality_planning",
+      "implementation",
+      "quality_review",
+      "documentation_readiness",
+      "delivery_readiness",
+      "release_review"
+    ],
+    "work_item_types": [
+      "slice",
+      "subslice",
+      "feature",
+      "spike"
+    ]
+  },
+  "meshes": {
+    "governance": {
+      "flow": "governance",
+      "mesh_id": "governance",
+      "name": "Governance Mesh",
+      "parent_mesh": null,
+      "purpose": "Track cross-team outcomes without taking specialist decision ownership.",
+      "roles": [
+        "enterprise-architect",
+        "delivery-manager",
+        "release-manager"
+      ]
+    },
+    "sdlc": {
+      "flow": "sdlc",
+      "mesh_id": "sdlc",
+      "name": "SDLC Mesh",
+      "parent_mesh": "governance",
+      "purpose": "Deliver software slices, features, spikes, and sub-slices through the project SDLC.",
+      "roles": [
+        "business-analyst",
+        "product-manager",
+        "ux-designer",
+        "enterprise-architect",
+        "solution-architect",
+        "security-architect",
+        "platform-engineer",
+        "engineering",
+        "qa-engineer",
+        "technical-writer",
+        "delivery-manager",
+        "release-manager"
+      ]
+    }
+  },
+  "project_id": "agentic-mesh-dev",
+  "role_memory": {
+    "backend": "filesystem",
+    "enabled": true,
+    "provenance_required": true,
+    "refresh_from_document_library": true,
+    "root": "memory/roles",
+    "team_overlay_root": "memory/team-overlays"
+  }
+}

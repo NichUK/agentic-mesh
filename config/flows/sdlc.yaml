@@ -4,8 +4,16 @@ description: Enterprise-oriented software delivery lifecycle template with accou
 entry_state: business_analysis
 work_item_types:
   - slice
+  - subslice
   - feature
   - spike
+visualization:
+  enabled: true
+  default_format: mermaid
+  group_by:
+    - lifecycle_state
+    - owner_role
+    - gate_type
 sponsor_initiated_work:
   allow_from_any_state: true
   default_work_item_type: spike
@@ -220,6 +228,106 @@ states:
         reviewer_role: platform-engineer
     handoffs:
       completed:
+        target_state: implementation_planning
+        target_role: engineering
+        message_type: sdlc.implementation_planning
+  implementation_planning:
+    owner_role: engineering
+    purpose: Plan the build before execution, including changed areas, affected roles, implementation sequence, risks, and test hooks.
+    artifact_path: docs/engineering/implementation-plan.md
+    consults:
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify acceptance criteria, scope, priority, or user-visible behaviour before build planning is locked.
+      solution_context:
+        target_state: solution_design
+        target_role: solution-architect
+        message_type: sdlc.consult.solution_design
+        purpose: Clarify interfaces, adapter boundaries, data contracts, or implementation constraints.
+      security_context:
+        target_state: security_review
+        target_role: security-architect
+        message_type: sdlc.consult.security_review
+        purpose: Clarify security-sensitive implementation details before build starts.
+      platform_context:
+        target_state: platform_readiness
+        target_role: platform-engineer
+        message_type: sdlc.consult.platform_readiness
+        purpose: Clarify deployment, runtime, observability, or operations needs before build starts.
+      documentation_context:
+        target_state: documentation_readiness
+        target_role: technical-writer
+        message_type: sdlc.consult.documentation_readiness
+        purpose: Ask for documentation impact review while implementation is still planned.
+    gates:
+      - gate_id: implementation_plan_peer_review
+        type: plan_review
+        required_documents:
+          - docs/engineering/implementation-plan.md
+        required_review_status: approved
+        reviewer_role: engineering
+        affected_roles:
+          - product-manager
+          - solution-architect
+          - security-architect
+          - platform-engineer
+          - qa-engineer
+          - technical-writer
+        review_outcomes:
+          - approved
+          - approved_with_comments
+          - changes_requested
+          - subslice_required
+          - blocked_disagreement
+        max_resolution_loops: 2
+    handoffs:
+      completed:
+        target_state: quality_planning
+        target_role: qa-engineer
+        message_type: sdlc.quality_planning
+  quality_planning:
+    owner_role: qa-engineer
+    purpose: Define BDD scenarios and the unit, integration, end-to-end, evidence, and residual-risk test strategy before implementation.
+    artifact_path: docs/qa/test-plan.md
+    consults:
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify expected behaviour, acceptance criteria, or risk tolerance before test planning is locked.
+      implementation_plan:
+        target_state: implementation_planning
+        target_role: engineering
+        message_type: sdlc.consult.implementation_planning
+        purpose: Ask for build plan detail, test hooks, observable outputs, or defect triage assumptions.
+      ux_context:
+        target_state: experience_design
+        target_role: ux-designer
+        message_type: sdlc.consult.experience_design
+        purpose: Clarify usability, accessibility, content, or interaction expectations for BDD scenarios.
+    gates:
+      - gate_id: quality_plan_peer_review
+        type: plan_review
+        required_documents:
+          - docs/qa/test-plan.md
+        required_review_status: approved
+        reviewer_role: qa-engineer
+        affected_roles:
+          - product-manager
+          - engineering
+          - ux-designer
+          - release-manager
+        review_outcomes:
+          - approved
+          - approved_with_comments
+          - changes_requested
+          - subslice_required
+          - blocked_disagreement
+        max_resolution_loops: 2
+    handoffs:
+      completed:
         target_state: implementation
         target_role: engineering
         message_type: sdlc.implementation
@@ -253,6 +361,11 @@ states:
         target_role: platform-engineer
         message_type: sdlc.consult.platform_readiness
         purpose: Clarify deployment, runtime, observability, or operations requirements.
+      quality_plan:
+        target_state: quality_planning
+        target_role: qa-engineer
+        message_type: sdlc.consult.quality_planning
+        purpose: Clarify BDD scenarios, test strategy, fixtures, or evidence expectations.
     gates:
       - gate_id: implementation_owner_review
         type: document_owner_review
@@ -275,6 +388,11 @@ states:
         target_role: engineering
         message_type: sdlc.consult.implementation
         purpose: Ask for implementation details, defect triage, or additional evidence.
+      quality_plan:
+        target_state: quality_planning
+        target_role: qa-engineer
+        message_type: sdlc.consult.quality_planning
+        purpose: Compare observed evidence against the planned BDD, unit, and integration coverage.
       product_scope:
         target_state: product_definition
         target_role: product-manager

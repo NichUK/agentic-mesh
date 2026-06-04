@@ -10,6 +10,47 @@ workspace:
       type: git
       path: ../../..
       default_branch: develop
+document_library:
+  backend: git
+  root: ../../..
+  structure_policy: togaf-sdlc-v1
+  index_path: docs/00-index/document-library-manifest.json
+  review_log_standard: same-document-review-log-v1
+  versioning: backend
+role_memory:
+  enabled: true
+  backend: filesystem
+  root: memory/roles
+  provenance_required: true
+  refresh_from_document_library: true
+  team_overlay_root: memory/team-overlays
+meshes:
+  governance:
+    name: Governance Mesh
+    flow: governance
+    roles:
+    - enterprise-architect
+    - delivery-manager
+    - release-manager
+    purpose: Track cross-team outcomes without taking specialist decision ownership.
+  sdlc:
+    name: SDLC Mesh
+    flow: sdlc
+    parent_mesh: governance
+    roles:
+    - business-analyst
+    - product-manager
+    - ux-designer
+    - enterprise-architect
+    - solution-architect
+    - security-architect
+    - platform-engineer
+    - engineering
+    - qa-engineer
+    - technical-writer
+    - delivery-manager
+    - release-manager
+    purpose: Deliver software slices, features, spikes, and sub-slices through the project SDLC.
 auth_credentials:
   codex-agentic-mesh-dev-team:
     method: codex_oauth_cache
@@ -561,6 +602,29 @@ document_accountabilities:
     - document.contribution_added
     - document.owner_review_requested
     - document.owner_review_completed
+  docs/engineering/implementation-plan.md:
+    owner_role: engineering
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - build_scope
+    - affected_roles
+    - implementation_sequence
+    - risks
+    - test_hooks
+    - review_log
+    contributing_roles:
+    - product-manager
+    - solution-architect
+    - security-architect
+    - platform-engineer
+    - qa-engineer
+    - technical-writer
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
   docs/qa/test-evidence.md:
     owner_role: qa-engineer
     accountability: accountable_owner
@@ -575,6 +639,28 @@ document_accountabilities:
     contributing_roles:
     - engineering
     - product-manager
+    - release-manager
+    lifecycle_events:
+    - document.contribution_added
+    - document.owner_review_requested
+    - document.owner_review_completed
+  docs/qa/test-plan.md:
+    owner_role: qa-engineer
+    accountability: accountable_owner
+    can_edit_contributions: true
+    review_on_contribution: true
+    required_sections:
+    - bdd_scenarios
+    - unit_tests
+    - integration_tests
+    - end_to_end_tests
+    - evidence_plan
+    - residual_risk
+    - review_log
+    contributing_roles:
+    - product-manager
+    - ux-designer
+    - engineering
     - release-manager
     lifecycle_events:
     - document.contribution_added

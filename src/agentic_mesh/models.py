@@ -93,6 +93,8 @@ class FlowHandoff:
     target_state: str
     target_role: str
     message_type: str
+    target_mesh: str | None = None
+    create_work_item: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,9 @@ class FlowGate:
     required_documents: list[str] = field(default_factory=list)
     required_review_status: str | None = None
     reviewer_role: str | None = None
+    affected_roles: list[str] = field(default_factory=list)
+    review_outcomes: list[str] = field(default_factory=list)
+    max_resolution_loops: int | None = None
     response_type: str | None = None
     prompt: str | None = None
     requested_from: str | None = None
@@ -142,12 +147,20 @@ class SponsorInitiatedWorkPolicy:
 
 
 @dataclass(frozen=True)
+class FlowVisualizationConfig:
+    enabled: bool = True
+    default_format: str = "mermaid"
+    group_by: list[str] = field(default_factory=lambda: ["mesh", "role"])
+
+
+@dataclass(frozen=True)
 class SdlcFlow:
     flow_id: str
     entry_state: str
     work_item_types: list[str]
     states: dict[str, FlowState]
     sponsor_initiated_work: SponsorInitiatedWorkPolicy | None = None
+    visualization: FlowVisualizationConfig = field(default_factory=FlowVisualizationConfig)
 
 
 @dataclass(frozen=True)
@@ -172,6 +185,37 @@ class DocumentAccountability:
     required_sections: list[str]
     contributing_roles: list[str]
     lifecycle_events: list[str]
+
+
+@dataclass(frozen=True)
+class DocumentLibraryConfig:
+    backend: str = "filesystem"
+    root: str = "docs"
+    structure_policy: str = "togaf-sdlc-v1"
+    index_path: str = "00-index/document-library-manifest.json"
+    review_log_standard: str = "same-document-review-log-v1"
+    versioning: str = "backend"
+    retention_policy: str | None = None
+
+
+@dataclass(frozen=True)
+class RoleMemoryConfig:
+    enabled: bool = True
+    backend: str = "filesystem"
+    root: str = "memory/roles"
+    provenance_required: bool = True
+    refresh_from_document_library: bool = True
+    team_overlay_root: str = "memory/team-overlays"
+
+
+@dataclass(frozen=True)
+class ProjectMeshConfig:
+    mesh_id: str
+    name: str
+    flow: str
+    roles: list[str]
+    parent_mesh: str | None = None
+    purpose: str | None = None
 
 
 @dataclass(frozen=True)
@@ -259,6 +303,9 @@ class ProjectConfig:
     roles: dict[str, ProjectRoleOverride]
     document_accountabilities: dict[str, DocumentAccountability]
     flow: SdlcFlow
+    document_library: DocumentLibraryConfig = field(default_factory=DocumentLibraryConfig)
+    role_memory: RoleMemoryConfig = field(default_factory=RoleMemoryConfig)
+    meshes: dict[str, ProjectMeshConfig] = field(default_factory=dict)
     auth_credentials: dict[str, AuthCredential] = field(default_factory=dict)
     connectors: dict[str, ProjectConnectorConfig] = field(default_factory=dict)
 

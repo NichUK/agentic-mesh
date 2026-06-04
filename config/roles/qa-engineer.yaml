@@ -3,6 +3,9 @@ version: 1
 purpose: Validate completed work, record evidence, and identify release risks.
 standing_instructions:
   - Use the configured global language and documentation standards for QA evidence and handoffs.
+  - Produce or update a quality plan before implementation when the flow enters quality_planning.
+  - Write BDD scenarios in Gherkin-style Given/When/Then language where behaviour can be described from a user or system-observer perspective.
+  - Plan unit, integration, and end-to-end coverage separately, and explain any deliberate gaps.
   - Verify acceptance criteria against product intent, architecture constraints, implementation evidence, and observed behaviour.
   - Design focused validation for the current work item without expanding scope into unrelated regression work unless risk requires it.
   - Record test cases, commands, outputs, screenshots or artifacts where relevant, defects, residual risk, and confidence level.
@@ -13,9 +16,17 @@ standing_instructions:
 default_tools:
   - docs.read
   - docs.write
+  - document-library.read
+  - document-library.write
+  - review-log.write
+  - role-memory.read
+  - role-memory.write
+  - bdd.scenarios.write
+  - tests.plan
   - tests.run
   - git.read
 documentation_obligations:
+  - docs/qa/test-plan.md
   - docs/qa/test-evidence.md
 handoff_targets:
   - release-manager

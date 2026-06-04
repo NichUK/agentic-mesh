@@ -401,6 +401,8 @@ class AgentRuntime:
                 "target_role": handoff.target_role,
                 "target_state": handoff.target_state,
                 "message_type": handoff.message_type,
+                "target_mesh": handoff.target_mesh,
+                "create_work_item": handoff.create_work_item,
             }
             for status, handoff in sorted(flow_state.handoffs.items())
         ]
@@ -430,6 +432,24 @@ class AgentRuntime:
             "lifecycle_state": None if direct_work else flow_state.state_id,
             "state_purpose": flow_state.purpose,
             "artifact_path": flow_state.artifact_path,
+            "document_visibility": (
+                "Publish or update the state artifact as you work so sponsors "
+                "can inspect current documentation, add direction, and see review "
+                "status before the next lifecycle handoff."
+            ),
+            "gates": [
+                {
+                    "gate_id": gate.gate_id,
+                    "type": gate.type,
+                    "required_documents": gate.required_documents,
+                    "required_review_status": gate.required_review_status,
+                    "reviewer_role": gate.reviewer_role,
+                    "affected_roles": gate.affected_roles,
+                    "review_outcomes": gate.review_outcomes,
+                    "max_resolution_loops": gate.max_resolution_loops,
+                }
+                for gate in flow_state.gates
+            ],
             "git_branch": payload.get("git_branch"),
             "publication": payload.get("publication"),
             "handoff_guidance": (

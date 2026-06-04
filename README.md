@@ -30,6 +30,8 @@ Current documentation:
   auth model
 - `docs/architecture/document-lifecycle.md`: document accountability,
   contribution events, and owner-review gates
+- `docs/architecture/document-library.md`: first-class document library,
+  review-log, role-memory, and cross-mesh document practices
 - `docs/architecture/flow-collaboration.md`: consult routes and
   sponsor-initiated tracked work
 - `docs/architecture/human-response-gates.md`: structured human response gates

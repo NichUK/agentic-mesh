@@ -1,0 +1,107 @@
+flowchart LR
+  start(["business analysis"])
+  business_analysis["business analysis<br/>business-analyst"]
+  business_analysis_business_brief_owner_review["business brief owner review<br/>document owner review"]
+  business_analysis --> business_analysis_business_brief_owner_review
+  business_analysis -->|completed| product_definition
+  business_analysis -. research_support .-> business_analysis
+  product_definition["product definition<br/>product-manager"]
+  product_definition_product_story_owner_review["product story owner review<br/>document owner review"]
+  product_definition --> product_definition_product_story_owner_review
+  product_definition -->|completed| experience_design
+  product_definition -. business_context .-> business_analysis
+  product_definition -. research_support .-> product_definition
+  experience_design["experience design<br/>ux-designer"]
+  experience_design_ux_owner_review["ux owner review<br/>document owner review"]
+  experience_design --> experience_design_ux_owner_review
+  experience_design -->|completed| enterprise_alignment
+  experience_design -. product_scope .-> product_definition
+  experience_design -. business_context .-> business_analysis
+  enterprise_alignment["enterprise alignment<br/>enterprise-architect"]
+  enterprise_alignment_enterprise_architecture_owner_review["enterprise architecture owner review<br/>document owner review"]
+  enterprise_alignment --> enterprise_alignment_enterprise_architecture_owner_review
+  enterprise_alignment -->|completed| solution_design
+  enterprise_alignment -. business_context .-> business_analysis
+  enterprise_alignment -. product_scope .-> product_definition
+  enterprise_alignment -. security_context .-> security_review
+  solution_design["solution design<br/>solution-architect"]
+  solution_design_solution_design_owner_review["solution design owner review<br/>document owner review"]
+  solution_design --> solution_design_solution_design_owner_review
+  solution_design -->|completed| security_review
+  solution_design -. enterprise_context .-> enterprise_alignment
+  solution_design -. product_scope .-> product_definition
+  solution_design -. platform_context .-> platform_readiness
+  solution_design -. security_context .-> security_review
+  security_review["security review<br/>security-architect"]
+  security_review_security_owner_review["security owner review<br/>document owner review"]
+  security_review --> security_review_security_owner_review
+  security_review -->|completed| platform_readiness
+  security_review -. solution_context .-> solution_design
+  security_review -. enterprise_context .-> enterprise_alignment
+  security_review -. platform_context .-> platform_readiness
+  platform_readiness["platform readiness<br/>platform-engineer"]
+  platform_readiness_platform_owner_review["platform owner review<br/>document owner review"]
+  platform_readiness --> platform_readiness_platform_owner_review
+  platform_readiness -->|completed| implementation_planning
+  platform_readiness -. solution_context .-> solution_design
+  platform_readiness -. security_context .-> security_review
+  platform_readiness -. engineering_context .-> implementation
+  implementation_planning["implementation planning<br/>engineering"]
+  implementation_planning_implementation_plan_peer_review{"implementation plan peer review<br/>plan review"}
+  implementation_planning --> implementation_planning_implementation_plan_peer_review
+  implementation_planning -->|completed| quality_planning
+  implementation_planning -. product_scope .-> product_definition
+  implementation_planning -. solution_context .-> solution_design
+  implementation_planning -. security_context .-> security_review
+  implementation_planning -. platform_context .-> platform_readiness
+  implementation_planning -. documentation_context .-> documentation_readiness
+  quality_planning["quality planning<br/>qa-engineer"]
+  quality_planning_quality_plan_peer_review{"quality plan peer review<br/>plan review"}
+  quality_planning --> quality_planning_quality_plan_peer_review
+  quality_planning -->|completed| implementation
+  quality_planning -. product_scope .-> product_definition
+  quality_planning -. implementation_plan .-> implementation_planning
+  quality_planning -. ux_context .-> experience_design
+  implementation["implementation<br/>engineering"]
+  implementation_implementation_owner_review["implementation owner review<br/>document owner review"]
+  implementation --> implementation_implementation_owner_review
+  implementation -->|completed| quality_review
+  implementation -. product_scope .-> product_definition
+  implementation -. ux_context .-> experience_design
+  implementation -. solution_context .-> solution_design
+  implementation -. security_context .-> security_review
+  implementation -. platform_context .-> platform_readiness
+  implementation -. quality_plan .-> quality_planning
+  quality_review["quality review<br/>qa-engineer"]
+  quality_review_qa_owner_review["qa owner review<br/>document owner review"]
+  quality_review --> quality_review_qa_owner_review
+  quality_review -->|completed| documentation_readiness
+  quality_review -. implementation_context .-> implementation
+  quality_review -. quality_plan .-> quality_planning
+  quality_review -. product_scope .-> product_definition
+  quality_review -. ux_context .-> experience_design
+  documentation_readiness["documentation readiness<br/>technical-writer"]
+  documentation_readiness_documentation_owner_review["documentation owner review<br/>document owner review"]
+  documentation_readiness --> documentation_readiness_documentation_owner_review
+  documentation_readiness -->|completed| delivery_readiness
+  documentation_readiness -. product_context .-> product_definition
+  documentation_readiness -. implementation_context .-> implementation
+  documentation_readiness -. qa_context .-> quality_review
+  delivery_readiness["delivery readiness<br/>delivery-manager"]
+  delivery_readiness_delivery_owner_review["delivery owner review<br/>document owner review"]
+  delivery_readiness --> delivery_readiness_delivery_owner_review
+  delivery_readiness -->|completed| release_review
+  delivery_readiness -. product_scope .-> product_definition
+  delivery_readiness -. quality_context .-> quality_review
+  delivery_readiness -. documentation_context .-> documentation_readiness
+  delivery_readiness -. release_context .-> release_review
+  release_review["release review<br/>release-manager"]
+  release_review_release_decision_response["release decision response<br/>human response"]
+  release_review --> release_review_release_decision_response
+  release_review_release_owner_review["release owner review<br/>document owner review"]
+  release_review --> release_review_release_owner_review
+  release_review -. delivery_context .-> delivery_readiness
+  release_review -. quality_context .-> quality_review
+  release_review -. security_context .-> security_review
+  release_review -. product_scope .-> product_definition
+  start --> business_analysis

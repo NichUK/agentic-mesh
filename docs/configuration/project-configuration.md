@@ -44,6 +44,9 @@ Optional top-level fields are:
 ```yaml
 auth_credentials: ...
 connectors: ...
+document_library: ...
+role_memory: ...
+meshes: ...
 document_accountabilities: ...
 ```
 
@@ -103,6 +106,83 @@ workspace:
 
 Runtime state and secrets do not belong in `workspace`. They are mounted and
 configured separately by deployment.
+
+## Document Library
+
+`document_library` declares the durable project document root independently
+from `workspace`. Relative roots resolve under the effective project workspace.
+
+```yaml
+document_library:
+  backend: git
+  root: ../../..
+  structure_policy: togaf-sdlc-v1
+  index_path: docs/00-index/document-library-manifest.json
+  review_log_standard: same-document-review-log-v1
+  versioning: backend
+```
+
+Fields:
+
+- `backend`: `git`, `filesystem`, `onedrive`, or `sharepoint`. Git and
+  filesystem are implemented first; Microsoft-backed libraries are adapter
+  targets.
+- `root`: document-library root path.
+- `structure_policy`: document organization policy, initially
+  `togaf-sdlc-v1`.
+- `index_path`: generated document manifest path under the library root.
+- `review_log_standard`: Markdown commenting convention. V1 uses visible
+  same-document `## Review Log` entries.
+- `versioning`: usually `backend`, meaning Git or OneDrive/SharePoint owns
+  version history.
+
+Use `python -m agentic_mesh.cli document-manifest --write` to generate the
+current library manifest.
+
+## Role Memory
+
+`role_memory` configures the derived, source-linked cache each role can use to
+avoid rereading the entire document library before every task.
+
+```yaml
+role_memory:
+  enabled: true
+  backend: filesystem
+  root: memory/roles
+  provenance_required: true
+  refresh_from_document_library: true
+  team_overlay_root: memory/team-overlays
+```
+
+Documents, ADRs, work-item artifacts, and the event journal remain canonical.
+If role memory disagrees with the document library, the agent should refresh
+memory from the canonical sources.
+
+## Meshes
+
+`meshes` declare peer team meshes and the roles that participate in each one.
+Roles can be shared across meshes where that matches the organization.
+
+```yaml
+meshes:
+  governance:
+    name: Governance Mesh
+    flow: governance
+    roles:
+      - enterprise-architect
+      - delivery-manager
+  sdlc:
+    name: SDLC Mesh
+    flow: sdlc
+    parent_mesh: governance
+    roles:
+      - product-manager
+      - engineering
+      - qa-engineer
+```
+
+Cross-mesh handoffs create linked work items in the receiving mesh. The
+receiving mesh applies its normal flow, reviews, and documentation rules.
 
 ## Roles
 

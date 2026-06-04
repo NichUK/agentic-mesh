@@ -67,7 +67,7 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
     solution_notes = tmp_path / "workspace" / "docs" / "architecture" / "solution-notes.md"
     security_notes = tmp_path / "workspace" / "docs" / "security" / "security-decisions.md"
     platform_notes = tmp_path / "workspace" / "docs" / "platform" / "operations.md"
-    engineering_log = tmp_path / "workspace" / "docs" / "engineering" / "implementation-log.md"
+    engineering_plan = tmp_path / "workspace" / "docs" / "engineering" / "implementation-plan.md"
     assert "business_analysis" in business_briefs.read_text(encoding="utf-8")
     assert "Local Runtime Skeleton" in stories.read_text(encoding="utf-8")
     assert "experience_design" in ux_notes.read_text(encoding="utf-8")
@@ -75,7 +75,8 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
     assert "solution_design" in solution_notes.read_text(encoding="utf-8")
     assert "security_review" in security_notes.read_text(encoding="utf-8")
     assert "platform_readiness" in platform_notes.read_text(encoding="utf-8")
-    assert "agentic-mesh-dev.engineering.1" in engineering_log.read_text(encoding="utf-8")
+    assert "implementation_planning" in engineering_plan.read_text(encoding="utf-8")
+    assert "agentic-mesh-dev.engineering.1" in engineering_plan.read_text(encoding="utf-8")
 
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "message_accepted" in event_types

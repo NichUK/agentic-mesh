@@ -47,6 +47,19 @@
       },
       "default": {}
     },
+    "document_library": {
+      "$ref": "#/$defs/documentLibrary"
+    },
+    "role_memory": {
+      "$ref": "#/$defs/roleMemory"
+    },
+    "meshes": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/projectMesh"
+      },
+      "default": {}
+    },
     "flow": {
       "$ref": "#/$defs/flow"
     }
@@ -364,6 +377,99 @@
         }
       }
     },
+    "documentLibrary": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "First-class project document library root and storage policy. Relative roots resolve under workspace.root.",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": ["git", "filesystem", "onedrive", "sharepoint"],
+          "default": "filesystem"
+        },
+        "root": {
+          "type": "string",
+          "default": "docs"
+        },
+        "structure_policy": {
+          "type": "string",
+          "default": "togaf-sdlc-v1"
+        },
+        "index_path": {
+          "type": "string",
+          "default": "00-index/document-library-manifest.json"
+        },
+        "review_log_standard": {
+          "type": "string",
+          "default": "same-document-review-log-v1"
+        },
+        "versioning": {
+          "type": "string",
+          "default": "backend"
+        },
+        "retention_policy": {
+          "type": "string"
+        }
+      },
+      "default": {}
+    },
+    "roleMemory": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Derived, source-linked role memory cache. Documents and journals remain canonical.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "backend": {
+          "type": "string",
+          "enum": ["filesystem", "git"],
+          "default": "filesystem"
+        },
+        "root": {
+          "type": "string",
+          "default": "memory/roles"
+        },
+        "provenance_required": {
+          "type": "boolean",
+          "default": true
+        },
+        "refresh_from_document_library": {
+          "type": "boolean",
+          "default": true
+        },
+        "team_overlay_root": {
+          "type": "string",
+          "default": "memory/team-overlays"
+        }
+      },
+      "default": {}
+    },
+    "projectMesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "flow", "roles"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "flow": {
+          "type": "string"
+        },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "parent_mesh": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        }
+      }
+    },
     "flow": {
       "oneOf": [
         { "$ref": "#/$defs/templateFlow" },
@@ -411,6 +517,9 @@
         "sponsor_initiated_work": {
           "$ref": "#/$defs/sponsorInitiatedWork"
         },
+        "visualization": {
+          "$ref": "#/$defs/flowVisualization"
+        },
         "states": {
           "type": "object",
           "minProperties": 1,
@@ -419,6 +528,27 @@
           }
         }
       }
+    },
+    "flowVisualization": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "default_format": {
+          "type": "string",
+          "enum": ["mermaid", "json"],
+          "default": "mermaid"
+        },
+        "group_by": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["mesh", "role"]
+        }
+      },
+      "default": {}
     },
     "flowState": {
       "type": "object",
@@ -530,6 +660,29 @@
         "reviewer_role": {
           "type": "string"
         },
+        "affected_roles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "review_outcomes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "approved_with_comments",
+              "changes_requested",
+              "subslice_required",
+              "blocked_disagreement"
+            ]
+          },
+          "default": []
+        },
+        "max_resolution_loops": {
+          "type": "integer",
+          "minimum": 1
+        },
         "response_type": {
           "type": "string",
           "description": "Response type template id from config/response-types.yaml."
@@ -572,6 +725,15 @@
         },
         "message_type": {
           "type": "string"
+        },
+        "target_mesh": {
+          "type": "string",
+          "description": "Optional receiving mesh for cross-team handoffs."
+        },
+        "create_work_item": {
+          "type": "boolean",
+          "description": "When true, the handoff creates a new linked work item in the target mesh.",
+          "default": false
         }
       }
     }

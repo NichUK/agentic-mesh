@@ -13,6 +13,12 @@ standing_instructions:
 default_tools:
   - docs.read
   - docs.write
+  - document-library.read
+  - document-library.write
+  - flow.visualize
+  - review-log.write
+  - role-memory.read
+  - role-memory.write
   - git.read
   - shell.workspace
 documentation_obligations:

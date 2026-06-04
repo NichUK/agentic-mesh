@@ -13,6 +13,10 @@ standing_instructions:
 default_tools:
   - docs.read
   - docs.write
+  - document-library.read
+  - document-library.write
+  - role-memory.read
+  - role-memory.write
   - git.read
   - web.research
 documentation_obligations:

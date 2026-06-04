@@ -24,6 +24,11 @@ from agentic_mesh.connectors import LocalTeamsConnectorAdapter
 from agentic_mesh.connectors import load_graph_token
 from agentic_mesh.controller_auth import ControllerAuthService
 from agentic_mesh.controller_auth import serve_controller_auth
+from agentic_mesh.document_library import build_document_manifest
+from agentic_mesh.document_library import document_library_context
+from agentic_mesh.document_library import render_flow_mermaid
+from agentic_mesh.document_library import resolve_document_library_root
+from agentic_mesh.document_library import write_document_manifest
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.lifecycle import LifecycleStore
 from agentic_mesh.messaging import build_human_response_received_message
@@ -56,6 +61,10 @@ def build_runtime(
         effective_workspace_root,
         mesh_config.project.project_id,
         journal,
+        document_library_root=project_document_library_root(
+            effective_workspace_root,
+            mesh_config,
+        ),
     )
     lifecycle = LifecycleStore(state_root, mesh_config.project.project_id, journal)
     runtime = AgentRuntime(
@@ -80,6 +89,13 @@ def project_workspace_root(base_workspace_root: Path, mesh_config) -> Path:
     if configured_root.is_absolute():
         return configured_root
     return (base_workspace_root / configured_root).resolve()
+
+
+def project_document_library_root(effective_workspace_root: Path, mesh_config) -> Path:
+    return resolve_document_library_root(
+        effective_workspace_root,
+        mesh_config.project.document_library,
+    )
 
 
 def configure_component_telemetry(mesh_config, component: str) -> None:
@@ -120,6 +136,13 @@ def cmd_validate(args) -> int:
                         )
                     },
                 },
+                "document_library": {
+                    **document_library_context(
+                        project_workspace_root(args.workspace_root, mesh_config),
+                        mesh_config.project,
+                    ),
+                },
+                "meshes": sorted(mesh_config.project.meshes),
                 "connectors": {
                     connector_id: {
                         "adapter": connector.adapter,
@@ -253,6 +276,12 @@ def cmd_status(args) -> int:
         "global_language": mesh_config.organization.global_language,
         "project_id": mesh_config.project.project_id,
         "workspace_root": str(project_workspace_root(args.workspace_root, mesh_config)),
+        "document_library_root": str(
+            project_document_library_root(
+                project_workspace_root(args.workspace_root, mesh_config),
+                mesh_config,
+            )
+        ),
         "default_repository": mesh_config.project.workspace.default_repository,
         "instances": {
             instance_id: lifecycle.get_state(instance_id)
@@ -269,6 +298,31 @@ def cmd_status(args) -> int:
         "journal_path": str(journal.path),
     }
     print(json.dumps(status, indent=2))
+    return 0
+
+
+def cmd_document_manifest(args) -> int:
+    mesh_config = load_mesh_config(args.config_root, project_file=args.project_file)
+    workspace = project_workspace_root(args.workspace_root, mesh_config)
+    configure_component_telemetry(mesh_config, "cli")
+    if args.write:
+        manifest_path = write_document_manifest(workspace, mesh_config.project)
+        print(json.dumps({"manifest_path": str(manifest_path)}, indent=2))
+    else:
+        print(json.dumps(build_document_manifest(mesh_config.project), indent=2))
+    return 0
+
+
+def cmd_flow_mermaid(args) -> int:
+    mesh_config = load_mesh_config(args.config_root, project_file=args.project_file)
+    configure_component_telemetry(mesh_config, "cli")
+    output = render_flow_mermaid(mesh_config.project.flow)
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output, encoding="utf-8")
+        print(json.dumps({"output": str(args.output)}, indent=2))
+    else:
+        print(output, end="")
     return 0
 
 
@@ -729,6 +783,14 @@ def parser() -> argparse.ArgumentParser:
 
     status = subcommands.add_parser("status")
     status.set_defaults(func=cmd_status)
+
+    document_manifest = subcommands.add_parser("document-manifest")
+    document_manifest.add_argument("--write", action="store_true")
+    document_manifest.set_defaults(func=cmd_document_manifest)
+
+    flow_mermaid = subcommands.add_parser("flow-mermaid")
+    flow_mermaid.add_argument("--output", type=Path)
+    flow_mermaid.set_defaults(func=cmd_flow_mermaid)
 
     auth_plan = subcommands.add_parser("auth-plan")
     auth_plan.add_argument("--instance")

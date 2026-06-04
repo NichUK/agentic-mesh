@@ -29,6 +29,9 @@ def test_project_schema_and_flow_template_files_exist() -> None:
     assert schema["title"] == "Agentic Mesh Project Configuration"
     assert "workspace" in schema["required"]
     assert "authCredential" in schema["$defs"]
+    assert "documentLibrary" in schema["$defs"]
+    assert "roleMemory" in schema["$defs"]
+    assert "projectMesh" in schema["$defs"]
     assert "flowConsult" in schema["$defs"]
     assert "sponsorInitiatedWork" in schema["$defs"]
     reasoning_effort_schema = schema["$defs"]["worker"]["properties"]["reasoning_effort"]
@@ -225,10 +228,28 @@ def test_loads_project_roles_and_instances() -> None:
     ]
     engineering = mesh_config.instances["agentic-mesh-dev.engineering.1"]
     assert engineering.template.role_id == "engineering"
+    assert "document-library.read" in engineering.template.default_tools
+    assert "bdd.scenarios.read" in engineering.template.default_tools
     assert engineering.override.worker.adapter == "codex-cli"
     assert engineering.override.worker.reasoning_effort == "high"
     assert engineering.override.worker.sandbox_mode == "danger-full-access"
     assert engineering.telemetry_service_name == "AM.dev-team.engineering.1"
+    assert mesh_config.project.document_library.backend == "git"
+    assert mesh_config.project.document_library.root == "../../.."
+    assert (
+        mesh_config.project.document_library.index_path
+        == "docs/00-index/document-library-manifest.json"
+    )
+    assert mesh_config.project.role_memory.enabled is True
+    assert mesh_config.project.role_memory.provenance_required is True
+    assert sorted(mesh_config.project.meshes) == ["governance", "sdlc"]
+    assert "enterprise-architect" in mesh_config.project.meshes["sdlc"].roles
+    assert "bdd.scenarios.write" in mesh_config.role_templates[
+        "qa-engineer"
+    ].default_tools
+    assert "flow.visualize" in mesh_config.role_templates[
+        "delivery-manager"
+    ].default_tools
 
 
 def test_loads_project_sdlc_flow_overlay() -> None:
@@ -237,20 +258,32 @@ def test_loads_project_sdlc_flow_overlay() -> None:
     flow = mesh_config.project.flow
     assert flow.flow_id == "agentic-mesh-sdlc-v0"
     assert flow.entry_state == "business_analysis"
-    assert flow.work_item_types == ["slice", "feature", "spike"]
+    assert flow.work_item_types == ["slice", "subslice", "feature", "spike"]
     assert flow.states["business_analysis"].owner_role == "business-analyst"
     assert (
         flow.states["business_analysis"].handoffs["completed"].target_state
         == "product_definition"
     )
-    assert (
-        flow.states["solution_design"].handoffs["completed"].target_role
-        == "security-architect"
+    assert flow.states["solution_design"].handoffs["completed"].target_role == (
+        "security-architect"
     )
     assert flow.sponsor_initiated_work is not None
     assert flow.sponsor_initiated_work.allow_from_any_state is True
     assert flow.sponsor_initiated_work.default_work_item_type == "spike"
     assert flow.sponsor_initiated_work.default_intake_state == "business_analysis"
+    assert (
+        flow.states["implementation_planning"].handoffs["completed"].target_state
+        == "quality_planning"
+    )
+    assert (
+        flow.states["quality_planning"].handoffs["completed"].target_state
+        == "implementation"
+    )
+    assert (
+        flow.states["quality_planning"].gates[0].type
+        == "plan_review"
+    )
+    assert "engineering" in flow.states["quality_planning"].gates[0].affected_roles
     assert (
         flow.states["implementation"].consults["product_scope"].target_role
         == "product-manager"
@@ -277,6 +310,16 @@ def test_loads_document_accountabilities_and_gates() -> None:
     assert product_state.gates[0].required_documents == ["docs/product/stories.md"]
     assert product_state.gates[0].required_review_status == "approved"
     assert product_state.gates[0].reviewer_role == "product-manager"
+
+    implementation_plan = mesh_config.project.document_accountabilities[
+        "docs/engineering/implementation-plan.md"
+    ]
+    assert implementation_plan.owner_role == "engineering"
+    assert "test_hooks" in implementation_plan.required_sections
+
+    test_plan = mesh_config.project.document_accountabilities["docs/qa/test-plan.md"]
+    assert test_plan.owner_role == "qa-engineer"
+    assert "bdd_scenarios" in test_plan.required_sections
 
     release_state = mesh_config.project.flow.states["release_review"]
     human_gate = release_state.gates[0]

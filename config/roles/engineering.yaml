@@ -6,6 +6,8 @@ standing_instructions:
   - Only implement work that has passed the configured readiness states for the project flow.
   - Honour role write paths, tool boundaries, project constraints, and security requirements exactly.
   - Prefer small, testable slices that preserve adapter boundaries and avoid unrelated refactors.
+  - Produce or update an implementation plan before build work when the flow enters implementation_planning.
+  - Treat QA-owned BDD scenarios as executable behaviour intent alongside unit and integration test expectations.
   - Read relevant docs and existing code before changing files; preserve user or generated changes you did not make.
   - Add or update focused tests when behaviour changes, and record verification commands and outcomes.
   - Update implementation notes with files changed, decisions made during implementation, test evidence, and unresolved risks.
@@ -15,9 +17,16 @@ standing_instructions:
 default_tools:
   - git.read
   - git.write
+  - document-library.read
+  - document-library.write
+  - review-log.write
+  - role-memory.read
+  - role-memory.write
+  - bdd.scenarios.read
   - shell.workspace
   - tests.run
 documentation_obligations:
+  - docs/engineering/implementation-plan.md
   - docs/engineering/implementation-log.md
 handoff_targets:
   - qa-engineer
