@@ -1067,12 +1067,27 @@ class TeamsBotIngress:
             )
             return None
         if logical_channel == "all-agents":
-            return self._record_all_agents_directive(
+            if self._activity_mentions(activity, logical_channel):
+                return self._record_all_agents_directive(
+                    activity,
+                    raw_activity_path,
+                    logical_channel=logical_channel,
+                    text=text,
+                )
+            targeted_roles = self._mentioned_role_ids(activity)
+            if targeted_roles:
+                return self._record_targeted_directive(
+                    activity,
+                    raw_activity_path,
+                    logical_channel=logical_channel,
+                    text=text,
+                    roles=targeted_roles,
+                )
+            self._journal_ignored_channel_message(
                 activity,
-                raw_activity_path,
-                logical_channel=logical_channel,
-                text=text,
+                reason="missing_all_agents_or_role_mention",
             )
+            return None
 
         sponsor_policy = self.project_config.flow.sponsor_initiated_work
         lifecycle_state = (
@@ -1147,6 +1162,58 @@ class TeamsBotIngress:
         text: str,
     ) -> list[Message]:
         assert self.project_config is not None
+        roles = sorted(self.project_config.roles)
+        return self._record_directive(
+            activity,
+            raw_activity_path,
+            logical_channel=logical_channel,
+            text=text,
+            roles=roles,
+            work_mode="direct_broadcast",
+            routed_event="teams_all_agents_directive_routed",
+            acknowledgement_event="teams_all_agents_acknowledgement_queued",
+            unroutable_event="teams_all_agents_acknowledgement_unroutable",
+            acknowledgement_role_id="delivery-manager",
+        )
+
+    def _record_targeted_directive(
+        self,
+        activity: dict[str, Any],
+        raw_activity_path: Path,
+        *,
+        logical_channel: str,
+        text: str,
+        roles: list[str],
+    ) -> list[Message]:
+        acknowledgement_role_id = roles[0] if len(roles) == 1 else "delivery-manager"
+        return self._record_directive(
+            activity,
+            raw_activity_path,
+            logical_channel=logical_channel,
+            text=text,
+            roles=roles,
+            work_mode="direct_targeted",
+            routed_event="teams_targeted_directive_routed",
+            acknowledgement_event="teams_targeted_directive_acknowledgement_queued",
+            unroutable_event="teams_targeted_directive_acknowledgement_unroutable",
+            acknowledgement_role_id=acknowledgement_role_id,
+        )
+
+    def _record_directive(
+        self,
+        activity: dict[str, Any],
+        raw_activity_path: Path,
+        *,
+        logical_channel: str,
+        text: str,
+        roles: list[str],
+        work_mode: str,
+        routed_event: str,
+        acknowledgement_event: str,
+        unroutable_event: str,
+        acknowledgement_role_id: str,
+    ) -> list[Message]:
+        assert self.project_config is not None
         assert self.connector_config is not None
         work_item_id = new_id("work")
         title = _title_from_text(text)
@@ -1162,7 +1229,6 @@ class TeamsBotIngress:
         team = channel_data.get("team") or {}
         channel = channel_data.get("channel") or {}
         conversation = activity.get("conversation") or {}
-        roles = sorted(self.project_config.roles)
         messages: list[Message] = []
         for role_id in roles:
             payload = {
@@ -1171,7 +1237,7 @@ class TeamsBotIngress:
                 "text": text,
                 "work_item_id": work_item_id,
                 "work_item_type": "directive",
-                "work_mode": "direct_broadcast",
+                "work_mode": work_mode,
                 "git_branch": git_branch,
                 "publication": publication,
                 "target_role": role_id,
@@ -1196,7 +1262,7 @@ class TeamsBotIngress:
             )
             messages.append(self.message_store.enqueue(message))
         self.journal.append(
-            "teams_all_agents_directive_routed",
+            routed_event,
             project_id=self.project_id,
             connector_id=self.connector_id,
             channel=logical_channel,
@@ -1208,7 +1274,7 @@ class TeamsBotIngress:
             work_item_type="directive",
             teams_activity_id=activity.get("id"),
         )
-        self._queue_all_agents_acknowledgement(
+        self._queue_directive_acknowledgement(
             logical_channel=logical_channel,
             title=title,
             text=text,
@@ -1217,10 +1283,13 @@ class TeamsBotIngress:
             publication=publication,
             roles=roles,
             activity=activity,
+            acknowledgement_role_id=acknowledgement_role_id,
+            queued_event=acknowledgement_event,
+            unroutable_event=unroutable_event,
         )
         return messages
 
-    def _queue_all_agents_acknowledgement(
+    def _queue_directive_acknowledgement(
         self,
         *,
         logical_channel: str,
@@ -1231,10 +1300,13 @@ class TeamsBotIngress:
         publication: dict[str, Any],
         roles: list[str],
         activity: dict[str, Any],
+        acknowledgement_role_id: str,
+        queued_event: str,
+        unroutable_event: str,
     ) -> None:
         if self.connector_outbox is None:
             self.journal.append(
-                "teams_all_agents_acknowledgement_unroutable",
+                unroutable_event,
                 project_id=self.project_id,
                 connector_id=self.connector_id,
                 channel=logical_channel,
@@ -1247,7 +1319,7 @@ class TeamsBotIngress:
             message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED,
             payload={
                 "project_id": self.project_id,
-                "role_id": "delivery-manager",
+                "role_id": acknowledgement_role_id,
                 "title": title,
                 "summary": text,
                 "work_item_id": work_item_id,
@@ -1263,13 +1335,28 @@ class TeamsBotIngress:
         )
         self.connector_outbox.enqueue(acknowledgement)
         self.journal.append(
-            "teams_all_agents_acknowledgement_queued",
+            queued_event,
             project_id=self.project_id,
             connector_id=self.connector_id,
             channel=logical_channel,
             connector_message_id=acknowledgement.message_id,
             work_item_id=work_item_id,
             role_count=len(roles),
+            acknowledgement_role_id=acknowledgement_role_id,
+        )
+
+    def _activity_mentions(self, activity: dict[str, Any], mention: str) -> bool:
+        mention_key = _normalise_mention_text(mention)
+        return mention_key in {
+            _normalise_mention_text(text)
+            for text in _mention_texts_from_activity(activity)
+        }
+
+    def _mentioned_role_ids(self, activity: dict[str, Any]) -> list[str]:
+        assert self.connector_config is not None
+        return _role_ids_for_mentions(
+            _mention_texts_from_activity(activity),
+            self.connector_config,
         )
 
     def _logical_channel_for_activity(self, activity: dict[str, Any]) -> str | None:
@@ -1678,7 +1765,11 @@ class GraphTeamsChannelIngressAdapter:
         if self._is_connector_echo(graph_message):
             self._journal_skipped(channel, graph_message, reason="connector_echo")
             return True
-        if channel == "all-agents" and not self._message_mentions(graph_message, channel):
+        if (
+            channel == "all-agents"
+            and not self._message_mentions(graph_message, channel)
+            and not self._message_mentions_role(graph_message)
+        ):
             self._journal_skipped(channel, graph_message, reason="missing_channel_mention")
             return True
         return False
@@ -1741,6 +1832,14 @@ class GraphTeamsChannelIngressAdapter:
         if "<at" not in html_text.casefold():
             return False
         return mention_key in _plain_text(html_text).casefold().split()
+
+    def _message_mentions_role(self, graph_message: dict[str, Any]) -> bool:
+        return bool(
+            _role_ids_for_mentions(
+                _mention_texts_from_graph_message(graph_message),
+                self.connector_config,
+            )
+        )
 
     @staticmethod
     def _message_text(graph_message: dict[str, Any]) -> str:
@@ -1820,6 +1919,70 @@ def _plain_text(value: Any) -> str:
     text = re.sub(r"<[^>]+>", " ", value)
     text = html.unescape(text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _mention_texts_from_activity(activity: dict[str, Any]) -> list[str]:
+    texts: list[str] = []
+    for entity in activity.get("entities") or []:
+        if not isinstance(entity, dict) or entity.get("type") != "mention":
+            continue
+        texts.append(_plain_text(entity.get("text")))
+        mentioned = entity.get("mentioned") or {}
+        if isinstance(mentioned, dict):
+            texts.append(_plain_text(mentioned.get("name")))
+    graph = activity.get("graph") or {}
+    if isinstance(graph, dict):
+        for item in graph.get("mentions") or []:
+            if isinstance(item, dict):
+                texts.append(_plain_text(item.get("mentionText")))
+    activity_text = activity.get("text")
+    texts.extend(_at_mention_texts(activity_text if isinstance(activity_text, str) else ""))
+    return [text for text in texts if text]
+
+
+def _mention_texts_from_graph_message(graph_message: dict[str, Any]) -> list[str]:
+    texts: list[str] = []
+    for item in graph_message.get("mentions") or []:
+        if isinstance(item, dict):
+            texts.append(_plain_text(item.get("mentionText")))
+    texts.extend(_at_mention_texts(GraphTeamsChannelIngressAdapter._message_text(graph_message)))
+    return [text for text in texts if text]
+
+
+def _at_mention_texts(value: str) -> list[str]:
+    if not value or "<at" not in value.casefold():
+        return []
+    return [
+        _plain_text(match)
+        for match in re.findall(r"<at\b[^>]*>(.*?)</at>", value, flags=re.IGNORECASE)
+    ]
+
+
+def _normalise_mention_text(value: Any) -> str:
+    text = _plain_text(value)
+    text = text.removeprefix("@").strip()
+    return re.sub(r"\s+", " ", text).casefold()
+
+
+def _role_ids_for_mentions(
+    mention_texts: list[str],
+    connector_config: ProjectConnectorConfig,
+) -> list[str]:
+    mention_keys = {_normalise_mention_text(text) for text in mention_texts}
+    matched: list[str] = []
+    for role_id in sorted(connector_config.role_bots):
+        role_bot = connector_config.role_bots[role_id]
+        aliases = {
+            role_id,
+            role_id.replace("-", " "),
+            role_bot.display_name,
+        }
+        if role_bot.display_name.casefold().startswith("am-"):
+            aliases.add(role_bot.display_name[3:])
+        alias_keys = {_normalise_mention_text(alias) for alias in aliases}
+        if mention_keys & alias_keys:
+            matched.append(role_id)
+    return matched
 
 
 def _title_from_text(text: str) -> str:

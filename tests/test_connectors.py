@@ -227,6 +227,85 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     assert "teams_all_agents_directive_routed" in event_types
 
 
+def test_teams_ingress_routes_named_role_mention_in_all_agents_channel(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+    )
+
+    result = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity/product-manager",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "<at>AM-Product Manager</at> Please refine the adoption story.",
+            "entities": [
+                {
+                    "type": "mention",
+                    "text": "<at>AM-Product Manager</at>",
+                    "mentioned": {"id": "bot-product-manager", "name": "AM-Product Manager"},
+                }
+            ],
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {
+                    "id": teams_config.channels["all-agents"].channel_id,
+                    "name": "all-agents",
+                },
+            },
+        }
+    )
+
+    assert result["routed"] is True
+    assert result["target_roles"] == ["product-manager"]
+    assert message_store.pending_count("product-manager") == 1
+    assert all(
+        message_store.pending_count(role_id) == 0
+        for role_id in mesh_config.project.roles
+        if role_id != "product-manager"
+    )
+    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
+    assert acknowledgement is not None
+    assert acknowledgement.payload["role_id"] == "product-manager"
+    assert acknowledgement.payload["role_count"] == 1
+    assert acknowledgement.payload["target_roles"] == ["product-manager"]
+
+    message = message_store.claim_next(
+        "product-manager",
+        "agentic-mesh-dev.product-manager.1",
+    )
+    assert message is not None
+    assert message.type == "sponsor_directive.requested"
+    assert message.payload["work_mode"] == "direct_targeted"
+    assert message.payload["requested_roles"] == ["product-manager"]
+    assert message.payload["target_role"] == "product-manager"
+    assert message.payload["output_path"] == "documents/analysis/product-manager.md"
+
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "teams_targeted_directive_routed" in event_types
+    assert "teams_all_agents_directive_routed" not in event_types
+
+
 def test_teams_ingress_journals_unmapped_channel_message(
     tmp_path: Path,
 ) -> None:
@@ -330,6 +409,75 @@ def test_graph_teams_channel_ingress_routes_all_agents_message(
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_graph_channel_message_received" in event_types
     assert "teams_all_agents_directive_routed" in event_types
+
+
+def test_graph_teams_channel_ingress_routes_named_role_mention(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = GraphTeamsChannelIngressAdapter(
+        connector_id="teams-graph-ingress",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        connector_config=teams_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token="token",
+        connector_outbox=connector_outbox,
+    )
+    ingress._list_channel_messages = lambda channel, max_messages: [
+        {
+            "id": "role-mention-1",
+            "createdDateTime": "2026-06-03T12:31:24.072Z",
+            "body": {
+                "contentType": "html",
+                "content": (
+                    "<div><at id=\"0\">AM-Product Manager</at> Please refine "
+                    "the adoption story.</div>"
+                ),
+            },
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [{"id": 0, "mentionText": "AM-Product Manager"}],
+            "webUrl": "https://teams.example/message/role-mention-1",
+        }
+    ]
+
+    result = ingress.process_once("all-agents", max_messages=5)
+
+    assert result == {"routed": 1, "skipped": 0, "seen": 1}
+    assert message_store.pending_count("product-manager") == 1
+    assert all(
+        message_store.pending_count(role_id) == 0
+        for role_id in mesh_config.project.roles
+        if role_id != "product-manager"
+    )
+    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
+    assert acknowledgement is not None
+    assert acknowledgement.payload["role_id"] == "product-manager"
+    message = message_store.claim_next(
+        "product-manager",
+        "agentic-mesh-dev.product-manager.1",
+    )
+    assert message is not None
+    assert message.source == "teams:teams-graph-ingress:all-agents"
+    assert message.payload["work_mode"] == "direct_targeted"
+    assert message.payload["teams_activity_id"] == "role-mention-1"
+    assert message.payload["teams_from_name"] == "Nich"
+
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "teams_graph_channel_message_received" in event_types
+    assert "teams_targeted_directive_routed" in event_types
+    assert "teams_all_agents_directive_routed" not in event_types
 
 
 def test_graph_teams_channel_ingress_skips_all_agents_acknowledgement_echo(
