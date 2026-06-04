@@ -918,6 +918,30 @@ def test_bot_connector_renders_sponsor_directive_publish_ready() -> None:
     assert "codex/work-adoption-adopt-this-project" in rendered
 
 
+def test_bot_connector_renders_blocked_directive_terminal_summary() -> None:
+    message = ConnectorMessage.create(
+        channel="all-agents",
+        message_type="sponsor_directive.publish_ready",
+        payload={
+            "title": "Create Mermaid CLI slice",
+            "work_item_id": "work-mermaid",
+            "git_branch": "codex/work-mermaid",
+            "publication": {"status": "terminal_with_blockers"},
+            "terminal_status": "terminal_with_blockers",
+            "blocked_roles": ["delivery-manager"],
+            "artifact_paths": [],
+        },
+        source="test",
+    )
+
+    rendered = BotFrameworkTeamsConnectorAdapter._render_text(message)
+
+    assert "needs sponsor review" in rendered
+    assert "ready to publish" not in rendered
+    assert "Blocked roles: delivery-manager" in rendered
+    assert "Artifacts: none" in rendered
+
+
 def test_teams_ingress_human_response_joins_trace_context(tmp_path: Path) -> None:
     sink = telemetry.TelemetryTestSink()
     telemetry.set_test_sink(sink)

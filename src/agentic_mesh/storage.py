@@ -164,10 +164,12 @@ class FileMessageStore:
                 "pending": 0,
                 "claimed": 0,
                 "completed": 0,
+                "completion_statuses": [],
                 "artifact_paths": [],
             }
             for role_id in roles
         }
+        completion_statuses = self._work_item_completion_statuses(work_item_id)
         for role_id in roles:
             for state, paths in [
                 ("pending", self._pending_dir(role_id).glob("*.json")),
@@ -178,8 +180,18 @@ class FileMessageStore:
                     if message.payload.get("work_item_id") != work_item_id:
                         continue
                     summary[role_id][state] += 1
+                    completion_status = completion_statuses.get(
+                        message.message_id,
+                        "completed",
+                    )
+                    if state == "completed":
+                        summary[role_id]["completion_statuses"].append(
+                            completion_status
+                        )
                     output_path = message.payload.get("output_path")
-                    if output_path:
+                    if output_path and (
+                        state != "completed" or completion_status == "completed"
+                    ):
                         summary[role_id]["artifact_paths"].append(output_path)
             claimed_parent = self.root / role_id / "claimed"
             for path in claimed_parent.glob("*/*.json"):
@@ -191,6 +203,19 @@ class FileMessageStore:
                 if output_path:
                     summary[role_id]["artifact_paths"].append(output_path)
         return summary
+
+    def _work_item_completion_statuses(self, work_item_id: str) -> dict[str, str]:
+        statuses: dict[str, str] = {}
+        for event in self.journal.read_all():
+            if event.get("event_type") != "work_completed":
+                continue
+            if event.get("work_item_id") != work_item_id:
+                continue
+            message_id = event.get("message_id")
+            status = event.get("status")
+            if message_id and status:
+                statuses[str(message_id)] = str(status)
+        return statuses
 
     def mark_work_item_publish_ready(
         self,

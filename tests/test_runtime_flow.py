@@ -4,11 +4,16 @@ from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
+from agentic_mesh.models import AgentRunResult
+from agentic_mesh.models import DocumentUpdate
+from agentic_mesh.models import FlowState
 from agentic_mesh.models import Message
+from agentic_mesh.models import RoleInstanceConfig
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.runtime import AgentRuntime
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.workers import StubCodexWorkerAdapter
+from agentic_mesh.workers import WorkerAdapter
 
 
 def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> None:
@@ -363,6 +368,107 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     assert "directive_publish_ready_connector_message_queued" in event_types
     assert "handoff_emitted" not in event_types
     assert "human_response_requested" not in event_types
+
+
+class BlockedDirectiveWorkerAdapter(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="blocked",
+            message="Cannot complete without an implementation handoff.",
+            document_updates=[
+                DocumentUpdate(
+                    path=flow_state.artifact_path,
+                    content="\n## Blocked\n\nThis should stay out of documents.\n",
+                )
+            ],
+            handoffs=[],
+        )
+
+
+def test_blocked_directive_reports_chat_status_without_document_artifact(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        BlockedDirectiveWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+
+    message_store.enqueue(
+        Message.create(
+            role_id="delivery-manager",
+            message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+            payload={
+                "title": "Create Mermaid CLI slice",
+                "summary": "Create a small lifecycle Mermaid CLI slice.",
+                "work_item_id": "work-mermaid",
+                "work_item_type": "directive",
+                "work_mode": "direct_targeted",
+                "requested_roles": ["delivery-manager"],
+                "output_path": "documents/analysis/delivery-manager.md",
+                "source_channel": "all-agents",
+                "git_branch": "codex/work-mermaid",
+                "publication": {
+                    "mode": "git_branch",
+                    "branch": "codex/work-mermaid",
+                    "status": "open",
+                    "commit_policy": "commit_and_push_after_all_roles_terminal",
+                },
+            },
+            source="test",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.delivery-manager.1",
+        mesh_config.instances["agentic-mesh-dev.delivery-manager.1"],
+    )
+
+    assert connector_outbox.pending_count("delivery") == 2
+    started = connector_outbox.claim_next("delivery", "test-connector")
+    blocked = connector_outbox.claim_next("delivery", "test-connector")
+    assert started is not None
+    assert blocked is not None
+    assert blocked.type == "sponsor_directive.completed"
+    assert blocked.payload["status"] == "blocked"
+    assert blocked.payload["status_message"] == (
+        "Cannot complete without an implementation handoff."
+    )
+    assert blocked.payload["artifact_paths"] == []
+
+    assert connector_outbox.pending_count("all-agents") == 1
+    publish_summary = connector_outbox.claim_next("all-agents", "test-connector")
+    assert publish_summary is not None
+    assert publish_summary.type == "sponsor_directive.publish_ready"
+    assert publish_summary.payload["publication"]["status"] == "terminal_with_blockers"
+    assert publish_summary.payload["terminal_status"] == "terminal_with_blockers"
+    assert publish_summary.payload["blocked_roles"] == ["delivery-manager"]
+    assert publish_summary.payload["artifact_paths"] == []
+
+    artifact = tmp_path / "workspace" / "documents" / "analysis" / "delivery-manager.md"
+    assert not artifact.exists()
 
 
 def test_human_response_received_completes_release_review(tmp_path: Path) -> None:

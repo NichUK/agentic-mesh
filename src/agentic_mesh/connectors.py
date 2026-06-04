@@ -726,6 +726,17 @@ def render_sponsor_directive_publish_ready_html(message: ConnectorMessage) -> st
     title = html.escape(str(payload.get("title") or "Direct instruction"))
     work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
     branch = html.escape(str(payload.get("git_branch") or "not assigned"))
+    publication = payload.get("publication") or {}
+    publication_status = str(
+        payload.get("terminal_status")
+        or publication.get("status")
+        or "ready_to_commit_and_push"
+    )
+    blocked_roles = [
+        html.escape(str(role))
+        for role in payload.get("blocked_roles") or []
+        if role
+    ]
     artifacts = [
         html.escape(str(path))
         for path in payload.get("artifact_paths") or []
@@ -734,10 +745,23 @@ def render_sponsor_directive_publish_ready_html(message: ConnectorMessage) -> st
     artifact_text = ", ".join(f"<code>{path}</code>" for path in artifacts)
     if not artifact_text:
         artifact_text = "none"
+    if publication_status == "ready_to_commit_and_push":
+        heading = f"Direct work item ready to publish: {title}"
+        status_text = (
+            "All requested roles completed successfully for "
+            f"<code>{work_item_id}</code>."
+        )
+    else:
+        heading = f"Direct work item needs sponsor review: {title}"
+        blocked_text = ", ".join(blocked_roles) if blocked_roles else "unknown"
+        status_text = (
+            "All requested roles reached a terminal result for "
+            f"<code>{work_item_id}</code>, but at least one role did not complete "
+            f"successfully. Blocked roles: {blocked_text}."
+        )
     return (
-        f"<p><strong>Direct work item ready to publish: {title}</strong></p>"
-        f"<p>All requested roles have reached a terminal result for "
-        f"<code>{work_item_id}</code>.</p>"
+        f"<p><strong>{heading}</strong></p>"
+        f"<p>{status_text}</p>"
         f"<p>Publication branch: <code>{branch}</code></p>"
         f"<p>Artifacts: {artifact_text}</p>"
     )

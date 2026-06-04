@@ -347,7 +347,10 @@ class AgentRuntime:
                 attributes=attrs,
             ):
                 result = self.worker.run(instance_config, message, direct_state)
-            for update in result.document_updates:
+            document_updates = (
+                result.document_updates if result.status == "completed" else []
+            )
+            for update in document_updates:
                 self.artifact_store.write_update(
                     update=update,
                     role_id=instance_config.role_id,
@@ -379,7 +382,7 @@ class AgentRuntime:
                 source_message=message,
                 status=result.status,
                 status_message=result.message,
-                artifact_paths=[update.path for update in result.document_updates],
+                artifact_paths=[update.path for update in document_updates],
             )
             self.message_store.complete(message, result.status)
             self._queue_directive_publish_ready_if_complete(
@@ -587,6 +590,20 @@ class AgentRuntime:
             return
         if any(data["completed"] == 0 for data in summary.values()):
             return
+        role_statuses = {
+            role_id: sorted(set(data.get("completion_statuses") or ["completed"]))
+            for role_id, data in summary.items()
+        }
+        blocked_roles = sorted(
+            role_id
+            for role_id, statuses in role_statuses.items()
+            if any(status != "completed" for status in statuses)
+        )
+        publication_status = (
+            "terminal_with_blockers"
+            if blocked_roles
+            else "ready_to_commit_and_push"
+        )
 
         artifact_paths = sorted(
             {
@@ -610,8 +627,11 @@ class AgentRuntime:
             "git_branch": source_message.payload.get("git_branch"),
             "publication": {
                 **(source_message.payload.get("publication") or {}),
-                "status": "ready_to_commit_and_push",
+                "status": publication_status,
             },
+            "terminal_status": publication_status,
+            "role_statuses": role_statuses,
+            "blocked_roles": blocked_roles,
             "artifact_paths": artifact_paths,
         }
         if not self.message_store.mark_work_item_publish_ready(work_item_id, payload):
