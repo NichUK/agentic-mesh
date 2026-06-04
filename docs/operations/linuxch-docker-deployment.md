@@ -93,6 +93,8 @@ The overlay adds:
 - `control-plane`, exposing the controller auth UI on host port `8100`
 - restart policies for the runtime services
 - `AGENTIC_MESH_PUBLIC_BOT_ENDPOINT=https://vpn.nixnet.com/api/messages`
+- `AGENTIC_MESH_STATUS_BASE_URL`, when set, rewrites Teams status/artifact
+  links to an externally reachable control-plane URL
 
 ## Runtime Image And Mounted Configuration
 
@@ -135,6 +137,19 @@ repository while `/mesh/project/state` remains on the local VM disk. This is
 useful for watching generated project files from the parent host without moving
 runtime queues, Teams raw activities, OAuth caches, or role secrets onto the
 share.
+
+Teams messages use `AGENTIC_MESH_STATUS_BASE_URL` for sponsor-facing work item
+links. On `linuxch`, set this in the same `.env` file when the control-plane
+port is routed externally:
+
+```text
+AGENTIC_MESH_STATUS_BASE_URL=https://vpn.nixnet.com
+```
+
+The external route must forward `/work-items/...`, `/artifact-viewer/...`, and
+`/artifacts/...` to the control-plane service on `linuxch:8100`. If that route
+is not in place, leave the value unset or use an internal URL such as
+`http://10.0.0.65:8100`.
 
 The project file then declares the workspace/repository shape:
 
