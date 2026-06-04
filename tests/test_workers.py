@@ -233,6 +233,10 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert '"default_repository": "agentic-mesh"' in prompt
     assert '"path": "../../.."' in prompt
     assert "Document library and role memory:" in prompt
+    assert "Role charter:" in prompt
+    assert "role_profile" in prompt
+    assert "decision_rights" in prompt
+    assert "core_workflows" in prompt
     assert "Configured role tools and skills:" in prompt
     assert "document-library.read" in prompt
 

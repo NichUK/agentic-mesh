@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-mesh.local/schemas/role-template.schema.json",
+  "title": "Agentic Mesh Role Template",
+  "description": "Schema for reusable role templates under config/roles.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "role_id",
+    "version",
+    "purpose",
+    "standing_instructions",
+    "default_tools",
+    "documentation_obligations",
+    "handoff_targets"
+  ],
+  "properties": {
+    "role_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "purpose": {
+      "type": "string",
+      "description": "Short role label. The richer persona belongs in role_profile and related charter fields."
+    },
+    "role_profile": {
+      "type": "string",
+      "default": ""
+    },
+    "accountabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "decision_rights": {
+      "type": "object",
+      "description": "Role decision boundaries, commonly owns/advises/escalates.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "default": {}
+    },
+    "boundaries": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "collaboration_style": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "quality_bar": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "memory_focus": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "core_workflows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/coreWorkflow" },
+      "default": []
+    },
+    "standards_references": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/standardsReference" },
+      "default": []
+    },
+    "anti_patterns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "standing_instructions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "default_tools": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "documentation_obligations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "handoff_targets": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "coreWorkflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_id", "trigger", "outputs"],
+      "properties": {
+        "workflow_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "trigger": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "outputs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+    "standardsReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "applies_to"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "applies_to": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

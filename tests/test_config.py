@@ -2,6 +2,10 @@ from pathlib import Path
 import json
 import yaml
 
+import pytest
+
+from agentic_mesh.config import ConfigError
+from agentic_mesh.config import _role_template_from_dict
 from agentic_mesh.config import load_mesh_config
 
 
@@ -24,6 +28,8 @@ def test_project_schema_and_flow_template_files_exist() -> None:
     )
 
     assert "docs/configuration/project-configuration.md" in readme
+    assert "docs/architecture/role-charters.md" in readme
+    assert "Standards-Informed Roles And Flows" in readme
     assert project["flow"] == {"template": "sdlc"}
     assert project["workspace"]["default_repository"] == "agentic-mesh"
     assert schema["title"] == "Agentic Mesh Project Configuration"
@@ -42,6 +48,14 @@ def test_project_schema_and_flow_template_files_exist() -> None:
     assert "danger-full-access" in sandbox_mode_schema["enum"]
     assert (Path.cwd() / "config" / "flows" / "sdlc.yaml").exists()
     assert (Path.cwd() / "config" / "schemas" / "response-types.schema.json").exists()
+    role_schema = json.loads(
+        (Path.cwd() / "config" / "schemas" / "role-template.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert role_schema["title"] == "Agentic Mesh Role Template"
+    assert "coreWorkflow" in role_schema["$defs"]
+    assert "standardsReference" in role_schema["$defs"]
 
 
 def test_loads_organization_defaults() -> None:
@@ -228,6 +242,18 @@ def test_loads_project_roles_and_instances() -> None:
     ]
     engineering = mesh_config.instances["agentic-mesh-dev.engineering.1"]
     assert engineering.template.role_id == "engineering"
+    assert engineering.template.role_profile.startswith("Act as a senior engineer")
+    assert "Implementation approach" in " ".join(
+        engineering.template.decision_rights["owns"]
+    )
+    assert engineering.template.core_workflows[0]["workflow_id"] == (
+        "plan-implementation"
+    )
+    assert any(
+        reference["name"] == "NIST SSDF"
+        for reference in engineering.template.standards_references
+    )
+    assert "Codebase patterns" in " ".join(engineering.template.memory_focus)
     assert "document-library.read" in engineering.template.default_tools
     assert "bdd.scenarios.read" in engineering.template.default_tools
     assert engineering.override.worker.adapter == "codex-cli"
@@ -250,6 +276,76 @@ def test_loads_project_roles_and_instances() -> None:
     assert "flow.visualize" in mesh_config.role_templates[
         "delivery-manager"
     ].default_tools
+
+
+def test_all_starter_role_templates_have_expanded_charters() -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+
+    for role_id, template in mesh_config.role_templates.items():
+        assert template.role_profile, role_id
+        assert template.accountabilities, role_id
+        assert template.decision_rights.get("owns"), role_id
+        assert template.boundaries, role_id
+        assert template.collaboration_style, role_id
+        assert template.quality_bar, role_id
+        assert template.memory_focus, role_id
+        assert template.core_workflows, role_id
+        assert template.standards_references, role_id
+        assert template.anti_patterns, role_id
+
+
+def test_minimal_legacy_role_template_defaults_expanded_fields() -> None:
+    template = _role_template_from_dict(
+        {
+            "role_id": "legacy-role",
+            "version": 1,
+            "purpose": "Legacy role.",
+            "standing_instructions": [],
+            "default_tools": [],
+            "documentation_obligations": [],
+            "handoff_targets": [],
+        },
+        Path("legacy-role.yaml"),
+    )
+
+    assert template.role_profile == ""
+    assert template.accountabilities == []
+    assert template.decision_rights == {}
+    assert template.core_workflows == []
+
+
+def test_role_template_rejects_malformed_decision_rights() -> None:
+    with pytest.raises(ConfigError, match="decision_rights.owns"):
+        _role_template_from_dict(
+            {
+                "role_id": "bad-role",
+                "version": 1,
+                "purpose": "Bad role.",
+                "standing_instructions": [],
+                "default_tools": [],
+                "documentation_obligations": [],
+                "handoff_targets": [],
+                "decision_rights": {"owns": "not-a-list"},
+            },
+            Path("bad-role.yaml"),
+        )
+
+
+def test_role_template_rejects_malformed_core_workflow() -> None:
+    with pytest.raises(ConfigError, match="core_workflows\\[0\\]"):
+        _role_template_from_dict(
+            {
+                "role_id": "bad-role",
+                "version": 1,
+                "purpose": "Bad role.",
+                "standing_instructions": [],
+                "default_tools": [],
+                "documentation_obligations": [],
+                "handoff_targets": [],
+                "core_workflows": [{"workflow_id": "missing-fields"}],
+            },
+            Path("bad-role.yaml"),
+        )
 
 
 def test_loads_project_sdlc_flow_overlay() -> None:

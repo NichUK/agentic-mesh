@@ -346,6 +346,20 @@ Document library and role memory:
 Standing role instructions:
 {json.dumps(instance.template.standing_instructions, indent=2)}
 
+Role charter:
+{json.dumps({
+            "role_profile": instance.template.role_profile,
+            "accountabilities": instance.template.accountabilities,
+            "decision_rights": instance.template.decision_rights,
+            "boundaries": instance.template.boundaries,
+            "collaboration_style": instance.template.collaboration_style,
+            "quality_bar": instance.template.quality_bar,
+            "memory_focus": instance.template.memory_focus,
+            "core_workflows": instance.template.core_workflows,
+            "standards_references": instance.template.standards_references,
+            "anti_patterns": instance.template.anti_patterns,
+        }, indent=2)}
+
 Configured role tools and skills:
 {json.dumps(instance.template.default_tools, indent=2)}
 

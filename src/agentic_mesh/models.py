@@ -31,6 +31,16 @@ class RoleTemplate:
     default_tools: list[str]
     documentation_obligations: list[str]
     handoff_targets: list[str]
+    role_profile: str = ""
+    accountabilities: list[str] = field(default_factory=list)
+    decision_rights: dict[str, list[str]] = field(default_factory=dict)
+    boundaries: list[str] = field(default_factory=list)
+    collaboration_style: list[str] = field(default_factory=list)
+    quality_bar: list[str] = field(default_factory=list)
+    memory_focus: list[str] = field(default_factory=list)
+    core_workflows: list[dict[str, Any]] = field(default_factory=list)
+    standards_references: list[dict[str, str]] = field(default_factory=list)
+    anti_patterns: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

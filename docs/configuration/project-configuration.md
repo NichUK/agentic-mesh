@@ -223,6 +223,27 @@ Fields:
 - `write_paths`: project workspace paths the role may write to.
 - `channels`: logical channel aliases used by connectors.
 
+Role templates under `config/roles/` carry the reusable role charter. Project
+roles should normally override local instructions, write paths, tools, and
+channels rather than rewriting the charter.
+
+Role template charters may include:
+
+- `role_profile`: professional stance and operating model.
+- `accountabilities`: durable responsibilities owned by the role.
+- `decision_rights`: decisions the role owns, advises on, or escalates.
+- `boundaries`: areas the role must not take over.
+- `collaboration_style`: review, pushback, consult, and handoff behaviour.
+- `quality_bar`: completion standards before the role marks work done.
+- `memory_focus`: what belongs in source-linked role memory.
+- `core_workflows`: repeatable role workflows with triggers, inputs, outputs,
+  and artifacts.
+- `standards_references`: standards or frameworks that informed the role.
+- `anti_patterns`: common poor role behaviours to avoid.
+
+See `docs/architecture/role-charters.md` and
+`config/schemas/role-template.schema.json`.
+
 `instances` supports parallel workers for the same role. For example,
 Engineering can have two instances competing for the same Engineering queue
 without cloning the role template.

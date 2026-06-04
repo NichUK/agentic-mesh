@@ -52,6 +52,84 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def _string_list(data: dict[str, Any], key: str, path: Path) -> list[str]:
+    value = data.get(key, []) or []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ConfigError(f"{path} {key} must be a list of strings")
+    return [str(item) for item in value]
+
+
+def _decision_rights_from_dict(data: dict[str, Any], path: Path) -> dict[str, list[str]]:
+    value = data.get("decision_rights", {}) or {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path} decision_rights must be a mapping")
+    rights: dict[str, list[str]] = {}
+    for key, items in value.items():
+        if not isinstance(items, list) or not all(
+            isinstance(item, str) for item in items
+        ):
+            raise ConfigError(
+                f"{path} decision_rights.{key} must be a list of strings"
+            )
+        rights[str(key)] = [str(item) for item in items]
+    return rights
+
+
+def _core_workflows_from_dict(data: dict[str, Any], path: Path) -> list[dict[str, Any]]:
+    value = data.get("core_workflows", []) or []
+    if not isinstance(value, list):
+        raise ConfigError(f"{path} core_workflows must be a list")
+    workflows: list[dict[str, Any]] = []
+    for index, workflow in enumerate(value):
+        if not isinstance(workflow, dict):
+            raise ConfigError(f"{path} core_workflows[{index}] must be a mapping")
+        missing = [
+            field
+            for field in ["workflow_id", "trigger", "outputs"]
+            if field not in workflow
+        ]
+        if missing:
+            raise ConfigError(
+                f"{path} core_workflows[{index}] is missing required fields: "
+                f"{', '.join(missing)}"
+            )
+        normalized = dict(workflow)
+        normalized["workflow_id"] = str(normalized["workflow_id"])
+        normalized["trigger"] = str(normalized["trigger"])
+        for key in ["inputs", "outputs", "artifacts"]:
+            items = normalized.get(key, []) or []
+            if not isinstance(items, list) or not all(
+                isinstance(item, str) for item in items
+            ):
+                raise ConfigError(
+                    f"{path} core_workflows[{index}].{key} must be a list of strings"
+                )
+            normalized[key] = [str(item) for item in items]
+        workflows.append(normalized)
+    return workflows
+
+
+def _standards_references_from_dict(
+    data: dict[str, Any],
+    path: Path,
+) -> list[dict[str, str]]:
+    value = data.get("standards_references", []) or []
+    if not isinstance(value, list):
+        raise ConfigError(f"{path} standards_references must be a list")
+    references: list[dict[str, str]] = []
+    for index, reference in enumerate(value):
+        if not isinstance(reference, dict):
+            raise ConfigError(f"{path} standards_references[{index}] must be a mapping")
+        missing = [field for field in ["name", "applies_to"] if field not in reference]
+        if missing:
+            raise ConfigError(
+                f"{path} standards_references[{index}] is missing required fields: "
+                f"{', '.join(missing)}"
+            )
+        references.append({str(key): str(value) for key, value in reference.items()})
+    return references
+
+
 def _role_template_from_dict(data: dict[str, Any], path: Path) -> RoleTemplate:
     required = [
         "role_id",
@@ -69,10 +147,24 @@ def _role_template_from_dict(data: dict[str, Any], path: Path) -> RoleTemplate:
         role_id=str(data["role_id"]),
         version=int(data["version"]),
         purpose=str(data["purpose"]),
-        standing_instructions=list(data["standing_instructions"]),
-        default_tools=list(data["default_tools"]),
-        documentation_obligations=list(data["documentation_obligations"]),
-        handoff_targets=list(data["handoff_targets"]),
+        standing_instructions=_string_list(data, "standing_instructions", path),
+        default_tools=_string_list(data, "default_tools", path),
+        documentation_obligations=_string_list(
+            data,
+            "documentation_obligations",
+            path,
+        ),
+        handoff_targets=_string_list(data, "handoff_targets", path),
+        role_profile=str(data.get("role_profile", "")),
+        accountabilities=_string_list(data, "accountabilities", path),
+        decision_rights=_decision_rights_from_dict(data, path),
+        boundaries=_string_list(data, "boundaries", path),
+        collaboration_style=_string_list(data, "collaboration_style", path),
+        quality_bar=_string_list(data, "quality_bar", path),
+        memory_focus=_string_list(data, "memory_focus", path),
+        core_workflows=_core_workflows_from_dict(data, path),
+        standards_references=_standards_references_from_dict(data, path),
+        anti_patterns=_string_list(data, "anti_patterns", path),
     )
 
 
