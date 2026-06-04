@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -58,10 +59,12 @@ class ControllerAuthService:
         config_root: Path,
         project_file: str,
         state_root: Path,
+        workspace_root: Path | None = None,
     ) -> None:
         self.config_root = config_root
         self.project_file = project_file
         self.state_root = state_root
+        self.workspace_root = workspace_root or config_root
         self.secret_root = state_root / "secrets"
         self.mount_root = state_root / "worker_mounts"
         self._sessions: dict[str, OAuthLoginSession] = {}
@@ -359,6 +362,10 @@ class ControllerAuthService:
             for event in events
             if event.get("teams_activity_id")
         ]
+        queue_entries = sorted(
+            queue_entries,
+            key=lambda entry: str(entry.get("created_at") or ""),
+        )
         return {
             "project_id": project_id,
             "work_item_id": work_item_id,
@@ -381,6 +388,41 @@ class ControllerAuthService:
             "teams_messages": teams_messages,
             "timeline": events,
         }
+
+    def resolve_artifact_path(self, artifact_path: str) -> Path | None:
+        mesh_config = self.load_config()
+        artifact_path = artifact_path.strip().lstrip("/\\")
+        requested = Path(artifact_path)
+        if not artifact_path or requested.is_absolute() or ".." in requested.parts:
+            return None
+        effective_workspace_root = self._effective_workspace_root(mesh_config)
+        if artifact_path.startswith("documents/analysis/"):
+            root = effective_workspace_root
+        else:
+            root = self._document_library_root(mesh_config, effective_workspace_root)
+        root = root.resolve()
+        path = (root / requested).resolve()
+        if path != root and root not in path.parents:
+            return None
+        if not path.exists() or not path.is_file():
+            return None
+        return path
+
+    def _effective_workspace_root(self, mesh_config: MeshConfig) -> Path:
+        configured_root = Path(mesh_config.project.workspace.root)
+        if configured_root.is_absolute():
+            return configured_root.resolve()
+        return (self.workspace_root / configured_root).resolve()
+
+    @staticmethod
+    def _document_library_root(
+        mesh_config: MeshConfig,
+        effective_workspace_root: Path,
+    ) -> Path:
+        configured_root = Path(mesh_config.project.document_library.root)
+        if configured_root.is_absolute():
+            return configured_root.resolve()
+        return (effective_workspace_root / configured_root).resolve()
 
     def _journal_events(self, project_id: str) -> list[dict[str, Any]]:
         path = self.state_root / "projects" / project_id / "journal" / "events.jsonl"
@@ -516,6 +558,14 @@ class ControllerAuthHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path)
         if path.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"status": "ok"})
+            return
+        if path.path.startswith("/artifacts/"):
+            artifact_path = unquote(path.path.removeprefix("/artifacts/"))
+            file_path = self.server.service.resolve_artifact_path(artifact_path)
+            if file_path is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
+            self._send_file(file_path)
             return
         if path.path.startswith("/work-items/") and path.path.endswith(".json"):
             work_item_id = unquote(path.path.removeprefix("/work-items/")[:-5])
@@ -869,7 +919,7 @@ if (statusEl.textContent === "running") {{
                 "</tr>"
             )
         artifact_items = "".join(
-            f"<li><code>{html.escape(path)}</code></li>"
+            f"<li><a href=\"/artifacts/{quote(path, safe='')}\"><code>{html.escape(path)}</code></a></li>"
             for path in payload["artifacts"]
         ) or "<li>None recorded</li>"
         teams_items = "".join(
@@ -989,6 +1039,16 @@ if (statusEl.textContent === "running") {{
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_file(self, path: Path) -> None:
+        body = path.read_bytes()
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 

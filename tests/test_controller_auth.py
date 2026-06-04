@@ -47,6 +47,9 @@ def test_controller_work_item_status_page_shows_claimed_slice(
 ) -> None:
     project_id = "example-project"
     state_root = tmp_path / "state"
+    artifact_path = tmp_path / "docs" / "docs" / "product" / "stories.md"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("# Stories\n\nVisible artifact content.\n", encoding="utf-8")
     journal = EventJournal(state_root, project_id)
     message_store = FileMessageStore(state_root, project_id, journal)
     message = Message.create(
@@ -80,6 +83,7 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         config_root=Path.cwd(),
         project_file="examples/projects/example-project/agentic-mesh/project.yaml",
         state_root=state_root,
+        workspace_root=tmp_path,
     )
     server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -106,6 +110,14 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert "Work Item work-queue-v0" in body
         assert "product_definition" in body
         assert "docs/product/stories.md" in body
+        assert "/artifacts/docs%2Fproduct%2Fstories.md" in body
+
+        connection.request("GET", "/artifacts/docs%2Fproduct%2Fstories.md")
+        response = connection.getresponse()
+        artifact_body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "Visible artifact content." in artifact_body
     finally:
         server.shutdown()
         server.server_close()

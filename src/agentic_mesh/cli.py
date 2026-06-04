@@ -520,6 +520,7 @@ def cmd_control_plane_loop(args) -> int:
             config_root=args.config_root,
             project_file=args.project_file,
             state_root=args.state_root,
+            workspace_root=args.workspace_root,
         )
         thread = Thread(
             target=serve_controller_auth,
@@ -543,6 +544,7 @@ def cmd_auth_admin_server(args) -> int:
         config_root=args.config_root,
         project_file=args.project_file,
         state_root=args.state_root,
+        workspace_root=args.workspace_root,
     )
     serve_controller_auth(host=args.host, port=args.port, service=service)
     return 0
