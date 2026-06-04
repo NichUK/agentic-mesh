@@ -56,16 +56,27 @@ AGENT_RESULT_SCHEMA: dict[str, Any] = {
                     "payload": {
                         "type": "object",
                         "additionalProperties": False,
+                        "required": [
+                            "title",
+                            "summary",
+                            "work_item_id",
+                            "work_item_type",
+                            "previous_lifecycle_state",
+                            "lifecycle_state",
+                            "source_message_id",
+                            "out_of_flow",
+                            "out_of_flow_reason",
+                        ],
                         "properties": {
-                            "title": {"type": "string"},
-                            "summary": {"type": "string"},
-                            "work_item_id": {"type": "string"},
-                            "work_item_type": {"type": "string"},
-                            "previous_lifecycle_state": {"type": "string"},
-                            "lifecycle_state": {"type": "string"},
-                            "source_message_id": {"type": "string"},
-                            "out_of_flow": {"type": "boolean"},
-                            "out_of_flow_reason": {"type": "string"},
+                            "title": {"type": ["string", "null"]},
+                            "summary": {"type": ["string", "null"]},
+                            "work_item_id": {"type": ["string", "null"]},
+                            "work_item_type": {"type": ["string", "null"]},
+                            "previous_lifecycle_state": {"type": ["string", "null"]},
+                            "lifecycle_state": {"type": ["string", "null"]},
+                            "source_message_id": {"type": ["string", "null"]},
+                            "out_of_flow": {"type": ["boolean", "null"]},
+                            "out_of_flow_reason": {"type": ["string", "null"]},
                         },
                     },
                 },
@@ -422,7 +433,8 @@ risk to it, say so and keep the work scoped.
 Prefer configured lifecycle handoffs. If a genuinely warranted handoff needs to
 go outside the configured route, include `lifecycle_state` for a state owned by
 the target role and include `out_of_flow_reason` explaining why the exception is
-needed. Do not emit ambiguous handoffs.
+needed. For handoff payload fields that runtime can derive, use `null` when you
+do not need to set them yourself. Do not emit ambiguous handoffs.
 
 Return only the final JSON object required by the provided schema. Put all
 document changes in `document_updates`; do not rely on unreported filesystem
