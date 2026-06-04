@@ -225,6 +225,11 @@ class AgentRuntime:
                 return True
 
             for handoff in result.handoffs:
+                handoff = self._normalise_handoff(
+                    handoff=handoff,
+                    source_message=message,
+                    flow_state=flow_state,
+                )
                 with telemetry.start_span(
                     "handoff.emit",
                     correlation_id=message.correlation_id,
@@ -277,6 +282,39 @@ class AgentRuntime:
 
             self.message_store.complete(message, result.status)
             return True
+
+    def _normalise_handoff(
+        self,
+        *,
+        handoff,
+        source_message: Message,
+        flow_state: FlowState,
+    ):
+        transition = next(
+            (
+                candidate
+                for candidate in flow_state.handoffs.values()
+                if candidate.target_role == handoff.target_role
+                and candidate.message_type == handoff.message_type
+            ),
+            None,
+        )
+        if transition is None:
+            raise ValueError(
+                "Worker emitted an unconfigured handoff from "
+                f"{flow_state.state_id} to {handoff.target_role} "
+                f"with message type {handoff.message_type}"
+            )
+
+        payload = dict(handoff.payload)
+        payload.setdefault("title", source_message.payload.get("title"))
+        payload.setdefault("summary", source_message.payload.get("summary"))
+        payload["work_item_id"] = source_message.payload.get("work_item_id")
+        payload["work_item_type"] = source_message.payload.get("work_item_type")
+        payload["previous_lifecycle_state"] = flow_state.state_id
+        payload["lifecycle_state"] = transition.target_state
+        payload["source_message_id"] = source_message.message_id
+        return replace(handoff, payload=payload)
 
     def _run_direct_directive(self, instance_id: str, instance_config, message: Message) -> bool:
         direct_state = FlowState(

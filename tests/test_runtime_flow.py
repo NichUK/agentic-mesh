@@ -7,6 +7,7 @@ from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.models import AgentRunResult
 from agentic_mesh.models import DocumentUpdate
 from agentic_mesh.models import FlowState
+from agentic_mesh.models import Handoff
 from agentic_mesh.models import Message
 from agentic_mesh.models import RoleInstanceConfig
 from agentic_mesh.storage import FileConnectorOutbox
@@ -14,6 +15,34 @@ from agentic_mesh.runtime import AgentRuntime
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.workers import StubCodexWorkerAdapter
 from agentic_mesh.workers import WorkerAdapter
+
+
+class IncompleteHandoffWorker(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="Completed with a minimal worker-emitted handoff.",
+            document_updates=[
+                DocumentUpdate(
+                    path=flow_state.artifact_path,
+                    content="Completed business framing.",
+                )
+            ],
+            handoffs=[
+                Handoff(
+                    target_role="product-manager",
+                    message_type="sdlc.product_definition",
+                    payload={
+                        "summary": "Ready for product definition.",
+                    },
+                )
+            ],
+        )
 
 
 def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> None:
@@ -92,6 +121,56 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
     assert "message_routed" in event_types
     assert "work_completed" in event_types
     assert "local_trace_span" in event_types
+
+
+def test_runtime_normalises_worker_handoff_payload_from_flow(tmp_path: Path) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(tmp_path / "state", mesh_config.project.project_id, journal)
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        IncompleteHandoffWorker(),
+    )
+
+    message_store.enqueue(
+        Message.create(
+            role_id="business-analyst",
+            message_type="sdlc.business_analysis",
+            payload={
+                "title": "Work Queue V0",
+                "summary": "Create the project work queue abstraction.",
+                "work_item_id": "work-queue-v0",
+                "work_item_type": "slice",
+                "lifecycle_state": "business_analysis",
+            },
+            source="test",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.business-analyst.1",
+        mesh_config.instances["agentic-mesh-dev.business-analyst.1"],
+    )
+
+    product_message = message_store.claim_next("product-manager", "test-product")
+    assert product_message is not None
+    assert product_message.payload["lifecycle_state"] == "product_definition"
+    assert product_message.payload["previous_lifecycle_state"] == "business_analysis"
+    assert product_message.payload["work_item_id"] == "work-queue-v0"
+    assert product_message.payload["work_item_type"] == "slice"
+    assert product_message.payload["title"] == "Work Queue V0"
+    assert product_message.payload["source_message_id"]
+
+    handoff_events = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "handoff_emitted"
+    ]
+    assert handoff_events[0]["target_lifecycle_state"] == "product_definition"
 
 
 def test_parallel_work_items_keep_independent_lifecycle_context(tmp_path: Path) -> None:
