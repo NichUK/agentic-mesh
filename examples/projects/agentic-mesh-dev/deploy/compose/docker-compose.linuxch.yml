@@ -18,7 +18,7 @@ services:
     volumes:
       - ../../../../..:/mesh/system:ro
       - ../..:/mesh/project
-      - ../../../../..:/mesh/workspaces/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
     working_dir: /mesh/workspaces/agentic-mesh
     restart: unless-stopped
 

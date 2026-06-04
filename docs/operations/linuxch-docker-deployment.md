@@ -122,6 +122,20 @@ AGENTIC_MESH_WORKSPACE_ROOT=/mesh/workspaces/agentic-mesh
 AGENTIC_MESH_STATE_ROOT=/mesh/project/state
 ```
 
+On `linuxch`, the workspace mount can be moved onto the mounted nichserv/NAS
+share by setting this Compose environment variable in the compose directory
+`.env` file:
+
+```text
+AGENTIC_MESH_WORKSPACE_HOST_PATH=/mnt/nixnas/Dev/agentic-mesh-linuxch
+```
+
+That makes `/mesh/workspaces/agentic-mesh` point at the CIFS-mounted project
+repository while `/mesh/project/state` remains on the local VM disk. This is
+useful for watching generated project files from the parent host without moving
+runtime queues, Teams raw activities, OAuth caches, or role secrets onto the
+share.
+
 The project file then declares the workspace/repository shape:
 
 ```yaml
