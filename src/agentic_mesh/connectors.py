@@ -602,18 +602,20 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
         if message.type == MESSAGE_TYPE_SDLC_HANDOFF:
             payload = message.payload
             title = html.escape(str(payload.get("title") or "SDLC handoff"))
-            work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+            raw_work_item_id = str(payload.get("work_item_id") or "unknown")
+            work_item_id = html.escape(raw_work_item_id)
             source = html.escape(str(payload.get("source_role") or "unknown"))
             target = html.escape(str(payload.get("target_role") or "unknown"))
             source_state = html.escape(str(payload.get("source_lifecycle_state") or "unknown"))
             target_state = html.escape(str(payload.get("target_lifecycle_state") or "unknown"))
             summary = html.escape(str(payload.get("summary") or ""))
+            status_link = _work_item_status_link_html(raw_work_item_id)
             return (
                 f"<b>Agentic Mesh SDLC handoff: {title}</b><br/>"
                 f"Work item <code>{work_item_id}</code> moved from "
                 f"<code>{source_state}</code> ({source}) to "
                 f"<code>{target_state}</code> ({target}).<br/>"
-                f"{summary}"
+                f"{summary}{status_link}"
             )
         if message.type == MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED:
             payload = message.payload
@@ -643,40 +645,47 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
 def render_sdlc_handoff_html(message: ConnectorMessage) -> str:
     payload = message.payload
     title = html.escape(str(payload.get("title") or "SDLC handoff"))
-    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    raw_work_item_id = str(payload.get("work_item_id") or "unknown")
+    work_item_id = html.escape(raw_work_item_id)
     source = html.escape(str(payload.get("source_role") or "unknown"))
     target = html.escape(str(payload.get("target_role_display_name") or payload.get("target_role") or "unknown"))
     source_state = html.escape(str(payload.get("source_lifecycle_state") or "unknown"))
     target_state = html.escape(str(payload.get("target_lifecycle_state") or "unknown"))
     summary = html.escape(str(payload.get("summary") or ""))
+    status_link = _work_item_status_link_html(raw_work_item_id, paragraph=True)
     return (
         f"<p><strong>Agentic Mesh SDLC handoff: {title}</strong></p>"
         f"<p>Work item <code>{work_item_id}</code> moved from "
         f"<code>{source_state}</code> ({source}) to <code>{target_state}</code> "
         f"({target}).</p>"
         f"<p>{summary}</p>"
+        f"{status_link}"
     )
 
 
 def render_human_response_request_html(message: ConnectorMessage) -> str:
     payload = message.payload
     prompt = html.escape(str(payload.get("prompt") or "Human response requested"))
-    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    raw_work_item_id = str(payload.get("work_item_id") or "unknown")
+    work_item_id = html.escape(raw_work_item_id)
     gate_id = html.escape(str(payload.get("gate_id") or "unknown"))
     response_type = html.escape(str(payload.get("response_type") or "unknown"))
     summary = html.escape(str(payload.get("summary") or ""))
+    status_link = _work_item_status_link_html(raw_work_item_id, paragraph=True)
     return (
         f"<p><strong>{prompt}</strong></p>"
         f"<p>Work item <code>{work_item_id}</code> is waiting at gate "
         f"<code>{gate_id}</code> for response type <code>{response_type}</code>.</p>"
         f"<p>{summary}</p>"
+        f"{status_link}"
     )
 
 
 def render_sponsor_directive_acknowledgement_html(message: ConnectorMessage) -> str:
     payload = message.payload
     title = html.escape(str(payload.get("title") or "Directive received"))
-    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    raw_work_item_id = str(payload.get("work_item_id") or "unknown")
+    work_item_id = html.escape(raw_work_item_id)
     branch = html.escape(str(payload.get("git_branch") or "not assigned"))
     role_count = html.escape(str(payload.get("role_count") or 0))
     roles = payload.get("target_roles") or []
@@ -689,13 +698,15 @@ def render_sponsor_directive_acknowledgement_html(message: ConnectorMessage) -> 
         f"and does not require release approval.</p>"
         f"<p>Publication branch: <code>{branch}</code></p>"
         f"<p>Roles: {role_text}</p>"
+        f"{_work_item_status_link_html(raw_work_item_id, paragraph=True)}"
     )
 
 
 def render_sponsor_directive_status_html(message: ConnectorMessage) -> str:
     payload = message.payload
     title = html.escape(str(payload.get("title") or "Direct instruction"))
-    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    raw_work_item_id = str(payload.get("work_item_id") or "unknown")
+    work_item_id = html.escape(raw_work_item_id)
     branch = html.escape(str(payload.get("git_branch") or "not assigned"))
     role_id = html.escape(str(payload.get("role_id") or "unknown"))
     role_instance_id = html.escape(str(payload.get("role_instance_id") or "unknown"))
@@ -718,13 +729,15 @@ def render_sponsor_directive_status_html(message: ConnectorMessage) -> str:
         f"<p>{status_message}</p>"
         f"<p>Publication branch: <code>{branch}</code></p>"
         f"<p>Artifacts: {artifact_text}</p>"
+        f"{_work_item_status_link_html(raw_work_item_id, paragraph=True)}"
     )
 
 
 def render_sponsor_directive_publish_ready_html(message: ConnectorMessage) -> str:
     payload = message.payload
     title = html.escape(str(payload.get("title") or "Direct instruction"))
-    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    raw_work_item_id = str(payload.get("work_item_id") or "unknown")
+    work_item_id = html.escape(raw_work_item_id)
     branch = html.escape(str(payload.get("git_branch") or "not assigned"))
     publication = payload.get("publication") or {}
     publication_status = str(
@@ -764,7 +777,29 @@ def render_sponsor_directive_publish_ready_html(message: ConnectorMessage) -> st
         f"<p>{status_text}</p>"
         f"<p>Publication branch: <code>{branch}</code></p>"
         f"<p>Artifacts: {artifact_text}</p>"
+        f"{_work_item_status_link_html(raw_work_item_id, paragraph=True)}"
     )
+
+
+def _work_item_status_link_html(
+    work_item_id: str,
+    *,
+    paragraph: bool = False,
+) -> str:
+    if not work_item_id or work_item_id == "unknown":
+        return ""
+    base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
+    if not base_url:
+        auth_url = os.environ.get("AGENTIC_MESH_AUTH_ADMIN_URL")
+        if auth_url:
+            base_url = auth_url.split("/auth/", 1)[0]
+    if not base_url:
+        return ""
+    href = f"{base_url.rstrip('/')}/work-items/{quote(work_item_id, safe='')}"
+    link = f'<a href="{html.escape(href)}">Status</a>'
+    if paragraph:
+        return f"<p>{link}</p>"
+    return f"<br/>{link}"
 
 
 def _html_to_teams_xml_text(value: str) -> str:

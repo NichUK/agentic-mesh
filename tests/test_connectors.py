@@ -778,7 +778,11 @@ def test_teams_ingress_updates_original_human_response_card(tmp_path: Path) -> N
     assert "teams_bot_card_updated" in event_types
 
 
-def test_bot_connector_selects_source_role_for_handoff_sender() -> None:
+def test_bot_connector_selects_source_role_for_handoff_sender(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "AGENTIC_MESH_AUTH_ADMIN_URL",
+        "http://controller.local/auth/credentials",
+    )
     message = ConnectorMessage.create(
         channel="engineering",
         message_type="sdlc.handoff",
@@ -799,6 +803,7 @@ def test_bot_connector_selects_source_role_for_handoff_sender() -> None:
     rendered = connector._render_text(message)
     assert "platform_readiness" in rendered
     assert "implementation" in rendered
+    assert "http://controller.local/work-items/slice-bot-sender" in rendered
 
 
 def test_bot_connector_attaches_human_response_card() -> None:

@@ -16,6 +16,8 @@ from threading import Lock
 from threading import Thread
 from typing import Any
 from urllib.parse import parse_qs
+from urllib.parse import quote
+from urllib.parse import unquote
 from urllib.parse import urlencode
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -309,6 +311,182 @@ class ControllerAuthService:
                 "redacted": True,
             }
 
+    def work_item_status(self, work_item_id: str) -> dict[str, Any]:
+        mesh_config = self.load_config()
+        project_id = mesh_config.project.project_id
+        events = [
+            event
+            for event in self._journal_events(project_id)
+            if event.get("work_item_id") == work_item_id
+        ]
+        queue_entries = self._queue_entries(project_id, work_item_id)
+        latest_completed_by_message = {
+            event.get("message_id"): event
+            for event in events
+            if event.get("event_type") == "work_completed" and event.get("message_id")
+        }
+        active_claims = [
+            entry
+            for entry in queue_entries
+            if entry["queue_state"] == "claimed"
+            and entry["message_id"] not in latest_completed_by_message
+        ]
+        pending = [
+            entry for entry in queue_entries if entry["queue_state"] == "pending"
+        ]
+
+        current = self._current_work_item_state(events, active_claims, pending)
+        artifacts = sorted(
+            {
+                str(event.get("path"))
+                for event in events
+                if event.get("event_type") == "documentation_updated"
+                and event.get("path")
+            }
+        )
+        for event in events:
+            for path in event.get("artifact_paths") or []:
+                if path:
+                    artifacts.append(str(path))
+        teams_messages = [
+            {
+                "timestamp": event.get("timestamp"),
+                "channel": event.get("channel"),
+                "message_type": event.get("message_type"),
+                "teams_activity_id": event.get("teams_activity_id"),
+                "teams_conversation_id": event.get("teams_conversation_id"),
+            }
+            for event in events
+            if event.get("teams_activity_id")
+        ]
+        return {
+            "project_id": project_id,
+            "work_item_id": work_item_id,
+            "status": current["status"],
+            "current": current,
+            "counts": {
+                "events": len(events),
+                "pending": len(pending),
+                "claimed": len(active_claims),
+                "completed": len(
+                    [
+                        event
+                        for event in events
+                        if event.get("event_type") == "work_completed"
+                    ]
+                ),
+            },
+            "queue_entries": queue_entries,
+            "artifacts": sorted(set(artifacts)),
+            "teams_messages": teams_messages,
+            "timeline": events,
+        }
+
+    def _journal_events(self, project_id: str) -> list[dict[str, Any]]:
+        path = self.state_root / "projects" / project_id / "journal" / "events.jsonl"
+        if not path.exists():
+            return []
+        with path.open("r", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+
+    def _queue_entries(self, project_id: str, work_item_id: str) -> list[dict[str, Any]]:
+        queue_root = self.state_root / "projects" / project_id / "queues"
+        if not queue_root.exists():
+            return []
+        entries: list[dict[str, Any]] = []
+        for role_dir in sorted(path for path in queue_root.iterdir() if path.is_dir()):
+            role_id = role_dir.name
+            for queue_state in ["pending", "completed"]:
+                for path in sorted((role_dir / queue_state).glob("*.json")):
+                    entry = self._queue_entry(path, role_id, queue_state, work_item_id)
+                    if entry:
+                        entries.append(entry)
+            for path in sorted((role_dir / "claimed").glob("*/*.json")):
+                entry = self._queue_entry(path, role_id, "claimed", work_item_id)
+                if entry:
+                    entries.append(entry)
+        return entries
+
+    def _queue_entry(
+        self,
+        path: Path,
+        role_id: str,
+        queue_state: str,
+        work_item_id: str,
+    ) -> dict[str, Any] | None:
+        with path.open("r", encoding="utf-8") as handle:
+            message = json.load(handle)
+        payload = message.get("payload") or {}
+        if payload.get("work_item_id") != work_item_id:
+            return None
+        return {
+            "role_id": role_id,
+            "queue_state": queue_state,
+            "message_id": message.get("message_id"),
+            "message_type": message.get("type"),
+            "lifecycle_state": payload.get("lifecycle_state"),
+            "created_at": message.get("created_at"),
+            "claimed_at": message.get("claimed_at"),
+            "claimed_by": message.get("claimed_by"),
+            "path": str(path),
+        }
+
+    @staticmethod
+    def _current_work_item_state(
+        events: list[dict[str, Any]],
+        active_claims: list[dict[str, Any]],
+        pending: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if active_claims:
+            claim = sorted(
+                active_claims,
+                key=lambda entry: str(entry.get("claimed_at") or ""),
+            )[-1]
+            return {
+                "status": "running",
+                "role_id": claim.get("role_id"),
+                "role_instance_id": claim.get("claimed_by"),
+                "lifecycle_state": claim.get("lifecycle_state"),
+                "message_id": claim.get("message_id"),
+                "since": claim.get("claimed_at"),
+            }
+        if pending:
+            next_item = sorted(
+                pending,
+                key=lambda entry: str(entry.get("created_at") or ""),
+            )[0]
+            return {
+                "status": "pending",
+                "role_id": next_item.get("role_id"),
+                "lifecycle_state": next_item.get("lifecycle_state"),
+                "message_id": next_item.get("message_id"),
+                "since": next_item.get("created_at"),
+            }
+        completed = [
+            event for event in events if event.get("event_type") == "work_completed"
+        ]
+        if completed:
+            latest = completed[-1]
+            return {
+                "status": str(latest.get("status") or "completed"),
+                "role_id": latest.get("role_id"),
+                "role_instance_id": latest.get("role_instance_id"),
+                "lifecycle_state": latest.get("lifecycle_state"),
+                "message_id": latest.get("message_id"),
+                "since": latest.get("timestamp"),
+            }
+        if events:
+            latest = events[-1]
+            return {
+                "status": "observed",
+                "role_id": latest.get("role_id") or latest.get("target_role"),
+                "lifecycle_state": latest.get("lifecycle_state")
+                or latest.get("target_lifecycle_state"),
+                "message_id": latest.get("message_id"),
+                "since": latest.get("timestamp"),
+            }
+        return {"status": "not_found"}
+
     def _credential(
         self,
         mesh_config: MeshConfig,
@@ -338,6 +516,25 @@ class ControllerAuthHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path)
         if path.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"status": "ok"})
+            return
+        if path.path.startswith("/work-items/") and path.path.endswith(".json"):
+            work_item_id = unquote(path.path.removeprefix("/work-items/")[:-5])
+            payload = self.server.service.work_item_status(work_item_id)
+            if payload["status"] == "not_found":
+                self._send_json(HTTPStatus.NOT_FOUND, payload)
+                return
+            self._send_json(HTTPStatus.OK, payload)
+            return
+        if path.path.startswith("/work-items/"):
+            work_item_id = unquote(path.path.removeprefix("/work-items/"))
+            payload = self.server.service.work_item_status(work_item_id)
+            if payload["status"] == "not_found":
+                self._send_html(
+                    HTTPStatus.NOT_FOUND,
+                    self._layout("Work Item Not Found", "<p>Unknown work item.</p>"),
+                )
+                return
+            self._send_html(HTTPStatus.OK, self._work_item_page(payload))
             return
         if path.path == "/auth/status.json":
             self._send_json(
@@ -636,6 +833,103 @@ if (statusEl.textContent === "running") {{
 """
         return self._layout("Codex OAuth Login", body)
 
+    def _work_item_page(self, payload: dict[str, Any]) -> str:
+        current = payload["current"]
+        queue_rows = []
+        for entry in payload["queue_entries"]:
+            queue_rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(entry.get('queue_state') or ''))}</td>"
+                f"<td>{html.escape(str(entry.get('role_id') or ''))}</td>"
+                f"<td>{html.escape(str(entry.get('lifecycle_state') or ''))}</td>"
+                f"<td><code>{html.escape(str(entry.get('message_id') or ''))}</code></td>"
+                f"<td>{html.escape(str(entry.get('claimed_by') or ''))}</td>"
+                f"<td>{html.escape(str(entry.get('claimed_at') or entry.get('created_at') or ''))}</td>"
+                "</tr>"
+            )
+        timeline_rows = []
+        for event in payload["timeline"][-80:]:
+            role = event.get("role_id") or event.get("source_role") or ""
+            target = event.get("target_role") or ""
+            lifecycle = (
+                event.get("lifecycle_state")
+                or event.get("target_lifecycle_state")
+                or event.get("source_lifecycle_state")
+                or ""
+            )
+            detail = event.get("status") or event.get("message_type") or ""
+            timeline_rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(event.get('timestamp') or ''))}</td>"
+                f"<td>{html.escape(str(event.get('event_type') or ''))}</td>"
+                f"<td>{html.escape(str(role))}</td>"
+                f"<td>{html.escape(str(target))}</td>"
+                f"<td>{html.escape(str(lifecycle))}</td>"
+                f"<td>{html.escape(str(detail))}</td>"
+                "</tr>"
+            )
+        artifact_items = "".join(
+            f"<li><code>{html.escape(path)}</code></li>"
+            for path in payload["artifacts"]
+        ) or "<li>None recorded</li>"
+        teams_items = "".join(
+            "<li>"
+            f"{html.escape(str(item.get('timestamp') or ''))} "
+            f"{html.escape(str(item.get('channel') or 'unknown'))}: "
+            f"<code>{html.escape(str(item.get('teams_activity_id') or ''))}</code>"
+            "</li>"
+            for item in payload["teams_messages"]
+        ) or "<li>None recorded</li>"
+        json_path = (
+            "/work-items/"
+            + quote(str(payload["work_item_id"]), safe="")
+            + ".json"
+        )
+        body = f"""
+<p class="summary">
+  <strong>Status:</strong> {html.escape(str(payload["status"]))}
+  <br><strong>Current role:</strong> {html.escape(str(current.get("role_id") or "none"))}
+  <br><strong>Lifecycle state:</strong> {html.escape(str(current.get("lifecycle_state") or "none"))}
+  <br><strong>Message:</strong> <code>{html.escape(str(current.get("message_id") or "none"))}</code>
+  <br><strong>Since:</strong> {html.escape(str(current.get("since") or "unknown"))}
+</p>
+<p><a href="{html.escape(json_path)}">JSON status</a></p>
+<h2>Queue</h2>
+<table>
+  <thead>
+    <tr>
+      <th>State</th>
+      <th>Role</th>
+      <th>Lifecycle</th>
+      <th>Message</th>
+      <th>Claimed By</th>
+      <th>Timestamp</th>
+    </tr>
+  </thead>
+  <tbody>{''.join(queue_rows)}</tbody>
+</table>
+<h2>Artifacts</h2>
+<ul>{artifact_items}</ul>
+<h2>Teams Messages</h2>
+<ul>{teams_items}</ul>
+<h2>Timeline</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Event</th>
+      <th>Role</th>
+      <th>Target</th>
+      <th>Lifecycle</th>
+      <th>Detail</th>
+    </tr>
+  </thead>
+  <tbody>{''.join(timeline_rows)}</tbody>
+</table>
+"""
+        title = f"Work Item {payload['work_item_id']}"
+        return self._layout(title, body)
+
     def _layout(self, title: str, body: str) -> str:
         return f"""<!doctype html>
 <html lang="en">
@@ -650,7 +944,9 @@ if (statusEl.textContent === "running") {{
     tr.selected {{ outline: 3px solid #6aa1ff; }}
     input[type=password] {{ min-width: 18rem; }}
     pre {{ background: #111; color: #eee; padding: 1rem; white-space: pre-wrap; }}
+    h2 {{ margin-top: 2rem; }}
     .notice {{ background: #e9f7ef; border: 1px solid #9bd7ad; padding: 0.75rem; }}
+    .summary {{ background: #f8fafc; border: 1px solid #cbd5e1; padding: 1rem; }}
     .primary {{ display: inline-block; background: #111827; color: white; padding: 0.75rem 1rem; text-decoration: none; }}
     .code-panel {{ border: 2px solid #111827; display: inline-block; padding: 1rem 1.25rem; margin: 1rem 0; }}
     .code-row {{ align-items: center; display: flex; gap: 0.75rem; }}

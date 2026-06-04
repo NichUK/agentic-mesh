@@ -10,6 +10,9 @@ from agentic_mesh import controller_auth
 from agentic_mesh.controller_auth import ControllerAuthHandler
 from agentic_mesh.controller_auth import ControllerAuthServer
 from agentic_mesh.controller_auth import ControllerAuthService
+from agentic_mesh.journal import EventJournal
+from agentic_mesh.models import Message
+from agentic_mesh.storage import FileMessageStore
 
 
 def test_controller_auth_status_json_lists_reusable_credentials(tmp_path: Path) -> None:
@@ -33,6 +36,76 @@ def test_controller_auth_status_json_lists_reusable_credentials(tmp_path: Path) 
         assert body["credentials"][0]["credential"] == "codex-example-shared-api-key"
         assert body["credentials"][0]["status"] == "missing"
         assert body["credentials"][0]["redacted"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_controller_work_item_status_page_shows_claimed_slice(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, project_id)
+    message_store = FileMessageStore(state_root, project_id, journal)
+    message = Message.create(
+        role_id="product-manager",
+        message_type="sdlc.product_definition",
+        payload={
+            "title": "Work Queue V0",
+            "summary": "Create the first work queue.",
+            "work_item_id": "work-queue-v0",
+            "work_item_type": "slice",
+            "lifecycle_state": "product_definition",
+        },
+        source="test",
+    )
+    message_store.enqueue(message)
+    message_store.claim_next(
+        "product-manager",
+        "example-project.product-manager.1",
+    )
+    journal.append(
+        "documentation_updated",
+        project_id=project_id,
+        role_id="product-manager",
+        role_instance_id="example-project.product-manager.1",
+        work_item_id="work-queue-v0",
+        work_item_type="slice",
+        lifecycle_state="product_definition",
+        path="docs/product/stories.md",
+    )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request("GET", "/work-items/work-queue-v0.json")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert payload["status"] == "running"
+        assert payload["current"]["role_id"] == "product-manager"
+        assert payload["current"]["lifecycle_state"] == "product_definition"
+        assert payload["artifacts"] == ["docs/product/stories.md"]
+
+        connection.request("GET", "/work-items/work-queue-v0")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "Work Item work-queue-v0" in body
+        assert "product_definition" in body
+        assert "docs/product/stories.md" in body
     finally:
         server.shutdown()
         server.server_close()
