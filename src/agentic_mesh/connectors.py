@@ -550,7 +550,12 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
         thread_url = self._thread_reply_url(message)
         if thread_url:
             url = thread_url
-            body = self._build_activity(message)
+            body = self._build_thread_reply_activity(
+                message,
+                role_id=role_id,
+                app_id=app_id,
+                display_name=role_bot.display_name,
+            )
         else:
             channel_config = self.connector_config.channels[message.channel]
             url = f"{self.service_url}/v3/conversations"
@@ -622,6 +627,34 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
             "type": "message",
             "textFormat": "xml",
             "text": self._render_text(message),
+        }
+        return activity
+
+    def _build_thread_reply_activity(
+        self,
+        message: ConnectorMessage,
+        *,
+        role_id: str,
+        app_id: str,
+        display_name: str,
+    ) -> dict[str, Any]:
+        activity = self._build_activity(message)
+        payload = message.payload
+        channel_config = self.connector_config.channels[message.channel]
+        conversation_id = str(payload.get("teams_conversation_id") or "")
+        reply_to_id = str(
+            payload.get("teams_reply_to_activity_id")
+            or payload.get("teams_activity_id")
+            or ""
+        )
+        activity["from"] = {"id": app_id, "name": display_name, "role": "bot"}
+        activity["conversation"] = {"id": conversation_id}
+        activity["replyToId"] = reply_to_id
+        activity["channelData"] = {
+            "tenant": {"id": self.connector_config.tenant_id},
+            "team": {"id": self.connector_config.team_id},
+            "channel": {"id": channel_config.channel_id},
+            "agenticMesh": {"senderRole": role_id},
         }
         return activity
 

@@ -1296,6 +1296,85 @@ def test_bot_connector_uses_thread_reply_url_when_source_reference_exists(
     )
 
 
+def test_bot_connector_thread_reply_body_uses_role_bot_identity(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    outbox = FileConnectorOutbox(state_root, mesh_config.project.project_id, journal)
+    class FakeSecrets:
+        def get(self, ref):
+            return {
+                "teams-bot-delivery-manager-app-id": "delivery-app-id",
+                "teams-bot-delivery-manager-secret": "delivery-secret",
+            }[ref]
+
+    connector = BotFrameworkTeamsConnectorAdapter(
+        connector_id="teams-bot-connector",
+        project_id=mesh_config.project.project_id,
+        connector_config=mesh_config.project.connectors["teams"],
+        outbox=outbox,
+        journal=journal,
+        secrets=FakeSecrets(),  # type: ignore[arg-type]
+    )
+    connector._bot_token = lambda app_id, app_secret: "bot-token"
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"id":"thread-reply-id"}'
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        captured["authorization"] = req.headers["Authorization"]
+        return FakeResponse()
+
+    monkeypatch.setattr("agentic_mesh.connectors.request.urlopen", fake_urlopen)
+
+    message = ConnectorMessage.create(
+        channel="all-agents",
+        message_type="sponsor_directive.acknowledged",
+        payload={
+            "title": "Queued slice",
+            "work_item_id": "work-threaded",
+            "role_id": "delivery-manager",
+            "role_count": 1,
+            "target_roles": ["delivery-manager"],
+            "teams_service_url": "https://smba.trafficmanager.net/uk/",
+            "teams_conversation_id": "19:conversation@thread.tacv2",
+            "teams_reply_to_activity_id": "1780500000000",
+        },
+        source="test",
+    )
+
+    connector._post_message(message, "delivery-manager")
+
+    assert captured["url"].endswith(
+        "/v3/conversations/19%3Aconversation%40thread.tacv2/"
+        "activities/1780500000000"
+    )
+    assert captured["authorization"] == "Bearer bot-token"
+    assert captured["body"]["from"] == {
+        "id": "delivery-app-id",
+        "name": "AM-Delivery Manager",
+        "role": "bot",
+    }
+    assert captured["body"]["replyToId"] == "1780500000000"
+    assert captured["body"]["conversation"]["id"] == "19:conversation@thread.tacv2"
+    assert captured["body"]["channelData"]["agenticMesh"]["senderRole"] == (
+        "delivery-manager"
+    )
+
+
 def test_bot_connector_renders_sponsor_directive_status() -> None:
     message = ConnectorMessage.create(
         channel="release",
