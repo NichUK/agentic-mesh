@@ -805,7 +805,7 @@ def _flow_gate_from_dict(
     gate_type = str(gate_data["type"])
     required_documents = list(gate_data.get("required_documents", []))
     for path in required_documents:
-        if path not in documents:
+        if path not in documents and not _is_work_item_document_template(path):
             raise ConfigError(
                 f"Flow state {state_id} gate {gate_id} references unknown document {path}"
             )
@@ -852,6 +852,10 @@ def _flow_gate_from_dict(
         on_timeout=gate_data.get("on_timeout"),
         completion_criteria=dict(gate_data.get("completion_criteria", {})),
     )
+
+
+def _is_work_item_document_template(path: str) -> bool:
+    return path.startswith("work-items/{work_item_id}/")
 
 
 def _flow_from_dict(

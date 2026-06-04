@@ -560,7 +560,7 @@ states:
   implementation:
     owner_role: engineering
     purpose: Implement the approved work item and collect implementation evidence.
-    artifact_path: docs/engineering/implementation-log.md
+    artifact_path: work-items/{work_item_id}/100-implementation-log.md
     gates: ...
     consults: ...
     handoffs: ...
@@ -571,6 +571,10 @@ Fields:
 - `owner_role`: role accountable for this lifecycle state.
 - `purpose`: what this state does.
 - `artifact_path`: document or artifact file updated by work in this state.
+  Lifecycle slice work should normally use `work-items/{work_item_id}/...`
+  paths so every work item leaves an enterprise-grade dossier. Durable
+  `docs/...` paths should be used for evergreen project knowledge, standards,
+  ADRs, indexes, and operating guides.
 - `gates`: required checks or human responses.
 - `consults`: allowed bounded role-to-role requests for help.
 - `handoffs`: lifecycle transitions when state work is complete.
@@ -637,7 +641,7 @@ gates:
   - gate_id: product_story_owner_review
     type: document_owner_review
     required_documents:
-      - docs/product/stories.md
+      - work-items/{work_item_id}/20-product-definition.md
     required_review_status: approved
     reviewer_role: product-manager
 ```
@@ -706,6 +710,7 @@ roles:
       - Keep product output concise and traceable to sponsor intent.
     write_paths:
       - docs/product/**
+      - work-items/**
     channels:
       primary: product
       handoff_inbox: product
@@ -721,6 +726,7 @@ roles:
       - src/**
       - tests/**
       - docs/engineering/**
+      - work-items/**
     channels:
       primary: engineering
       handoff_inbox: engineering
@@ -735,7 +741,7 @@ flow:
     product_definition:
       owner_role: product-manager
       purpose: Define product intent and acceptance criteria.
-      artifact_path: docs/product/stories.md
+      artifact_path: work-items/{work_item_id}/20-product-definition.md
       handoffs:
         completed:
           target_state: implementation
@@ -744,7 +750,7 @@ flow:
     implementation:
       owner_role: engineering
       purpose: Implement the configured example work item.
-      artifact_path: docs/engineering/implementation-log.md
+      artifact_path: work-items/{work_item_id}/100-implementation-log.md
       consults:
         product_scope:
           target_state: product_definition

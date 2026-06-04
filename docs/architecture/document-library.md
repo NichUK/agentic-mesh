@@ -54,6 +54,52 @@ Existing repositories may keep established folders such as `docs/product/` or
 `docs/architecture/`. New project libraries should prefer the numbered layout
 when starting clean.
 
+## Slice Documentation
+
+Every real work item must produce enterprise-grade documentation. The default
+location for lifecycle evidence is:
+
+```text
+work-items/{work_item_id}/
+```
+
+Durable area documents such as `docs/product/`, `docs/architecture/`, ADRs,
+standards, and operating guides are for evergreen knowledge. Agents should only
+update those durable documents when the work intentionally changes durable
+project knowledge. They must not use generic durable files as a dumping ground
+for slice notes.
+
+Slice documents should be ordered so the work item reads as a coherent dossier,
+for example:
+
+```text
+work-items/{work_item_id}/10-business-brief.md
+work-items/{work_item_id}/20-product-definition.md
+work-items/{work_item_id}/30-experience-design.md
+work-items/{work_item_id}/40-enterprise-alignment.md
+work-items/{work_item_id}/50-solution-design.md
+work-items/{work_item_id}/60-security-review.md
+work-items/{work_item_id}/70-platform-readiness.md
+work-items/{work_item_id}/80-implementation-plan.md
+work-items/{work_item_id}/90-quality-plan.md
+work-items/{work_item_id}/100-implementation-log.md
+work-items/{work_item_id}/110-quality-evidence.md
+work-items/{work_item_id}/120-documentation-readiness.md
+work-items/{work_item_id}/130-delivery-readiness.md
+work-items/{work_item_id}/140-release-record.md
+```
+
+Each slice document should include, where relevant:
+
+- objective and business outcome
+- scope and non-goals
+- assumptions and dependencies
+- decisions and rationale
+- implementation or review evidence
+- risks, controls, and residual concerns
+- `## Review Log`
+- next handoff, closure criteria, or release decision
+
 ## Naming
 
 - Use lowercase kebab-case filenames.

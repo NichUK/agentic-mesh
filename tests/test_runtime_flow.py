@@ -127,14 +127,15 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
     assert message_store.pending_count("engineering") == 0
     assert message_store.pending_count("qa-engineer") == 1
 
-    business_briefs = tmp_path / "workspace" / "docs" / "business" / "briefs.md"
-    stories = tmp_path / "workspace" / "docs" / "product" / "stories.md"
-    ux_notes = tmp_path / "workspace" / "docs" / "ux" / "design-notes.md"
-    enterprise_notes = tmp_path / "workspace" / "docs" / "architecture" / "enterprise-notes.md"
-    solution_notes = tmp_path / "workspace" / "docs" / "architecture" / "solution-notes.md"
-    security_notes = tmp_path / "workspace" / "docs" / "security" / "security-decisions.md"
-    platform_notes = tmp_path / "workspace" / "docs" / "platform" / "operations.md"
-    engineering_plan = tmp_path / "workspace" / "docs" / "engineering" / "implementation-plan.md"
+    work_item_root = tmp_path / "workspace" / "work-items" / "slice-local-runtime"
+    business_briefs = work_item_root / "10-business-brief.md"
+    stories = work_item_root / "20-product-definition.md"
+    ux_notes = work_item_root / "30-experience-design.md"
+    enterprise_notes = work_item_root / "40-enterprise-alignment.md"
+    solution_notes = work_item_root / "50-solution-design.md"
+    security_notes = work_item_root / "60-security-review.md"
+    platform_notes = work_item_root / "70-platform-readiness.md"
+    engineering_plan = work_item_root / "80-implementation-plan.md"
     assert "business_analysis" in business_briefs.read_text(encoding="utf-8")
     assert "Local Runtime Skeleton" in stories.read_text(encoding="utf-8")
     assert "experience_design" in ux_notes.read_text(encoding="utf-8")
@@ -144,6 +145,7 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
     assert "platform_readiness" in platform_notes.read_text(encoding="utf-8")
     assert "implementation_planning" in engineering_plan.read_text(encoding="utf-8")
     assert "agentic-mesh-dev.engineering.1" in engineering_plan.read_text(encoding="utf-8")
+    assert not (tmp_path / "workspace" / "docs" / "product" / "stories.md").exists()
 
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "message_accepted" in event_types
@@ -197,6 +199,14 @@ def test_runtime_normalises_worker_handoff_payload_from_flow(tmp_path: Path) -> 
     assert product_message.payload["work_item_type"] == "slice"
     assert product_message.payload["title"] == "Work Queue V0"
     assert product_message.payload["source_message_id"]
+    artifact = (
+        tmp_path
+        / "workspace"
+        / "work-items"
+        / "work-queue-v0"
+        / "10-business-brief.md"
+    )
+    assert artifact.read_text(encoding="utf-8") == "Completed business framing.\n"
 
     handoff_events = [
         event

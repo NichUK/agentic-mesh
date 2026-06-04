@@ -26,12 +26,16 @@ def test_build_document_manifest_includes_plans_meshes_and_memory() -> None:
     assert manifest["document_library"]["structure_policy"] == "togaf-sdlc-v1"
     assert manifest["role_memory"]["provenance_required"] is True
     assert sorted(manifest["meshes"]) == ["governance", "sdlc"]
-    assert "implementation_planning" in documents[
-        "docs/engineering/implementation-plan.md"
-    ]["lifecycle_states"]
-    assert "quality_planning" in documents["docs/qa/test-plan.md"][
-        "lifecycle_states"
+    implementation_plan = documents[
+        "work-items/{work_item_id}/80-implementation-plan.md"
     ]
+    assert implementation_plan["document_kind"] == "work_item_template"
+    assert "implementation_planning" in implementation_plan["lifecycle_states"]
+    assert "evidence" in implementation_plan["required_sections"]
+
+    quality_plan = documents["work-items/{work_item_id}/90-quality-plan.md"]
+    assert quality_plan["document_kind"] == "work_item_template"
+    assert "quality_planning" in quality_plan["lifecycle_states"]
 
 
 def test_write_document_manifest_uses_configured_index_path(tmp_path) -> None:

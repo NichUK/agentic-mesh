@@ -24,6 +24,7 @@ roles:
       - Keep product output concise and traceable to sponsor intent.
     write_paths:
       - docs/product/**
+      - work-items/**
     channels:
       primary: product
       handoff_inbox: product
@@ -41,6 +42,7 @@ roles:
       - src/**
       - tests/**
       - docs/engineering/**
+      - work-items/**
     channels:
       primary: engineering
       handoff_inbox: engineering
@@ -55,7 +57,7 @@ flow:
     product_definition:
       owner_role: product-manager
       purpose: Define product intent and acceptance criteria for this example project.
-      artifact_path: docs/product/stories.md
+      artifact_path: work-items/{work_item_id}/20-product-definition.md
       handoffs:
         completed:
           target_state: implementation
@@ -64,5 +66,5 @@ flow:
     implementation:
       owner_role: engineering
       purpose: Implement the configured example work item.
-      artifact_path: docs/engineering/implementation-log.md
+      artifact_path: work-items/{work_item_id}/100-implementation-log.md
       handoffs: {}

@@ -47,7 +47,13 @@ def test_controller_work_item_status_page_shows_claimed_slice(
 ) -> None:
     project_id = "example-project"
     state_root = tmp_path / "state"
-    artifact_path = tmp_path / "docs" / "docs" / "product" / "stories.md"
+    artifact_path = (
+        tmp_path
+        / "docs"
+        / "work-items"
+        / "work-queue-v0"
+        / "20-product-definition.md"
+    )
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("# Stories\n\nVisible artifact content.\n", encoding="utf-8")
     journal = EventJournal(state_root, project_id)
@@ -77,7 +83,7 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         work_item_id="work-queue-v0",
         work_item_type="slice",
         lifecycle_state="product_definition",
-        path="docs/product/stories.md",
+        path="work-items/work-queue-v0/20-product-definition.md",
     )
     service = ControllerAuthService(
         config_root=Path.cwd(),
@@ -100,7 +106,9 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert payload["status"] == "running"
         assert payload["current"]["role_id"] == "product-manager"
         assert payload["current"]["lifecycle_state"] == "product_definition"
-        assert payload["artifacts"] == ["docs/product/stories.md"]
+        assert payload["artifacts"] == [
+            "work-items/work-queue-v0/20-product-definition.md"
+        ]
 
         connection.request("GET", "/work-items/work-queue-v0")
         response = connection.getresponse()
@@ -109,10 +117,16 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert response.status == 200
         assert "Work Item work-queue-v0" in body
         assert "product_definition" in body
-        assert "docs/product/stories.md" in body
-        assert "/artifacts/docs%2Fproduct%2Fstories.md" in body
+        assert "work-items/work-queue-v0/20-product-definition.md" in body
+        assert (
+            "/artifacts/work-items%2Fwork-queue-v0%2F20-product-definition.md"
+            in body
+        )
 
-        connection.request("GET", "/artifacts/docs%2Fproduct%2Fstories.md")
+        connection.request(
+            "GET",
+            "/artifacts/work-items%2Fwork-queue-v0%2F20-product-definition.md",
+        )
         response = connection.getresponse()
         artifact_body = response.read().decode("utf-8")
 

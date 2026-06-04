@@ -17,9 +17,8 @@
         "security-architect",
         "platform-engineer"
       ],
-      "lifecycle_states": [
-        "enterprise_alignment"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "enterprise-architect",
       "path": "docs/architecture/enterprise-notes.md",
       "required_sections": [
@@ -40,9 +39,8 @@
         "platform-engineer",
         "engineering"
       ],
-      "lifecycle_states": [
-        "solution_design"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "solution-architect",
       "path": "docs/architecture/solution-notes.md",
       "required_sections": [
@@ -62,9 +60,8 @@
         "product-manager",
         "enterprise-architect"
       ],
-      "lifecycle_states": [
-        "business_analysis"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "business-analyst",
       "path": "docs/business/briefs.md",
       "required_sections": [
@@ -86,9 +83,8 @@
         "qa-engineer",
         "release-manager"
       ],
-      "lifecycle_states": [
-        "delivery_readiness"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "delivery-manager",
       "path": "docs/delivery/status.md",
       "required_sections": [
@@ -109,9 +105,8 @@
         "qa-engineer",
         "technical-writer"
       ],
-      "lifecycle_states": [
-        "implementation"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "engineering",
       "path": "docs/engineering/implementation-log.md",
       "required_sections": [
@@ -134,9 +129,8 @@
         "qa-engineer",
         "technical-writer"
       ],
-      "lifecycle_states": [
-        "implementation_planning"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "engineering",
       "path": "docs/engineering/implementation-plan.md",
       "required_sections": [
@@ -158,9 +152,8 @@
         "engineering",
         "release-manager"
       ],
-      "lifecycle_states": [
-        "platform_readiness"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "platform-engineer",
       "path": "docs/platform/operations.md",
       "required_sections": [
@@ -181,9 +174,8 @@
         "solution-architect",
         "qa-engineer"
       ],
-      "lifecycle_states": [
-        "product_definition"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "product-manager",
       "path": "docs/product/stories.md",
       "required_sections": [
@@ -204,9 +196,8 @@
         "product-manager",
         "release-manager"
       ],
-      "lifecycle_states": [
-        "quality_review"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "qa-engineer",
       "path": "docs/qa/test-evidence.md",
       "required_sections": [
@@ -227,9 +218,8 @@
         "engineering",
         "release-manager"
       ],
-      "lifecycle_states": [
-        "quality_planning"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "qa-engineer",
       "path": "docs/qa/test-plan.md",
       "required_sections": [
@@ -252,9 +242,8 @@
         "technical-writer",
         "engineering"
       ],
-      "lifecycle_states": [
-        "release_review"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "release-manager",
       "path": "docs/releases/release-records.md",
       "required_sections": [
@@ -274,6 +263,7 @@
         "product-manager",
         "enterprise-architect"
       ],
+      "document_kind": "durable",
       "lifecycle_states": [],
       "owner_role": "research-analyst",
       "path": "docs/research/findings.md",
@@ -295,9 +285,8 @@
         "engineering",
         "qa-engineer"
       ],
-      "lifecycle_states": [
-        "security_review"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "security-architect",
       "path": "docs/security/security-decisions.md",
       "required_sections": [
@@ -318,9 +307,8 @@
         "qa-engineer",
         "release-manager"
       ],
-      "lifecycle_states": [
-        "documentation_readiness"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "technical-writer",
       "path": "docs/technical-writing/documentation-log.md",
       "required_sections": [
@@ -339,9 +327,8 @@
         "engineering",
         "technical-writer"
       ],
-      "lifecycle_states": [
-        "experience_design"
-      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
       "owner_role": "ux-designer",
       "path": "docs/ux/design-notes.md",
       "required_sections": [
@@ -349,6 +336,314 @@
         "interaction_states",
         "accessibility",
         "design_risks"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "business_analysis"
+      ],
+      "owner_role": "business-analyst",
+      "path": "work-items/{work_item_id}/10-business-brief.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "delivery_readiness"
+      ],
+      "owner_role": "delivery-manager",
+      "path": "work-items/{work_item_id}/130-delivery-readiness.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "documentation_readiness"
+      ],
+      "owner_role": "technical-writer",
+      "path": "work-items/{work_item_id}/120-documentation-readiness.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "enterprise_alignment"
+      ],
+      "owner_role": "enterprise-architect",
+      "path": "work-items/{work_item_id}/40-enterprise-alignment.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "experience_design"
+      ],
+      "owner_role": "ux-designer",
+      "path": "work-items/{work_item_id}/30-experience-design.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "implementation"
+      ],
+      "owner_role": "engineering",
+      "path": "work-items/{work_item_id}/100-implementation-log.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "implementation_planning"
+      ],
+      "owner_role": "engineering",
+      "path": "work-items/{work_item_id}/80-implementation-plan.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "platform_readiness"
+      ],
+      "owner_role": "platform-engineer",
+      "path": "work-items/{work_item_id}/70-platform-readiness.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "product_definition"
+      ],
+      "owner_role": "product-manager",
+      "path": "work-items/{work_item_id}/20-product-definition.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "quality_planning"
+      ],
+      "owner_role": "qa-engineer",
+      "path": "work-items/{work_item_id}/90-quality-plan.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "quality_review"
+      ],
+      "owner_role": "qa-engineer",
+      "path": "work-items/{work_item_id}/110-quality-evidence.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "release_review"
+      ],
+      "owner_role": "release-manager",
+      "path": "work-items/{work_item_id}/140-release-record.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "security_review"
+      ],
+      "owner_role": "security-architect",
+      "path": "work-items/{work_item_id}/60-security-review.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
+      ],
+      "review_on_contribution": true,
+      "status": "configured"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [],
+      "document_kind": "work_item_template",
+      "lifecycle_states": [
+        "solution_design"
+      ],
+      "owner_role": "solution-architect",
+      "path": "work-items/{work_item_id}/50-solution-design.md",
+      "required_sections": [
+        "objective",
+        "scope",
+        "assumptions",
+        "decisions",
+        "evidence",
+        "risks",
+        "review_log",
+        "next_step"
       ],
       "review_on_contribution": true,
       "status": "configured"

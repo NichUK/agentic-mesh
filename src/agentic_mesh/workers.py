@@ -441,6 +441,15 @@ document changes in `document_updates`; do not rely on unreported filesystem
 edits. For direct broadcast work, use the requested artifact path and do not
 emit handoffs unless the prompt explicitly asks for one.
 
+All real lifecycle work must produce enterprise-grade documentation. For slice
+and subslice work, use the configured slice-scoped artifact path, normally under
+`work-items/{{work_item_id}}/`, unless you are deliberately updating a durable
+project standard, ADR, index, or evergreen reference. The document update should
+include the objective, scope, assumptions, decisions, evidence, risks, review
+log, and next handoff or closure criteria appropriate to your role and state.
+Do not write vague generic notes into durable area documents as a substitute for
+slice evidence.
+
 Use the document library as the canonical project memory. Use role memory only
 as a concise, source-linked accelerator, and include provenance links when you
 update it. For plan or document review gates, write visible `## Review Log`

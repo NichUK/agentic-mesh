@@ -207,6 +207,7 @@ roles:
     write_paths:
     - docs/business/**
     - docs/implementation-slices/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: business-analysis
@@ -229,6 +230,7 @@ roles:
     write_paths:
     - docs/product/**
     - docs/implementation-slices/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: product
@@ -250,6 +252,7 @@ roles:
     write_paths:
     - docs/ux/**
     - docs/implementation-slices/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: ux
@@ -272,6 +275,7 @@ roles:
     write_paths:
     - docs/architecture/**
     - docs/implementation-slices/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: enterprise-architecture
@@ -292,6 +296,7 @@ roles:
     write_paths:
     - docs/architecture/**
     - docs/implementation-slices/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: solution-architecture
@@ -314,6 +319,7 @@ roles:
     write_paths:
     - docs/security/**
     - docs/architecture/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: security
@@ -338,6 +344,7 @@ roles:
     - examples/projects/agentic-mesh-dev/**
     - Dockerfile
     - config/otel/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: platform
@@ -360,6 +367,7 @@ roles:
     - src/**
     - tests/**
     - docs/engineering/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: engineering
@@ -380,6 +388,7 @@ roles:
     write_paths:
     - docs/qa/**
     - tests/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: qa
@@ -401,6 +410,7 @@ roles:
     - README.md
     - MEMORY.md
     - docs/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: technical-writing
@@ -421,6 +431,7 @@ roles:
     - Keep delivery status tied to work_item_id.
     write_paths:
     - docs/delivery/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: delivery
@@ -441,6 +452,7 @@ roles:
     write_paths:
     - docs/research/**
     - docs/architecture/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: research
@@ -460,6 +472,7 @@ roles:
     - Keep release records linked to work_item_id.
     write_paths:
     - docs/releases/**
+    - work-items/**
     - documents/analysis/**
     channels:
       primary: release

@@ -420,19 +420,26 @@ def test_loads_document_accountabilities_and_gates() -> None:
     product_state = mesh_config.project.flow.states["product_definition"]
     assert product_state.gates[0].gate_id == "product_story_owner_review"
     assert product_state.gates[0].type == "document_owner_review"
-    assert product_state.gates[0].required_documents == ["docs/product/stories.md"]
+    assert product_state.artifact_path == (
+        "work-items/{work_item_id}/20-product-definition.md"
+    )
+    assert product_state.gates[0].required_documents == [
+        "work-items/{work_item_id}/20-product-definition.md"
+    ]
     assert product_state.gates[0].required_review_status == "approved"
     assert product_state.gates[0].reviewer_role == "product-manager"
 
-    implementation_plan = mesh_config.project.document_accountabilities[
-        "docs/engineering/implementation-plan.md"
+    implementation_plan_state = mesh_config.project.flow.states[
+        "implementation_planning"
     ]
-    assert implementation_plan.owner_role == "engineering"
-    assert "test_hooks" in implementation_plan.required_sections
+    assert implementation_plan_state.artifact_path == (
+        "work-items/{work_item_id}/80-implementation-plan.md"
+    )
 
-    test_plan = mesh_config.project.document_accountabilities["docs/qa/test-plan.md"]
-    assert test_plan.owner_role == "qa-engineer"
-    assert "bdd_scenarios" in test_plan.required_sections
+    quality_plan_state = mesh_config.project.flow.states["quality_planning"]
+    assert quality_plan_state.artifact_path == (
+        "work-items/{work_item_id}/90-quality-plan.md"
+    )
 
     release_state = mesh_config.project.flow.states["release_review"]
     human_gate = release_state.gates[0]

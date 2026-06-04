@@ -54,6 +54,7 @@ def document_library_context(
 
 def build_document_manifest(project: ProjectConfig) -> dict[str, object]:
     documents = []
+    indexed_paths: set[str] = set()
     for path, accountability in sorted(project.document_accountabilities.items()):
         states = [
             state_id
@@ -64,6 +65,7 @@ def build_document_manifest(project: ProjectConfig) -> dict[str, object]:
         documents.append(
             {
                 "path": path,
+                "document_kind": "durable",
                 "owner_role": accountability.owner_role,
                 "accountability": accountability.accountability,
                 "contributing_roles": accountability.contributing_roles,
@@ -73,6 +75,38 @@ def build_document_manifest(project: ProjectConfig) -> dict[str, object]:
                 "status": "configured",
             }
         )
+        indexed_paths.add(path)
+
+    for state_id, state in sorted(project.flow.states.items()):
+        paths = {state.artifact_path}
+        for gate in state.gates:
+            paths.update(gate.required_documents)
+        for path in sorted(paths):
+            if path in indexed_paths:
+                continue
+            documents.append(
+                {
+                    "path": path,
+                    "document_kind": "work_item_template",
+                    "owner_role": state.owner_role,
+                    "accountability": "accountable_owner",
+                    "contributing_roles": [],
+                    "required_sections": [
+                        "objective",
+                        "scope",
+                        "assumptions",
+                        "decisions",
+                        "evidence",
+                        "risks",
+                        "review_log",
+                        "next_step",
+                    ],
+                    "lifecycle_states": [state_id],
+                    "review_on_contribution": True,
+                    "status": "configured",
+                }
+            )
+            indexed_paths.add(path)
 
     return {
         "project_id": project.project_id,

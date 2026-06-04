@@ -112,6 +112,12 @@ class AgentRuntime:
             ):
                 result = self.worker.run(instance_config, message, flow_state)
             for update in result.document_updates:
+                update = self._resolve_document_update_path(
+                    update,
+                    source_message=message,
+                    flow_state=flow_state,
+                    role_id=instance_config.role_id,
+                )
                 self.artifact_store.write_update(
                     update=update,
                     role_id=instance_config.role_id,
@@ -416,6 +422,12 @@ class AgentRuntime:
                 result.document_updates if result.status == "completed" else []
             )
             for update in document_updates:
+                update = self._resolve_document_update_path(
+                    update,
+                    source_message=message,
+                    flow_state=direct_state,
+                    role_id=instance_config.role_id,
+                )
                 self.artifact_store.write_update(
                     update=update,
                     role_id=instance_config.role_id,
@@ -505,6 +517,14 @@ class AgentRuntime:
                 "can inspect current documentation, add direction, and see review "
                 "status before the next lifecycle handoff."
             ),
+            "document_quality_bar": (
+                "All real work must produce enterprise-grade documentation. "
+                "For slice or subslice work, write slice-scoped artifacts under "
+                "`work-items/{work_item_id}/` unless you are deliberately updating "
+                "a durable project document. Include objective, scope, assumptions, "
+                "decisions, evidence, risks, review log, and clear next handoff "
+                "or closure criteria where relevant."
+            ),
             "gates": [
                 {
                     "gate_id": gate.gate_id,
@@ -535,6 +555,25 @@ class AgentRuntime:
             ),
         }
         return replace(message, payload=payload)
+
+    @staticmethod
+    def _resolve_document_update_path(
+        update,
+        *,
+        source_message: Message,
+        flow_state: FlowState,
+        role_id: str,
+    ):
+        path = update.path.format(
+            work_item_id=source_message.payload.get(
+                "work_item_id",
+                source_message.message_id,
+            ),
+            work_item_type=source_message.payload.get("work_item_type", "slice"),
+            lifecycle_state=flow_state.state_id,
+            role_id=role_id,
+        )
+        return replace(update, path=path)
 
     def _queue_handoff_connector_message(
         self,
