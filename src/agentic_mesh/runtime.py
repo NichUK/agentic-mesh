@@ -257,6 +257,8 @@ class AgentRuntime:
                         target_role=handoff.target_role,
                         source_lifecycle_state=state_id,
                         target_lifecycle_state=handoff.payload.get("lifecycle_state"),
+                        out_of_flow=handoff.payload.get("out_of_flow", False),
+                        out_of_flow_reason=handoff.payload.get("out_of_flow_reason"),
                         work_item_id=message.payload.get("work_item_id"),
                         message_id=handoff_message.message_id,
                         correlation_id=message.correlation_id,
@@ -275,6 +277,8 @@ class AgentRuntime:
                         target_role=handoff.target_role,
                         source_lifecycle_state=state_id,
                         target_lifecycle_state=handoff.payload.get("lifecycle_state"),
+                        out_of_flow=handoff.payload.get("out_of_flow", False),
+                        out_of_flow_reason=handoff.payload.get("out_of_flow_reason"),
                         work_item_id=message.payload.get("work_item_id"),
                         message_id=handoff_message.message_id,
                         correlation_id=message.correlation_id,
@@ -299,20 +303,43 @@ class AgentRuntime:
             ),
             None,
         )
-        if transition is None:
-            raise ValueError(
-                "Worker emitted an unconfigured handoff from "
-                f"{flow_state.state_id} to {handoff.target_role} "
-                f"with message type {handoff.message_type}"
-            )
-
         payload = dict(handoff.payload)
+        if transition is None:
+            target_state = payload.get("lifecycle_state")
+            if not isinstance(target_state, str) or not target_state:
+                raise ValueError(
+                    "Worker emitted an unconfigured handoff from "
+                    f"{flow_state.state_id} to {handoff.target_role} "
+                    f"with message type {handoff.message_type}, but did not "
+                    "provide a target lifecycle_state"
+                )
+            if target_state not in self.project.flow.states:
+                raise ValueError(
+                    "Worker emitted an out-of-flow handoff to unknown "
+                    f"lifecycle_state {target_state}"
+                )
+            target_flow_state = self.project.flow.states[target_state]
+            if target_flow_state.owner_role != handoff.target_role:
+                raise ValueError(
+                    "Worker emitted an out-of-flow handoff to "
+                    f"{target_state}, which is owned by "
+                    f"{target_flow_state.owner_role}, not {handoff.target_role}"
+                )
+            reason = payload.get("out_of_flow_reason")
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError(
+                    "Worker emitted an out-of-flow handoff without "
+                    "out_of_flow_reason"
+                )
+            payload["out_of_flow"] = True
+        else:
+            payload["lifecycle_state"] = transition.target_state
+
         payload.setdefault("title", source_message.payload.get("title"))
         payload.setdefault("summary", source_message.payload.get("summary"))
         payload["work_item_id"] = source_message.payload.get("work_item_id")
         payload["work_item_type"] = source_message.payload.get("work_item_type")
         payload["previous_lifecycle_state"] = flow_state.state_id
-        payload["lifecycle_state"] = transition.target_state
         payload["source_message_id"] = source_message.message_id
         return replace(handoff, payload=payload)
 

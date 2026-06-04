@@ -252,6 +252,8 @@ def test_agent_result_schema_is_strict_for_nested_handoff_payload() -> None:
 
     assert handoff_payload_schema["type"] == "object"
     assert handoff_payload_schema["additionalProperties"] is False
+    assert "lifecycle_state" in handoff_payload_schema["properties"]
+    assert "out_of_flow_reason" in handoff_payload_schema["properties"]
 
 
 def test_summarize_worker_failure_keeps_error_tail() -> None:

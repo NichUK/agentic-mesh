@@ -45,6 +45,39 @@ class IncompleteHandoffWorker(WorkerAdapter):
         )
 
 
+class OutOfFlowHandoffWorker(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="Completed with a warranted out-of-flow handoff.",
+            document_updates=[
+                DocumentUpdate(
+                    path=flow_state.artifact_path,
+                    content="Identified an implementation-ready repair.",
+                )
+            ],
+            handoffs=[
+                Handoff(
+                    target_role="engineering",
+                    message_type="sdlc.implementation",
+                    payload={
+                        "summary": "Runtime repair is already scoped.",
+                        "lifecycle_state": "implementation",
+                        "out_of_flow_reason": (
+                            "The issue is a contained runtime defect with "
+                            "clear acceptance criteria and no product ambiguity."
+                        ),
+                    },
+                )
+            ],
+        )
+
+
 def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> None:
     mesh_config = load_mesh_config(Path.cwd())
     journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
@@ -171,6 +204,54 @@ def test_runtime_normalises_worker_handoff_payload_from_flow(tmp_path: Path) -> 
         if event["event_type"] == "handoff_emitted"
     ]
     assert handoff_events[0]["target_lifecycle_state"] == "product_definition"
+
+
+def test_runtime_allows_reasoned_out_of_flow_handoff(tmp_path: Path) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(tmp_path / "state", mesh_config.project.project_id, journal)
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        OutOfFlowHandoffWorker(),
+    )
+
+    message_store.enqueue(
+        Message.create(
+            role_id="business-analyst",
+            message_type="sdlc.business_analysis",
+            payload={
+                "title": "Fix handoff routing",
+                "summary": "Repair a contained runtime handoff bug.",
+                "work_item_id": "work-handoff-repair",
+                "work_item_type": "slice",
+                "lifecycle_state": "business_analysis",
+            },
+            source="test",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.business-analyst.1",
+        mesh_config.instances["agentic-mesh-dev.business-analyst.1"],
+    )
+
+    engineering_message = message_store.claim_next("engineering", "test-engineering")
+    assert engineering_message is not None
+    assert engineering_message.payload["lifecycle_state"] == "implementation"
+    assert engineering_message.payload["out_of_flow"] is True
+    assert "contained runtime defect" in engineering_message.payload["out_of_flow_reason"]
+
+    routed_events = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "message_routed"
+    ]
+    assert routed_events[0]["target_lifecycle_state"] == "implementation"
+    assert routed_events[0]["out_of_flow"] is True
 
 
 def test_parallel_work_items_keep_independent_lifecycle_context(tmp_path: Path) -> None:

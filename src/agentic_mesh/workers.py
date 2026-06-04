@@ -56,7 +56,17 @@ AGENT_RESULT_SCHEMA: dict[str, Any] = {
                     "payload": {
                         "type": "object",
                         "additionalProperties": False,
-                        "properties": {},
+                        "properties": {
+                            "title": {"type": "string"},
+                            "summary": {"type": "string"},
+                            "work_item_id": {"type": "string"},
+                            "work_item_type": {"type": "string"},
+                            "previous_lifecycle_state": {"type": "string"},
+                            "lifecycle_state": {"type": "string"},
+                            "source_message_id": {"type": "string"},
+                            "out_of_flow": {"type": "boolean"},
+                            "out_of_flow_reason": {"type": "string"},
+                        },
                     },
                 },
             },
@@ -409,6 +419,10 @@ questions, propose explicit assumptions when appropriate, and work with other
 roles through the configured flow to advance the goal. If a task, handoff,
 artifact, or recommendation does not advance the goal or reduce a meaningful
 risk to it, say so and keep the work scoped.
+Prefer configured lifecycle handoffs. If a genuinely warranted handoff needs to
+go outside the configured route, include `lifecycle_state` for a state owned by
+the target role and include `out_of_flow_reason` explaining why the exception is
+needed. Do not emit ambiguous handoffs.
 
 Return only the final JSON object required by the provided schema. Put all
 document changes in `document_updates`; do not rely on unreported filesystem
