@@ -159,6 +159,54 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
     assert "local_trace_span" in event_types
 
 
+def test_runtime_marks_misrouted_claim_failed_instead_of_leaving_claimed(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(tmp_path / "state", mesh_config.project.project_id, journal)
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        StubCodexWorkerAdapter(),
+    )
+    message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type="sdlc.product_definition",
+            payload={
+                "title": "Misrouted",
+                "summary": "This state belongs to business analysis.",
+                "work_item_id": "work-misrouted",
+                "work_item_type": "slice",
+                "lifecycle_state": "business_analysis",
+            },
+            source="test",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+
+    assert message_store.pending_count("product-manager") == 0
+    summary = message_store.work_item_summary("work-misrouted", ["product-manager"])
+    assert summary["product-manager"]["claimed"] == 0
+    assert summary["product-manager"]["completed"] == 1
+    events = journal.read_all()
+    assert [event["event_type"] for event in events] == [
+        "message_accepted",
+        "work_claimed",
+        "agent_run_failed",
+        "work_completed",
+    ]
+    assert events[-1]["status"] == "failed"
+
+
 def test_runtime_normalises_worker_handoff_payload_from_flow(tmp_path: Path) -> None:
     mesh_config = load_mesh_config(Path.cwd())
     journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)

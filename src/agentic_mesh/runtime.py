@@ -47,6 +47,26 @@ class AgentRuntime:
         message = self.message_store.claim_next(instance_config.role_id, instance_id)
         if message is None:
             return False
+        try:
+            return self._run_claimed_message(instance_id, instance_config, message)
+        except Exception as exc:
+            self.journal.append(
+                "agent_run_failed",
+                project_id=instance_config.project_id,
+                role_id=instance_config.role_id,
+                role_instance_id=instance_id,
+                work_item_id=message.payload.get("work_item_id"),
+                work_item_type=message.payload.get("work_item_type"),
+                lifecycle_state=message.payload.get("lifecycle_state"),
+                message_id=message.message_id,
+                correlation_id=message.correlation_id,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            self.message_store.complete(message, "failed")
+            return True
+
+    def _run_claimed_message(self, instance_id: str, instance_config, message: Message) -> bool:
         if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED:
             return self._run_direct_directive(instance_id, instance_config, message)
         state_id = message.payload.get("lifecycle_state", self.project.flow.entry_state)
