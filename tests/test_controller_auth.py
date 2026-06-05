@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import replace
 from http.client import HTTPConnection
 from pathlib import Path
 from threading import Thread
@@ -218,6 +219,73 @@ def test_controller_work_item_status_page_marks_missing_artifacts(
             "/artifact-viewer/work-items%2Fwork-missing-artifact%2F10-business-brief.md"
             not in body
         )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_controller_work_item_status_page_marks_stale_claim(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, project_id)
+    message_store = FileMessageStore(state_root, project_id, journal)
+    message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type="sdlc.product_definition",
+            payload={
+                "title": "Stale Product Definition",
+                "summary": "A claimed item got abandoned.",
+                "work_item_id": "work-stale-claim",
+                "work_item_type": "slice",
+                "lifecycle_state": "product_definition",
+            },
+            source="test",
+        )
+    )
+    claimed = message_store.claim_next(
+        "product-manager",
+        "example-project.product-manager.1",
+    )
+    assert claimed is not None
+    claimed_path = message_store._find_claimed_path(claimed)
+    assert claimed_path is not None
+    message_store._write_message(
+        claimed_path,
+        replace(claimed, claimed_at="2000-01-01T00:00:00+00:00"),
+    )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+        workspace_root=tmp_path,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+        with patch.dict(os.environ, {"AGENTIC_MESH_CLAIM_LEASE_SECONDS": "1"}):
+            connection.request("GET", "/work-items/work-stale-claim.json")
+            response = connection.getresponse()
+            payload = json.loads(response.read().decode("utf-8"))
+
+            assert response.status == 200
+            assert payload["status"] == "stale_claim"
+            assert payload["current"]["stale"] is True
+            assert payload["queue_entries"][0]["claim_age_seconds"] > 1
+
+            connection.request("GET", "/work-items/work-stale-claim")
+            response = connection.getresponse()
+            body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "stale claimed message" in body
+        assert "stale claim" in body
     finally:
         server.shutdown()
         server.server_close()

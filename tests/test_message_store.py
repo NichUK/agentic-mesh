@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from agentic_mesh.journal import EventJournal
@@ -32,6 +33,53 @@ def test_two_instances_do_not_claim_same_message(tmp_path: Path) -> None:
     assert second is None
     assert [event["event_type"] for event in journal.read_all()] == [
         "message_accepted",
+        "work_claimed",
+    ]
+
+
+def test_stale_claim_is_reclaimed_for_same_instance(tmp_path: Path) -> None:
+    journal = EventJournal(tmp_path, "agentic-mesh-dev")
+    store = FileMessageStore(tmp_path, "agentic-mesh-dev", journal)
+    store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type="sdlc.product_definition",
+            payload={
+                "title": "Define slice",
+                "work_item_id": "slice-product",
+                "work_item_type": "slice",
+                "lifecycle_state": "product_definition",
+            },
+            source="test",
+        )
+    )
+
+    claimed = store.claim_next("product-manager", "agentic-mesh-dev.product-manager.1")
+    assert claimed is not None
+    stale_claim = replace(claimed, claimed_at="2000-01-01T00:00:00+00:00")
+    claimed_path = store._find_claimed_path(claimed)
+    assert claimed_path is not None
+    store._write_message(claimed_path, stale_claim)
+
+    reclaimed = store.reclaim_stale_claims(
+        "product-manager",
+        "agentic-mesh-dev.product-manager.1",
+        max_claim_age_seconds=1,
+    )
+
+    assert [message.message_id for message in reclaimed] == [claimed.message_id]
+    assert reclaimed[0].claimed_by is None
+    assert store.pending_count("product-manager") == 1
+    next_claim = store.claim_next(
+        "product-manager",
+        "agentic-mesh-dev.product-manager.1",
+    )
+    assert next_claim is not None
+    assert next_claim.message_id == claimed.message_id
+    assert [event["event_type"] for event in journal.read_all()] == [
+        "message_accepted",
+        "work_claimed",
+        "work_claim_reclaimed",
         "work_claimed",
     ]
 

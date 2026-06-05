@@ -55,6 +55,49 @@ class FileMessageStore:
             )
             return message
 
+    def reclaim_stale_claims(
+        self,
+        role_id: str,
+        instance_id: str,
+        max_claim_age_seconds: int,
+    ) -> list[Message]:
+        if max_claim_age_seconds <= 0:
+            return []
+        claimed = self._claimed_dir(role_id, instance_id)
+        if not claimed.exists():
+            return []
+        pending = self._pending_dir(role_id)
+        pending.mkdir(parents=True, exist_ok=True)
+        reclaimed: list[Message] = []
+        for path in sorted(claimed.glob("*.json")):
+            message = self._read_message(path)
+            claim_age_seconds = telemetry.elapsed_seconds(message.claimed_at)
+            if claim_age_seconds is None or claim_age_seconds < max_claim_age_seconds:
+                continue
+            reclaimed_message = replace(message, claimed_by=None, claimed_at=None)
+            target = pending / path.name
+            try:
+                path.replace(target)
+            except FileNotFoundError:
+                continue
+            self._write_message(target, reclaimed_message)
+            reclaimed.append(reclaimed_message)
+            self.journal.append(
+                "work_claim_reclaimed",
+                project_id=self.project_id,
+                role_id=role_id,
+                role_instance_id=instance_id,
+                message_id=message.message_id,
+                work_item_id=message.payload.get("work_item_id"),
+                work_item_type=message.payload.get("work_item_type"),
+                lifecycle_state=message.payload.get("lifecycle_state"),
+                correlation_id=message.correlation_id,
+                claimed_at=message.claimed_at,
+                claim_age_seconds=round(claim_age_seconds, 3),
+                max_claim_age_seconds=max_claim_age_seconds,
+            )
+        return reclaimed
+
     def claim_next(self, role_id: str, instance_id: str) -> Message | None:
         pending = self._pending_dir(role_id)
         claimed = self._claimed_dir(role_id, instance_id)

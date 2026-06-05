@@ -222,7 +222,7 @@ def cmd_enqueue(args) -> int:
 
 
 def cmd_run_agent(args) -> int:
-    mesh_config, _, _, _, lifecycle, runtime = build_runtime(
+    mesh_config, _, message_store, _, lifecycle, runtime = build_runtime(
         args.config_root,
         args.project_file,
         args.workspace_root,
@@ -231,9 +231,23 @@ def cmd_run_agent(args) -> int:
     configure_instance_telemetry(mesh_config, args.instance)
     instance = mesh_config.instances[args.instance]
     lifecycle.set_state(instance, "active", reason="run_once")
+    reclaimed = message_store.reclaim_stale_claims(
+        instance.role_id,
+        args.instance,
+        getattr(args, "claim_lease_seconds", None)
+        or int(os.environ.get("AGENTIC_MESH_CLAIM_LEASE_SECONDS", "21600")),
+    )
     did_work = runtime.run_once(args.instance, instance)
     lifecycle.set_state(instance, "idle", reason="run_once_complete")
-    print(json.dumps({"instance": args.instance, "did_work": did_work}))
+    print(
+        json.dumps(
+            {
+                "instance": args.instance,
+                "did_work": did_work,
+                "reclaimed": len(reclaimed),
+            }
+        )
+    )
     return 0
 
 
@@ -956,6 +970,15 @@ def parser() -> argparse.ArgumentParser:
 
     run_agent = subcommands.add_parser("run-agent")
     run_agent.add_argument("--instance", required=True)
+    run_agent.add_argument(
+        "--claim-lease-seconds",
+        type=int,
+        default=int(os.environ.get("AGENTIC_MESH_CLAIM_LEASE_SECONDS", "21600")),
+        help=(
+            "Requeue this role instance's claimed messages after this many "
+            "seconds without completion. Set 0 to disable."
+        ),
+    )
     run_agent.set_defaults(func=cmd_run_agent)
 
     tick = subcommands.add_parser("control-plane-tick")
@@ -1083,6 +1106,15 @@ def parser() -> argparse.ArgumentParser:
     agent_loop = subcommands.add_parser("agent-loop")
     agent_loop.add_argument("--instance", required=True)
     agent_loop.add_argument("--poll-seconds", type=int, default=5)
+    agent_loop.add_argument(
+        "--claim-lease-seconds",
+        type=int,
+        default=int(os.environ.get("AGENTIC_MESH_CLAIM_LEASE_SECONDS", "21600")),
+        help=(
+            "Requeue this role instance's claimed messages after this many "
+            "seconds without completion. Set 0 to disable."
+        ),
+    )
     agent_loop.set_defaults(func=cmd_agent_loop)
 
     control_loop = subcommands.add_parser("control-plane-loop")

@@ -23,6 +23,7 @@ from urllib.parse import urlencode
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from agentic_mesh import telemetry
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.models import AuthCredential
 from agentic_mesh.models import AuthMethod
@@ -317,6 +318,7 @@ class ControllerAuthService:
     def work_item_status(self, work_item_id: str) -> dict[str, Any]:
         mesh_config = self.load_config()
         project_id = mesh_config.project.project_id
+        claim_lease_seconds = self.claim_lease_seconds()
         events = [
             event
             for event in self._journal_events(project_id)
@@ -338,7 +340,12 @@ class ControllerAuthService:
             entry for entry in queue_entries if entry["queue_state"] == "pending"
         ]
 
-        current = self._current_work_item_state(events, active_claims, pending)
+        current = self._current_work_item_state(
+            events,
+            active_claims,
+            pending,
+            claim_lease_seconds=claim_lease_seconds,
+        )
         artifact_paths = sorted(
             {
                 str(event.get("path"))
@@ -391,6 +398,7 @@ class ControllerAuthService:
                     ]
                 ),
             },
+            "claim_lease_seconds": claim_lease_seconds,
             "queue_entries": queue_entries,
             "artifacts": artifacts,
             "artifact_records": artifact_records,
@@ -423,6 +431,13 @@ class ControllerAuthService:
     @staticmethod
     def artifact_renderer_url_template() -> str | None:
         return os.environ.get("AGENTIC_MESH_ARTIFACT_RENDERER_URL_TEMPLATE")
+
+    @staticmethod
+    def claim_lease_seconds() -> int:
+        try:
+            return int(os.environ.get("AGENTIC_MESH_CLAIM_LEASE_SECONDS", "21600"))
+        except ValueError:
+            return 21600
 
     def _effective_workspace_root(self, mesh_config: MeshConfig) -> Path:
         configured_root = Path(mesh_config.project.workspace.root)
@@ -486,6 +501,11 @@ class ControllerAuthService:
             "created_at": message.get("created_at"),
             "claimed_at": message.get("claimed_at"),
             "claimed_by": message.get("claimed_by"),
+            "claim_age_seconds": (
+                telemetry.elapsed_seconds(message.get("claimed_at"))
+                if queue_state == "claimed"
+                else None
+            ),
             "path": str(path),
         }
 
@@ -494,19 +514,28 @@ class ControllerAuthService:
         events: list[dict[str, Any]],
         active_claims: list[dict[str, Any]],
         pending: list[dict[str, Any]],
+        claim_lease_seconds: int,
     ) -> dict[str, Any]:
         if active_claims:
             claim = sorted(
                 active_claims,
                 key=lambda entry: str(entry.get("claimed_at") or ""),
             )[-1]
+            claim_age_seconds = claim.get("claim_age_seconds")
+            stale = (
+                isinstance(claim_age_seconds, int | float)
+                and claim_lease_seconds > 0
+                and claim_age_seconds >= claim_lease_seconds
+            )
             return {
-                "status": "running",
+                "status": "stale_claim" if stale else "running",
                 "role_id": claim.get("role_id"),
                 "role_instance_id": claim.get("claimed_by"),
                 "lifecycle_state": claim.get("lifecycle_state"),
                 "message_id": claim.get("message_id"),
                 "since": claim.get("claimed_at"),
+                "claim_age_seconds": claim_age_seconds,
+                "stale": stale,
             }
         if pending:
             next_item = sorted(
@@ -918,14 +947,31 @@ if (statusEl.textContent === "running") {{
         current = payload["current"]
         queue_rows = []
         for entry in payload["queue_entries"]:
+            claim_age = entry.get("claim_age_seconds")
+            claim_age_text = (
+                f"{int(float(claim_age))}s"
+                if isinstance(claim_age, int | float)
+                else ""
+            )
+            is_stale_claim = (
+                entry.get("queue_state") == "claimed"
+                and isinstance(claim_age, int | float)
+                and payload.get("claim_lease_seconds", 0) > 0
+                and float(claim_age) >= float(payload.get("claim_lease_seconds", 0))
+            )
+            row_class = ' class="stale-claim"' if is_stale_claim else ""
+            stale_label = (
+                ' <span class="warning">stale claim</span>' if is_stale_claim else ""
+            )
             queue_rows.append(
-                "<tr>"
-                f"<td>{html.escape(str(entry.get('queue_state') or ''))}</td>"
+                f"<tr{row_class}>"
+                f"<td>{html.escape(str(entry.get('queue_state') or ''))}{stale_label}</td>"
                 f"<td>{html.escape(str(entry.get('role_id') or ''))}</td>"
                 f"<td>{html.escape(str(entry.get('lifecycle_state') or ''))}</td>"
                 f"<td><code>{html.escape(str(entry.get('message_id') or ''))}</code></td>"
                 f"<td>{html.escape(str(entry.get('claimed_by') or ''))}</td>"
-                f"<td>{html.escape(str(entry.get('claimed_at') or entry.get('created_at') or ''))}</td>"
+                f"<td>{html.escape(str(entry.get('claimed_at') or entry.get('created_at') or ''))}"
+                f"{' (' + html.escape(claim_age_text) + ')' if claim_age_text else ''}</td>"
                 "</tr>"
             )
         timeline_rows = []
@@ -985,6 +1031,12 @@ if (statusEl.textContent === "running") {{
             + quote(str(payload["work_item_id"]), safe="")
             + ".json"
         )
+        stale_notice = (
+            "<p class=\"warning-box\">This work item has a stale claimed message. "
+            "The owning role instance should reclaim it automatically on its next loop.</p>"
+            if current.get("stale")
+            else ""
+        )
         body = f"""
 <p class="summary">
   <strong>Status:</strong> {html.escape(str(payload["status"]))}
@@ -992,7 +1044,9 @@ if (statusEl.textContent === "running") {{
   <br><strong>Lifecycle state:</strong> {html.escape(str(current.get("lifecycle_state") or "none"))}
   <br><strong>Message:</strong> <code>{html.escape(str(current.get("message_id") or "none"))}</code>
   <br><strong>Since:</strong> {html.escape(str(current.get("since") or "unknown"))}
+  <br><strong>Claim age:</strong> {html.escape(str(int(float(current.get("claim_age_seconds") or 0))) + "s" if current.get("claim_age_seconds") is not None else "n/a")}
 </p>
+{stale_notice}
 <p><a href="{html.escape(json_path)}">JSON status</a></p>
 <h2>Queue</h2>
 <table>
@@ -1155,6 +1209,8 @@ await mermaid.run({{ querySelector: ".mermaid" }});
     .notice {{ background: #e9f7ef; border: 1px solid #9bd7ad; padding: 0.75rem; }}
     .summary {{ background: #f8fafc; border: 1px solid #cbd5e1; padding: 1rem; }}
     .warning {{ color: #92400e; font-weight: 600; }}
+    .warning-box {{ background: #fffbeb; border: 1px solid #f59e0b; color: #78350f; padding: 0.75rem; }}
+    tr.stale-claim td {{ background: #fffbeb; }}
     .missing-artifact {{ background: #fffbeb; border-left: 4px solid #f59e0b; padding: 0.5rem 0.75rem; }}
     .primary {{ display: inline-block; background: #111827; color: white; padding: 0.75rem 1rem; text-decoration: none; }}
     .code-panel {{ border: 2px solid #111827; display: inline-block; padding: 1rem 1.25rem; margin: 1rem 0; }}
