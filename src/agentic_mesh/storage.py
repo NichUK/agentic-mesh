@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,47 @@ class FileMessageStore:
                 claimed_at=message.claimed_at,
                 claim_age_seconds=round(claim_age_seconds, 3),
                 max_claim_age_seconds=max_claim_age_seconds,
+                reason="claim_lease_expired",
+            )
+        return reclaimed
+
+    def reclaim_claims_before(
+        self,
+        role_id: str,
+        instance_id: str,
+        claimed_before: str,
+    ) -> list[Message]:
+        claimed = self._claimed_dir(role_id, instance_id)
+        if not claimed.exists():
+            return []
+        pending = self._pending_dir(role_id)
+        pending.mkdir(parents=True, exist_ok=True)
+        reclaimed: list[Message] = []
+        for path in sorted(claimed.glob("*.json")):
+            message = self._read_message(path)
+            if not self._is_before(message.claimed_at, claimed_before):
+                continue
+            reclaimed_message = replace(message, claimed_by=None, claimed_at=None)
+            target = pending / path.name
+            try:
+                path.replace(target)
+            except FileNotFoundError:
+                continue
+            self._write_message(target, reclaimed_message)
+            reclaimed.append(reclaimed_message)
+            self.journal.append(
+                "work_claim_reclaimed",
+                project_id=self.project_id,
+                role_id=role_id,
+                role_instance_id=instance_id,
+                message_id=message.message_id,
+                work_item_id=message.payload.get("work_item_id"),
+                work_item_type=message.payload.get("work_item_type"),
+                lifecycle_state=message.payload.get("lifecycle_state"),
+                correlation_id=message.correlation_id,
+                claimed_at=message.claimed_at,
+                claimed_before=claimed_before,
+                reason="process_start",
             )
         return reclaimed
 
@@ -303,6 +345,15 @@ class FileMessageStore:
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
         return Message(**data)
+
+    @staticmethod
+    def _is_before(value: str | None, threshold: str) -> bool:
+        if not value:
+            return False
+        try:
+            return datetime.fromisoformat(value) < datetime.fromisoformat(threshold)
+        except ValueError:
+            return value < threshold
 
 
 class FileConnectorOutbox:

@@ -35,6 +35,7 @@ from agentic_mesh.lifecycle import LifecycleStore
 from agentic_mesh.messaging import build_human_response_received_message
 from agentic_mesh.models import Message
 from agentic_mesh.models import new_id
+from agentic_mesh.models import utc_now_iso
 from agentic_mesh.runtime import AgentRuntime
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
@@ -231,6 +232,14 @@ def cmd_run_agent(args) -> int:
     configure_instance_telemetry(mesh_config, args.instance)
     instance = mesh_config.instances[args.instance]
     lifecycle.set_state(instance, "active", reason="run_once")
+    startup_reclaimed = []
+    reclaim_claimed_before = getattr(args, "reclaim_claimed_before", None)
+    if reclaim_claimed_before:
+        startup_reclaimed = message_store.reclaim_claims_before(
+            instance.role_id,
+            args.instance,
+            reclaim_claimed_before,
+        )
     reclaimed = message_store.reclaim_stale_claims(
         instance.role_id,
         args.instance,
@@ -244,7 +253,7 @@ def cmd_run_agent(args) -> int:
             {
                 "instance": args.instance,
                 "did_work": did_work,
-                "reclaimed": len(reclaimed),
+                "reclaimed": len(startup_reclaimed) + len(reclaimed),
             }
         )
     )
@@ -541,8 +550,11 @@ def cmd_record_human_response(args) -> int:
 
 
 def cmd_agent_loop(args) -> int:
+    if getattr(args, "reclaim_existing_claims_on_start", True):
+        args.reclaim_claimed_before = utc_now_iso()
     while True:
         cmd_run_agent(args)
+        args.reclaim_claimed_before = None
         time.sleep(args.poll_seconds)
 
 
@@ -1106,6 +1118,15 @@ def parser() -> argparse.ArgumentParser:
     agent_loop = subcommands.add_parser("agent-loop")
     agent_loop.add_argument("--instance", required=True)
     agent_loop.add_argument("--poll-seconds", type=int, default=5)
+    agent_loop.add_argument(
+        "--no-reclaim-existing-claims-on-start",
+        action="store_false",
+        dest="reclaim_existing_claims_on_start",
+        help=(
+            "Disable startup recovery of this role instance's claims that "
+            "predate the current agent-loop process."
+        ),
+    )
     agent_loop.add_argument(
         "--claim-lease-seconds",
         type=int,

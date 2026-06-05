@@ -84,6 +84,87 @@ def test_stale_claim_is_reclaimed_for_same_instance(tmp_path: Path) -> None:
     ]
 
 
+def test_claim_before_process_start_is_reclaimed_for_same_instance(tmp_path: Path) -> None:
+    journal = EventJournal(tmp_path, "agentic-mesh-dev")
+    store = FileMessageStore(tmp_path, "agentic-mesh-dev", journal)
+    store.enqueue(
+        Message.create(
+            role_id="enterprise-architect",
+            message_type="sdlc.enterprise_alignment",
+            payload={
+                "title": "Align enterprise",
+                "work_item_id": "slice-enterprise",
+                "work_item_type": "slice",
+                "lifecycle_state": "enterprise_alignment",
+            },
+            source="test",
+        )
+    )
+
+    claimed = store.claim_next(
+        "enterprise-architect",
+        "agentic-mesh-dev.enterprise-architect.1",
+    )
+    assert claimed is not None
+    old_claim = replace(claimed, claimed_at="2026-06-05T09:21:01+00:00")
+    claimed_path = store._find_claimed_path(claimed)
+    assert claimed_path is not None
+    store._write_message(claimed_path, old_claim)
+
+    reclaimed = store.reclaim_claims_before(
+        "enterprise-architect",
+        "agentic-mesh-dev.enterprise-architect.1",
+        claimed_before="2026-06-05T09:30:00+00:00",
+    )
+
+    assert [message.message_id for message in reclaimed] == [claimed.message_id]
+    assert store.pending_count("enterprise-architect") == 1
+    events = journal.read_all()
+    assert events[-1]["event_type"] == "work_claim_reclaimed"
+    assert events[-1]["reason"] == "process_start"
+
+
+def test_claim_after_process_start_is_not_reclaimed(tmp_path: Path) -> None:
+    journal = EventJournal(tmp_path, "agentic-mesh-dev")
+    store = FileMessageStore(tmp_path, "agentic-mesh-dev", journal)
+    store.enqueue(
+        Message.create(
+            role_id="enterprise-architect",
+            message_type="sdlc.enterprise_alignment",
+            payload={
+                "title": "Align enterprise",
+                "work_item_id": "slice-enterprise",
+                "work_item_type": "slice",
+                "lifecycle_state": "enterprise_alignment",
+            },
+            source="test",
+        )
+    )
+
+    claimed = store.claim_next(
+        "enterprise-architect",
+        "agentic-mesh-dev.enterprise-architect.1",
+    )
+    assert claimed is not None
+    new_claim = replace(claimed, claimed_at="2026-06-05T09:31:00+00:00")
+    claimed_path = store._find_claimed_path(claimed)
+    assert claimed_path is not None
+    store._write_message(claimed_path, new_claim)
+
+    reclaimed = store.reclaim_claims_before(
+        "enterprise-architect",
+        "agentic-mesh-dev.enterprise-architect.1",
+        claimed_before="2026-06-05T09:30:00+00:00",
+    )
+
+    assert reclaimed == []
+    assert store.pending_count("enterprise-architect") == 0
+    assert [event["event_type"] for event in journal.read_all()] == [
+        "message_accepted",
+        "work_claimed",
+    ]
+
+
 def test_connector_outbox_claims_channel_messages(tmp_path: Path) -> None:
     journal = EventJournal(tmp_path, "agentic-mesh-dev")
     outbox = FileConnectorOutbox(tmp_path, "agentic-mesh-dev", journal)

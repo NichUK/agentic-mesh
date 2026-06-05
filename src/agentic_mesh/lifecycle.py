@@ -40,9 +40,11 @@ class LifecycleStore:
             }
             path = self._path(instance.instance_id)
             path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8") as handle:
+            tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+            with tmp_path.open("w", encoding="utf-8") as handle:
                 json.dump(data, handle, indent=2, sort_keys=True)
                 handle.write("\n")
+            tmp_path.replace(path)
 
     def get_state(self, instance_id: str) -> dict:
         path = self._path(instance_id)
