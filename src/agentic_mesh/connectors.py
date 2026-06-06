@@ -10,27 +10,45 @@ from typing import Any
 from urllib import request
 from urllib.error import HTTPError
 from urllib.parse import quote
+from urllib.parse import urlparse
 from urllib.parse import urlencode
 import html
 
 from agentic_mesh import telemetry
+from agentic_mesh.approval_decisions import ApprovalDecisionViewModel
+from agentic_mesh.approval_decisions import build_recorded_approval_decision
+from agentic_mesh.approval_decisions import build_requested_approval_decision
 from agentic_mesh.journal import EventJournal
+from agentic_mesh.human_gates import FileHumanGateRequestStore
+from agentic_mesh.human_response_submissions import HumanResponseSubmissionService
+from agentic_mesh.human_response_submissions import HumanResponseSubmissionResult
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED
+from agentic_mesh.messaging import MESSAGE_TYPE_PROBLEM_STATUS_UPDATED
+from agentic_mesh.messaging import MESSAGE_TYPE_ROUTE_STATUS_UPDATED
 from agentic_mesh.messaging import MESSAGE_TYPE_SDLC_HANDOFF
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED
-from agentic_mesh.messaging import build_human_response_received_message
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.models import Message
 from agentic_mesh.models import ProjectConnectorConfig
 from agentic_mesh.models import ProjectConfig
 from agentic_mesh.models import new_id
 from agentic_mesh.models import utc_now_iso
+from agentic_mesh.gateway import GatewayService
+from agentic_mesh.gateway import GatewayStore
+from agentic_mesh.gateway import event_from_message
+from agentic_mesh.notification_display import build_notification_display_facts
+from agentic_mesh.notifications import MESSAGE_TYPE_NOTIFICATION_EVENT
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.storage import FileConnectorOutbox
+from agentic_mesh.threaded_context import BindingResult
+from agentic_mesh.threaded_context import FileThreadedContextStore
+from agentic_mesh.threaded_context import MESSAGE_TYPE_THREADED_CONTEXT_ATTENTION_REQUESTED
+from agentic_mesh.threaded_context import ThreadRouteRecord
+from agentic_mesh.threaded_context import has_explicit_linked_new_work_intent
 from agentic_mesh.work_queue import FileWorkQueueStore
 from agentic_mesh.work_queue import SourceAnchor
 
@@ -138,6 +156,16 @@ class LocalTeamsConnectorAdapter(ConnectorAdapter):
             rendered["teams_message"] = render_sponsor_directive_status_html(message)
         if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY:
             rendered["teams_message"] = render_sponsor_directive_publish_ready_html(message)
+        if message.type == MESSAGE_TYPE_PROBLEM_STATUS_UPDATED:
+            rendered["teams_message"] = render_problem_status_html(message)
+        if message.type == MESSAGE_TYPE_ROUTE_STATUS_UPDATED:
+            rendered["teams_message"] = render_route_status_html(message)
+        if message.type == MESSAGE_TYPE_NOTIFICATION_EVENT:
+            rendered["teams_message"] = render_notification_event_html(message)
+        if message.type == "threaded_context.receipt":
+            rendered["teams_message"] = render_threaded_context_receipt_html(message)
+        if message.type == "gateway.receipt":
+            rendered["teams_message"] = render_gateway_receipt_html(message)
         return rendered
 
     def _human_response_card(self, message: ConnectorMessage) -> dict[str, Any]:
@@ -156,7 +184,9 @@ class LocalTeamsConnectorAdapter(ConnectorAdapter):
             "work_item_id": payload.get("work_item_id"),
             "work_item_type": payload.get("work_item_type"),
             "lifecycle_state": payload.get("lifecycle_state"),
+            "approval_request_id": payload.get("approval_request_id"),
             "response_request_id": payload.get("response_request_id"),
+            "notification_attempt_id": payload.get("notification_attempt_id"),
             "gate_id": payload.get("gate_id"),
             "response_type": payload.get("response_type"),
             "correlation_id": payload.get("correlation_id"),
@@ -233,6 +263,21 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
                         attrs,
                     )
             except Exception as exc:
+                error_class = _connector_error_class(exc, prefix="Graph")
+                if message.type == MESSAGE_TYPE_PROBLEM_STATUS_UPDATED:
+                    self.journal.append(
+                        "problem_status_notification_failed",
+                        project_id=self.project_id,
+                        connector_id=self.connector_id,
+                        channel=message.channel,
+                        message_id=message.message_id,
+                        message_type=message.type,
+                        work_item_id=message.payload.get("work_item_id"),
+                        lifecycle_state=message.payload.get("lifecycle_state"),
+                        correlation_id=message.correlation_id,
+                        notification_result="failed",
+                        notification_error_class=error_class,
+                    )
                 self.journal.append(
                     "teams_graph_message_failed",
                     project_id=self.project_id,
@@ -244,7 +289,8 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
                     lifecycle_state=message.payload.get("target_lifecycle_state")
                     or message.payload.get("lifecycle_state"),
                     correlation_id=message.correlation_id,
-                    error=str(exc),
+                    error=error_class,
+                    redacted_error_class=error_class,
                 )
                 self.outbox.complete(message, "failed")
                 return True
@@ -293,8 +339,7 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
             with request.urlopen(req, timeout=30) as response:
                 response_body = response.read().decode("utf-8")
         except HTTPError as exc:
-            error_body = exc.read().decode("utf-8")
-            raise RuntimeError(f"Graph returned {exc.code}: {error_body}") from exc
+            raise RuntimeError(f"GraphSendFailed{exc.code}") from exc
         return json.loads(response_body) if response_body else {}
 
     @staticmethod
@@ -310,6 +355,14 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
         }:
             return render_sponsor_directive_status_html(message)
+        if message.type == MESSAGE_TYPE_PROBLEM_STATUS_UPDATED:
+            return render_problem_status_html(message)
+        if message.type == MESSAGE_TYPE_ROUTE_STATUS_UPDATED:
+            return render_route_status_html(message)
+        if message.type == MESSAGE_TYPE_NOTIFICATION_EVENT:
+            return render_notification_event_html(message)
+        if message.type == "threaded_context.receipt":
+            return render_threaded_context_receipt_html(message)
         return (
             "<p><strong>Agentic Mesh message</strong></p>"
             f"<pre>{html.escape(json.dumps(message.payload, indent=2))}</pre>"
@@ -355,6 +408,14 @@ def load_graph_token(
     )
 
 
+def _connector_error_class(error: BaseException, *, prefix: str) -> str:
+    text = str(error)
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", text).strip("_")
+    if safe.startswith(prefix) and len(safe) <= 80:
+        return safe
+    return f"{prefix}{error.__class__.__name__}"
+
+
 def graph_client_credentials_token(
     *,
     tenant_id: str,
@@ -383,8 +444,7 @@ def graph_client_credentials_token(
         with request.urlopen(req, timeout=30) as response:
             token_response = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        error_body = exc.read().decode("utf-8")
-        raise RuntimeError(f"Graph token request returned {exc.code}: {error_body}") from exc
+        raise RuntimeError(f"GraphTokenRequestFailed{exc.code}") from exc
     return str(token_response["access_token"])
 
 
@@ -427,8 +487,7 @@ def bot_framework_token(
         with request.urlopen(req, timeout=30) as response:
             token_response = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
-        error_body = exc.read().decode("utf-8")
-        raise RuntimeError(f"Bot token request returned {exc.code}: {error_body}") from exc
+        raise RuntimeError(f"BotTokenRequestFailed{exc.code}") from exc
     return str(token_response["access_token"])
 
 
@@ -493,6 +552,22 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
                         attrs,
                     )
             except Exception as exc:
+                error_class = _connector_error_class(exc, prefix="Bot")
+                if message.type == MESSAGE_TYPE_PROBLEM_STATUS_UPDATED:
+                    self.journal.append(
+                        "problem_status_notification_failed",
+                        project_id=self.project_id,
+                        connector_id=self.connector_id,
+                        role_id=role_id,
+                        channel=message.channel,
+                        message_id=message.message_id,
+                        message_type=message.type,
+                        work_item_id=message.payload.get("work_item_id"),
+                        lifecycle_state=message.payload.get("lifecycle_state"),
+                        correlation_id=message.correlation_id,
+                        notification_result="failed",
+                        notification_error_class=error_class,
+                    )
                 self.journal.append(
                     "teams_bot_message_failed",
                     project_id=self.project_id,
@@ -505,7 +580,8 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
                     lifecycle_state=message.payload.get("target_lifecycle_state")
                     or message.payload.get("lifecycle_state"),
                     correlation_id=message.correlation_id,
-                    error=str(exc),
+                    error=error_class,
+                    redacted_error_class=error_class,
                 )
                 self.outbox.complete(message, "failed")
                 return True
@@ -582,8 +658,7 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
             with request.urlopen(req, timeout=30) as response:
                 response_body = response.read().decode("utf-8")
         except HTTPError as exc:
-            error_body = exc.read().decode("utf-8")
-            raise RuntimeError(f"Bot Connector returned {exc.code}: {error_body}") from exc
+            raise RuntimeError(f"BotSendFailed{exc.code}") from exc
         return json.loads(response_body) if response_body else {}
 
     def _thread_reply_url(self, message: ConnectorMessage) -> str | None:
@@ -700,7 +775,179 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
             return _html_to_teams_xml_text(render_sponsor_directive_status_html(message))
         if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY:
             return _html_to_teams_xml_text(render_sponsor_directive_publish_ready_html(message))
+        if message.type == MESSAGE_TYPE_PROBLEM_STATUS_UPDATED:
+            return _html_to_teams_xml_text(render_problem_status_html(message))
+        if message.type == MESSAGE_TYPE_ROUTE_STATUS_UPDATED:
+            return _html_to_teams_xml_text(render_route_status_html(message))
+        if message.type == MESSAGE_TYPE_NOTIFICATION_EVENT:
+            return _html_to_teams_xml_text(render_notification_event_html(message))
+        if message.type == "threaded_context.receipt":
+            return _html_to_teams_xml_text(render_threaded_context_receipt_html(message))
+        if message.type == "gateway.receipt":
+            return _html_to_teams_xml_text(render_gateway_receipt_html(message))
         return html.escape(json.dumps(message.payload, indent=2))
+
+
+def render_threaded_context_receipt_html(message: ConnectorMessage) -> str:
+    payload = message.payload
+    work_item_id = html.escape(str(payload.get("work_item_id") or "unknown"))
+    context_id = html.escape(str(payload.get("threaded_context_id") or "unknown"))
+    action_state = html.escape(str(payload.get("action_state") or "captured"))
+    attention_state = html.escape(str(payload.get("attention_state") or "not_required"))
+    return (
+        "<p><strong>Agentic Mesh captured this threaded reply.</strong></p>"
+        f"<p>Parent work item <code>{work_item_id}</code>; context "
+        f"<code>{context_id}</code>; state <code>{action_state}</code>; "
+        f"owner attention <code>{attention_state}</code>.</p>"
+    )
+
+
+def render_gateway_receipt_html(message: ConnectorMessage) -> str:
+    payload = message.payload
+    receipt = payload.get("receipt") if isinstance(payload.get("receipt"), dict) else {}
+    label = html.escape(str(receipt.get("label") or "Agentic Mesh gateway received this."))
+    outcome = html.escape(str(payload.get("outcome") or receipt.get("outcome") or "unknown"))
+    queue_item_id = payload.get("queue_item_id") or receipt.get("queue_item_id")
+    owner_role = payload.get("owner_role") or receipt.get("owner_role")
+    next_action = html.escape(str(receipt.get("next_action") or ""))
+    parts = [
+        f"<p><strong>{label}</strong></p>",
+        f"<p>Outcome <code>{outcome}</code>.</p>",
+    ]
+    if queue_item_id:
+        parts.append(f"<p>Queue item <code>{html.escape(str(queue_item_id))}</code>.</p>")
+    if owner_role:
+        parts.append(f"<p>Owner <code>{html.escape(str(owner_role))}</code>.</p>")
+    if next_action:
+        parts.append(f"<p>{next_action}</p>")
+    return "".join(parts)
+
+
+def render_notification_event_html(message: ConnectorMessage) -> str:
+    attrs = telemetry.span_attributes(
+        project_id=message.payload.get("project_id"),
+        event_kind=message.payload.get("event_kind"),
+        visibility=message.payload.get("visibility"),
+        work_item_id=message.payload.get("work_item_id"),
+        work_item_type=message.payload.get("work_item_type"),
+        lifecycle_state=message.payload.get("lifecycle_state"),
+        queue_item_id=message.payload.get("queue_item_id"),
+        owner_role=message.payload.get("owner_role"),
+        affected_role=message.payload.get("affected_role"),
+        correlation_id=message.correlation_id,
+    )
+    with telemetry.start_span(
+        "notification.display_facts_built",
+        correlation_id=message.correlation_id,
+        trace_context=message.trace_context,
+        attributes=attrs,
+    ):
+        facts = build_notification_display_facts(message.payload)
+    render_attrs = telemetry.span_attributes(
+        **attrs,
+        display_category=facts.get("display_category"),
+    )
+    with telemetry.start_span(
+        "notification.message_rendered",
+        correlation_id=message.correlation_id,
+        trace_context=message.trace_context,
+        attributes=render_attrs,
+    ):
+        return _render_notification_display_facts_html(facts, message)
+
+
+def _render_notification_display_facts_html(
+    facts: dict[str, Any],
+    message: ConnectorMessage,
+) -> str:
+    label = html.escape(str(facts["display_label"]))
+    title = html.escape(str(facts["title"]))
+    summary = html.escape(str(facts.get("summary") or ""))
+    fact_lines = []
+    for item in facts.get("facts") or []:
+        label_text = html.escape(str(item.get("label") or "Fact"))
+        value_text = html.escape(str(item.get("value") or ""))
+        if item.get("code"):
+            value_text = f"<code>{value_text}</code>"
+        fact_lines.append(f"<strong>{label_text}:</strong> {value_text}")
+    fact_html = f"<p>{'<br/>'.join(fact_lines)}</p>" if fact_lines else ""
+
+    detail_items = [
+        html.escape(str(item))
+        for item in facts.get("detail_items") or []
+        if item
+    ]
+    detail_html = ""
+    if detail_items:
+        detail_html = "<ul>" + "".join(f"<li>{item}</li>" for item in detail_items) + "</ul>"
+
+    action_html = ""
+    if facts.get("action_needed"):
+        action_lines = [
+            f"<strong>Action owner:</strong> {html.escape(str(facts.get('action_owner') or 'Action owner unknown'))}",
+            f"<strong>Next action:</strong> {html.escape(str(facts.get('next_action') or 'Review work item status for next action'))}",
+        ]
+        if facts.get("retryability_label"):
+            action_lines.append(
+                f"<strong>Retryable:</strong> {html.escape(str(facts['retryability_label']))}"
+            )
+        action_html = f"<p>{'<br/>'.join(action_lines)}</p>"
+
+    status_links = _render_links(facts.get("status_links") or [])
+    artifact_links = _render_links(facts.get("artifact_links") or [])
+    link_parts = []
+    if status_links:
+        link_parts.append(status_links)
+    if artifact_links:
+        link_parts.append(artifact_links)
+    link_html = f"<p>{' | '.join(link_parts)}</p>" if link_parts else ""
+
+    notices = []
+    if facts.get("truncation_notice"):
+        notices.append(html.escape(str(facts["truncation_notice"])))
+    overflow = facts.get("artifact_overflow")
+    if isinstance(overflow, dict) and overflow.get("notice"):
+        notice = html.escape(str(overflow["notice"]))
+        if notice not in notices:
+            notices.append(notice)
+    notice_html = f"<p>{' '.join(notices)}</p>" if notices else ""
+
+    footer_lines = []
+    if facts.get("occurred_at") or message.created_at:
+        footer_lines.append(
+            f"<strong>Occurred:</strong> {html.escape(str(facts.get('occurred_at') or message.created_at))}"
+        )
+    source = facts.get("source") if isinstance(facts.get("source"), dict) else {}
+    if source.get("source_anchor_ref"):
+        footer_lines.append(
+            f"<strong>Source:</strong> <code>{html.escape(str(source['source_anchor_ref']))}</code>"
+        )
+    if facts.get("correlation_id"):
+        footer_lines.append(
+            f"<strong>Correlation:</strong> <code>{html.escape(str(facts['correlation_id']))}</code>"
+        )
+    footer_html = f"<p>{'<br/>'.join(footer_lines)}</p>" if footer_lines else ""
+    return (
+        f"<p><strong>{label}: {title}</strong></p>"
+        f"<p>{summary}</p>"
+        f"{fact_html}"
+        f"{detail_html}"
+        f"{action_html}"
+        f"{link_html}"
+        f"{notice_html}"
+        f"{footer_html}"
+    )
+
+
+def _render_links(links: list[dict[str, Any]]) -> str:
+    safe_links = []
+    for link in links:
+        if not isinstance(link, dict) or not link.get("available") or not link.get("href"):
+            continue
+        href = html.escape(str(link["href"]), quote=True)
+        text = html.escape(str(link.get("label") or "Open status"))
+        safe_links.append(f'<a href="{href}">{text}</a>')
+    return " | ".join(safe_links)
 
 
 def render_sdlc_handoff_html(message: ConnectorMessage) -> str:
@@ -726,53 +973,39 @@ def render_sdlc_handoff_html(message: ConnectorMessage) -> str:
 
 def render_human_response_request_html(message: ConnectorMessage) -> str:
     payload = message.payload
-    prompt = html.escape(str(payload.get("prompt") or "Human response requested"))
-    raw_work_item_id = str(payload.get("work_item_id") or "unknown")
+    view = _approval_decision_view(payload)
+    prompt = html.escape(_request_heading(view, payload))
+    raw_work_item_id = view.work_item_id or "unknown"
     work_item_id = html.escape(raw_work_item_id)
-    gate_id = html.escape(str(payload.get("gate_id") or "unknown"))
-    response_type = html.escape(str(payload.get("response_type") or "unknown"))
-    summary = html.escape(str(payload.get("summary") or ""))
-    approval_context = payload.get("approval_context") or {}
-    work_summary = html.escape(
-        _truncate(str(approval_context.get("work_performed_summary") or summary), 900)
-    )
-    completed_roles = [
-        html.escape(str(role))
-        for role in approval_context.get("completed_roles") or []
-        if role
-    ]
-    blocked_roles = [
-        html.escape(str(role))
-        for role in approval_context.get("blocked_roles") or []
-        if role
-    ]
-    artifacts = [
-        html.escape(str(path))
-        for path in approval_context.get("artifact_paths") or []
-        if path
-    ]
-    completed_text = ", ".join(completed_roles) if completed_roles else "none recorded"
-    blocked_text = ", ".join(blocked_roles) if blocked_roles else "none"
-    artifact_text = ", ".join(f"<code>{path}</code>" for path in artifacts[:8])
-    if len(artifacts) > 8:
-        artifact_text += f", and {len(artifacts) - 8} more"
-    if not artifact_text:
-        artifact_text = "none recorded"
+    gate_id = html.escape(view.gate_id or "unknown")
+    approval_request_id = html.escape(view.response_request_id or "unknown")
+    response_type = html.escape(view.response_type or "unknown")
+    lifecycle_state = html.escape(view.lifecycle_state or "unknown")
+    decision_scope = html.escape(view.decision_scope)
+    work_summary = html.escape(view.description_summary)
+    artifacts = [html.escape(str(item.get("path") or item.get("label"))) for item in view.artifacts]
+    artifact_text = ", ".join(f"<code>{path}</code>" for path in artifacts[: view.artifact_inline_limit])
+    if view.artifact_count > view.artifact_inline_limit:
+        artifact_text += f", and {view.artifact_count - view.artifact_inline_limit} more"
+    artifact_text = artifact_text or "none recorded"
     status_link = _work_item_status_link_html(raw_work_item_id, paragraph=True)
-    test_url = approval_context.get("test_url") or approval_context.get("status_url")
+    test_url = view.test_url or view.status_url
     test_link = (
         f'<p><a href="{html.escape(str(test_url))}">'
-        f'{html.escape(str(approval_context.get("test_url_label") or "Review and test"))}</a></p>'
+        f'{html.escape(str(view.test_label or "Review and test"))}</a></p>'
         if test_url
         else ""
     )
     return (
         f"<p><strong>{prompt}</strong></p>"
         f"<p>Work item <code>{work_item_id}</code> is waiting at gate "
-        f"<code>{gate_id}</code> for response type <code>{response_type}</code>.</p>"
+        f"<code>{gate_id}</code> in <code>{lifecycle_state}</code> for response type "
+        f"<code>{response_type}</code>.</p>"
+        f"<p><strong>Approval request:</strong> <code>{approval_request_id}</code></p>"
+        f"<p><strong>Decision requested:</strong> {decision_scope}</p>"
+        f"{_response_options_html(payload)}"
+        f"{_timeout_html(payload)}"
         f"<p><strong>Work performed:</strong> {work_summary}</p>"
-        f"<p><strong>Completed roles:</strong> {completed_text}</p>"
-        f"<p><strong>Blocked roles:</strong> {blocked_text}</p>"
         f"<p><strong>Artifacts:</strong> {artifact_text}</p>"
         f"{test_link}"
         f"{status_link}"
@@ -845,6 +1078,120 @@ def render_sponsor_directive_status_html(message: ConnectorMessage) -> str:
     )
 
 
+def render_route_status_html(message: ConnectorMessage) -> str:
+    payload = message.payload
+    route = payload.get("route_status") or {}
+    title = html.escape(str(payload.get("title") or "Route requested"))
+    raw_work_item_id = str(route.get("work_item_id") or payload.get("work_item_id") or "unknown")
+    work_item_id = html.escape(raw_work_item_id)
+    route_status = html.escape(str(route.get("route_status") or "route_requested"))
+    route_kind = html.escape(str(route.get("route_kind") or "configured_route"))
+    source_role = html.escape(str(route.get("source_role") or payload.get("source_role") or "unknown"))
+    target_role = html.escape(str(route.get("target_role") or payload.get("target_role") or "unknown"))
+    source_state = html.escape(str(route.get("source_lifecycle_state") or "unknown"))
+    target_state = html.escape(str(route.get("target_lifecycle_state") or "unknown"))
+    summary = html.escape(_truncate(str(payload.get("summary") or ""), 700))
+    defect_id = route.get("defect_id")
+    required_change = route.get("required_change")
+    evidence_required = route.get("evidence_required")
+    gate_id = route.get("gate_id")
+    route_bits = []
+    if defect_id:
+        route_bits.append(f"<strong>Defect:</strong> <code>{html.escape(str(defect_id))}</code>")
+    if gate_id:
+        route_bits.append(f"<strong>Gate:</strong> <code>{html.escape(str(gate_id))}</code>")
+    if required_change:
+        route_bits.append(
+            f"<strong>Required change:</strong> {html.escape(_truncate(str(required_change), 500))}"
+        )
+    if evidence_required:
+        route_bits.append(
+            f"<strong>Evidence required:</strong> {html.escape(_truncate(str(evidence_required), 500))}"
+        )
+    detail = "<br/>".join(route_bits)
+    if detail:
+        detail = f"<p>{detail}</p>"
+    fallback = (
+        "<p><strong>Route note:</strong> Sent through the configured fallback route.</p>"
+        if payload.get("fallback")
+        else ""
+    )
+    status_url = route.get("status_url")
+    status_link = (
+        f'<p><a href="{html.escape(str(status_url))}">Open work item status</a></p>'
+        if status_url
+        else _work_item_status_link_html(raw_work_item_id, paragraph=True)
+    )
+    return (
+        f"<p><strong>{route_status}: {title}</strong></p>"
+        f"<p>Work item <code>{work_item_id}</code> has a "
+        f"<strong>{route_kind}</strong> from <code>{source_state}</code> "
+        f"({source_role}) to <code>{target_state}</code> ({target_role}).</p>"
+        f"<p>{summary}</p>"
+        f"{detail}"
+        f"{fallback}"
+        f"{status_link}"
+    )
+
+
+def render_problem_status_html(message: ConnectorMessage) -> str:
+    payload = message.payload
+    problem = payload.get("problem_status") or {}
+    title = html.escape(str(payload.get("title") or "Work item problem"))
+    raw_work_item_id = str(problem.get("work_item_id") or payload.get("work_item_id") or "unknown")
+    work_item_id = html.escape(raw_work_item_id)
+    status_label = html.escape(str(problem.get("status_label") or problem.get("status") or "Problem"))
+    problem_label = html.escape(str(problem.get("problem_label") or problem.get("problem_kind") or "unknown"))
+    affected_role = html.escape(str(problem.get("affected_role") or "unknown"))
+    lifecycle_state = html.escape(str(problem.get("lifecycle_state") or "unknown"))
+    reason = html.escape(_truncate(str(problem.get("reason_summary") or problem.get("reason") or ""), 500))
+    next_action = html.escape(_truncate(str(problem.get("next_action") or ""), 350))
+    action_owner = html.escape(str(problem.get("action_owner") or "unknown"))
+    retryability = html.escape(str(problem.get("retryability_label") or problem.get("retryable") or "unknown"))
+    fallback = (
+        "<p><strong>Route note:</strong> Sent through the configured fallback route.</p>"
+        if payload.get("fallback")
+        else ""
+    )
+    status_url = problem.get("status_url")
+    if isinstance(status_url, str) and status_url.startswith(("http://", "https://")):
+        status_link = f'<p><a href="{html.escape(status_url)}">Open work item status</a></p>'
+    else:
+        status_link = _work_item_status_link_html(raw_work_item_id, paragraph=True)
+    status_link = (
+        status_link
+        or f"<p>Work item: <code>{work_item_id}</code></p>"
+    )
+    artifact_paths = [
+        str(path)
+        for path in problem.get("artifact_paths") or []
+        if path
+    ][:5]
+    artifact_lines = "".join(
+        _artifact_link_html(path)
+        for path in artifact_paths
+    )
+    artifact_html = (
+        f"<p><strong>Evidence:</strong><br/>{artifact_lines}</p>"
+        if artifact_lines
+        else ""
+    )
+    return (
+        f"<p><strong>{status_label}: {title}</strong></p>"
+        f"<p><strong>Problem:</strong> {problem_label}<br/>"
+        f"<strong>Work item:</strong> <code>{work_item_id}</code><br/>"
+        f"<strong>Affected role:</strong> {affected_role}<br/>"
+        f"<strong>Lifecycle state:</strong> <code>{lifecycle_state}</code><br/>"
+        f"<strong>What happened:</strong> {reason}<br/>"
+        f"<strong>Next action:</strong> {next_action}<br/>"
+        f"<strong>Action owner:</strong> {action_owner}<br/>"
+        f"<strong>Retryability:</strong> {retryability}</p>"
+        f"{fallback}"
+        f"{artifact_html}"
+        f"{status_link}"
+    )
+
+
 def render_sponsor_directive_publish_ready_html(message: ConnectorMessage) -> str:
     payload = message.payload
     title = html.escape(str(payload.get("title") or "Direct instruction"))
@@ -898,20 +1245,62 @@ def _work_item_status_link_html(
     *,
     paragraph: bool = False,
 ) -> str:
-    if not work_item_id or work_item_id == "unknown":
+    href = _work_item_status_url(work_item_id)
+    if not href:
         return ""
-    base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
-    if not base_url:
-        auth_url = os.environ.get("AGENTIC_MESH_AUTH_ADMIN_URL")
-        if auth_url:
-            base_url = auth_url.split("/auth/", 1)[0]
-    if not base_url:
-        return ""
-    href = f"{base_url.rstrip('/')}/work-items/{quote(work_item_id, safe='')}"
     link = f'<a href="{html.escape(href)}">Status</a>'
     if paragraph:
         return f"<p>{link}</p>"
     return f"<br/>{link}"
+
+
+def _work_item_status_url(work_item_id: str) -> str:
+    if not work_item_id or work_item_id == "unknown":
+        return ""
+    base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
+    if not base_url:
+        return ""
+    parsed = urlparse(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.query
+        or parsed.fragment
+        or _is_loopback_status_host(parsed.hostname)
+    ):
+        return ""
+    return f"{base_url.rstrip('/')}/work-items/{quote(work_item_id, safe='')}"
+
+
+def _artifact_viewer_url(path: str) -> str:
+    base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
+    if not base_url:
+        return ""
+    parsed = urlparse(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.query
+        or parsed.fragment
+        or _is_loopback_status_host(parsed.hostname)
+    ):
+        return ""
+    return f"{base_url.rstrip('/')}/artifact-viewer/{quote(path, safe='')}"
+
+
+def _is_loopback_status_host(hostname: str | None) -> bool:
+    if hostname is None:
+        return True
+    normalized = hostname.strip().lower()
+    return normalized in {"localhost", "::1"} or normalized.startswith("127.")
+
+
+def _artifact_link_html(path: str) -> str:
+    label = html.escape(path)
+    url = _artifact_viewer_url(path)
+    if not url:
+        return f"<code>{label}</code><br/>"
+    return f'<a href="{html.escape(url)}">{label}</a><br/>'
 
 
 def _html_to_teams_xml_text(value: str) -> str:
@@ -939,46 +1328,37 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
     payload = message.payload
     response_template = payload.get("response_template") or {}
     input_mode = response_template.get("input_mode")
-    approval_context = payload.get("approval_context") or {}
-    work_summary = _truncate(
-        str(approval_context.get("work_performed_summary") or payload.get("summary") or ""),
-        900,
+    view = _approval_decision_view(payload)
+    artifact_text = "\n".join(
+        f"- {item.get('path') or item.get('label')}"
+        for item in view.artifacts[: view.artifact_inline_limit]
     )
-    completed_roles = ", ".join(
-        str(role) for role in approval_context.get("completed_roles") or [] if role
-    ) or "none recorded"
-    blocked_roles = ", ".join(
-        str(role) for role in approval_context.get("blocked_roles") or [] if role
-    ) or "none"
-    artifact_paths = [
-        str(path) for path in approval_context.get("artifact_paths") or [] if path
-    ]
-    artifact_text = "\n".join(f"- {path}" for path in artifact_paths[:8])
-    if len(artifact_paths) > 8:
-        artifact_text += f"\n- and {len(artifact_paths) - 8} more"
-    if not artifact_text:
-        artifact_text = "none recorded"
+    if view.artifact_count > view.artifact_inline_limit:
+        artifact_text += f"\n- and {view.artifact_count - view.artifact_inline_limit} more"
+    artifact_text = artifact_text or "none recorded"
     body = [
         {
             "type": "TextBlock",
-            "text": payload.get("prompt") or "Response requested",
+            "text": _request_heading(view, payload),
             "weight": "Bolder",
             "wrap": True,
         },
         {
             "type": "TextBlock",
-            "text": f"Work performed: {work_summary}",
+            "text": f"Work performed: {view.description_summary}",
             "wrap": True,
         },
         {
             "type": "FactSet",
             "facts": [
-                {"title": "Work item", "value": payload.get("work_item_id") or ""},
-                {"title": "Lifecycle", "value": payload.get("lifecycle_state") or ""},
-                {"title": "Gate", "value": payload.get("gate_id") or ""},
-                {"title": "Response type", "value": payload.get("response_type") or ""},
-                {"title": "Completed roles", "value": completed_roles},
-                {"title": "Blocked roles", "value": blocked_roles},
+                {"title": "Work item", "value": view.work_item_id},
+                {"title": "Lifecycle", "value": view.lifecycle_state},
+                {"title": "Gate", "value": view.gate_id},
+                {"title": "Request", "value": view.response_request_id},
+                {"title": "Response type", "value": view.response_type or ""},
+                {"title": "Decision", "value": view.decision_scope},
+                {"title": "Timeout", "value": _timeout_text(payload)},
+                {"title": "Context", "value": view.context_completeness},
             ],
         },
         {
@@ -994,13 +1374,22 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
         "body": body,
         "actions": [],
     }
-    test_url = approval_context.get("test_url") or approval_context.get("status_url")
+    test_url = view.test_url or view.status_url
     if test_url:
         card["actions"].append(
             {
                 "type": "Action.OpenUrl",
-                "title": str(approval_context.get("test_url_label") or "Review and test"),
+                "title": str(view.test_label or "Review and test"),
                 "url": str(test_url),
+            }
+        )
+    status_url = view.status_url or _work_item_status_url(view.work_item_id)
+    if status_url and status_url != test_url:
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": f"Status: {status_url}",
+                "wrap": True,
             }
         )
     if input_mode == "choice":
@@ -1032,6 +1421,39 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
     return card
 
 
+def _decision_scope_text(payload: dict[str, Any]) -> str:
+    gate_id = str(payload.get("gate_id") or "")
+    if gate_id == "release_decision_response":
+        return "Final release decision. This is separate from earlier planning or implementation progression approvals."
+    if gate_id == "pre_implementation_sponsor_approval":
+        return "Progression into implementation for this scoped work item. Specialist review and final release approval remain separate."
+    return "Human response for the configured lifecycle gate."
+
+
+def _response_options_html(payload: dict[str, Any]) -> str:
+    template = payload.get("response_template") or {}
+    options = template.get("options") or []
+    if not options:
+        return ""
+    labels = ", ".join(html.escape(str(option.get("label") or option.get("value"))) for option in options)
+    return f"<p><strong>Options:</strong> {labels}</p>"
+
+
+def _timeout_text(payload: dict[str, Any]) -> str:
+    timeout = payload.get("timeout")
+    on_timeout = payload.get("on_timeout")
+    if not timeout and not on_timeout:
+        return "not configured"
+    return f"{timeout or 'not configured'}; on timeout: {on_timeout or 'not configured'}"
+
+
+def _timeout_html(payload: dict[str, Any]) -> str:
+    text = _timeout_text(payload)
+    if text == "not configured":
+        return ""
+    return f"<p><strong>Timeout:</strong> {html.escape(text)}</p>"
+
+
 def human_response_submit_data(
     payload: dict[str, Any],
     *,
@@ -1044,12 +1466,12 @@ def human_response_submit_data(
         "work_item_id": payload.get("work_item_id"),
         "work_item_type": payload.get("work_item_type"),
         "lifecycle_state": payload.get("lifecycle_state"),
+        "approval_request_id": payload.get("approval_request_id"),
         "response_request_id": payload.get("response_request_id"),
+        "notification_attempt_id": payload.get("notification_attempt_id"),
         "gate_id": payload.get("gate_id"),
         "response_type": payload.get("response_type"),
         "correlation_id": payload.get("correlation_id"),
-        "trace_context": payload.get("trace_context"),
-        "requested_at": payload.get("requested_at"),
     }
     if response_value is not None:
         data["response_value"] = response_value
@@ -1079,39 +1501,76 @@ def build_human_response_completed_card(
     *,
     responder: str,
     response_value: Any,
+    recorded_view_model: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    response_label = response_value_label(
+    view = (
+        ApprovalDecisionViewModel.from_dict(recorded_view_model)
+        if recorded_view_model
+        else build_recorded_approval_decision(
+            None,
+            request_metadata=submit_payload,
+            decision_value=response_value,
+            responder_display=responder,
+            recorded_at=None,
+        )
+    )
+    response_label = view.decision_label or response_value_label(
         submit_payload,
         response_value=response_value,
     )
+    facts = [
+        {"title": "Work item", "value": view.work_item_id},
+        {"title": "Lifecycle", "value": view.lifecycle_state},
+        {"title": "Gate", "value": view.gate_id},
+        {"title": "Request", "value": view.response_request_id},
+        {"title": "Decision", "value": response_label},
+        {"title": "Responder", "value": view.responder_display or responder},
+    ]
+    if view.recorded_at:
+        facts.append({"title": "Recorded", "value": view.recorded_at})
+    if view.context_completeness != "complete":
+        facts.append({"title": "Context", "value": view.context_completeness})
+    body: list[dict[str, Any]] = [
+        {
+            "type": "TextBlock",
+            "text": "Release decision recorded",
+            "weight": "Bolder",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": view.title,
+            "weight": "Bolder",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": view.description_summary,
+            "wrap": True,
+        },
+        {"type": "FactSet", "facts": facts},
+    ]
+    if view.artifacts:
+        artifact_text = "\n".join(
+            f"- {item.get('path') or item.get('label')}"
+            for item in view.artifacts[: view.artifact_inline_limit]
+        )
+        if view.artifact_count > view.artifact_inline_limit:
+            artifact_text += f"\n- and {view.artifact_count - view.artifact_inline_limit} more"
+        body.append({"type": "TextBlock", "text": f"Artifacts:\n{artifact_text}", "wrap": True})
+    if view.context_completeness != "complete":
+        body.append(
+            {
+                "type": "TextBlock",
+                "text": "Decision context partially available.",
+                "wrap": True,
+            }
+        )
     return {
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "type": "AdaptiveCard",
         "version": "1.5",
-        "body": [
-            {
-                "type": "TextBlock",
-                "text": "Release decision recorded",
-                "weight": "Bolder",
-                "wrap": True,
-            },
-            {
-                "type": "FactSet",
-                "facts": [
-                    {
-                        "title": "Work item",
-                        "value": submit_payload.get("work_item_id") or "",
-                    },
-                    {
-                        "title": "Lifecycle",
-                        "value": submit_payload.get("lifecycle_state") or "",
-                    },
-                    {"title": "Gate", "value": submit_payload.get("gate_id") or ""},
-                    {"title": "Decision", "value": response_label},
-                    {"title": "Responder", "value": responder},
-                ],
-            },
-        ],
+        "body": body,
         "actions": [
             {
                 "type": "Action.Submit",
@@ -1125,6 +1584,51 @@ def build_human_response_completed_card(
             }
         ],
     }
+
+
+def build_human_response_pending_card(
+    submit_payload: dict[str, Any],
+    *,
+    validation_reason: str,
+) -> dict[str, Any]:
+    return {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "Decision received for validation",
+                "weight": "Bolder",
+                "wrap": True,
+            },
+            {
+                "type": "FactSet",
+                "facts": [
+                    {"title": "Work item", "value": submit_payload.get("work_item_id") or ""},
+                    {"title": "Lifecycle", "value": submit_payload.get("lifecycle_state") or ""},
+                    {"title": "Gate", "value": submit_payload.get("gate_id") or ""},
+                    {"title": "Validation", "value": validation_reason},
+                ],
+            },
+        ],
+        "actions": [],
+    }
+
+
+def _approval_decision_view(payload: dict[str, Any]) -> ApprovalDecisionViewModel:
+    if isinstance(payload.get("approval_decision_view"), dict):
+        return ApprovalDecisionViewModel.from_dict(payload["approval_decision_view"])
+    return build_requested_approval_decision(payload)
+
+
+def _request_heading(
+    view: ApprovalDecisionViewModel,
+    payload: dict[str, Any],
+) -> str:
+    if view.gate_id == "release_decision_response":
+        return "Release approval requested"
+    return str(payload.get("prompt") or "Human response requested")
 
 
 def response_value_label(
@@ -1169,11 +1673,38 @@ class TeamsBotIngress:
         self.project_config = project_config
         self.secrets = secrets
         self.connector_outbox = connector_outbox
+        self.human_gate_store = FileHumanGateRequestStore(state_root, project_id)
+        self.human_response_submission_service = HumanResponseSubmissionService(
+            project_id=project_id,
+            store=self.human_gate_store,
+            message_store=message_store,
+        )
         self.work_queue = work_queue or (
             FileWorkQueueStore(state_root, project_id, journal)
             if project_config is not None
             else None
         )
+        self.threaded_contexts = (
+            FileThreadedContextStore(state_root, project_id, journal)
+            if project_config is not None
+            else None
+        )
+        self.gateway_services: dict[str, GatewayService] = {}
+        if project_config is not None:
+            for gateway_id, gateway_config in project_config.gateways.items():
+                if (
+                    gateway_config.enabled
+                    and gateway_config.teams is not None
+                    and gateway_config.teams.connector == connector_id
+                ):
+                    self.gateway_services[gateway_id] = GatewayService(
+                        project_id=project_id,
+                        gateway_config=gateway_config,
+                        store=GatewayStore(state_root, project_id),
+                        journal=journal,
+                        work_queue=self.work_queue,
+                        role_ids=set(project_config.roles),
+                    )
 
     def receive_activity(self, activity: dict[str, Any]) -> dict[str, Any]:
         activity_id = self._activity_id(activity)
@@ -1215,25 +1746,37 @@ class TeamsBotIngress:
             )
 
             if isinstance(value, dict) and value.get("action") == "human_response.submit":
-                message = self._record_human_response(activity, value)
-                response_card = build_human_response_completed_card(
-                    value,
-                    responder=str(message.payload.get("responder") or "teams-user"),
-                    response_value=message.payload.get("response_value"),
-                )
+                submission = self._submit_human_response(activity, value)
+                if submission.final:
+                    response_card = build_human_response_completed_card(
+                        value,
+                        responder=str(submission.responder_display or "teams-user"),
+                        response_value=submission.decision_value,
+                        recorded_view_model=submission.recorded_view_model,
+                    )
+                else:
+                    response_card = build_human_response_pending_card(
+                        value,
+                        validation_reason=submission.validation_reason,
+                    )
                 self.journal.append(
                     "human_response_completion_card_returned",
                     project_id=self.project_id,
                     connector_id=self.connector_id,
-                    message_id=message.message_id,
-                    work_item_id=message.payload.get("work_item_id"),
-                    lifecycle_state=message.payload.get("lifecycle_state"),
-                    gate_id=message.payload.get("gate_id"),
-                    response_value=message.payload.get("response_value"),
-                    responder=message.payload.get("responder"),
-                    correlation_id=message.correlation_id,
+                    message_id=submission.message_id,
+                    work_item_id=value.get("work_item_id"),
+                    lifecycle_state=value.get("lifecycle_state"),
+                    gate_id=value.get("gate_id"),
+                    response_request_id=submission.response_request_id,
+                    response_value=submission.decision_value,
+                    validation_reason=submission.validation_reason,
+                    final=submission.final,
+                    duplicate=submission.duplicate,
+                    context_lookup=submission.context_lookup,
+                    context_completeness=submission.context_completeness,
+                    correlation_id=submission.correlation_id,
                 )
-                self._update_original_card(activity, value, response_card, message)
+                self._update_original_card(activity, value, response_card, submission)
                 return adaptive_card_invoke_response(response_card)
 
             intake_messages = self._record_channel_intake(activity, path)
@@ -1280,11 +1823,54 @@ class TeamsBotIngress:
             return None
 
         logical_channel = self._logical_channel_for_activity(activity)
+        if logical_channel is None and self._is_gateway_dm(activity):
+            self._record_gateway_intake(
+                activity,
+                raw_activity_path,
+                logical_channel="dm",
+                text=text,
+                source_kind="dm",
+            )
+            return None
         if logical_channel is None:
             self._journal_ignored_channel_message(
                 activity,
                 reason="unmapped_channel",
             )
+            return None
+        if self._is_gateway_channel_message(activity, logical_channel):
+            self._record_gateway_intake(
+                activity,
+                raw_activity_path,
+                logical_channel=logical_channel,
+                text=text,
+                source_kind="channel",
+            )
+            return None
+        threaded_result = self._record_threaded_context_if_known_parent(
+            activity,
+            logical_channel=logical_channel,
+            text=text,
+        )
+        if threaded_result is not None:
+            if (
+                threaded_result.status == "bound"
+                and threaded_result.context is not None
+                and has_explicit_linked_new_work_intent(text)
+            ):
+                linked = self._record_sponsor_intake(
+                    activity,
+                    raw_activity_path,
+                    logical_channel=logical_channel,
+                    text=text,
+                    intake_reason="linked_new_work_from_threaded_context",
+                    parent_work_item_id=threaded_result.context.parent_work_item_id,
+                    parent_threaded_context_id=threaded_result.context.context_id,
+                )
+                if linked is not None:
+                    return linked
+            if threaded_result.status == "bound" and threaded_result.context is not None:
+                return self._route_threaded_context_attention(threaded_result)
             return None
         if logical_channel == "all-agents":
             if self._activity_mentions(activity, logical_channel):
@@ -1325,6 +1911,338 @@ class TeamsBotIngress:
             intake_reason="channel_sponsor_intake",
         )
 
+    def _record_threaded_context_if_known_parent(
+        self,
+        activity: dict[str, Any],
+        *,
+        logical_channel: str,
+        text: str,
+    ) -> BindingResult | None:
+        if self.threaded_contexts is None:
+            return None
+        reply_to_id = activity.get("replyToId")
+        graph = activity.get("graph") if isinstance(activity.get("graph"), dict) else {}
+        parent_ref = (
+            graph.get("parent_message_id")
+            or graph.get("reply_to_id")
+            or reply_to_id
+        )
+        if not parent_ref:
+            return None
+
+        result = self.threaded_contexts.resolve_route(
+            connector_type="teams",
+            connector_id=self.connector_id,
+            source_scope=logical_channel,
+            root_message_ref=str(parent_ref),
+            candidate_connector_ids=[self.connector_id, "teams-shared"],
+        )
+        if result.status != "bound" or result.route is None:
+            self.journal.append(
+                "threaded_context.parent_not_verified",
+                project_id=self.project_id,
+                connector_type="teams",
+                connector_id=self.connector_id,
+                source_scope=logical_channel,
+                reason=result.reason or "parent_not_verified",
+                candidate_count=result.conflict_count,
+            )
+            return result
+
+        source_anchor = self._source_anchor_for_activity(activity, logical_channel)
+        source_message_ref = str(
+            graph.get("message_id")
+            or activity.get("id")
+            or self._message_fingerprint_for_activity(activity)
+        )
+        capture = self.threaded_contexts.capture(
+            route=result.route,
+            source_message_ref=source_message_ref,
+            actor_label=(activity.get("from") or {}).get("name"),
+            text=text,
+            mentioned_roles=self._mentioned_role_ids(activity),
+            source_anchor_ref=source_anchor.source_anchor_ref(),
+            correlation_id=None,
+        )
+        if capture.status == "bound" and capture.context is not None:
+            self._queue_threaded_context_receipt(
+                logical_channel=logical_channel,
+                context=capture.context.to_safe_dict(),
+            )
+        return capture
+
+    def _route_threaded_context_attention(
+        self,
+        result: BindingResult,
+    ) -> Message | None:
+        context = result.context
+        if context is None or not context.owner_role:
+            return None
+        message = Message.create(
+            role_id=context.owner_role,
+            message_type=MESSAGE_TYPE_THREADED_CONTEXT_ATTENTION_REQUESTED,
+            payload={
+                "title": "Threaded context needs attention",
+                "summary": context.summary,
+                "work_item_id": context.parent_work_item_id,
+                "work_item_type": context.parent_work_item_type,
+                "lifecycle_state": context.lifecycle_state,
+                "threaded_context_id": context.context_id,
+                "source_anchor_ref": context.source_anchor_ref,
+                "action_state": context.action_state,
+                "attention_state": context.attention_state,
+                "mentioned_roles": list(context.mentioned_roles),
+                "context_kind": context.context_kind,
+            },
+            source=f"threaded-context:{context.connector_type}:{context.connector_id}",
+            correlation_id=context.correlation_id,
+        )
+        queued = self.message_store.enqueue(message)
+        self.journal.append(
+            "threaded_context.owner_attention.routed",
+            project_id=self.project_id,
+            connector_type=context.connector_type,
+            connector_id=context.connector_id,
+            parent_work_item_id=context.parent_work_item_id,
+            threaded_context_id=context.context_id,
+            owner_role=context.owner_role,
+            message_id=queued.message_id,
+            correlation_id=queued.correlation_id,
+        )
+        return queued
+
+    def _queue_threaded_context_receipt(
+        self,
+        *,
+        logical_channel: str,
+        context: dict[str, Any],
+    ) -> None:
+        if self.connector_outbox is None:
+            self.journal.append(
+                "threaded_context.receipt.failed",
+                project_id=self.project_id,
+                connector_type="teams",
+                connector_id=self.connector_id,
+                parent_work_item_id=context.get("parent_work_item_id"),
+                threaded_context_id=context.get("context_id"),
+                reason="connector_outbox_not_configured",
+                correlation_id=context.get("correlation_id"),
+            )
+            return
+        receipt = ConnectorMessage.create(
+            channel=logical_channel,
+            message_type="threaded_context.receipt",
+            payload={
+                "project_id": self.project_id,
+                "title": "Threaded context captured",
+                "summary": "Added this reply to the parent work item.",
+                "work_item_id": context.get("parent_work_item_id"),
+                "work_item_type": context.get("parent_work_item_type"),
+                "lifecycle_state": context.get("lifecycle_state"),
+                "threaded_context_id": context.get("context_id"),
+                "action_state": context.get("action_state"),
+                "attention_state": context.get("attention_state"),
+                "source_anchor_ref": context.get("source_anchor_ref"),
+            },
+            source=f"threaded-context:{self.connector_id}:{logical_channel}",
+            correlation_id=context.get("correlation_id"),
+        )
+        self.connector_outbox.enqueue(receipt)
+        self.journal.append(
+            "threaded_context.receipt.queued",
+            project_id=self.project_id,
+            connector_type="teams",
+            connector_id=self.connector_id,
+            channel=logical_channel,
+            parent_work_item_id=context.get("parent_work_item_id"),
+            threaded_context_id=context.get("context_id"),
+            connector_message_id=receipt.message_id,
+            correlation_id=context.get("correlation_id"),
+        )
+
+    def _seed_thread_route(
+        self,
+        activity: dict[str, Any],
+        *,
+        logical_channel: str,
+        work_item_id: str,
+        work_item_type: str,
+        lifecycle_state: str | None,
+        owner_role: str | None,
+        source_anchor_ref: str | None,
+    ) -> None:
+        if self.threaded_contexts is None or not activity.get("id"):
+            return
+        for connector_id in {self.connector_id, "teams-shared"}:
+            self.threaded_contexts.upsert_route(
+                ThreadRouteRecord.create(
+                    connector_type="teams",
+                    connector_id=connector_id,
+                    source_scope=logical_channel,
+                    root_message_ref=str(activity["id"]),
+                    parent_work_item_id=work_item_id,
+                    parent_work_item_type=work_item_type,
+                    lifecycle_state=lifecycle_state,
+                    owner_role=owner_role,
+                    source_anchor_ref=source_anchor_ref,
+                )
+            )
+
+    def _is_gateway_dm(self, activity: dict[str, Any]) -> bool:
+        if not self.gateway_services:
+            return False
+        conversation = activity.get("conversation") or {}
+        conversation_type = str(conversation.get("conversationType") or "").casefold()
+        source_scope = str(activity.get("source_scope") or "").casefold()
+        return conversation_type == "personal" or source_scope == "dm"
+
+    def _is_gateway_channel_message(
+        self,
+        activity: dict[str, Any],
+        logical_channel: str,
+    ) -> bool:
+        if not self.gateway_services:
+            return False
+        for gateway_id, service in self.gateway_services.items():
+            teams_config = service.gateway_config.teams
+            if teams_config is None:
+                continue
+            if logical_channel not in set(teams_config.intake_channels):
+                continue
+            if self._activity_mentions(activity, gateway_id):
+                return True
+            leading_targets = {
+                _normalise_mention_text(gateway_id),
+                _normalise_mention_text(teams_config.bot.display_name),
+            }
+            text = _plain_text(activity.get("text")).strip()
+            first_token = re.split(r"[:,\\s]+", text, maxsplit=1)[0] if text else ""
+            if _normalise_mention_text(first_token) in leading_targets:
+                return True
+        return False
+
+    def _gateway_service_for_activity(
+        self,
+        activity: dict[str, Any],
+        logical_channel: str,
+    ) -> tuple[str, GatewayService] | None:
+        if not self.gateway_services:
+            return None
+        for gateway_id, service in self.gateway_services.items():
+            teams_config = service.gateway_config.teams
+            if teams_config is None:
+                continue
+            if logical_channel == "dm" and teams_config.dm_enabled:
+                return gateway_id, service
+            if logical_channel in set(teams_config.intake_channels):
+                if self._activity_mentions(activity, gateway_id):
+                    return gateway_id, service
+                text = _plain_text(activity.get("text")).strip()
+                first_token = re.split(r"[:,\\s]+", text, maxsplit=1)[0] if text else ""
+                if _normalise_mention_text(first_token) in {
+                    _normalise_mention_text(gateway_id),
+                    _normalise_mention_text(teams_config.bot.display_name),
+                }:
+                    return gateway_id, service
+        return None
+
+    def _record_gateway_intake(
+        self,
+        activity: dict[str, Any],
+        raw_activity_path: Path,
+        *,
+        logical_channel: str,
+        text: str,
+        source_kind: str,
+    ) -> None:
+        match = self._gateway_service_for_activity(activity, logical_channel)
+        if match is None:
+            self._journal_ignored_channel_message(activity, reason="gateway_not_configured")
+            return
+        gateway_id, service = match
+        source_anchor = self._source_anchor_for_activity(activity, logical_channel)
+        event = event_from_message(
+            project_id=self.project_id,
+            gateway_id=gateway_id,
+            connector_type="teams",
+            connector_id=self.connector_id,
+            source_kind=source_kind,
+            source_anchor=source_anchor,
+            actor_label=str((activity.get("from") or {}).get("name") or "teams-user"),
+            actor_source_id=(activity.get("from") or {}).get("id"),
+            text=text,
+            idempotency_key=self._source_idempotency_key(activity, logical_channel),
+            role_hints=self._mentioned_role_ids(activity),
+        )
+        result = service.handle_event(event)
+        self.journal.append(
+            "teams_gateway_intake_processed",
+            project_id=self.project_id,
+            connector_id=self.connector_id,
+            gateway_id=gateway_id,
+            channel=logical_channel,
+            gateway_event_id=event.gateway_event_id,
+            gateway_result_id=result.gateway_result_id,
+            outcome=result.outcome,
+            queue_item_id=result.queue_item_id,
+            source_anchor_ref=source_anchor.source_anchor_ref(),
+            raw_activity_ref=raw_activity_path.name,
+            correlation_id=result.correlation_id,
+        )
+        self._queue_gateway_receipt(
+            logical_channel=logical_channel,
+            gateway_id=gateway_id,
+            result=result.to_safe_dict(),
+        )
+
+    def _queue_gateway_receipt(
+        self,
+        *,
+        logical_channel: str,
+        gateway_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        if self.connector_outbox is None:
+            self.journal.append(
+                "gateway.receipt.failed",
+                project_id=self.project_id,
+                connector_type="teams",
+                connector_id=self.connector_id,
+                gateway_id=gateway_id,
+                reason="connector_outbox_not_configured",
+                correlation_id=result.get("correlation_id"),
+            )
+            return
+        channel = logical_channel if logical_channel != "dm" else "all-agents"
+        message = ConnectorMessage.create(
+            channel=channel,
+            message_type="gateway.receipt",
+            payload={
+                "project_id": self.project_id,
+                "gateway_id": gateway_id,
+                "outcome": result.get("outcome"),
+                "queue_item_id": result.get("queue_item_id"),
+                "work_item_id": result.get("work_item_id"),
+                "owner_role": result.get("owner_role"),
+                "receipt": result.get("receipt") or {},
+            },
+            source=f"gateway:{gateway_id}",
+            correlation_id=result.get("correlation_id"),
+        )
+        self.connector_outbox.enqueue(message)
+        self.journal.append(
+            "gateway.receipt.queued",
+            project_id=self.project_id,
+            connector_type="teams",
+            connector_id=self.connector_id,
+            gateway_id=gateway_id,
+            channel=channel,
+            connector_message_id=message.message_id,
+            outcome=result.get("outcome"),
+            queue_item_id=result.get("queue_item_id"),
+            correlation_id=result.get("correlation_id"),
+        )
+
     def _record_sponsor_intake(
         self,
         activity: dict[str, Any],
@@ -1333,6 +2251,8 @@ class TeamsBotIngress:
         logical_channel: str,
         text: str,
         intake_reason: str,
+        parent_work_item_id: str | None = None,
+        parent_threaded_context_id: str | None = None,
     ) -> Message | None:
         assert self.project_config is not None
         sponsor_policy = self.project_config.flow.sponsor_initiated_work
@@ -1385,6 +2305,14 @@ class TeamsBotIngress:
                     "work_item_id": work_item_id,
                     "work_item_type": work_item_type,
                     "intake": intake_reason,
+                    **(
+                        {
+                            "parent_work_item_id": parent_work_item_id,
+                            "parent_threaded_context_id": parent_threaded_context_id,
+                        }
+                        if parent_work_item_id and parent_threaded_context_id
+                        else {}
+                    ),
                 },
                 raw_payload=activity,
                 retain_raw_payload=False,
@@ -1410,6 +2338,8 @@ class TeamsBotIngress:
             "teams_from_id": from_user.get("id"),
             "teams_from_name": from_user.get("name"),
             "raw_activity_path": str(raw_activity_path),
+            "parent_work_item_id": parent_work_item_id,
+            "parent_threaded_context_id": parent_threaded_context_id,
         }
         message = Message.create(
             role_id=flow_state.owner_role,
@@ -1445,6 +2375,15 @@ class TeamsBotIngress:
             source_anchor=source_anchor.redacted_summary(),
             activity=activity,
             correlation_id=message.correlation_id,
+        )
+        self._seed_thread_route(
+            activity,
+            logical_channel=logical_channel,
+            work_item_id=work_item_id,
+            work_item_type=work_item_type,
+            lifecycle_state=lifecycle_state,
+            owner_role=flow_state.owner_role,
+            source_anchor_ref=source_anchor.source_anchor_ref(),
         )
         return message
 
@@ -1620,6 +2559,15 @@ class TeamsBotIngress:
             acknowledgement_role_id=acknowledgement_role_id,
             queued_event=acknowledgement_event,
             unroutable_event=unroutable_event,
+        )
+        self._seed_thread_route(
+            activity,
+            logical_channel=logical_channel,
+            work_item_id=work_item_id,
+            work_item_type="directive",
+            lifecycle_state=None,
+            owner_role=acknowledgement_role_id,
+            source_anchor_ref=source_anchor.source_anchor_ref(),
         )
         return messages
 
@@ -1909,11 +2857,11 @@ class TeamsBotIngress:
             reason=reason,
         )
 
-    def _record_human_response(
+    def _submit_human_response(
         self,
         activity: dict[str, Any],
         value: dict[str, Any],
-    ):
+    ) -> HumanResponseSubmissionResult:
         responder = (
             (activity.get("from") or {}).get("name")
             or (activity.get("from") or {}).get("id")
@@ -1950,39 +2898,50 @@ class TeamsBotIngress:
                     wait_seconds,
                     wait_attrs,
                 )
-        message = build_human_response_received_message(
+        result = self.human_response_submission_service.submit(
             target_role=str(value["role_id"]),
             work_item_id=str(value["work_item_id"]),
             work_item_type=str(value.get("work_item_type") or "slice"),
             lifecycle_state=str(value["lifecycle_state"]),
             gate_id=str(value["gate_id"]),
+            response_type=str(value.get("response_type") or ""),
+            approval_request_id=(
+                str(value.get("approval_request_id"))
+                if value.get("approval_request_id")
+                else None
+            ),
             response_request_id=str(value["response_request_id"]),
             responder=str(responder),
             response_value=response_value,
             source=f"teams:{self.connector_id}",
+            authenticated=True,
             correlation_id=value.get("correlation_id"),
             trace_context=trace_context,
         )
-        message = self.message_store.enqueue(message)
         self.journal.append(
             "human_response_received_from_teams",
             project_id=self.project_id,
             connector_id=self.connector_id,
-            message_id=message.message_id,
-            work_item_id=message.payload.get("work_item_id"),
-            lifecycle_state=message.payload.get("lifecycle_state"),
-            gate_id=message.payload.get("gate_id"),
-            responder=message.payload.get("responder"),
-            correlation_id=message.correlation_id,
+            message_id=result.message_id,
+            work_item_id=value.get("work_item_id"),
+            lifecycle_state=value.get("lifecycle_state"),
+            gate_id=value.get("gate_id"),
+            approval_request_id=value.get("approval_request_id"),
+            response_request_id=value.get("response_request_id"),
+            validation_reason=result.validation_reason,
+            final=result.final,
+            duplicate=result.duplicate,
+            context_lookup=result.context_lookup,
+            correlation_id=value.get("correlation_id"),
         )
-        return message
+        return result
 
     def _update_original_card(
         self,
         activity: dict[str, Any],
         value: dict[str, Any],
         card: dict[str, Any],
-        message,
+        submission: HumanResponseSubmissionResult,
     ) -> None:
         if self.connector_config is None or self.secrets is None:
             return
@@ -1996,28 +2955,28 @@ class TeamsBotIngress:
                 "teams_bot_card_update_skipped",
                 project_id=self.project_id,
                 connector_id=self.connector_id,
-                message_id=message.message_id,
-                work_item_id=message.payload.get("work_item_id"),
-                lifecycle_state=message.payload.get("lifecycle_state"),
+                message_id=submission.message_id,
+                work_item_id=value.get("work_item_id"),
+                lifecycle_state=value.get("lifecycle_state"),
                 reason="missing_activity_reference",
-                correlation_id=message.correlation_id,
+                correlation_id=submission.correlation_id,
             )
             return
 
         try:
             with telemetry.start_span(
                 "teams.card.update",
-                correlation_id=message.correlation_id,
-                trace_context=message.trace_context,
+                correlation_id=submission.correlation_id,
+                trace_context=None,
                 attributes=telemetry.span_attributes(
                     project_id=self.project_id,
                     connector_id=self.connector_id,
                     role_id=role_id,
                     conversation_id=conversation_id,
                     activity_id=activity_id,
-                    work_item_id=message.payload.get("work_item_id"),
-                    lifecycle_state=message.payload.get("lifecycle_state"),
-                    correlation_id=message.correlation_id,
+                    work_item_id=value.get("work_item_id"),
+                    lifecycle_state=value.get("lifecycle_state"),
+                    correlation_id=submission.correlation_id,
                 ),
             ):
                 response = self._update_activity(
@@ -2032,14 +2991,14 @@ class TeamsBotIngress:
                 "teams_bot_card_update_failed",
                 project_id=self.project_id,
                 connector_id=self.connector_id,
-                message_id=message.message_id,
-                work_item_id=message.payload.get("work_item_id"),
-                lifecycle_state=message.payload.get("lifecycle_state"),
+                message_id=submission.message_id,
+                work_item_id=value.get("work_item_id"),
+                lifecycle_state=value.get("lifecycle_state"),
                 role_id=role_id,
                 conversation_id=conversation_id,
                 activity_id=activity_id,
                 error=str(exc),
-                correlation_id=message.correlation_id,
+                correlation_id=submission.correlation_id,
             )
             return
 
@@ -2047,14 +3006,14 @@ class TeamsBotIngress:
             "teams_bot_card_updated",
             project_id=self.project_id,
             connector_id=self.connector_id,
-            message_id=message.message_id,
-            work_item_id=message.payload.get("work_item_id"),
-            lifecycle_state=message.payload.get("lifecycle_state"),
+            message_id=submission.message_id,
+            work_item_id=value.get("work_item_id"),
+            lifecycle_state=value.get("lifecycle_state"),
             role_id=role_id,
             conversation_id=conversation_id,
             activity_id=activity_id,
             updated_activity_id=response.get("id"),
-            correlation_id=message.correlation_id,
+            correlation_id=submission.correlation_id,
         )
 
     def _update_activity(
@@ -2173,8 +3132,38 @@ class GraphTeamsChannelIngressAdapter:
         skipped = 0
         new_seen = set(seen)
 
-        messages = sorted(
+        root_messages = sorted(
             self._list_channel_messages(channel, max_messages=max_messages),
+            key=lambda item: str(item.get("createdDateTime") or item.get("id") or ""),
+        )
+        messages: list[dict[str, Any]] = []
+        for root_message in root_messages:
+            messages.append(root_message)
+            root_message_id = str(root_message.get("id") or "")
+            if not root_message_id:
+                continue
+            try:
+                replies = self._list_channel_replies(
+                    channel,
+                    root_message_id,
+                    max_messages=max_messages,
+                )
+            except Exception as exc:
+                self.journal.append(
+                    "teams_graph_channel_replies_fetch_failed",
+                    project_id=self.project_id,
+                    connector_id=self.connector_id,
+                    channel=channel,
+                    parent_message_ref=_short_ref(root_message_id),
+                    error=exc.__class__.__name__,
+                )
+                replies = []
+            for reply in replies:
+                reply = dict(reply)
+                reply.setdefault("parent_message_id", root_message_id)
+                messages.append(reply)
+        messages = sorted(
+            messages,
             key=lambda item: str(item.get("createdDateTime") or item.get("id") or ""),
         )
         unseen_messages = [
@@ -2266,6 +3255,36 @@ class GraphTeamsChannelIngressAdapter:
         value = payload.get("value") if isinstance(payload, dict) else None
         return [item for item in value or [] if isinstance(item, dict)]
 
+    def _list_channel_replies(
+        self,
+        channel: str,
+        root_message_id: str,
+        *,
+        max_messages: int,
+    ) -> list[dict[str, Any]]:
+        channel_config = self.connector_config.channels[channel]
+        url = (
+            "https://graph.microsoft.com/v1.0/teams/"
+            f"{quote(self.connector_config.team_id, safe='')}/channels/"
+            f"{quote(channel_config.channel_id, safe='')}/messages/"
+            f"{quote(root_message_id, safe='')}/replies?"
+            f"{urlencode({'$top': max_messages})}"
+        )
+        req = request.Request(
+            url,
+            method="GET",
+            headers={"Authorization": f"Bearer {self.token}"},
+        )
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                response_body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            error_body = exc.read().decode("utf-8")
+            raise RuntimeError(f"Graph returned {exc.code}: {error_body}") from exc
+        payload = json.loads(response_body) if response_body else {}
+        value = payload.get("value") if isinstance(payload, dict) else None
+        return [item for item in value or [] if isinstance(item, dict)]
+
     def _should_skip_message(self, channel: str, graph_message: dict[str, Any]) -> bool:
         text = self._message_text(graph_message)
         if not text:
@@ -2274,6 +3293,8 @@ class GraphTeamsChannelIngressAdapter:
         if self._is_connector_echo(graph_message):
             self._journal_skipped(channel, graph_message, reason="connector_echo")
             return True
+        if graph_message.get("parent_message_id") or graph_message.get("replyToId"):
+            return False
         if (
             channel == "all-agents"
             and not self._message_mentions(graph_message, channel)
@@ -2309,6 +3330,8 @@ class GraphTeamsChannelIngressAdapter:
         return {
             "type": "message",
             "id": graph_message.get("id"),
+            "replyToId": graph_message.get("parent_message_id")
+            or graph_message.get("replyToId"),
             "serviceUrl": "graph://microsoft-teams",
             "timestamp": graph_message.get("createdDateTime"),
             "text": self._message_text(graph_message),
@@ -2323,6 +3346,8 @@ class GraphTeamsChannelIngressAdapter:
             },
             "graph": {
                 "message_id": graph_message.get("id"),
+                "parent_message_id": graph_message.get("parent_message_id")
+                or graph_message.get("replyToId"),
                 "web_url": graph_message.get("webUrl"),
                 "mentions": graph_message.get("mentions") or [],
             },

@@ -10,12 +10,21 @@ from threading import Thread
 from unittest.mock import patch
 
 from agentic_mesh import controller_auth
+from agentic_mesh import telemetry
+from agentic_mesh.activation_evidence import ActivationEvidence
+from agentic_mesh.activation_evidence import FileActivationEvidenceStore
 from agentic_mesh.controller_auth import ControllerAuthHandler
 from agentic_mesh.controller_auth import ControllerAuthServer
 from agentic_mesh.controller_auth import ControllerAuthService
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.models import Message
+from agentic_mesh.problem_status import ProblemStatusStore
+from agentic_mesh.problem_status import malformed_route_problem_status
+from agentic_mesh.route_status import CurrentRoute
+from agentic_mesh.route_status import CurrentRouteStore
 from agentic_mesh.storage import FileMessageStore
+from agentic_mesh.work_queue import FileWorkQueueStore
+from agentic_mesh.work_queue import SourceAnchor
 
 
 def test_controller_auth_status_json_lists_reusable_credentials(tmp_path: Path) -> None:
@@ -29,7 +38,7 @@ def test_controller_auth_status_json_lists_reusable_credentials(tmp_path: Path) 
     thread.start()
     try:
         host, port = server.server_address
-        connection = HTTPConnection(host, port, timeout=5)
+        connection = HTTPConnection(host, port, timeout=20)
 
         connection.request("GET", "/auth/status.json")
         response = connection.getresponse()
@@ -39,6 +48,70 @@ def test_controller_auth_status_json_lists_reusable_credentials(tmp_path: Path) 
         assert body["credentials"][0]["credential"] == "codex-example-shared-api-key"
         assert body["credentials"][0]["status"] == "missing"
         assert body["credentials"][0]["redacted"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_current_agents_routes_and_status_navigation(tmp_path: Path) -> None:
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml",
+        state_root=tmp_path / "state",
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=20)
+
+        connection.request("GET", "/agents/current.json")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert payload["schema_version"] == "current-agents-v0"
+        assert payload["read_only"] is True
+        assert payload["refresh_mode"] == "manual_browser_refresh"
+        assert len(payload["agents"]) == 14
+
+        connection.request("GET", "/agents/current")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "Current Agents" in body
+        assert "No agent attention needed." in body
+        assert "<form" not in body
+        assert "<script" not in body
+        assert "setTimeout" not in body
+        assert "WebSocket" not in body
+        assert "EventSource" not in body
+        assert "restart" not in body.lower()
+        assert "requeue" not in body.lower()
+
+        connection.request("GET", "/status")
+        response = connection.getresponse()
+        status_body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert 'href="/agents/current"' in status_body
+        assert 'href="/agents/current.json"' in status_body
+        assert "Current Agents table" not in status_body
+
+        connection.request("GET", "/status/agents")
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 303
+        assert response.headers["Location"] == "/agents/current"
+
+        connection.request("GET", "/status/agents.json")
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 303
+        assert response.headers["Location"] == "/agents/current.json"
     finally:
         server.shutdown()
         server.server_close()
@@ -115,6 +188,8 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert payload["artifact_records"] == [
             {
                 "path": "work-items/work-queue-v0/20-product-definition.md",
+                "label": "Verified artifact",
+                "verification": "verified",
                 "exists": True,
             }
         ]
@@ -156,9 +231,135 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         viewer_body = response.read().decode("utf-8")
 
         assert response.status == 200
+        assert "Content-Security-Policy" in response.headers
         assert "marked.min.js" in viewer_body
         assert "mermaid.esm.min.mjs" in viewer_body
+        assert 'securityLevel: "strict"' in viewer_body
+        assert "sanitizeRenderedMarkdown" in viewer_body
+        assert "script, style, iframe, object, embed, link" in viewer_body
         assert "Visible artifact content." in viewer_body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_controller_work_item_status_includes_safe_activation_section(
+    tmp_path: Path,
+) -> None:
+    project_id = "agentic-mesh-dev"
+    state_root = tmp_path / "state"
+    evidence = ActivationEvidence(
+        project_id=project_id,
+        work_item_id="work-activation-detail",
+        work_item_type="slice",
+        lifecycle_state="implementation",
+        impact_categories=("runtime_code", "route_or_ingress"),
+        live_smoke_required=True,
+        target_labels=("dogfood_compose",),
+        activation_paths=("rebuild_image",),
+        source_status="source_ready",
+        activation_status="blocked",
+        smoke_status="failed",
+        failure_class="source_changed_running_service_not_updated",
+        action_owner="runtime/operator",
+        next_action="Rebuild image and smoke /agents/current.json.",
+        retryable=True,
+        notification_state="blocked_unroutable",
+        updated_at="2026-06-05T16:10:00+00:00",
+    )
+    FileActivationEvidenceStore(state_root, project_id).write_current(evidence)
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml",
+        state_root=state_root,
+    )
+
+    payload = service.work_item_status("work-activation-detail")
+
+    assert payload["activation_evidence"]["schema_version"] == "activation-evidence-v0"
+    assert payload["activation_summary"]["attention_needed"] is True
+    assert payload["activation_evidence"]["failure_class"] == "source_changed_running_service_not_updated"
+    serialized_activation = json.dumps(payload["activation_evidence"])
+    assert "service_url" not in serialized_activation
+    assert "tenant_id" not in serialized_activation
+    assert "secret_ref" not in serialized_activation
+    assert "teams_messages" not in payload["activation_evidence"]
+    assert payload["teams_messages"] == []
+
+
+def test_lifecycle_artifact_status_label_and_viewer_hardening(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    artifact_path = tmp_path / "docs" / "work-items" / "work-life" / "lifecycle-flow.md"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text(
+        "# Lifecycle Flow\n\n<script>alert(1)</script>\n\n```mermaid\nflowchart TD\n```\n",
+        encoding="utf-8",
+    )
+    journal = EventJournal(state_root, project_id)
+    journal.append(
+        "documentation_updated",
+        project_id=project_id,
+        role_id="lifecycle-export",
+        role_instance_id="lifecycle-export",
+        component_id="lifecycle-export",
+        work_item_id="work-life",
+        work_item_type="slice",
+        lifecycle_state="implementation",
+        path="work-items/work-life/lifecycle-flow.md",
+        generated_artifact=True,
+    )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+        workspace_root=tmp_path,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request("GET", "/work-items/work-life.json")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+
+        assert payload["artifact_records"] == [
+            {
+                "path": "work-items/work-life/lifecycle-flow.md",
+                "label": "Lifecycle flow",
+                "verification": "verified",
+                "exists": True,
+            }
+        ]
+
+        connection.request("GET", "/work-items/work-life")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert "Lifecycle flow" in body
+        assert "work-items/work-life/lifecycle-flow.md" in body
+        assert 'target="_blank"' in body
+
+        connection.request(
+            "GET",
+            "/artifact-viewer/work-items%2Fwork-life%2Flifecycle-flow.md",
+        )
+        response = connection.getresponse()
+        viewer_body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "default-src 'none'" in response.headers["Content-Security-Policy"]
+        assert "https://cdn.jsdelivr.net" in response.headers["Content-Security-Policy"]
+        assert 'securityLevel: "strict"' in viewer_body
+        assert "sanitizeRenderedMarkdown" in viewer_body
+        assert "name.startsWith(\"on\")" in viewer_body
+        assert "isSafeUrl" in viewer_body
     finally:
         server.shutdown()
         server.server_close()
@@ -202,6 +403,8 @@ def test_controller_work_item_status_page_marks_missing_artifacts(
         assert payload["artifact_records"] == [
             {
                 "path": "work-items/work-missing-artifact/10-business-brief.md",
+                "label": "Verified artifact",
+                "verification": "verified",
                 "exists": False,
             }
         ]
@@ -214,7 +417,7 @@ def test_controller_work_item_status_page_marks_missing_artifacts(
         body = response.read().decode("utf-8")
 
         assert response.status == 200
-        assert "missing from document library" in body
+        assert "Missing artifact" in body
         assert (
             "/artifact-viewer/work-items%2Fwork-missing-artifact%2F10-business-brief.md"
             not in body
@@ -292,6 +495,239 @@ def test_controller_work_item_status_page_marks_stale_claim(
         thread.join(timeout=5)
 
 
+def test_controller_status_dashboard_routes_are_safe_and_read_only(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    artifact_path = (
+        tmp_path
+        / "docs"
+        / "work-items"
+        / "work-dashboard"
+        / "20-product-definition.md"
+    )
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text("# Dashboard Product\n", encoding="utf-8")
+    journal = EventJournal(state_root, project_id)
+    queue_store = FileWorkQueueStore(state_root, project_id, journal)
+    queue_item = queue_store.capture(
+        title="<script>alert(1)</script>",
+        summary="Synthetic queue item with raw details.",
+        owner_role="product-manager",
+        source_anchor=SourceAnchor(
+            connector_type="teams",
+            connector_id="teams-bot-listener",
+            source_scope="all-agents",
+            source_message_id="activity/raw-123",
+            actor="raw-user-id",
+            received_at="2026-06-05T10:00:00+00:00",
+            display_label="<b>Nicholas</b> in all-agents",
+            external_url="https://teams.example/raw",
+        ),
+        recommended_work_item_type="slice",
+        raw_payload={"secret": "synthetic"},
+        retain_raw_payload=True,
+    )
+    message_store = FileMessageStore(state_root, project_id, journal)
+    message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type="sdlc.product_definition",
+            payload={
+                "title": "Dashboard Product",
+                "summary": "Create status dashboard.",
+                "work_item_id": "work-dashboard",
+                "work_item_type": "slice",
+                "lifecycle_state": "product_definition",
+                "queue_item_id": queue_item.queue_item_id,
+                "source_anchor": queue_item.source_anchor.redacted_summary(),
+            },
+            source=f"work-queue:{queue_item.queue_item_id}",
+        )
+    )
+    journal.append(
+        "documentation_updated",
+        project_id=project_id,
+        role_id="product-manager",
+        role_instance_id="example-project.product-manager.1",
+        work_item_id="work-dashboard",
+        work_item_type="slice",
+        lifecycle_state="product_definition",
+        path="work-items/work-dashboard/20-product-definition.md",
+    )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+        workspace_root=tmp_path,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    sink = telemetry.TelemetryTestSink()
+    telemetry.set_test_sink(sink)
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request("GET", "/status.json")
+        response = connection.getresponse()
+        status_payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert status_payload["schema_version"] == "status-dashboard-v0"
+        assert status_payload["read_only"] is True
+        assert status_payload["refresh_mode"] == "manual_browser_refresh"
+        assert status_payload["counts"]["total_work_items"] == 1
+        assert status_payload["counts"]["total_queue_items"] == 1
+        rendered = json.dumps(status_payload)
+        for forbidden in [
+            "queue_entries",
+            "timeline",
+            "teams_messages",
+            "teams_activity_id",
+            "teams_conversation_id",
+            "activity/raw-123",
+            "raw-user-id",
+            "teams.example",
+            "raw_refs",
+            "secret_ref",
+            "mount_ref",
+            str(state_root),
+        ]:
+            assert forbidden not in rendered
+
+        connection.request("GET", "/work-items.json")
+        response = connection.getresponse()
+        work_items_payload = json.loads(response.read().decode("utf-8"))
+        row = work_items_payload["items"][0]
+
+        assert response.status == 200
+        assert row["status"] == "pending"
+        assert row["display_label"] == "Pending"
+        assert row["status_group"] == "active"
+        assert row["queue_item_id"] == queue_item.queue_item_id
+        assert row["artifact_links"][0]["viewer_url"].startswith("/artifact-viewer/")
+
+        connection.request("GET", "/work-queue.json")
+        response = connection.getresponse()
+        work_queue_payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert work_queue_payload["schema_version"] == "status-dashboard-v0"
+        assert work_queue_payload["items"][0]["title"] == "<script>alert(1)</script>"
+
+        connection.request("GET", "/status")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+        assert "<script>alert(1)</script>" not in body
+        for forbidden in [
+            "<form",
+            "setTimeout",
+            "WebSocket",
+            "EventSource",
+            "http-equiv",
+            "activity/raw-123",
+            "raw-user-id",
+            "teams.example",
+            str(state_root),
+        ]:
+            assert forbidden not in body
+
+        connection.request("GET", "/queue")
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 303
+        assert response.headers["Location"] == "/work-queue"
+
+        connection.request("GET", "/queue.json")
+        response = connection.getresponse()
+        queue_alias_payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert queue_alias_payload["schema_version"] == "status-dashboard-v0"
+        assert queue_alias_payload["items"][0]["queue_item_id"] == queue_item.queue_item_id
+        assert any(
+            span.name == "agentic_mesh.status_dashboard.read"
+            for span in sink.spans
+        )
+        assert any(
+            log.get("event_type") == "status_dashboard_read"
+            for log in sink.logs
+        )
+        telemetry_rendered = json.dumps(
+            {
+                "spans": [span.attributes for span in sink.spans],
+                "logs": sink.logs,
+            }
+        )
+        for forbidden in [
+            "activity/raw-123",
+            "raw-user-id",
+            "teams.example",
+            "raw_refs",
+            str(state_root),
+        ]:
+            assert forbidden not in telemetry_rendered
+    finally:
+        telemetry.set_test_sink(None)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_controller_status_dashboard_isolates_corrupt_queue_item(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    corrupt_path = (
+        state_root
+        / "projects"
+        / project_id
+        / "work_queue"
+        / "items"
+        / "queue-corrupt.json"
+    )
+    corrupt_path.parent.mkdir(parents=True)
+    corrupt_path.write_text("{not-json", encoding="utf-8")
+    journal_path = state_root / "projects" / project_id / "journal" / "events.jsonl"
+    journal_path.parent.mkdir(parents=True)
+    journal_path.write_text("{not-json\n", encoding="utf-8")
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+        workspace_root=tmp_path,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request("GET", "/work-queue.json")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert payload["items"][0]["queue_item_id"] == "queue-corrupt"
+        assert payload["items"][0]["status"] == "incomplete_record"
+        assert payload["items"][0]["extraction_error"] == "JSONDecodeError"
+        rendered = json.dumps(payload)
+        assert str(corrupt_path) not in rendered
+        assert "{not-json" not in rendered
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_artifact_viewer_redirects_to_configured_renderer(
     tmp_path: Path,
 ) -> None:
@@ -342,6 +778,86 @@ def test_artifact_viewer_redirects_to_configured_renderer(
             in location
         )
         assert "path=work-items%2Fwork-queue-v0%2F20-product-definition.md" in location
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_work_item_status_json_and_html_include_current_route_after_problem(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    CurrentRouteStore(state_root, project_id).write_current(
+        CurrentRoute(
+            work_item_id="work-route-status",
+            work_item_type="slice",
+            queue_item_id="queue-route",
+            source_message_id="msg-route",
+            source_anchor_ref="source:route",
+            source_anchor_summary="QA channel",
+            correlation_id="corr-route",
+            route_id="route-123",
+            route_kind="configured_correction",
+            route_status="correction_requested",
+            source_role="qa-engineer",
+            target_role="engineering",
+            source_lifecycle_state="quality_review",
+            target_lifecycle_state="implementation",
+            message_type="sdlc.consult.implementation",
+            configured_route_id="implementation_context",
+            defect_id="DEF-QA-LIFE-001",
+            required_change="Correct the route normalizer.",
+            evidence_required="Implementation log and test output.",
+        )
+    )
+    ProblemStatusStore(state_root, project_id).write_current(
+        malformed_route_problem_status(
+            failure_class="malformed_route",
+            reason="Malformed route requires runtime recovery.",
+            role_id="qa-engineer",
+            role_instance_id="example-project.qa-engineer.1",
+            message_payload={
+                "work_item_id": "work-route-status",
+                "work_item_type": "slice",
+                "lifecycle_state": "quality_review",
+            },
+            source_message_id="msg-problem",
+            correlation_id="corr-route",
+            lifecycle_state="quality_review",
+            attempted_target_role="engineering",
+            attempted_lifecycle_state=None,
+        )
+    )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+        workspace_root=tmp_path,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+        connection.request("GET", "/work-items/work-route-status.json")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert payload["problem_status"]["failure_class"] == "malformed_route"
+        assert payload["current_route"]["route_status"] == "correction_requested"
+        assert payload["current_route"]["route_kind"] == "configured_correction"
+
+        connection.request("GET", "/work-items/work-route-status")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert body.index("Current Problem") < body.index("Current Route")
+        assert "DEF-QA-LIFE-001" in body
     finally:
         server.shutdown()
         server.server_close()

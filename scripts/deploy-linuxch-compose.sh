@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+COMPOSE_SRC="$REPO_ROOT/examples/projects/agentic-mesh-dev/deploy/compose"
+STAGE_DIR="${AGENTIC_MESH_COMPOSE_STAGE_DIR:-$HOME/agentic-mesh-compose-run}"
+
+if [ -f "$COMPOSE_SRC/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$COMPOSE_SRC/.env"
+  set +a
+fi
+
+AGENTIC_MESH_WORKSPACE_HOST_PATH="${AGENTIC_MESH_WORKSPACE_HOST_PATH:-$REPO_ROOT}"
+AGENTIC_MESH_STATUS_BASE_URL="${AGENTIC_MESH_STATUS_BASE_URL:-}"
+export AGENTIC_MESH_WORKSPACE_HOST_PATH
+export AGENTIC_MESH_STATUS_BASE_URL
+
+mkdir -p "$STAGE_DIR"
+cp "$COMPOSE_SRC/docker-compose.yml" "$STAGE_DIR/docker-compose.yml"
+cp "$COMPOSE_SRC/docker-compose.linuxch.yml" "$STAGE_DIR/docker-compose.linuxch.yml"
+
+if [ "$#" -eq 0 ]; then
+  set -- up -d
+fi
+
+exec docker compose \
+  --env-file /dev/null \
+  -f "$STAGE_DIR/docker-compose.yml" \
+  -f "$STAGE_DIR/docker-compose.linuxch.yml" \
+  "$@"

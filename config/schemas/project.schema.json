@@ -33,6 +33,9 @@
       },
       "default": {}
     },
+    "capability_defaults": {
+      "$ref": "#/$defs/capabilityProfile"
+    },
     "workspace": {
       "$ref": "#/$defs/projectWorkspace"
     },
@@ -42,6 +45,23 @@
         "$ref": "#/$defs/projectConnector"
       },
       "default": {}
+    },
+    "gateways": {
+      "type": "object",
+      "description": "Connector-neutral human-facing gateway configuration. Gateways are not role agents and cannot perform delivery work.",
+      "additionalProperties": {
+        "$ref": "#/$defs/projectGateway"
+      },
+      "default": {}
+    },
+    "notification_policy": {
+      "$ref": "#/$defs/notificationPolicy"
+    },
+    "control_plane": {
+      "$ref": "#/$defs/controlPlanePolicy"
+    },
+    "human_gate_policy": {
+      "$ref": "#/$defs/humanGatePolicy"
     },
     "document_accountabilities": {
       "type": "object",
@@ -94,6 +114,154 @@
         }
       }
     },
+    "projectGateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Human-facing intake/status gateway. Meaningful work must enter Work Queue V0 before lifecycle execution.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "no_delivery_work": { "type": "boolean", "const": true, "default": true },
+        "raw_retention_mode": {
+          "type": "string",
+          "enum": ["none", "reference_only", "support_audited"],
+          "default": "reference_only"
+        },
+        "default_owner_role": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "delivery-manager"
+        },
+        "authorization_policy": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "gateway-v0-default"
+        },
+        "teams": { "$ref": "#/$defs/gatewayTeams" }
+      },
+      "not": {
+        "anyOf": [
+          {"required": ["tenant_id"]},
+          {"required": ["team_id"]},
+          {"required": ["channel_id"]},
+          {"required": ["conversation_id"]},
+          {"required": ["activity_id"]},
+          {"required": ["user_id"]},
+          {"required": ["service_url"]},
+          {"required": ["raw_payload"]},
+          {"required": ["credential_ref"]},
+          {"required": ["secret_value"]},
+          {"required": ["access_token"]},
+          {"required": ["provider_output"]}
+        ]
+      }
+    },
+    "gatewayTeams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "connector": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "teams"
+        },
+        "dm_enabled": { "type": "boolean", "default": true },
+        "intake_channels": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+          "default": []
+        },
+        "process_role_channels_by_default": {
+          "type": "boolean",
+          "const": false,
+          "default": false
+        },
+        "fallback_surface": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "status_fallback"
+        },
+        "approvals_surface": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "approvals"
+        },
+        "bot": { "$ref": "#/$defs/gatewayBot" }
+      },
+      "required": ["bot"]
+    },
+    "gatewayBot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bot_id_ref", "secret_ref"],
+      "properties": {
+        "display_name": { "type": "string", "minLength": 1 },
+        "bot_id_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "secret_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        }
+      }
+    },
+    "humanGatePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Connector-neutral human gate visibility and optional sponsor approval policy. Use logical gate ids and routes only.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "human-gate-policy-v0",
+          "default": "human-gate-policy-v0"
+        },
+        "sponsor_approval_before_build": {
+          "type": "string",
+          "enum": ["not_required", "required_before_implementation"],
+          "default": "not_required"
+        },
+        "work_item_types": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+          "default": []
+        },
+        "gate_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "pre_implementation_sponsor_approval"
+        },
+        "response_type": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "approve_not_approve"
+        },
+        "requested_from": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "release-sponsor"
+        },
+        "channel": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "default": "approvals"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {"required": ["tenant_id"]},
+          {"required": ["team_id"]},
+          {"required": ["channel_id"]},
+          {"required": ["user_id"]},
+          {"required": ["bot_id"]},
+          {"required": ["secret_ref"]},
+          {"required": ["credential_ref"]},
+          {"required": ["mount_ref"]},
+          {"required": ["provider"]},
+          {"required": ["service_url"]},
+          {"required": ["external_url"]}
+        ]
+      }
+    },
     "projectWorkspace": {
       "type": "object",
       "additionalProperties": false,
@@ -114,6 +282,43 @@
           "additionalProperties": {
             "$ref": "#/$defs/projectRepository"
           }
+        }
+      }
+    },
+    "controlPlanePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Local/private versus remote-enabled control-plane action policy. All broad remote surfaces default disabled.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "control-plane-policy-v0",
+          "default": "control-plane-policy-v0"
+        },
+        "binding_mode": {
+          "type": "string",
+          "enum": ["local_private", "remote_enabled"],
+          "default": "local_private"
+        },
+        "api_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "mcp_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "remote_promotion_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "support_read_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "safe_external_base_url": {
+          "type": "string",
+          "pattern": "^https://[^\\\\@]+$"
         }
       }
     },
@@ -168,8 +373,109 @@
           "type": "object",
           "additionalProperties": { "type": "string" },
           "default": {}
+        },
+        "capabilities": {
+          "$ref": "#/$defs/capabilityProfile"
         }
       }
+    },
+    "capabilityProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "role-capability-profile-v0",
+          "default": "role-capability-profile-v0"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability" },
+          "default": []
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_id", "category", "requirement", "display_name"],
+      "properties": {
+        "capability_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$" },
+        "category": {
+          "type": "string",
+          "enum": ["logical_tool", "skill", "runtime_package", "mount", "external_connector", "validation_command", "worker_capability", "document_library", "compatibility_default_tool"]
+        },
+        "requirement": {
+          "type": "string",
+          "enum": ["required", "optional", "restricted", "not_applicable"]
+        },
+        "display_name": { "type": "string" },
+        "description": { "type": "string" },
+        "validation": { "$ref": "#/$defs/capabilityValidation" },
+        "affects": { "$ref": "#/$defs/capabilityAffects" },
+        "fallback": { "$ref": "#/$defs/capabilityFallback" },
+        "waiver": { "$ref": "#/$defs/capabilityWaiver" },
+        "severity": { "type": "string" },
+        "impact": { "type": "string" },
+        "next_action": { "type": "string" },
+        "action_owner": { "type": "string" }
+      }
+    },
+    "capabilityValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["command", "python_import", "logical_mount", "connector_config", "document_library", "worker_auth", "configured"]
+        },
+        "command": {
+          "oneOf": [
+            { "type": "string", "not": { "pattern": "[;&|`$<>]" } },
+            { "type": "array", "items": { "type": "string", "not": { "pattern": "[;&|`$<>]" } }, "minItems": 1, "maxItems": 4 }
+          ]
+        },
+        "target": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "freshness_seconds": { "type": "integer", "minimum": 60 },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 30 }
+      }
+    },
+    "capabilityAffects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lifecycle_states": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "work_item_types": { "type": "array", "items": { "type": "string" }, "default": [] }
+      }
+    },
+    "capabilityFallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "policy_summary", "residual_impact"],
+      "properties": {
+        "owner": { "type": "string" },
+        "policy_summary": { "type": "string" },
+        "residual_impact": { "type": "string" },
+        "review_point": { "type": "string" },
+        "allowed_scope": { "type": "string" }
+      }
+    },
+    "capabilityWaiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "reason", "residual_impact"],
+      "properties": {
+        "owner": { "type": "string" },
+        "reason": { "type": "string" },
+        "residual_impact": { "type": "string" },
+        "expires_at": { "type": "string" },
+        "review_point": { "type": "string" }
+      },
+      "anyOf": [
+        { "required": ["expires_at"] },
+        { "required": ["review_point"] }
+      ]
     },
     "projectConnector": {
       "type": "object",
@@ -275,6 +581,101 @@
         }
       }
     },
+    "notificationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Connector-neutral human notification policy. Routine lifecycle events are dashboard-only by default unless an explicit override opts in to connector posts.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "notification-policy-v0",
+          "default": "notification-policy-v0"
+        },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/notificationVisibility"
+          },
+          "default": {}
+        },
+        "surfaces": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/notificationSurface"
+          },
+          "default": {}
+        },
+        "event_overrides": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/notificationOverride"
+          },
+          "default": {}
+        },
+        "role_overrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/notificationOverride"
+            }
+          },
+          "default": {}
+        },
+        "compatibility": {
+          "$ref": "#/$defs/notificationCompatibility"
+        }
+      },
+      "default": {}
+    },
+    "notificationSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["connector", "route", "label"],
+      "properties": {
+        "connector": {
+          "type": "string"
+        },
+        "route": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "notificationOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["visibility"],
+      "properties": {
+        "visibility": {
+          "$ref": "#/$defs/notificationVisibility"
+        },
+        "preferred_surface": {
+          "type": "string"
+        }
+      }
+    },
+    "notificationCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role_channels_enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "role_channels_default_visibility": {
+          "$ref": "#/$defs/notificationVisibility"
+        }
+      },
+      "default": {}
+    },
+    "notificationVisibility": {
+      "type": "string",
+      "enum": ["notify", "dashboard_only", "suppress", "blocked_unroutable"]
+    },
     "worker": {
       "type": "object",
       "additionalProperties": false,
@@ -297,6 +698,21 @@
           "description": "Worker command sandbox mode. Adapters map this generic project intent to their own execution controls. Defaults to workspace-write when omitted.",
           "enum": ["read-only", "workspace-write", "danger-full-access"],
           "default": "workspace-write"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "description": "Absolute worker execution timeout in seconds."
+        },
+        "progress_window_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "description": "Maximum silent window before a progress-aware worker is treated as stalled."
+        },
+        "max_timeout_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "description": "Optional operator ceiling for the resolved worker timeout."
         },
         "auth": {
           "$ref": "#/$defs/authBinding"

@@ -77,6 +77,81 @@ auth_credentials:
   codex-agentic-mesh-dev-team:
     method: codex_oauth_cache
     mount_ref: codex-agentic-mesh-dev-team-home
+capability_defaults:
+  schema_version: role-capability-profile-v0
+  capabilities:
+  - capability_id: worker.codex
+    category: worker_capability
+    requirement: required
+    display_name: Codex worker adapter
+    description: Role can invoke the configured worker adapter through deployment-bound auth.
+    validation:
+      kind: worker_auth
+      freshness_seconds: 86400
+    affects:
+      lifecycle_states:
+      - business_analysis
+      - product_definition
+      - implementation
+      - quality_review
+    impact: Role startup and status publication depend on worker auth binding.
+    next_action: Repair the role worker auth binding or credential mount reference.
+    action_owner: platform-engineer
+  - capability_id: document-library.read
+    category: document_library
+    requirement: required
+    display_name: Document library read
+    description: Role can inspect canonical project documents through the configured document library.
+    validation:
+      kind: document_library
+      freshness_seconds: 86400
+    impact: Lifecycle work depends on source-linked project memory and artifacts.
+    next_action: Repair the document library configuration or workspace mount.
+    action_owner: platform-engineer
+  - capability_id: git.read
+    category: logical_tool
+    requirement: required
+    display_name: Git read
+    description: Role can inspect repository history and worktree status.
+    validation:
+      kind: command
+      command:
+      - git
+      - --version
+      freshness_seconds: 86400
+      timeout_seconds: 5
+    impact: Git-backed configuration, documentation, and evidence require repository inspection.
+    next_action: Ensure git is present in the role image or deployment profile.
+    action_owner: platform-engineer
+  - capability_id: python.runtime
+    category: runtime_package
+    requirement: required
+    display_name: Python runtime packages
+    description: Role runtime can import required Python configuration dependencies.
+    validation:
+      kind: python_import
+      target: yaml
+      freshness_seconds: 86400
+    impact: Config loading and local validation depend on runtime Python packages.
+    next_action: Ensure required Python packages are installed in the shared runtime image.
+    action_owner: platform-engineer
+  - capability_id: teams.notify
+    category: external_connector
+    requirement: optional
+    display_name: Teams connector notification
+    description: Role can use the connector-neutral Teams route when configured.
+    validation:
+      kind: connector_config
+      target: teams
+      freshness_seconds: 86400
+    impact: Missing Teams notification support reduces visibility but does not block local CLI status.
+    fallback:
+      owner: delivery-manager
+      policy_summary: Use CLI/status dashboard and work-item artifacts when Teams delivery is unavailable.
+      residual_impact: Sponsor-facing notifications may need manual relay.
+      review_point: Before release review.
+    next_action: Repair connector configuration or use dashboard-only status.
+    action_owner: platform-engineer
 connectors:
   teams:
     adapter: teams-bot-connector
@@ -189,6 +264,58 @@ connectors:
       release:
         id: 19:0abfe2b5e6a645438860c8ab22361fc1@thread.tacv2
         name: release
+gateways:
+  agentic-mesh:
+    enabled: true
+    no_delivery_work: true
+    raw_retention_mode: reference_only
+    default_owner_role: delivery-manager
+    authorization_policy: gateway-v0-default
+    teams:
+      connector: teams
+      dm_enabled: true
+      intake_channels:
+      - all-agents
+      process_role_channels_by_default: false
+      fallback_surface: status_fallback
+      approvals_surface: approvals
+      bot:
+        display_name: AM-Agentic Mesh
+        bot_id_ref: teams-bot-agentic-mesh-app-id
+        secret_ref: teams-bot-agentic-mesh-secret
+notification_policy:
+  schema_version: notification-policy-v0
+  defaults:
+    routine_lifecycle_events: dashboard_only
+    action_needed_events: notify
+    completion_events: notify
+    fallback_notices: notify
+  surfaces:
+    intake:
+      connector: teams
+      route: all-agents
+      label: all-agents intake
+    approvals:
+      connector: teams
+      route: approvals
+      label: approvals
+    status_fallback:
+      connector: teams
+      route: all-agents
+      label: project status fallback
+  event_overrides:
+    lifecycle.handoff_requested:
+      visibility: dashboard_only
+    lifecycle.consult_requested:
+      visibility: dashboard_only
+    lifecycle.review_loop_requested:
+      visibility: dashboard_only
+    human_response.requested:
+      visibility: notify
+      preferred_surface: approvals
+  compatibility:
+    role_channels_enabled: true
+    role_channels_default_visibility: dashboard_only
 roles:
   business-analyst:
     template: business-analyst
@@ -212,6 +339,18 @@ roles:
     channels:
       primary: business-analysis
       handoff_inbox: business-analysis
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.business-analysis
+        category: skill
+        requirement: required
+        display_name: Business analysis role skill
+        validation:
+          kind: configured
+        impact: Business framing depends on approved role instructions and document write paths.
+        next_action: Keep business-analysis artifacts under configured write paths.
+        action_owner: business-analyst
   product-manager:
     template: product-manager
     instances: 1
@@ -235,6 +374,18 @@ roles:
     channels:
       primary: product
       handoff_inbox: product
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.product-definition
+        category: skill
+        requirement: required
+        display_name: Product definition role skill
+        validation:
+          kind: configured
+        impact: Product scope and acceptance criteria depend on approved role instructions.
+        next_action: Keep product artifacts under configured write paths.
+        action_owner: product-manager
   ux-designer:
     template: ux-designer
     instances: 1
@@ -257,6 +408,18 @@ roles:
     channels:
       primary: ux
       handoff_inbox: ux
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.experience-design
+        category: skill
+        requirement: required
+        display_name: Experience design role skill
+        validation:
+          kind: configured
+        impact: Human interaction changes depend on UX review before downstream build.
+        next_action: Keep UX artifacts under configured write paths.
+        action_owner: ux-designer
   enterprise-architect:
     template: enterprise-architect
     instances: 1
@@ -280,6 +443,18 @@ roles:
     channels:
       primary: enterprise-architecture
       handoff_inbox: enterprise-architecture
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.enterprise-alignment
+        category: skill
+        requirement: required
+        display_name: Enterprise alignment role skill
+        validation:
+          kind: configured
+        impact: Enterprise fit depends on architecture governance artifacts.
+        next_action: Keep enterprise architecture evidence under configured write paths.
+        action_owner: enterprise-architect
   solution-architect:
     template: solution-architect
     instances: 1
@@ -301,6 +476,18 @@ roles:
     channels:
       primary: solution-architecture
       handoff_inbox: solution-architecture
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.solution-design
+        category: skill
+        requirement: required
+        display_name: Solution design role skill
+        validation:
+          kind: configured
+        impact: Implementation-ready design depends on approved architecture artifacts.
+        next_action: Keep solution design evidence under configured write paths.
+        action_owner: solution-architect
   security-architect:
     template: security-architect
     instances: 1
@@ -324,6 +511,18 @@ roles:
     channels:
       primary: security
       handoff_inbox: security
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.security-review
+        category: skill
+        requirement: required
+        display_name: Security review role skill
+        validation:
+          kind: configured
+        impact: Security-sensitive work depends on approved controls and residual-risk evidence.
+        next_action: Keep security artifacts under configured write paths.
+        action_owner: security-architect
   platform-engineer:
     template: platform-engineer
     instances: 1
@@ -349,6 +548,18 @@ roles:
     channels:
       primary: platform
       handoff_inbox: platform
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.platform-readiness
+        category: skill
+        requirement: required
+        display_name: Platform readiness role skill
+        validation:
+          kind: configured
+        impact: Runtime state, deployment, and telemetry changes depend on platform readiness evidence.
+        next_action: Keep platform artifacts under configured write paths.
+        action_owner: platform-engineer
   engineering:
     template: engineering
     instances: 2
@@ -372,6 +583,18 @@ roles:
     channels:
       primary: engineering
       handoff_inbox: engineering
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.implementation
+        category: skill
+        requirement: required
+        display_name: Implementation role skill
+        validation:
+          kind: configured
+        impact: Build work depends on approved implementation and QA planning.
+        next_action: Keep code, tests, and implementation evidence under configured write paths.
+        action_owner: engineering
   qa-engineer:
     template: qa-engineer
     instances: 1
@@ -393,6 +616,18 @@ roles:
     channels:
       primary: qa
       handoff_inbox: qa
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.quality-planning
+        category: skill
+        requirement: required
+        display_name: Quality planning and review role skill
+        validation:
+          kind: configured
+        impact: Acceptance evidence depends on QA-owned scenarios and review artifacts.
+        next_action: Keep QA artifacts and tests under configured write paths.
+        action_owner: qa-engineer
   technical-writer:
     template: technical-writer
     instances: 1
@@ -415,6 +650,18 @@ roles:
     channels:
       primary: technical-writing
       handoff_inbox: technical-writing
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.documentation-readiness
+        category: skill
+        requirement: required
+        display_name: Documentation readiness role skill
+        validation:
+          kind: configured
+        impact: Release documentation depends on technical writing review.
+        next_action: Keep documentation updates under configured write paths.
+        action_owner: technical-writer
   delivery-manager:
     template: delivery-manager
     instances: 1
@@ -436,6 +683,18 @@ roles:
     channels:
       primary: delivery
       handoff_inbox: delivery
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.delivery-readiness
+        category: skill
+        requirement: required
+        display_name: Delivery readiness role skill
+        validation:
+          kind: configured
+        impact: Cross-role readiness depends on delivery coordination without specialist decision ownership.
+        next_action: Keep delivery status tied to work item ids.
+        action_owner: delivery-manager
   research-analyst:
     template: research-analyst
     instances: 1
@@ -457,6 +716,18 @@ roles:
     channels:
       primary: research
       handoff_inbox: research
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.research
+        category: skill
+        requirement: optional
+        display_name: Research role skill
+        validation:
+          kind: configured
+        impact: Future-stock-flow research can proceed when explicitly routed.
+        next_action: Cite sources in research artifacts when this role is used.
+        action_owner: research-analyst
   release-manager:
     template: release-manager
     instances: 1
@@ -477,6 +748,18 @@ roles:
     channels:
       primary: release
       handoff_inbox: release
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.release-review
+        category: skill
+        requirement: required
+        display_name: Release review role skill
+        validation:
+          kind: configured
+        impact: Release closure depends on linked product, architecture, implementation, QA, and residual-risk evidence.
+        next_action: Keep release records under configured write paths.
+        action_owner: release-manager
 document_accountabilities:
   docs/business/briefs.md:
     owner_role: business-analyst

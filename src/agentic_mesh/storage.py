@@ -38,6 +38,22 @@ class FileMessageStore:
             attributes=attrs,
         ) as trace_context:
             message = replace(message, trace_context=trace_context)
+            duplicate = self._find_active_duplicate(message)
+            if duplicate is not None:
+                self.journal.append(
+                    "message_duplicate_suppressed",
+                    project_id=self.project_id,
+                    role_id=message.role_id,
+                    message_id=message.message_id,
+                    duplicate_of_message_id=duplicate.message_id,
+                    message_type=message.type,
+                    work_item_id=message.payload.get("work_item_id"),
+                    work_item_type=message.payload.get("work_item_type"),
+                    lifecycle_state=message.payload.get("lifecycle_state"),
+                    correlation_id=message.correlation_id,
+                    source=message.source,
+                )
+                return duplicate
             pending = self._pending_dir(message.role_id)
             pending.mkdir(parents=True, exist_ok=True)
             path = pending / f"{message.created_at.replace(':', '')}-{message.message_id}.json"
@@ -146,6 +162,23 @@ class FileMessageStore:
         claimed.mkdir(parents=True, exist_ok=True)
         for path in sorted(pending.glob("*.json")):
             original = self._read_message(path)
+            active_conflict = self._find_active_claim_conflict(original)
+            if active_conflict is not None:
+                self.journal.append(
+                    "work_claim_deferred",
+                    project_id=self.project_id,
+                    role_id=role_id,
+                    role_instance_id=instance_id,
+                    message_id=original.message_id,
+                    conflict_message_id=active_conflict.message_id,
+                    conflict_claimed_by=active_conflict.claimed_by,
+                    work_item_id=original.payload.get("work_item_id"),
+                    work_item_type=original.payload.get("work_item_type"),
+                    lifecycle_state=original.payload.get("lifecycle_state"),
+                    correlation_id=original.correlation_id,
+                    reason="same_role_work_item_lifecycle_already_claimed",
+                )
+                continue
             wait_seconds = telemetry.elapsed_seconds(original.created_at)
             wait_attrs = telemetry.span_attributes(
                 project_id=self.project_id,
@@ -198,7 +231,14 @@ class FileMessageStore:
             return message
         return None
 
-    def complete(self, message: Message, status: str) -> None:
+    def complete(
+        self,
+        message: Message,
+        status: str,
+        *,
+        result_message: str | None = None,
+        result_summary: str | None = None,
+    ) -> None:
         if not message.claimed_by:
             raise ValueError("Cannot complete an unclaimed message")
         attrs = telemetry.span_attributes(
@@ -234,6 +274,9 @@ class FileMessageStore:
                 lifecycle_state=message.payload.get("lifecycle_state"),
                 correlation_id=message.correlation_id,
                 status=status,
+                result_message=result_message,
+                result_summary=result_summary
+                or (result_message[:500] if result_message else None),
             )
 
     def pending_count(self, role_id: str) -> int:
@@ -333,6 +376,64 @@ class FileMessageStore:
         matches = list(claimed_dir.glob(f"*-{message.message_id}.json"))
         return matches[0] if matches else None
 
+    def _find_active_duplicate(self, message: Message) -> Message | None:
+        key = self._dedupe_key(message)
+        if key is None:
+            return None
+        active_paths = list(self._pending_dir(message.role_id).glob("*.json"))
+        claimed_parent = self.root / message.role_id / "claimed"
+        if claimed_parent.exists():
+            active_paths.extend(claimed_parent.glob("*/*.json"))
+        for path in sorted(active_paths):
+            existing = self._read_message(path)
+            if existing.message_id == message.message_id:
+                continue
+            if self._dedupe_key(existing) == key:
+                return existing
+        return None
+
+    def _find_active_claim_conflict(self, message: Message) -> Message | None:
+        key = self._claim_conflict_key(message)
+        if key is None:
+            return None
+        claimed_parent = self.root / message.role_id / "claimed"
+        if not claimed_parent.exists():
+            return None
+        for path in sorted(claimed_parent.glob("*/*.json")):
+            existing = self._read_message(path)
+            if existing.message_id == message.message_id:
+                continue
+            if self._claim_conflict_key(existing) == key:
+                return existing
+        return None
+
+    @staticmethod
+    def _dedupe_key(message: Message) -> tuple[str, str, str, str, str] | None:
+        work_item_id = message.payload.get("work_item_id")
+        lifecycle_state = message.payload.get("lifecycle_state")
+        if not work_item_id or not lifecycle_state:
+            return None
+        return (
+            message.role_id,
+            message.type,
+            str(work_item_id),
+            str(lifecycle_state),
+            _stable_payload_fingerprint(message.payload),
+        )
+
+    @staticmethod
+    def _claim_conflict_key(message: Message) -> tuple[str, str, str, str] | None:
+        work_item_id = message.payload.get("work_item_id")
+        lifecycle_state = message.payload.get("lifecycle_state")
+        if not work_item_id or not lifecycle_state:
+            return None
+        return (
+            message.role_id,
+            message.type,
+            str(work_item_id),
+            str(lifecycle_state),
+        )
+
     @staticmethod
     def _write_message(path: Path, message: Message) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -354,6 +455,10 @@ class FileMessageStore:
             return datetime.fromisoformat(value) < datetime.fromisoformat(threshold)
         except ValueError:
             return value < threshold
+
+
+def _stable_payload_fingerprint(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 class FileConnectorOutbox:

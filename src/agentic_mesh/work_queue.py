@@ -20,6 +20,7 @@ from agentic_mesh.storage import FileMessageStore
 
 
 QUEUE_SCHEMA_VERSION = "work-queue-v0"
+QUEUE_NOTIFICATION_SCHEMA_VERSION = "queue-notification-summary-v0"
 
 STATUS_CAPTURED = "captured"
 STATUS_TRIAGING = "triaging"
@@ -29,6 +30,11 @@ STATUS_READY_FOR_PROMOTION = "ready_for_promotion"
 STATUS_PROMOTED = "promoted"
 STATUS_CLOSED = "closed"
 STATUS_CANCELED = "canceled"
+
+SUCCESSFUL_WORK_COMPLETION_STATUSES = {
+    "completed",
+    "completed_after_human_response",
+}
 
 QUEUE_STATUSES = {
     STATUS_CAPTURED,
@@ -77,6 +83,12 @@ READINESS_REQUIRED_FIELDS = {
     "constraints",
     "priority_or_risk_signal",
     "recommended_work_item_type",
+}
+
+INTAKE_PROMOTION_STATUSES = {
+    STATUS_CAPTURED,
+    STATUS_TRIAGING,
+    STATUS_NEEDS_CLARIFICATION,
 }
 
 
@@ -214,6 +226,18 @@ class QueueNotification:
     status: str
     reason: str | None
     recorded_at: str
+    event_kind: str | None = None
+    attempt_id: str | None = None
+    dedupe_ref: str | None = None
+    route_kind: str | None = None
+    selected_surface_key: str | None = None
+    route_label: str | None = None
+    fallback_reason: str | None = None
+    failure_class: str | None = None
+    retry_count: int = 0
+    dead_lettered: bool = False
+    correlation_id: str | None = None
+    schema_version: str = QUEUE_NOTIFICATION_SCHEMA_VERSION
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "QueueNotification":
@@ -221,7 +245,64 @@ class QueueNotification:
             status=str(data["status"]),
             reason=str(data["reason"]) if data.get("reason") is not None else None,
             recorded_at=str(data["recorded_at"]),
+            event_kind=(
+                str(data["event_kind"]) if data.get("event_kind") is not None else None
+            ),
+            attempt_id=(
+                str(data["attempt_id"]) if data.get("attempt_id") is not None else None
+            ),
+            dedupe_ref=(
+                str(data["dedupe_ref"]) if data.get("dedupe_ref") is not None else None
+            ),
+            route_kind=(
+                str(data["route_kind"]) if data.get("route_kind") is not None else None
+            ),
+            selected_surface_key=(
+                str(data["selected_surface_key"])
+                if data.get("selected_surface_key") is not None
+                else None
+            ),
+            route_label=(
+                str(data["route_label"]) if data.get("route_label") is not None else None
+            ),
+            fallback_reason=(
+                str(data["fallback_reason"])
+                if data.get("fallback_reason") is not None
+                else None
+            ),
+            failure_class=(
+                str(data["failure_class"]) if data.get("failure_class") is not None else None
+            ),
+            retry_count=int(data.get("retry_count", 0)),
+            dead_lettered=bool(data.get("dead_lettered", False)),
+            correlation_id=(
+                str(data["correlation_id"])
+                if data.get("correlation_id") is not None
+                else None
+            ),
+            schema_version=str(
+                data.get("schema_version") or QUEUE_NOTIFICATION_SCHEMA_VERSION
+            ),
         )
+
+    def to_safe_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status,
+            "reason": self.reason,
+            "recorded_at": self.recorded_at,
+            "event_kind": self.event_kind,
+            "attempt_id": self.attempt_id,
+            "dedupe_ref": self.dedupe_ref,
+            "route_kind": self.route_kind,
+            "selected_surface_key": self.selected_surface_key,
+            "route_label": self.route_label,
+            "fallback_reason": self.fallback_reason,
+            "failure_class": self.failure_class,
+            "retry_count": self.retry_count,
+            "dead_lettered": self.dead_lettered,
+            "correlation_id": self.correlation_id,
+        }
 
 
 @dataclass(frozen=True)
@@ -261,9 +342,14 @@ class QueueItem:
             ),
             "updated_at": self.updated_at,
             "blocker_reason": self.blocker_reason,
+            "notification": (
+                self.notification.to_safe_dict() if self.notification else None
+            ),
             "notification_failure_reason": (
-                self.notification.reason
-                if self.notification and self.notification.status == "failed"
+                self.notification.reason or self.notification.failure_class
+                if self.notification
+                and self.notification.status
+                in {"failed", "dead_lettered", "blocked_unroutable"}
                 else None
             ),
             "correlation_id": self.correlation_id,
@@ -528,6 +614,16 @@ class FileWorkQueueStore:
         *,
         status: str,
         reason: str | None,
+        event_kind: str | None = None,
+        attempt_id: str | None = None,
+        dedupe_ref: str | None = None,
+        route_kind: str | None = None,
+        selected_surface_key: str | None = None,
+        route_label: str | None = None,
+        fallback_reason: str | None = None,
+        failure_class: str | None = None,
+        retry_count: int = 0,
+        dead_lettered: bool = False,
         correlation_id: str | None = None,
     ) -> QueueItem:
         with self._locked(queue_item_id):
@@ -536,6 +632,17 @@ class FileWorkQueueStore:
                 status=status,
                 reason=reason,
                 recorded_at=utc_now_iso(),
+                event_kind=event_kind,
+                attempt_id=attempt_id,
+                dedupe_ref=dedupe_ref,
+                route_kind=route_kind,
+                selected_surface_key=selected_surface_key,
+                route_label=route_label,
+                fallback_reason=fallback_reason,
+                failure_class=failure_class,
+                retry_count=retry_count,
+                dead_lettered=dead_lettered,
+                correlation_id=correlation_id or item.correlation_id,
             )
             updated = replace(
                 item,
@@ -552,6 +659,17 @@ class FileWorkQueueStore:
             event_type,
             updated,
             reason=reason,
+            notification_status=status,
+            notification_event_kind=event_kind,
+            notification_attempt_id=attempt_id,
+            notification_dedupe_ref=dedupe_ref,
+            notification_route_kind=route_kind,
+            notification_selected_surface_key=selected_surface_key,
+            notification_route_label=route_label,
+            notification_fallback_reason=fallback_reason,
+            notification_failure_class=failure_class,
+            notification_retry_count=retry_count,
+            notification_dead_lettered=dead_lettered,
             correlation_id=correlation_id or updated.correlation_id,
         )
         return updated
@@ -573,8 +691,20 @@ class FileWorkQueueStore:
             item = self._require_item(queue_item_id)
             if item.promotion is not None:
                 return item.promotion
+            promotion_kind = "delivery"
             if item.status != STATUS_READY_FOR_PROMOTION:
-                raise WorkQueueError("queue item is not ready for promotion")
+                intake_role = _intake_role_for(item)
+                if item.status not in INTAKE_PROMOTION_STATUSES:
+                    raise WorkQueueError(
+                        "queue item is not ready for delivery promotion "
+                        f"and cannot be routed for intake from `{item.status}`"
+                    )
+                if target_role != intake_role:
+                    raise WorkQueueError(
+                        "queue item is not ready for delivery promotion; "
+                        f"route it to `{intake_role}` for intake/readiness"
+                    )
+                promotion_kind = "intake"
             key = idempotency_key or f"{item.queue_item_id}:{item.correlation_id}"
             promotion_index = self.promotion_index_dir / f"{self.safe_index_key(key)}.json"
             if promotion_index.exists():
@@ -616,6 +746,11 @@ class FileWorkQueueStore:
                     "lifecycle_state": lifecycle_state,
                     "queue_item_id": item.queue_item_id,
                     "source_anchor": item.source_anchor.redacted_summary(),
+                    "queue_promotion_kind": promotion_kind,
+                    "queue_status_at_promotion": item.status,
+                    "readiness": (
+                        asdict(item.readiness) if item.readiness is not None else None
+                    ),
                 },
                 source=f"work-queue:{item.queue_item_id}",
                 correlation_id=item.correlation_id,
@@ -650,6 +785,47 @@ class FileWorkQueueStore:
         )
         self._record_depth_gauges()
         return promotion
+
+    def reconcile_promoted_closures(
+        self,
+        *,
+        message_store: FileMessageStore,
+        actor_role: str = "work-queue-reconciler",
+    ) -> list[QueueItem]:
+        closed: list[QueueItem] = []
+        for item in self.list_items():
+            if item.status != STATUS_PROMOTED or item.promotion is None:
+                continue
+            work_item_id = item.promotion.work_item_id
+            if _has_active_work_message(message_store, work_item_id):
+                continue
+            completion = _latest_work_completion(self.journal, work_item_id)
+            if completion is None:
+                continue
+            if completion.get("status") not in SUCCESSFUL_WORK_COMPLETION_STATUSES:
+                continue
+            closed.append(
+                self.transition(
+                    item.queue_item_id,
+                    STATUS_CLOSED,
+                    actor_role=actor_role,
+                    reason="Promoted lifecycle work completed with no active messages.",
+                    correlation_id=item.correlation_id,
+                )
+            )
+            self.journal.append(
+                "queue_item_closed_by_reconciliation",
+                project_id=self.project_id,
+                queue_item_id=item.queue_item_id,
+                work_item_id=work_item_id,
+                work_item_type=item.promotion.work_item_type,
+                completion_status=completion.get("status"),
+                completion_event_timestamp=completion.get("timestamp"),
+                actor_role=actor_role,
+                correlation_id=item.correlation_id,
+                schema_version=item.schema_version,
+            )
+        return closed
 
     def support_read(
         self,
@@ -888,6 +1064,48 @@ def _truncate(value: str, max_length: int) -> str:
     if len(value) <= max_length:
         return value
     return f"{value[: max_length - 3].rstrip()}..."
+
+
+def _intake_role_for(item: QueueItem) -> str:
+    work_type = item.recommended_work_item_type
+    if work_type == "spike":
+        return "business-analyst"
+    if work_type in {"slice", "feature"}:
+        return "product-manager"
+    return item.owner_role
+
+
+def _has_active_work_message(message_store: FileMessageStore, work_item_id: str) -> bool:
+    for role_dir in sorted(message_store.root.iterdir() if message_store.root.exists() else []):
+        if not role_dir.is_dir():
+            continue
+        pending = role_dir / "pending"
+        if pending.exists():
+            for path in pending.glob("*.json"):
+                message = message_store._read_message(path)
+                if message.payload.get("work_item_id") == work_item_id:
+                    return True
+        claimed = role_dir / "claimed"
+        if claimed.exists():
+            for path in claimed.glob("*/*.json"):
+                message = message_store._read_message(path)
+                if message.payload.get("work_item_id") == work_item_id:
+                    return True
+    return False
+
+
+def _latest_work_completion(
+    journal: EventJournal,
+    work_item_id: str,
+) -> dict[str, Any] | None:
+    latest: dict[str, Any] | None = None
+    for event in journal.read_all():
+        if event.get("event_type") != "work_completed":
+            continue
+        if event.get("work_item_id") != work_item_id:
+            continue
+        latest = event
+    return latest
 
 
 def source_anchor_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:

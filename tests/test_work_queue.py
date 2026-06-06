@@ -151,6 +151,138 @@ def test_readiness_authority_and_promotion_are_idempotent(tmp_path: Path) -> Non
     assert message.payload["source_anchor"]["source_anchor_ref"].startswith("source:")
 
 
+def test_promoted_queue_item_closes_when_lifecycle_work_completed(
+    tmp_path: Path,
+) -> None:
+    store, journal = _store(tmp_path)
+    message_store = FileMessageStore(tmp_path / "state", "agentic-mesh-dev", journal)
+    item = _capture(store)
+    evidence = {
+        "requester": "Nich",
+        "outcome": "Visible project queue",
+        "scope": "Local V0",
+        "constraints": "Connector neutral",
+        "priority_or_risk_signal": "High",
+        "recommended_work_item_type": "slice",
+    }
+    store.mark_readiness(
+        item.queue_item_id,
+        actor_role="product-manager",
+        evidence=evidence,
+    )
+    store.promote(
+        item.queue_item_id,
+        actor_role="promotion-service",
+        message_store=message_store,
+        target_role="business-analyst",
+        lifecycle_state="business_analysis",
+        work_item_id="work-queue-v0",
+        work_item_type="slice",
+    )
+    claimed = message_store.claim_next("business-analyst", "test")
+    assert claimed is not None
+    message_store.complete(claimed, "completed")
+
+    closed = store.reconcile_promoted_closures(message_store=message_store)
+
+    assert [item.queue_item_id for item in closed] == [item.queue_item_id]
+    assert store.get(item.queue_item_id).status == "closed"
+    assert [event["event_type"] for event in journal.read_all()][-2:] == [
+        "queue_item_closed",
+        "queue_item_closed_by_reconciliation",
+    ]
+
+
+def test_promoted_queue_item_stays_active_when_lifecycle_work_is_pending(
+    tmp_path: Path,
+) -> None:
+    store, journal = _store(tmp_path)
+    message_store = FileMessageStore(tmp_path / "state", "agentic-mesh-dev", journal)
+    item = _capture(store)
+    evidence = {
+        "requester": "Nich",
+        "outcome": "Visible project queue",
+        "scope": "Local V0",
+        "constraints": "Connector neutral",
+        "priority_or_risk_signal": "High",
+        "recommended_work_item_type": "slice",
+    }
+    store.mark_readiness(
+        item.queue_item_id,
+        actor_role="product-manager",
+        evidence=evidence,
+    )
+    store.promote(
+        item.queue_item_id,
+        actor_role="promotion-service",
+        message_store=message_store,
+        target_role="business-analyst",
+        lifecycle_state="business_analysis",
+        work_item_id="work-queue-v0",
+        work_item_type="slice",
+    )
+    journal.append(
+        "work_completed",
+        project_id="agentic-mesh-dev",
+        work_item_id="work-queue-v0",
+        work_item_type="slice",
+        role_id="business-analyst",
+        lifecycle_state="business_analysis",
+        message_id="msg-old",
+        status="completed",
+    )
+
+    closed = store.reconcile_promoted_closures(message_store=message_store)
+
+    assert closed == []
+    assert store.get(item.queue_item_id).status == "promoted"
+
+
+def test_captured_spike_can_be_promoted_to_intake_role_without_readiness(
+    tmp_path: Path,
+) -> None:
+    store, journal = _store(tmp_path)
+    message_store = FileMessageStore(tmp_path / "state", "agentic-mesh-dev", journal)
+    item = store.capture(
+        title="Operational Recovery Spike",
+        summary="Investigate smart retry and blocker observability.",
+        owner_role="product-manager",
+        source_anchor=_anchor(),
+        recommended_work_item_type="spike",
+        idempotency_key="teams:activity/spike",
+    )
+
+    with pytest.raises(WorkQueueError) as wrong_role:
+        store.promote(
+            item.queue_item_id,
+            actor_role="promotion-service",
+            message_store=message_store,
+            target_role="product-manager",
+            lifecycle_state="product_planning",
+            work_item_id="work-wrong-role",
+            work_item_type="spike",
+        )
+    assert "business-analyst" in str(wrong_role.value)
+
+    promotion = store.promote(
+        item.queue_item_id,
+        actor_role="promotion-service",
+        message_store=message_store,
+        target_role="business-analyst",
+        lifecycle_state="business_analysis",
+        work_item_id="work-operational-recovery-spike",
+        work_item_type="spike",
+        message_type="sdlc.intake",
+    )
+
+    assert promotion.target_role == "business-analyst"
+    assert store.get(item.queue_item_id).status == "promoted"
+    message = message_store.claim_next("business-analyst", "test")
+    assert message is not None
+    assert message.payload["queue_promotion_kind"] == "intake"
+    assert message.payload["queue_status_at_promotion"] == "captured"
+
+
 def test_support_mode_and_purge_are_audited_without_raw_paths(tmp_path: Path) -> None:
     store, journal = _store(tmp_path)
     item = store.capture(

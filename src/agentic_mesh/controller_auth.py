@@ -24,10 +24,27 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from agentic_mesh import telemetry
+from agentic_mesh import current_agent_status
+from agentic_mesh import status_dashboard
+from agentic_mesh.activation_evidence import ActivationReadError
+from agentic_mesh.activation_evidence import FileActivationEvidenceStore
+from agentic_mesh.human_gates import derive_human_gate_summary
 from agentic_mesh.config import load_mesh_config
+from agentic_mesh.journal import EventJournal
 from agentic_mesh.models import AuthCredential
 from agentic_mesh.models import AuthMethod
 from agentic_mesh.models import MeshConfig
+from agentic_mesh.models import new_id
+from agentic_mesh.problem_status import ProblemStatusStore
+from agentic_mesh.route_status import CurrentRouteStore
+from agentic_mesh.storage import FileMessageStore
+from agentic_mesh.work_item_recovery import DuplicateActiveWorkGuard
+from agentic_mesh.work_item_recovery import FileRecoveryStatusStore
+from agentic_mesh.work_item_recovery import RecoveryActionRequest
+from agentic_mesh.work_item_recovery import RecoveryActionService
+from agentic_mesh.worker_runs import FileWorkerRunStore
+from agentic_mesh.worker_runs import WorkerRun
+from agentic_mesh.worker_runs import WorkerRunReadError
 
 
 @dataclass
@@ -70,9 +87,15 @@ class ControllerAuthService:
         self.mount_root = state_root / "worker_mounts"
         self._sessions: dict[str, OAuthLoginSession] = {}
         self._lock = Lock()
+        self._mesh_config_cache: MeshConfig | None = None
 
     def load_config(self) -> MeshConfig:
-        return load_mesh_config(self.config_root, project_file=self.project_file)
+        if self._mesh_config_cache is None:
+            self._mesh_config_cache = load_mesh_config(
+                self.config_root,
+                project_file=self.project_file,
+            )
+        return self._mesh_config_cache
 
     def credential_statuses(self) -> list[dict[str, Any]]:
         mesh_config = self.load_config()
@@ -346,6 +369,44 @@ class ControllerAuthService:
             pending,
             claim_lease_seconds=claim_lease_seconds,
         )
+        problem_status = ProblemStatusStore(
+            self.state_root,
+            project_id,
+        ).read_current(work_item_id)
+        current_route = CurrentRouteStore(
+            self.state_root,
+            project_id,
+        ).read_current(work_item_id)
+        activation_record = FileActivationEvidenceStore(
+            self.state_root,
+            project_id,
+            create_dirs=False,
+        ).read_current_with_error(work_item_id)
+        if isinstance(activation_record, ActivationReadError):
+            activation_evidence = activation_record.to_summary()
+            activation_summary = activation_record.to_summary()
+        elif activation_record is not None:
+            activation_evidence = activation_record.to_dict()
+            activation_summary = activation_record.to_summary()
+        else:
+            activation_evidence = None
+            activation_summary = None
+        worker_runs = self._worker_runs(project_id, work_item_id)
+        if problem_status:
+            current = {
+                "status": problem_status.get("status"),
+                "role_id": problem_status.get("affected_role"),
+                "role_instance_id": problem_status.get("role_instance_id"),
+                "lifecycle_state": problem_status.get("lifecycle_state"),
+                "message_id": problem_status.get("source_message_id"),
+                "since": problem_status.get("occurred_at"),
+                "problem_kind": problem_status.get("problem_kind"),
+                "failure_class": problem_status.get("failure_class"),
+                "reason_summary": problem_status.get("reason_summary"),
+                "next_action": problem_status.get("next_action"),
+                "action_owner": problem_status.get("action_owner"),
+                "retryable": problem_status.get("retryable"),
+            }
         artifact_paths = sorted(
             {
                 str(event.get("path"))
@@ -359,9 +420,18 @@ class ControllerAuthService:
                 if path:
                     artifact_paths.append(str(path))
         artifacts = sorted(set(artifact_paths))
+        verification_by_path = {
+            str(record.get("path")): record
+            for record in (problem_status or {}).get("artifact_verification", [])
+            if record.get("path")
+        }
         artifact_records = [
             {
                 "path": artifact_path,
+                **_artifact_label_record(
+                    artifact_path,
+                    verification_by_path.get(artifact_path),
+                ),
                 "exists": self.resolve_artifact_path(artifact_path) is not None,
             }
             for artifact_path in artifacts
@@ -381,11 +451,61 @@ class ControllerAuthService:
             queue_entries,
             key=lambda entry: str(entry.get("created_at") or ""),
         )
+        title, summary = self._work_item_metadata(work_item_id, queue_entries)
+        human_gate_summary = derive_human_gate_summary(
+            mesh_config=mesh_config,
+            state_root=self.state_root,
+            work_item_id=work_item_id,
+            current=current,
+            problem_status=problem_status,
+        )
+        recovery_status = FileRecoveryStatusStore(
+            self.state_root,
+            project_id,
+            create_dirs=False,
+        ).get_current(work_item_id)
+        recovery_status_payload = (
+            recovery_status.to_dict() if recovery_status is not None else None
+        )
+        live_human_gate_active = (
+            current.get("status") == "waiting_for_human_response"
+            and human_gate_summary.get("status")
+            in {"waiting_for_response", "pending"}
+        )
+        notification_state = self._notification_state(events)
+        if live_human_gate_active:
+            # Historical recovery and failed problem-notification records can
+            # outlive the runtime issue they described. A live human gate is the
+            # current unblock path, so keep old evidence in the timeline but do
+            # not present it as the active status problem.
+            recovery_status_payload = None
+            notification_state = {
+                "status": "superseded_by_human_gate",
+                "updated_at": human_gate_summary.get("requested_at"),
+            }
+        unblock_guidance = self._work_item_unblock_guidance(
+            work_item_id=work_item_id,
+            current=current,
+            human_gate_summary=human_gate_summary,
+            problem_status=problem_status,
+            recovery_status=recovery_status_payload,
+        )
         return {
             "project_id": project_id,
             "work_item_id": work_item_id,
+            "title": title,
+            "summary": summary,
             "status": current["status"],
             "current": current,
+            "problem_status": problem_status,
+            "activation_evidence": activation_evidence,
+            "activation_summary": activation_summary,
+            "worker_runs": worker_runs,
+            "human_gate_summary": human_gate_summary,
+            "recovery_status": recovery_status_payload,
+            "unblock_guidance": unblock_guidance,
+            "current_route": current_route,
+            "notification_state": notification_state,
             "counts": {
                 "events": len(events),
                 "pending": len(pending),
@@ -408,6 +528,400 @@ class ControllerAuthService:
             "teams_messages": teams_messages,
             "timeline": events,
         }
+
+    def _work_item_unblock_guidance(
+        self,
+        *,
+        work_item_id: str,
+        current: dict[str, Any],
+        human_gate_summary: dict[str, Any],
+        problem_status: dict[str, Any] | None,
+        recovery_status: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        response_request_id = (
+            human_gate_summary.get("response_request_id")
+            or human_gate_summary.get("approval_request_id")
+        )
+        current_gate = human_gate_summary.get("current_human_gate") or {}
+        lifecycle_state = str(
+            current_gate.get("lifecycle_state")
+            or current.get("lifecycle_state")
+            or ""
+        )
+        gate_id = str(current_gate.get("gate_id") or "")
+        revision = int((recovery_status or {}).get("revision") or 0)
+        actor = "sponsor"
+        if response_request_id and lifecycle_state and gate_id:
+            return {
+                "state": "live_human_response_required",
+                "label": "Waiting for your response",
+                "summary": (
+                    "This work item has an active human gate. Respond from the "
+                    "Teams approval card if available, or record the response "
+                    "through the CLI command below."
+                ),
+                "can_user_answer_now": True,
+                "action_owner": "sponsor",
+                "available_actions": [
+                    {
+                        "label": "Approve through CLI",
+                        "action": "record_human_response",
+                        "command": (
+                            "python -m agentic_mesh.cli record-human-response "
+                            f"--work-item-id {work_item_id} "
+                            f"--lifecycle-state {lifecycle_state} "
+                            f"--gate-id {gate_id} "
+                            f"--response-request-id {response_request_id} "
+                            "--responder sponsor --value approve"
+                        ),
+                    },
+                    {
+                        "label": "Reject through CLI",
+                        "action": "record_human_response",
+                        "command": (
+                            "python -m agentic_mesh.cli record-human-response "
+                            f"--work-item-id {work_item_id} "
+                            f"--lifecycle-state {lifecycle_state} "
+                            f"--gate-id {gate_id} "
+                            f"--response-request-id {response_request_id} "
+                            "--responder sponsor --value reject"
+                        ),
+                    },
+                ],
+            }
+
+        recovery_state = str((recovery_status or {}).get("recovery_state") or "")
+        recoverability = str(
+            (recovery_status or {}).get("recoverability_class") or ""
+        )
+        problem_status_value = str((problem_status or {}).get("status") or "")
+        problem_summary = str(
+            (problem_status or {}).get("reason_summary")
+            or (problem_status or {}).get("reason")
+            or "No detailed reason captured."
+        )
+        if recovery_state == "runtime_fix_required" or recoverability == "fix_runtime_first":
+            return {
+                "state": "operator_recovery_required",
+                "label": "Runtime fix required before retry",
+                "summary": (
+                    "This is not waiting for sponsor input. The runtime or "
+                    f"worker failed and must be repaired first. Last reason: {problem_summary}"
+                ),
+                "can_user_answer_now": False,
+                "action_owner": "runtime/operator",
+                "available_actions": [
+                    {
+                        "label": "Mark repaired and recover",
+                        "action": "recover",
+                        "command": (
+                            "python -m agentic_mesh.cli work-item recovery recover "
+                            f"--work-item-id {work_item_id} "
+                            f"--expected-revision {revision} "
+                            "--actor operator "
+                            "--reason \"Runtime repair confirmed\" "
+                            f"--idempotency-key recover-{work_item_id}-{revision} "
+                            "--repair-confirmed"
+                        ),
+                    }
+                ],
+            }
+
+        if (
+            recovery_state == "sponsor_decision_required"
+            or problem_status_value == "blocked"
+        ):
+            return {
+                "state": "historical_blocker_unanswerable",
+                "label": "Historical blocker has no live response request",
+                "summary": (
+                    "This item was backfilled as needing a sponsor decision, "
+                    "but no active human-gate request or concrete question was "
+                    "preserved. It cannot be answered in-place; retry it if it "
+                    "is still useful, or supersede it with a clearer work item."
+                ),
+                "can_user_answer_now": False,
+                "action_owner": str(
+                    (problem_status or {}).get("action_owner") or "sponsor"
+                ),
+                "available_actions": [
+                    {
+                        "label": "Retry this work item",
+                        "action": "retry",
+                        "command": (
+                            "python -m agentic_mesh.cli work-item recovery retry "
+                            f"--work-item-id {work_item_id} "
+                            f"--expected-revision {revision} "
+                            f"--actor {actor} "
+                            "--reason \"Retry after sponsor review\" "
+                            f"--idempotency-key retry-{work_item_id}-{revision}"
+                        ),
+                    },
+                    {
+                        "label": "Supersede with replacement work item",
+                        "action": "supersede",
+                        "requires_replacement_work_item_id": True,
+                        "command": (
+                            "python -m agentic_mesh.cli work-item recovery supersede "
+                            f"--work-item-id {work_item_id} "
+                            "--replacement-work-item-id <replacement-work-item-id> "
+                            f"--expected-revision {revision} "
+                            f"--actor {actor} "
+                            "--reason \"Superseded by replacement work\" "
+                            f"--idempotency-key supersede-{work_item_id}-{revision}"
+                        ),
+                    },
+                ],
+            }
+
+        if problem_status or recovery_status:
+            return {
+                "state": "review_status",
+                "label": "Review recovery status",
+                "summary": (
+                    "This work item has recovery/problem state, but no direct "
+                    "human response is currently available. Review the current "
+                    "problem and recovery details before retrying or closing it."
+                ),
+                "can_user_answer_now": False,
+                "action_owner": str(
+                    (problem_status or {}).get("action_owner")
+                    or (recovery_status or {}).get("action_owner")
+                    or "operator"
+                ),
+                "available_actions": [],
+            }
+
+        return {
+            "state": "no_unblock_action",
+            "label": "No unblock action needed",
+            "summary": "This work item is not currently blocked by a human gate or recovery state.",
+            "can_user_answer_now": False,
+            "action_owner": "none",
+            "available_actions": [],
+        }
+
+    def execute_work_item_action(
+        self,
+        work_item_id: str,
+        *,
+        action: str,
+        form: dict[str, str],
+    ) -> dict[str, Any]:
+        mesh_config = self.load_config()
+        project_id = mesh_config.project.project_id
+        journal = EventJournal(self.state_root, project_id)
+        recovery_store = FileRecoveryStatusStore(self.state_root, project_id)
+        current = recovery_store.get_current(work_item_id)
+        revision = _safe_int(form.get("expected_revision")) or (
+            current.revision if current else 1
+        )
+        actor = form.get("actor") or "operator"
+        reason = form.get("reason") or _default_work_item_action_reason(action)
+        problem_store = ProblemStatusStore(self.state_root, project_id)
+
+        if action in {"retry", "recover", "supersede"}:
+            action_type = {
+                "retry": "retry_work_item_recovery",
+                "recover": "record_work_item_recovery",
+                "supersede": "supersede_work_item_recovery",
+            }[action]
+            request = RecoveryActionRequest(
+                action_type=action_type,
+                project_id=project_id,
+                work_item_id=work_item_id,
+                work_item_type=form.get("work_item_type") or None,
+                queue_item_id=form.get("queue_item_id") or None,
+                lifecycle_state=form.get("lifecycle_state") or None,
+                affected_role=form.get("affected_role") or None,
+                actor=actor,
+                reason=reason,
+                idempotency_key=(
+                    form.get("idempotency_key")
+                    or f"web-{action}-{work_item_id}-{revision}"
+                ),
+                expected_revision=revision,
+                correlation_id=form.get("correlation_id") or new_id("corr"),
+                source_type="controller-ui",
+                repair_confirmed=action == "recover",
+                replacement_work_item_id=(
+                    form.get("replacement_work_item_id") or None
+                ),
+            )
+            service = RecoveryActionService(
+                project_id=project_id,
+                store=recovery_store,
+                message_store=FileMessageStore(self.state_root, project_id, journal),
+                journal=journal,
+                duplicate_guard=DuplicateActiveWorkGuard(
+                    state_root=self.state_root,
+                    project_id=project_id,
+                ),
+            )
+            receipt = service.execute(request)
+            if receipt.outcome in {
+                "accepted",
+                "queued",
+                "duplicate",
+                "superseded",
+            }:
+                problem_store.clear_current(work_item_id)
+            return {
+                "ok": receipt.outcome
+                in {"accepted", "queued", "duplicate", "superseded"},
+                "action": action,
+                "receipt": receipt.to_dict(),
+                "message": f"{action} recorded with outcome {receipt.outcome}.",
+            }
+
+        if action in {"cancel", "complete"}:
+            if current is not None:
+                recovery_store.apply_transition(
+                    current,
+                    expected_revision=revision,
+                    recovery_state=(
+                        "not_recoverable"
+                        if action == "cancel"
+                        else "recovery_succeeded"
+                    ),
+                    recoverability_class=(
+                        "not_recoverable"
+                        if action == "cancel"
+                        else current.recoverability_class
+                    ),
+                    next_action=(
+                        "Work item was cancelled manually."
+                        if action == "cancel"
+                        else "Work item was marked complete manually."
+                    ),
+                    action_owner="none",
+                    journal_ref=(
+                        "work_item_manually_cancelled"
+                        if action == "cancel"
+                        else "work_item_manually_completed"
+                    ),
+                )
+            cleared_problem = problem_store.clear_current(work_item_id)
+            status = "cancelled" if action == "cancel" else "completed"
+            event_type = (
+                "work_item_manually_cancelled"
+                if action == "cancel"
+                else "work_item_manually_completed"
+            )
+            journal.append(
+                event_type,
+                project_id=project_id,
+                work_item_id=work_item_id,
+                lifecycle_state=form.get("lifecycle_state") or None,
+                role_id=form.get("affected_role") or None,
+                role_instance_id="controller-ui",
+                status=status,
+                actor=actor,
+                reason=reason,
+                problem_status_cleared=cleared_problem,
+                schema_version="controller-work-item-action-v0",
+            )
+            journal.append(
+                "work_completed",
+                project_id=project_id,
+                work_item_id=work_item_id,
+                lifecycle_state=form.get("lifecycle_state") or None,
+                role_id=form.get("affected_role") or None,
+                role_instance_id="controller-ui",
+                status=status,
+                actor=actor,
+                reason=reason,
+                source="controller-ui",
+            )
+            return {
+                "ok": True,
+                "action": action,
+                "message": f"Work item {status} manually.",
+                "problem_status_cleared": cleared_problem,
+            }
+
+        raise ValueError(f"Unsupported work item action `{action}`.")
+
+    def _worker_runs(self, project_id: str, work_item_id: str) -> dict[str, Any]:
+        store = FileWorkerRunStore(self.state_root, project_id)
+        runs = store.list_recent(work_item_id=work_item_id, limit=25)
+        current = []
+        recent = []
+        for item in runs:
+            if isinstance(item, WorkerRunReadError):
+                recent.append(item.safe_summary())
+                continue
+            if not isinstance(item, WorkerRun):
+                continue
+            summary = item.safe_summary()
+            recent.append(summary)
+            if item.run_status in {"starting", "running"}:
+                current.append(summary)
+        return {
+            "schema_version": "worker-run-evidence-v0",
+            "current": current,
+            "recent": recent,
+            "read_only": True,
+        }
+
+    def status_dashboard_payload(self, route_name: str) -> dict[str, Any]:
+        mesh_config = self.load_config()
+        with telemetry.start_span(
+            "agentic_mesh.status_dashboard.read",
+            attributes={
+                "agentic_mesh.project_id": mesh_config.project.project_id,
+                "agentic_mesh.route": route_name,
+                "agentic_mesh.schema_version": status_dashboard.SCHEMA_VERSION,
+            },
+        ):
+            payload = status_dashboard.build_status_dashboard(
+                mesh_config=mesh_config,
+                state_root=self.state_root,
+                workspace_root=self.workspace_root,
+                work_item_status=self.work_item_status,
+                artifact_exists=lambda path: self.resolve_artifact_path(path) is not None,
+            )
+        telemetry.emit_log(
+            {
+                "event_type": "status_dashboard_read",
+                "project_id": mesh_config.project.project_id,
+                "route": route_name,
+                "schema_version": status_dashboard.SCHEMA_VERSION,
+                "work_item_count": len(payload["work_items"]),
+                "queue_item_count": len(payload["queue_items"]),
+                "generated_at": payload["generated_at"],
+            }
+        )
+        return payload
+
+    def current_agents_payload(self, route_name: str) -> dict[str, Any]:
+        mesh_config = self.load_config()
+        with telemetry.start_span(
+            "agentic_mesh.current_agents.read",
+            attributes={
+                "agentic_mesh.project_id": mesh_config.project.project_id,
+                "agentic_mesh.route": route_name,
+                "agentic_mesh.schema_version": current_agent_status.SCHEMA_VERSION,
+            },
+        ):
+            payload = current_agent_status.build_current_agent_status(
+                mesh_config=mesh_config,
+                state_root=self.state_root,
+                workspace_root=self.workspace_root,
+            )
+        telemetry.emit_log(
+            {
+                "event_type": "current_agents_read",
+                "project_id": mesh_config.project.project_id,
+                "route": route_name,
+                "schema_version": current_agent_status.SCHEMA_VERSION,
+                "total_agent_count": payload["counts"]["total_agents"],
+                "attention_count": payload["counts"]["attention_count"],
+                "extraction_error_count": payload["counts"]["extraction_error_count"],
+                "generated_at": payload["generated_at"],
+            }
+        )
+        return payload
 
     def resolve_artifact_path(self, artifact_path: str) -> Path | None:
         mesh_config = self.load_config()
@@ -460,7 +974,17 @@ class ControllerAuthService:
         if not path.exists():
             return []
         with path.open("r", encoding="utf-8") as handle:
-            return [json.loads(line) for line in handle if line.strip()]
+            events = []
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    events.append(event)
+            return events
 
     def _queue_entries(self, project_id: str, work_item_id: str) -> list[dict[str, Any]]:
         queue_root = self.state_root / "projects" / project_id / "queues"
@@ -471,11 +995,17 @@ class ControllerAuthService:
             role_id = role_dir.name
             for queue_state in ["pending", "completed"]:
                 for path in sorted((role_dir / queue_state).glob("*.json")):
-                    entry = self._queue_entry(path, role_id, queue_state, work_item_id)
+                    try:
+                        entry = self._queue_entry(path, role_id, queue_state, work_item_id)
+                    except (OSError, json.JSONDecodeError):
+                        entry = None
                     if entry:
                         entries.append(entry)
             for path in sorted((role_dir / "claimed").glob("*/*.json")):
-                entry = self._queue_entry(path, role_id, "claimed", work_item_id)
+                try:
+                    entry = self._queue_entry(path, role_id, "claimed", work_item_id)
+                except (OSError, json.JSONDecodeError):
+                    entry = None
                 if entry:
                     entries.append(entry)
         return entries
@@ -497,6 +1027,10 @@ class ControllerAuthService:
             "queue_state": queue_state,
             "message_id": message.get("message_id"),
             "message_type": message.get("type"),
+            "queue_item_id": payload.get("queue_item_id"),
+            "title": payload.get("title"),
+            "summary": payload.get("summary"),
+            "source_anchor": payload.get("source_anchor"),
             "lifecycle_state": payload.get("lifecycle_state"),
             "created_at": message.get("created_at"),
             "claimed_at": message.get("claimed_at"),
@@ -506,8 +1040,51 @@ class ControllerAuthService:
                 if queue_state == "claimed"
                 else None
             ),
-            "path": str(path),
         }
+
+    @staticmethod
+    def _work_item_metadata(
+        work_item_id: str,
+        queue_entries: list[dict[str, Any]],
+    ) -> tuple[str, str | None]:
+        title_source = next(
+            (entry.get("title") for entry in queue_entries if entry.get("title")),
+            None,
+        )
+        summary_source = next(
+            (entry.get("summary") for entry in queue_entries if entry.get("summary")),
+            None,
+        )
+        title = status_dashboard.human_title(title_source or work_item_id)
+        summary = status_dashboard.human_summary(summary_source or title_source)
+        return title, summary
+
+
+    @staticmethod
+    def _notification_state(events: list[dict[str, Any]]) -> dict[str, Any]:
+        failed = [
+            event
+            for event in events
+            if event.get("event_type") == "problem_status_notification_failed"
+        ]
+        queued = [
+            event
+            for event in events
+            if event.get("event_type") == "problem_status_notification_queued"
+        ]
+        if failed:
+            latest = failed[-1]
+            return {
+                "status": "failed",
+                "error_class": latest.get("notification_error_class"),
+                "updated_at": latest.get("timestamp"),
+            }
+        if queued:
+            return {
+                "status": "queued",
+                "updated_at": queued[-1].get("timestamp"),
+            }
+        return {"status": "not_queued"}
 
     @staticmethod
     def _current_work_item_state(
@@ -561,6 +1138,9 @@ class ControllerAuthService:
                 "lifecycle_state": latest.get("lifecycle_state"),
                 "message_id": latest.get("message_id"),
                 "since": latest.get("timestamp"),
+                "reason_summary": latest.get("result_summary")
+                or latest.get("reason"),
+                "result_message": latest.get("result_message"),
             }
         if events:
             latest = events[-1]
@@ -603,6 +1183,70 @@ class ControllerAuthHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path)
         if path.path == "/healthz":
             self._send_json(HTTPStatus.OK, {"status": "ok"})
+            return
+        if path.path == "/status":
+            aggregate = self.server.service.status_dashboard_payload("status")
+            self._send_html(HTTPStatus.OK, self._status_dashboard_page(aggregate))
+            return
+        if path.path == "/status.json":
+            aggregate = self.server.service.status_dashboard_payload("status.json")
+            self._send_json(HTTPStatus.OK, aggregate)
+            return
+        if path.path == "/agents/current":
+            payload = self.server.service.current_agents_payload("agents.current")
+            self._send_html(HTTPStatus.OK, self._current_agents_page(payload))
+            return
+        if path.path == "/agents/current.json":
+            payload = self.server.service.current_agents_payload("agents.current.json")
+            self._send_json(HTTPStatus.OK, payload)
+            return
+        if path.path == "/status/agents":
+            self._redirect("/agents/current")
+            return
+        if path.path == "/status/agents.json":
+            self._redirect("/agents/current.json")
+            return
+        if path.path == "/work-items":
+            aggregate = self.server.service.status_dashboard_payload("work-items")
+            self._send_html(
+                HTTPStatus.OK,
+                self._work_items_dashboard_page(
+                    status_dashboard.work_items_payload(aggregate)
+                ),
+            )
+            return
+        if path.path == "/work-items.json":
+            aggregate = self.server.service.status_dashboard_payload("work-items.json")
+            self._send_json(
+                HTTPStatus.OK,
+                status_dashboard.work_items_payload(aggregate),
+            )
+            return
+        if path.path == "/work-queue":
+            aggregate = self.server.service.status_dashboard_payload("work-queue")
+            self._send_html(
+                HTTPStatus.OK,
+                self._work_queue_dashboard_page(
+                    status_dashboard.work_queue_payload(aggregate)
+                ),
+            )
+            return
+        if path.path == "/work-queue.json":
+            aggregate = self.server.service.status_dashboard_payload("work-queue.json")
+            self._send_json(
+                HTTPStatus.OK,
+                status_dashboard.work_queue_payload(aggregate),
+            )
+            return
+        if path.path == "/queue":
+            self._redirect("/work-queue")
+            return
+        if path.path == "/queue.json":
+            aggregate = self.server.service.status_dashboard_payload("queue.json")
+            self._send_json(
+                HTTPStatus.OK,
+                status_dashboard.work_queue_payload(aggregate),
+            )
             return
         if path.path.startswith("/artifact-viewer/"):
             artifact_path = unquote(path.path.removeprefix("/artifact-viewer/"))
@@ -703,6 +1347,22 @@ class ControllerAuthHandler(BaseHTTPRequestHandler):
                 )
                 self._redirect(
                     "/auth/codex/session?" + urlencode({"id": session.session_id})
+                )
+                return
+            if path.path.startswith("/work-items/") and path.path.endswith("/actions"):
+                work_item_id = unquote(
+                    path.path.removeprefix("/work-items/").removesuffix("/actions")
+                )
+                result = self.server.service.execute_work_item_action(
+                    work_item_id,
+                    action=form.get("action", ""),
+                    form=form,
+                )
+                self._redirect(
+                    "/work-items/"
+                    + quote(work_item_id, safe="")
+                    + "?"
+                    + urlencode({"notice": result["message"]})
                 )
                 return
         except Exception as exc:
@@ -943,8 +1603,486 @@ if (statusEl.textContent === "running") {{
 """
         return self._layout("Codex OAuth Login", body)
 
+    def _status_dashboard_page(self, payload: dict[str, Any]) -> str:
+        counts = payload["counts"]
+        links = payload["links"]
+        nav = self._dashboard_nav(links)
+        attention = payload["attention_needed"]
+        active = payload["active"]
+        queue_preview = payload["promoted"]["queue_items"] + payload["unknown"]["queue_items"]
+        body = f"""
+{nav}
+<p class="summary">
+  <strong>Project:</strong> {html.escape(str(payload["project"]["project_id"]))}
+  <br><strong>Generated:</strong> {html.escape(str(payload["generated_at"]))}
+  <br><strong>Refresh:</strong> manual browser refresh
+  <br><strong>Read only:</strong> true
+</p>
+<h2>Status Counts</h2>
+<table>
+  <thead><tr><th>Group</th><th>Count</th></tr></thead>
+  <tbody>
+    <tr><td>Attention needed</td><td>{counts["attention_needed"]}</td></tr>
+    <tr><td>Active</td><td>{counts["active"]}</td></tr>
+    <tr><td>Promoted</td><td>{counts["promoted"]}</td></tr>
+    <tr><td>Terminal</td><td>{counts["terminal"]}</td></tr>
+    <tr><td>Unknown</td><td>{counts["unknown"]}</td></tr>
+    <tr><td>Total work items</td><td>{counts["total_work_items"]}</td></tr>
+    <tr><td>Total queue items</td><td>{counts["total_queue_items"]}</td></tr>
+  </tbody>
+</table>
+<h2>Attention Needed</h2>
+{self._mixed_rows(attention["work_items"], attention["queue_items"], empty="No attention-needed work found.")}
+<h2>Active Work</h2>
+{self._mixed_rows(active["work_items"], active["queue_items"], empty="No active work found.")}
+<h2>Work Queue Summary</h2>
+{self._queue_rows(queue_preview[:10], empty="No promoted or incomplete queue items found.")}
+"""
+        return self._layout("Status Dashboard", body)
+
+    def _work_items_dashboard_page(self, payload: dict[str, Any]) -> str:
+        rows_by_group = self._rows_by_group(payload["items"])
+        sections = []
+        for group in status_dashboard.GROUPS:
+            sections.append(
+                f"<h2>{html.escape(group.replace('_', ' ').title())}</h2>"
+                + self._work_item_rows(
+                    rows_by_group[group],
+                    empty="No work items found for this group.",
+                )
+            )
+        body = f"""
+{self._dashboard_nav(payload["links"])}
+<p class="summary">
+  <strong>Project:</strong> {html.escape(str(payload["project"]["project_id"]))}
+  <br><strong>Generated:</strong> {html.escape(str(payload["generated_at"]))}
+  <br><strong>Total work items:</strong> {payload["counts"]["total"]}
+</p>
+{''.join(sections) if payload["items"] else '<p>No work items found for this project.</p>'}
+"""
+        return self._layout("Work Items", body)
+
+    def _work_queue_dashboard_page(self, payload: dict[str, Any]) -> str:
+        rows_by_group = self._rows_by_group(payload["items"])
+        sections = []
+        for group in status_dashboard.GROUPS:
+            sections.append(
+                f"<h2>{html.escape(group.replace('_', ' ').title())}</h2>"
+                + self._queue_rows(
+                    rows_by_group[group],
+                    empty="No work queue items found for this group.",
+                )
+            )
+        body = f"""
+{self._dashboard_nav(payload["links"])}
+<p class="summary">
+  <strong>Project:</strong> {html.escape(str(payload["project"]["project_id"]))}
+  <br><strong>Generated:</strong> {html.escape(str(payload["generated_at"]))}
+  <br><strong>Total queue items:</strong> {payload["counts"]["total"]}
+  <br><strong>Alias:</strong> /queue opens this Work Queue view.
+</p>
+{''.join(sections) if payload["items"] else '<p>No work queue items found for this project.</p>'}
+"""
+        return self._layout("Work Queue", body)
+
+    def _dashboard_nav(self, links: dict[str, str]) -> str:
+        return f"""
+<p>
+  <a href="{html.escape(links["status_html"])}">Status</a>
+  <a href="{html.escape(links["work_items_html"])}">Work items</a>
+  <a href="{html.escape(links["work_queue_html"])}">Work queue</a>
+  <a href="{html.escape(links["current_agents_html"])}">Current agents</a>
+  <a href="{html.escape(links["status_json"])}">Status JSON</a>
+  <a href="{html.escape(links["work_items_json"])}">Work items JSON</a>
+  <a href="{html.escape(links["work_queue_json"])}">Work queue JSON</a>
+  <a href="{html.escape(links["current_agents_json"])}">Current agents JSON</a>
+</p>
+"""
+
+    def _current_agents_page(self, payload: dict[str, Any]) -> str:
+        links = payload["links"]
+        counts = payload["counts"]
+        nav = f"""
+<p>
+  <a href="{html.escape(links["status_html"])}">Status</a>
+  <a href="{html.escape(links["current_agents_json"])}">Current agents JSON</a>
+</p>
+"""
+        condition_rows = "".join(
+            "<tr>"
+            f"<td>{html.escape(str(condition))}</td>"
+            f"<td>{html.escape(str(count))}</td>"
+            "</tr>"
+            for condition, count in sorted(counts["by_condition"].items())
+        )
+        attention_html = self._current_agent_attention_rows(payload["attention"])
+        agent_html = self._current_agent_rows(payload["agents"])
+        body = f"""
+{nav}
+<p class="summary">
+  <strong>Project:</strong> {html.escape(str(payload["project"]["project_id"]))}
+  <br><strong>Generated:</strong> {html.escape(str(payload["generated_at"]))}
+  <br><strong>Schema:</strong> {html.escape(str(payload["schema_version"]))}
+  <br><strong>Refresh:</strong> manual browser refresh
+  <br><strong>Read only:</strong> true
+</p>
+<h2>Condition Counts</h2>
+{self._dashboard_table(["Condition", "Count"], [condition_rows] if condition_rows else [])}
+<h2>Attention</h2>
+{attention_html}
+<h2>Current Agents</h2>
+{agent_html}
+"""
+        return self._layout("Current Agents", body)
+
+    def _current_agent_attention_rows(self, rows: list[dict[str, Any]]) -> str:
+        if not rows:
+            return "<p>No agent attention needed.</p>"
+        rendered = []
+        for row in rows:
+            status_url = row.get("status_url")
+            work_item = row.get("current_work_item_id") or "None"
+            work_item_html = (
+                f"<a href=\"{html.escape(str(status_url))}\">{html.escape(str(work_item))}</a>"
+                if status_url
+                else html.escape(str(work_item))
+            )
+            rendered.append(
+                "<tr>"
+                f"<td><code>{html.escape(str(row['role_instance_id']))}</code></td>"
+                f"<td>{html.escape(str(row['condition_label']))}<br><code>{html.escape(str(row['condition']))}</code></td>"
+                f"<td>{work_item_html}</td>"
+                f"<td>{html.escape(str(row.get('lifecycle_state') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('elapsed_seconds') or row.get('claim_age_seconds') or 'n/a'))}</td>"
+                f"<td>{html.escape(str(row.get('evidence_source') or 'unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('next_action') or 'Next action unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('action_owner') or 'Unknown owner'))}</td>"
+                "</tr>"
+            )
+        return self._dashboard_table(
+            [
+                "Role instance",
+                "Condition",
+                "Work item",
+                "Lifecycle",
+                "Elapsed or age",
+                "Evidence",
+                "Next action",
+                "Owner",
+            ],
+            rendered,
+        )
+
+    def _current_agent_rows(self, rows: list[dict[str, Any]]) -> str:
+        if not rows:
+            return "<p>No configured role-agent instances found.</p>"
+        rendered = []
+        for row in rows:
+            status_url = row.get("status_url")
+            json_url = row.get("work_item_json_url")
+            work_item = row.get("current_work_item_id") or "None"
+            work_item_html = (
+                f"<a href=\"{html.escape(str(status_url))}\">{html.escape(str(work_item))}</a>"
+                if status_url
+                else html.escape(str(work_item))
+            )
+            json_html = (
+                f"<a href=\"{html.escape(str(json_url))}\">JSON</a>" if json_url else "None"
+            )
+            rendered.append(
+                "<tr>"
+                f"<td><code>{html.escape(str(row['role_instance_id']))}</code><br>{html.escape(str(row['role_id']))}</td>"
+                f"<td>{html.escape(str(row['condition_label']))}<br><code>{html.escape(str(row['condition']))}</code></td>"
+                f"<td>{html.escape(str(row.get('condition_reason') or ''))}</td>"
+                f"<td>{work_item_html}<br>{json_html}</td>"
+                f"<td>{html.escape(str(row.get('lifecycle_state') or 'None'))}</td>"
+                f"<td>{html.escape(str(row.get('service_label') or 'unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('evidence_source') or 'unknown'))}<br>{html.escape(str(row.get('evidence_observed_at') or 'not observed'))}</td>"
+                f"<td>{html.escape(str(row.get('pending_queue_count') or 0))}</td>"
+                f"<td>{html.escape(str(row.get('elapsed_seconds') if row.get('elapsed_seconds') is not None else 'n/a'))}</td>"
+                f"<td>{html.escape(str(row.get('next_action') or 'Next action unknown'))}<br>{html.escape(str(row.get('action_owner') or 'Unknown owner'))}</td>"
+                "</tr>"
+            )
+        return self._dashboard_table(
+            [
+                "Agent",
+                "Condition",
+                "Reason",
+                "Work item",
+                "Lifecycle",
+                "Service label",
+                "Evidence",
+                "Pending",
+                "Elapsed",
+                "Action",
+            ],
+            rendered,
+        )
+
+    @staticmethod
+    def _rows_by_group(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        grouped = {group: [] for group in status_dashboard.GROUPS}
+        for row in rows:
+            grouped.setdefault(str(row.get("status_group") or "unknown"), []).append(row)
+        return grouped
+
+    def _mixed_rows(
+        self,
+        work_items: list[dict[str, Any]],
+        queue_items: list[dict[str, Any]],
+        *,
+        empty: str,
+    ) -> str:
+        if not work_items and not queue_items:
+            return f"<p>{html.escape(empty)}</p>"
+        rows = []
+        for row in work_items:
+            rows.append(
+                "<tr>"
+                "<td>Work item</td>"
+                f"<td>{self._status_label(row)}</td>"
+                f"<td><a href=\"{html.escape(str(row['status_url']))}\">{html.escape(str(row['work_item_id']))}</a></td>"
+                f"<td>{html.escape(str(row.get('title') or row['work_item_id']))}</td>"
+                f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
+                f"<td>{html.escape(str(row.get('lifecycle_state') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('attention_reason') or row.get('next_action') or 'Reason unavailable'))}</td>"
+                f"<td>{html.escape(str(row.get('updated_at') or row.get('started_at') or 'Unknown'))}</td>"
+                "</tr>"
+            )
+        for row in queue_items:
+            target = row.get("work_item_status_url") or "/work-queue"
+            rows.append(
+                "<tr>"
+                "<td>Queue item</td>"
+                f"<td>{self._status_label(row)}</td>"
+                f"<td><a href=\"{html.escape(str(target))}\">{html.escape(str(row['queue_item_id']))}</a></td>"
+                f"<td>{html.escape(str(row.get('title') or row['queue_item_id']))}</td>"
+                f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
+                f"<td>{html.escape(str(row.get('recommended_work_item_type') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('attention_reason') or row.get('next_action') or 'Reason unavailable'))}</td>"
+                f"<td>{html.escape(str(row.get('updated_at') or row.get('created_at') or 'Unknown'))}</td>"
+                "</tr>"
+            )
+        return self._dashboard_table(
+            ["Type", "Status", "Title", "Owner", "State", "Reason or next action", "Timestamp"],
+            rows,
+        )
+
+    def _work_item_rows(self, rows: list[dict[str, Any]], *, empty: str) -> str:
+        if not rows:
+            return f"<p>{html.escape(empty)}</p>"
+        rendered = []
+        for row in rows:
+            artifacts = (
+                ", ".join(
+                    f"<a href=\"{html.escape(link['viewer_url'])}\" target=\"_blank\" rel=\"noopener noreferrer\">"
+                    f"{html.escape(str(link['label']))}</a>"
+                    for link in row.get("artifact_links") or []
+                )
+                or "No artifacts recorded."
+            )
+            rendered.append(
+                "<tr>"
+                f"<td>{self._status_label(row)}</td>"
+                f"<td><a href=\"{html.escape(str(row['status_url']))}\" aria-label=\"Open work item {html.escape(str(row['work_item_id']))}\">{html.escape(str(row['work_item_id']))}</a></td>"
+                f"<td>{html.escape(str(row.get('title') or row['work_item_id']))}</td>"
+                f"<td>{html.escape(str(row.get('lifecycle_state') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
+                f"<td>{html.escape(str(row.get('role_instance_id') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('queue_item_id') or 'None'))}</td>"
+                f"<td>{html.escape(str(row.get('next_action') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('attention_reason') or ''))}</td>"
+                f"<td>{row.get('artifact_count', 0)} total, {row.get('missing_artifact_count', 0)} missing<br>{artifacts}</td>"
+                f"<td><a href=\"{html.escape(str(row['json_url']))}\">JSON</a></td>"
+                "</tr>"
+            )
+        return self._dashboard_table(
+            [
+                "Status",
+                "Title",
+                "Lifecycle",
+                "Owner",
+                "Role instance",
+                "Queue item",
+                "Next action",
+                "Attention",
+                "Artifacts",
+                "Links",
+            ],
+            rendered,
+        )
+
+    def _queue_rows(self, rows: list[dict[str, Any]], *, empty: str) -> str:
+        if not rows:
+            return f"<p>{html.escape(empty)}</p>"
+        rendered = []
+        for row in rows:
+            source = row.get("source_anchor_summary") or {}
+            promoted_link = (
+                f"<a href=\"{html.escape(str(row['work_item_status_url']))}\">{html.escape(str(row.get('promoted_work_item_id')))}</a>"
+                if row.get("work_item_status_url")
+                else html.escape(str(row.get("promoted_work_item_id") or "None"))
+            )
+            source_text = "; ".join(
+                html.escape(str(source.get(key) or ""))
+                for key in [
+                    "connector_type",
+                    "connector_id",
+                    "source_scope",
+                    "source_anchor_ref",
+                    "display_label",
+                    "received_at",
+                ]
+                if source.get(key)
+            ) or "Source unknown"
+            rendered.append(
+                "<tr>"
+                f"<td>{self._status_label(row)}</td>"
+                f"<td><code>{html.escape(str(row['queue_item_id']))}</code></td>"
+                f"<td>{html.escape(str(row.get('title') or row['queue_item_id']))}</td>"
+                f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
+                f"<td>{html.escape(str(row.get('recommended_work_item_type') or 'Unknown'))}</td>"
+                f"<td>{source_text}</td>"
+                f"<td>{promoted_link}</td>"
+                f"<td>{html.escape(str(row.get('blocker_reason') or ''))}</td>"
+                f"<td>{html.escape(str(row.get('notification_failure_reason') or ''))}</td>"
+                f"<td>{html.escape(str(row.get('next_action') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('updated_at') or row.get('created_at') or 'Unknown'))}</td>"
+                "</tr>"
+            )
+        return self._dashboard_table(
+            [
+                "Status",
+                "Queue item",
+                "Title",
+                "Owner",
+                "Type",
+                "Source",
+                "Promoted work",
+                "Blocker",
+                "Notification",
+                "Next action",
+                "Updated",
+            ],
+            rendered,
+        )
+
+    @staticmethod
+    def _status_label(row: dict[str, Any]) -> str:
+        classes = "status-label"
+        if row.get("status_group") == "attention_needed":
+            classes += " warning"
+        return (
+            f"<span class=\"{classes}\">"
+            f"{html.escape(str(row.get('display_label') or row.get('status') or 'Unknown'))}"
+            f"</span><br><code>{html.escape(str(row.get('status_group') or 'unknown'))}</code>"
+        )
+
+    @staticmethod
+    def _dashboard_table(headers: list[str], rows: list[str]) -> str:
+        header_html = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+        return f"""
+<div class="table-scroll">
+<table>
+  <thead><tr>{header_html}</tr></thead>
+  <tbody>{''.join(rows)}</tbody>
+</table>
+</div>
+"""
+
     def _work_item_page(self, payload: dict[str, Any]) -> str:
         current = payload["current"]
+        problem = payload.get("problem_status") or {}
+        route = payload.get("current_route") or {}
+        problem_html = ""
+        if problem:
+            problem_html = f"""
+<h2>Current Problem</h2>
+<p class="warning-box">
+  <strong>{html.escape(str(problem.get("status_label") or problem.get("status") or "Problem"))}</strong>
+  - {html.escape(str(problem.get("problem_label") or problem.get("problem_kind") or "unknown"))}
+  <br><strong>Affected role:</strong> {html.escape(str(problem.get("affected_role") or "unknown"))}
+  <br><strong>Lifecycle state:</strong> {html.escape(str(problem.get("lifecycle_state") or "unknown"))}
+  <br><strong>Reason:</strong> {html.escape(str(problem.get("reason_summary") or problem.get("reason") or ""))}
+  <br><strong>Next action:</strong> {html.escape(str(problem.get("next_action") or ""))}
+  <br><strong>Action owner:</strong> {html.escape(str(problem.get("action_owner") or "unknown"))}
+  <br><strong>Retryability:</strong> {html.escape(str(problem.get("retryability_label") or problem.get("retryable") or "unknown"))}
+  <br><strong>Occurred:</strong> {html.escape(str(problem.get("occurred_at") or "unknown"))}
+</p>
+"""
+        activation = payload.get("activation_evidence") or {}
+        activation_html = ""
+        if activation:
+            impact = ", ".join(activation.get("impact_category_labels") or activation.get("deployment_impact_labels") or [])
+            paths = ", ".join(activation.get("activation_path_labels") or [])
+            targets = ", ".join(activation.get("target_labels") or [])
+            activation_html = f"""
+<h2>Activation Evidence</h2>
+<p class="info-box">
+  <strong>{html.escape(str(activation.get("failure_class_label") or activation.get("activation_status_label") or "Activation"))}</strong>
+  <br><strong>Impact:</strong> {html.escape(impact or "none")}
+  <br><strong>Activation paths:</strong> {html.escape(paths or "unknown")}
+  <br><strong>Targets:</strong> {html.escape(targets or "target_unknown")}
+  <br><strong>Source:</strong> <code>{html.escape(str(activation.get("source_status") or "unknown"))}</code>
+  <br><strong>Activation:</strong> <code>{html.escape(str(activation.get("activation_status") or "unknown"))}</code>
+  <br><strong>Smoke:</strong> <code>{html.escape(str(activation.get("smoke_status") or "unknown"))}</code>
+  <br><strong>Failure class:</strong> <code>{html.escape(str(activation.get("failure_class") or "none"))}</code>
+  <br><strong>Action owner:</strong> {html.escape(str(activation.get("action_owner") or "none"))}
+  <br><strong>Next action:</strong> {html.escape(str(activation.get("next_action") or "none"))}
+  <br><strong>Notification:</strong> <code>{html.escape(str(activation.get("notification_state") or "not_required"))}</code>
+  <br><strong>Updated:</strong> {html.escape(str(activation.get("updated_at") or activation.get("activation_updated_at") or "unknown"))}
+</p>
+"""
+        route_html = ""
+        if route:
+            route_html = f"""
+<h2>Current Route</h2>
+<p class="info-box">
+  <strong>{html.escape(str(route.get("route_status") or "route_requested"))}</strong>
+  - {html.escape(str(route.get("route_kind") or "configured_route"))}
+  <br><strong>Source:</strong> {html.escape(str(route.get("source_role") or "unknown"))}
+  at <code>{html.escape(str(route.get("source_lifecycle_state") or "unknown"))}</code>
+  <br><strong>Target:</strong> {html.escape(str(route.get("target_role") or "unknown"))}
+  at <code>{html.escape(str(route.get("target_lifecycle_state") or "unknown"))}</code>
+  <br><strong>Route id:</strong> <code>{html.escape(str(route.get("route_id") or "unknown"))}</code>
+  <br><strong>Defect:</strong> <code>{html.escape(str(route.get("defect_id") or "none"))}</code>
+  <br><strong>Required change:</strong> {html.escape(str(route.get("required_change") or ""))}
+  <br><strong>Evidence required:</strong> {html.escape(str(route.get("evidence_required") or ""))}
+</p>
+"""
+        worker_runs = payload.get("worker_runs") or {}
+        worker_run_html = ""
+        if worker_runs.get("current") or worker_runs.get("recent"):
+            worker_run_rows = []
+            displayed_runs = list(worker_runs.get("current") or [])
+            displayed_runs.extend(list(worker_runs.get("recent") or [])[:10])
+            seen_runs: set[str] = set()
+            for run in displayed_runs:
+                run_id = str(run.get("run_id") or "unknown")
+                if run_id in seen_runs:
+                    continue
+                seen_runs.add(run_id)
+                worker_run_rows.append(
+                    "<tr>"
+                    f"<td><code>{html.escape(run_id)}</code></td>"
+                    f"<td>{html.escape(str(run.get('role_instance_id') or ''))}</td>"
+                    f"<td>{html.escape(str(run.get('run_status') or ''))}</td>"
+                    f"<td>{html.escape(str(run.get('run_condition') or ''))}</td>"
+                    f"<td>{html.escape(str(run.get('failure_class') or ''))}</td>"
+                    f"<td>{html.escape(str(run.get('last_progress_at') or ''))}</td>"
+                    "</tr>"
+                )
+            worker_run_html = "<h2>Worker Run Evidence</h2>" + self._dashboard_table(
+                [
+                    "Run",
+                    "Role instance",
+                    "Status",
+                    "Condition",
+                    "Failure",
+                    "Last progress",
+                ],
+                worker_run_rows,
+            )
         queue_rows = []
         for entry in payload["queue_entries"]:
             claim_age = entry.get("claim_age_seconds")
@@ -1001,11 +2139,12 @@ if (statusEl.textContent === "running") {{
         ]
         for record in artifact_records:
             path = str(record.get("path") or "")
+            label = str(record.get("label") or path)
             if record.get("exists"):
                 artifact_items_parts.append(
                     "<li>"
                     f"<a href=\"/artifact-viewer/{quote(path, safe='')}\" target=\"_blank\" rel=\"noopener noreferrer\">"
-                    f"<code>{html.escape(path)}</code>"
+                    f"{html.escape(label)} <code>{html.escape(path)}</code>"
                     "</a>"
                     f" <a class=\"source-link\" href=\"/artifacts/{quote(path, safe='')}\" target=\"_blank\" rel=\"noopener noreferrer\">source</a>"
                     "</li>"
@@ -1014,7 +2153,7 @@ if (statusEl.textContent === "running") {{
                 artifact_items_parts.append(
                     "<li class=\"missing-artifact\">"
                     f"<code>{html.escape(path)}</code>"
-                    ' <span class="warning">missing from document library</span>'
+                    ' <span class="warning">Missing artifact</span>'
                     "</li>"
                 )
         artifact_items = "".join(artifact_items_parts) or "<li>None recorded</li>"
@@ -1037,9 +2176,61 @@ if (statusEl.textContent === "running") {{
             if current.get("stale")
             else ""
         )
+        title = str(payload.get("title") or payload["work_item_id"])
+        summary_text = str(payload.get("summary") or "No summary captured yet.")
+        work_item_label = "Work Item " + str(payload["work_item_id"])
+        human_gate = payload.get("human_gate_summary") or {}
+        current_gate = human_gate.get("current_human_gate") or {}
+        next_gate = human_gate.get("next_human_gate") or {}
+        unblock = payload.get("unblock_guidance") or {}
+        recovery = payload.get("recovery_status") or {}
+        query = parse_qs(urlparse(self.path).query)
+        notice = query.get("notice", [""])[0]
+        notice_html = (
+            f"<p class=\"notice\">{html.escape(notice)}</p>" if notice else ""
+        )
+        unblock_actions = "".join(
+            "<li>"
+            f"<strong>{html.escape(str(action.get('label') or 'Action'))}</strong>"
+            f"{self._work_item_action_form(payload, action)}"
+            f"<pre>{html.escape(str(action.get('command') or ''))}</pre>"
+            "</li>"
+            for action in unblock.get("available_actions") or []
+        )
+        if not unblock_actions:
+            unblock_actions = "<li>No direct action command is available for this state.</li>"
+        manual_actions = self._manual_work_item_action_forms(payload, recovery)
+        can_answer = "yes" if unblock.get("can_user_answer_now") else "no"
+        unblock_html = f"""
+<h2>How To Unblock</h2>
+<div class="info-box">
+  <strong>{html.escape(str(unblock.get("label") or "Unblock guidance unavailable"))}</strong>
+  <br><strong>Can sponsor answer now:</strong> {html.escape(can_answer)}
+  <br><strong>Action owner:</strong> {html.escape(str(unblock.get("action_owner") or "unknown"))}
+  <br><strong>State:</strong> <code>{html.escape(str(unblock.get("state") or "unknown"))}</code>
+  <p>{html.escape(str(unblock.get("summary") or "No unblock guidance captured."))}</p>
+  <ul>{unblock_actions}</ul>
+  {manual_actions}
+</div>
+"""
+        human_gate_html = f"""
+<h2>Human Gate Summary</h2>
+<p class="info-box">
+  <strong>{html.escape(str(human_gate.get("display_label") or "Unknown"))}</strong>
+  <br><strong>Status:</strong> <code>{html.escape(str(human_gate.get("status") or "unknown"))}</code>
+  <br><strong>Current gate:</strong> <code>{html.escape(str(current_gate.get("gate_id") or "none"))}</code>
+  <br><strong>Next gate:</strong> <code>{html.escape(str(next_gate.get("gate_id") or "none"))}</code>
+  <br><strong>Approval request:</strong> <code>{html.escape(str(human_gate.get("approval_request_id") or human_gate.get("response_request_id") or "none"))}</code>
+  <br><strong>Notification attempt:</strong> <code>{html.escape(str(human_gate.get("notification_attempt_id") or "none"))}</code>
+  <br><strong>Attention:</strong> {html.escape(str(human_gate.get("attention_reason") or "none"))}
+</p>
+"""
         body = f"""
 <p class="summary">
-  <strong>Status:</strong> {html.escape(str(payload["status"]))}
+  <strong>{html.escape(work_item_label)}</strong>
+  <br><br>
+  {html.escape(summary_text)}
+  <br><br><strong>Status:</strong> {html.escape(str(payload["status"]))}
   <br><strong>Current role:</strong> {html.escape(str(current.get("role_id") or "none"))}
   <br><strong>Lifecycle state:</strong> {html.escape(str(current.get("lifecycle_state") or "none"))}
   <br><strong>Message:</strong> <code>{html.escape(str(current.get("message_id") or "none"))}</code>
@@ -1047,7 +2238,14 @@ if (statusEl.textContent === "running") {{
   <br><strong>Claim age:</strong> {html.escape(str(int(float(current.get("claim_age_seconds") or 0))) + "s" if current.get("claim_age_seconds") is not None else "n/a")}
 </p>
 {stale_notice}
+{notice_html}
 <p><a href="{html.escape(json_path)}">JSON status</a></p>
+{unblock_html}
+{human_gate_html}
+{problem_html}
+{activation_html}
+{route_html}
+{worker_run_html}
 <h2>Queue</h2>
 <table>
   <thead>
@@ -1081,8 +2279,118 @@ if (statusEl.textContent === "running") {{
   <tbody>{''.join(timeline_rows)}</tbody>
 </table>
 """
-        title = f"Work Item {payload['work_item_id']}"
         return self._layout(title, body)
+
+    def _work_item_action_form(
+        self,
+        payload: dict[str, Any],
+        action: dict[str, Any],
+    ) -> str:
+        action_name = str(action.get("action") or "")
+        if action_name not in {"retry", "recover", "supersede"}:
+            return ""
+        recovery = payload.get("recovery_status") or {}
+        current = payload.get("current") or {}
+        work_item_id = str(payload["work_item_id"])
+        fields = {
+            "action": action_name,
+            "expected_revision": str(recovery.get("revision") or 1),
+            "lifecycle_state": str(
+                recovery.get("lifecycle_state")
+                or current.get("lifecycle_state")
+                or ""
+            ),
+            "affected_role": str(
+                recovery.get("affected_role") or current.get("role_id") or ""
+            ),
+            "work_item_type": str(recovery.get("work_item_type") or ""),
+            "queue_item_id": str(recovery.get("queue_item_id") or ""),
+            "actor": "operator" if action_name == "recover" else "sponsor",
+            "reason": _default_work_item_action_reason(action_name),
+        }
+        replacement_html = ""
+        if action_name == "supersede":
+            replacement_html = (
+                '<label>Replacement work item '
+                '<input name="replacement_work_item_id" required '
+                'placeholder="work-..."></label>'
+            )
+        button_label = {
+            "retry": "Run Retry",
+            "recover": "Mark Repaired And Recover",
+            "supersede": "Supersede",
+        }[action_name]
+        return (
+            f"<form class=\"inline-action\" method=\"post\" action=\"/work-items/{quote(work_item_id, safe='')}/actions\">"
+            + "".join(
+                f"<input type=\"hidden\" name=\"{html.escape(name)}\" value=\"{html.escape(value)}\">"
+                for name, value in fields.items()
+            )
+            + replacement_html
+            + f"<button type=\"submit\">{html.escape(button_label)}</button>"
+            + "</form>"
+        )
+
+    def _manual_work_item_action_forms(
+        self,
+        payload: dict[str, Any],
+        recovery: dict[str, Any],
+    ) -> str:
+        problem = payload.get("problem_status") or {}
+        if not problem and not recovery:
+            return ""
+        current = payload.get("current") or {}
+        work_item_id = str(payload["work_item_id"])
+        base_fields = {
+            "expected_revision": str(recovery.get("revision") or 1),
+            "lifecycle_state": str(
+                recovery.get("lifecycle_state")
+                or current.get("lifecycle_state")
+                or ""
+            ),
+            "affected_role": str(
+                recovery.get("affected_role")
+                or problem.get("affected_role")
+                or current.get("role_id")
+                or ""
+            ),
+            "actor": "operator",
+        }
+
+        def form(action: str, label: str, reason: str, danger: bool = False) -> str:
+            fields = {
+                **base_fields,
+                "action": action,
+                "reason": reason,
+            }
+            class_name = "danger-button" if danger else "secondary-button"
+            return (
+                f"<form class=\"inline-action\" method=\"post\" action=\"/work-items/{quote(work_item_id, safe='')}/actions\">"
+                + "".join(
+                    f"<input type=\"hidden\" name=\"{html.escape(name)}\" value=\"{html.escape(value)}\">"
+                    for name, value in fields.items()
+                )
+                + f"<button class=\"{class_name}\" type=\"submit\">{html.escape(label)}</button>"
+                + "</form>"
+            )
+
+        return (
+            "<div class=\"manual-actions\">"
+            "<h3>Manual Closure</h3>"
+            "<p>Use these only when you have verified the item should no longer be worked by agents.</p>"
+            + form(
+                "complete",
+                "Mark Complete",
+                "Manual operator marked the work item complete.",
+            )
+            + form(
+                "cancel",
+                "Cancel",
+                "Manual operator cancelled the work item.",
+                danger=True,
+            )
+            + "</div>"
+        )
 
     def _artifact_viewer_page(self, artifact_path: str, file_path: Path) -> str:
         raw_href = "/artifacts/" + quote(artifact_path, safe="")
@@ -1108,6 +2416,7 @@ const targetEl = document.getElementById("markdown-rendered");
 const markdown = JSON.parse(sourceEl.textContent || '""');
 mermaid.initialize({{ startOnLoad: false, securityLevel: "strict" }});
 targetEl.innerHTML = marked.parse(markdown, {{ mangle: false, headerIds: true }});
+sanitizeRenderedMarkdown(targetEl);
 const diagrams = targetEl.querySelectorAll("pre code.language-mermaid, code.language-mermaid");
 diagrams.forEach((node, index) => {{
   const container = document.createElement("div");
@@ -1122,6 +2431,29 @@ diagrams.forEach((node, index) => {{
   }}
 }});
 await mermaid.run({{ querySelector: ".mermaid" }});
+
+function sanitizeRenderedMarkdown(root) {{
+  root.querySelectorAll("script, style, iframe, object, embed, link").forEach((node) => node.remove());
+  root.querySelectorAll("*").forEach((node) => {{
+    [...node.attributes].forEach((attribute) => {{
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith("on") || name === "style") {{
+        node.removeAttribute(attribute.name);
+      }}
+      if ((name === "href" || name === "src") && !isSafeUrl(value)) {{
+        node.removeAttribute(attribute.name);
+      }}
+    }});
+  }});
+}}
+
+function isSafeUrl(value) {{
+  return value === "" || value.startsWith("#") || value.startsWith("/") ||
+    value.startsWith("./") || value.startsWith("../") ||
+    value.startsWith("http://") || value.startsWith("https://") ||
+    value.startsWith("mailto:");
+}}
 </script>
 """
         elif content_type.startswith("text/") or suffix in {".json", ".yaml", ".yml", ".toml", ".log"}:
@@ -1200,7 +2532,9 @@ await mermaid.run({{ querySelector: ".mermaid" }});
   <style>
     body {{ font-family: system-ui, sans-serif; margin: 2rem; line-height: 1.4; }}
     table {{ border-collapse: collapse; width: 100%; }}
+    .table-scroll {{ overflow-x: auto; }}
     th, td {{ border: 1px solid #d4d4d4; padding: 0.5rem; vertical-align: top; }}
+    td {{ overflow-wrap: anywhere; }}
     th {{ background: #f4f4f4; text-align: left; }}
     tr.selected {{ outline: 3px solid #6aa1ff; }}
     input[type=password] {{ min-width: 18rem; }}
@@ -1219,8 +2553,15 @@ await mermaid.run({{ querySelector: ".mermaid" }});
     .icon-button {{ align-items: center; background: #111827; border: 0; color: white; cursor: pointer; display: inline-flex; height: 2.75rem; justify-content: center; width: 2.75rem; }}
     .icon-button svg {{ fill: none; height: 1.25rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; width: 1.25rem; }}
     .status-button {{ align-items: center; background: #e9f7ef; border: 1px solid #166534; color: #166534; display: inline-flex; gap: 0.35rem; padding: 0.45rem 0.7rem; }}
+    .status-label {{ font-weight: 700; }}
     .status-button svg {{ fill: none; height: 1rem; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; width: 1rem; }}
     .copy-status {{ color: #166534; min-width: 4rem; }}
+    .inline-action {{ align-items: center; display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0; }}
+    .inline-action input {{ padding: 0.45rem; }}
+    .inline-action button {{ background: #111827; border: 1px solid #111827; color: white; cursor: pointer; padding: 0.5rem 0.75rem; }}
+    .inline-action .secondary-button {{ background: #f8fafc; border-color: #64748b; color: #0f172a; }}
+    .inline-action .danger-button {{ background: #991b1b; border-color: #991b1b; color: white; }}
+    .manual-actions {{ border-top: 1px solid #cbd5e1; margin-top: 1rem; padding-top: 1rem; }}
     .source-link {{ color: #4b5563; font-size: 0.85rem; margin-left: 0.5rem; }}
     .artifact-meta {{ background: #f8fafc; border-left: 4px solid #2563eb; padding: 1rem; }}
     .artifact-source {{ overflow: auto; padding: 1rem; white-space: pre-wrap; }}
@@ -1261,6 +2602,19 @@ await mermaid.run({{ querySelector: ".mermaid" }});
         body = payload.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header(
+            "Content-Security-Policy",
+            (
+                "default-src 'none'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "connect-src 'self'; "
+                "frame-src 'self'; "
+                "object-src 'none'; "
+                "base-uri 'none'"
+            ),
+        )
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1286,6 +2640,25 @@ def serve_controller_auth(
     server.serve_forever()
 
 
+def _safe_int(value: str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _default_work_item_action_reason(action: str) -> str:
+    return {
+        "retry": "Retry requested from the controller status page.",
+        "recover": "Runtime repair confirmed from the controller status page.",
+        "supersede": "Superseded from the controller status page.",
+        "complete": "Marked complete from the controller status page.",
+        "cancel": "Cancelled from the controller status page.",
+    }.get(action, "Controller status page action.")
+
+
 def _first_url(text: str) -> str | None:
     text = _strip_ansi(text)
     match = re.search(r"https?://[^\s)>\"]+", text)
@@ -1304,3 +2677,17 @@ def _first_device_code(text: str) -> str | None:
 
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+
+
+def _artifact_label_record(
+    path: str,
+    verification: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    if verification:
+        return {
+            "label": str(verification.get("label") or "Unverified partial artifact"),
+            "verification": str(verification.get("verification") or "unverified_partial"),
+        }
+    if path.endswith("/lifecycle-flow.md"):
+        return {"label": "Lifecycle flow", "verification": "verified"}
+    return {"label": "Verified artifact", "verification": "verified"}

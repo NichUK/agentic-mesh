@@ -5,6 +5,7 @@ x-agentic-mesh-env: &agentic-mesh-env
   AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
   AGENTIC_MESH_AUTH_ADMIN_URL: http://127.0.0.1:8100/auth/credentials
   AGENTIC_MESH_STATUS_BASE_URL: ${AGENTIC_MESH_STATUS_BASE_URL:-}
+  PYTHONPATH: /mesh/workspaces/agentic-mesh/src
   OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
   OTEL_EXPORTER_OTLP_INSECURE: "true"
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc

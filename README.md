@@ -38,6 +38,8 @@ Current documentation:
   sponsor-initiated tracked work
 - `docs/architecture/human-response-gates.md`: structured human response gates
   and reusable response type templates
+- `docs/architecture/risk-register.md`: open architecture and delivery risks
+  identified during dogfood recovery
 - `docs/architecture/decisions.md`: architecture decisions
 - `docs/architecture.md`: architecture overview
 - `docs/operations/codex-auth.md`: Codex auth strategy for role containers

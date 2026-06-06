@@ -1,15 +1,21 @@
 import json
 from pathlib import Path
+from urllib.error import HTTPError
 
 from agentic_mesh import telemetry
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.connectors import BotFrameworkTeamsConnectorAdapter
 from agentic_mesh.connectors import LocalTeamsConnectorAdapter
 from agentic_mesh.connectors import GraphTeamsChannelIngressAdapter
+from agentic_mesh.connectors import GraphTeamsConnectorAdapter
 from agentic_mesh.connectors import TeamsBotIngress
 from agentic_mesh.connectors import build_human_response_card
 from agentic_mesh.connectors import load_graph_token
 from agentic_mesh.connectors import render_human_response_request_html
+from agentic_mesh.connectors import render_route_status_html
+from agentic_mesh.connectors import _work_item_status_url
+from agentic_mesh.approval_decisions import build_requested_approval_decision
+from agentic_mesh.human_gates import FileHumanGateRequestStore
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.models import FlowGate
 from agentic_mesh.models import FlowState
@@ -19,6 +25,183 @@ from agentic_mesh.models import Message
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.work_queue import FileWorkQueueStore
+
+
+class _HttpErrorBody:
+    def read(self) -> bytes:
+        return b'{"tenant_id":"raw-tenant","access_token":"raw-token","serviceUrl":"https://raw"}'
+
+    def close(self) -> None:
+        return None
+
+
+class _StaticSecrets:
+    def get(self, secret_ref: str) -> str:
+        return f"value-for-{secret_ref}"
+
+
+def _seed_release_approval_context(
+    state_root: Path,
+    *,
+    project_id: str = "agentic-mesh-dev",
+    response_request_id: str = "human-response-1",
+    work_item_id: str = "slice-release",
+    correlation_id: str = "corr-release",
+) -> None:
+    store = FileHumanGateRequestStore(state_root, project_id)
+    request, _ = store.ensure_request(
+        work_item_id=work_item_id,
+        work_item_type="slice",
+        lifecycle_state="release_review",
+        gate=FlowGate(
+            gate_id="release_decision_response",
+            type="human_response",
+            response_type="approve_not_approve",
+            prompt="Record the final release decision for this work item.",
+            requested_from="release-sponsor",
+            channel="approvals",
+            completion_criteria={"accepted_values": ["approved"]},
+        ),
+        response_request_id=response_request_id,
+    )
+    payload = {
+        "response_request_id": request.response_request_id,
+        "gate_id": request.gate_id,
+        "response_type": request.response_type,
+        "prompt": request.prompt,
+        "project_id": project_id,
+        "role_id": "release-manager",
+        "work_item_id": work_item_id,
+        "work_item_type": "slice",
+        "lifecycle_state": "release_review",
+        "title": "Release local runtime",
+        "summary": "Old submit summary must not be authority.",
+        "correlation_id": correlation_id,
+        "approval_context": {
+            "work_performed_summary": "Durable request-time release context.",
+            "artifact_paths": [f"work-items/{work_item_id}/140-release-record.md"],
+            "status_url": f"http://controller.local/work-items/{work_item_id}",
+        },
+        "response_template": {
+            "input_mode": "choice",
+            "options": [
+                {"label": "Approve", "value": "approved"},
+                {"label": "Not Approve", "value": "not_approved"},
+            ],
+        },
+    }
+    store.record_decision_context(
+        response_request_id,
+        decision_context=build_requested_approval_decision(payload).to_dict(),
+    )
+
+
+def _raise_provider_http_error(*args, **kwargs):
+    raise HTTPError(
+        url="https://graph.microsoft.com/raw",
+        code=500,
+        msg="failed",
+        hdrs={},
+        fp=_HttpErrorBody(),
+    )
+
+
+def test_graph_send_failure_records_redacted_error_class(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    outbox = FileConnectorOutbox(state_root, mesh_config.project.project_id, journal)
+    outbox.enqueue(
+        ConnectorMessage.create(
+            channel="all-agents",
+            message_type="notification.event",
+            payload={
+                "event_kind": "work.completed",
+                "title": "Done",
+                "work_item_id": "work-redacted",
+            },
+            source="test",
+        )
+    )
+    monkeypatch.setattr("agentic_mesh.connectors.request.urlopen", _raise_provider_http_error)
+    connector = GraphTeamsConnectorAdapter(
+        connector_id="graph-teams",
+        project_id=mesh_config.project.project_id,
+        connector_config=mesh_config.project.connectors["teams"],
+        outbox=outbox,
+        journal=journal,
+        token="fake-token",
+    )
+
+    assert connector.process_once("all-agents") is True
+
+    failure = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "teams_graph_message_failed"
+    ][0]
+    rendered = json.dumps(failure)
+    assert failure["error"] == "GraphSendFailed500"
+    assert failure["redacted_error_class"] == "GraphSendFailed500"
+    assert "raw-token" not in rendered
+    assert "tenant_id" not in rendered
+    assert "serviceUrl" not in rendered
+    assert "graph.microsoft.com/raw" not in rendered
+
+
+def test_bot_send_failure_records_redacted_error_class(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    outbox = FileConnectorOutbox(state_root, mesh_config.project.project_id, journal)
+    outbox.enqueue(
+        ConnectorMessage.create(
+            channel="all-agents",
+            message_type="notification.event",
+            payload={
+                "event_kind": "work.completed",
+                "title": "Done",
+                "work_item_id": "work-redacted",
+                "role_id": "engineering",
+            },
+            source="test",
+        )
+    )
+    monkeypatch.setattr("agentic_mesh.connectors.request.urlopen", _raise_provider_http_error)
+    monkeypatch.setattr(
+        BotFrameworkTeamsConnectorAdapter,
+        "_bot_token",
+        lambda self, app_id, app_secret: "fake-token",
+    )
+    connector = BotFrameworkTeamsConnectorAdapter(
+        connector_id="bot-teams",
+        project_id=mesh_config.project.project_id,
+        connector_config=mesh_config.project.connectors["teams"],
+        outbox=outbox,
+        journal=journal,
+        secrets=_StaticSecrets(),
+    )
+
+    assert connector.process_once("all-agents") is True
+
+    failure = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "teams_bot_message_failed"
+    ][0]
+    rendered = json.dumps(failure)
+    assert failure["error"] == "BotSendFailed500"
+    assert failure["redacted_error_class"] == "BotSendFailed500"
+    assert "raw-token" not in rendered
+    assert "tenant_id" not in rendered
+    assert "serviceUrl" not in rendered
+    assert "graph.microsoft.com/raw" not in rendered
 
 
 def test_local_teams_connector_renders_human_response_card(tmp_path: Path) -> None:
@@ -91,6 +274,42 @@ def test_local_teams_connector_renders_human_response_card(tmp_path: Path) -> No
     ]
 
 
+def test_route_status_html_escapes_correction_fields_and_exposes_no_retry() -> None:
+    message = ConnectorMessage.create(
+        channel="engineering",
+        message_type="route_status.updated",
+        payload={
+            "title": "<script>Correction</script>",
+            "summary": "Fix route rendering.",
+            "work_item_id": "work-correction",
+            "route_status": {
+                "work_item_id": "work-correction",
+                "route_id": "route-123",
+                "route_kind": "configured_correction",
+                "route_status": "correction_requested",
+                "source_role": "qa-engineer",
+                "target_role": "engineering",
+                "source_lifecycle_state": "quality_review",
+                "target_lifecycle_state": "implementation",
+                "defect_id": "DEF-QA-LIFE-001",
+                "gate_id": "qa_owner_review",
+                "required_change": "<b>Do not render raw HTML</b>",
+                "evidence_required": "Implementation log and tests.",
+                "status_url": "http://controller.local/work-items/work-correction",
+            },
+        },
+        source="agentic-mesh-dev.qa-engineer.1",
+    )
+
+    rendered = render_route_status_html(message)
+
+    assert "&lt;script&gt;Correction&lt;/script&gt;" in rendered
+    assert "&lt;b&gt;Do not render raw HTML&lt;/b&gt;" in rendered
+    assert "correction_requested" in rendered
+    assert "DEF-QA-LIFE-001" in rendered
+    assert "Retry same state" not in rendered
+
+
 def test_human_response_rendering_includes_approval_context() -> None:
     message = ConnectorMessage.create(
         channel="approvals",
@@ -138,12 +357,17 @@ def test_human_response_rendering_includes_approval_context() -> None:
     card = build_human_response_card(message)
 
     assert "Implemented queue capture and QA evidence." in html
-    assert "engineering, qa-engineer" in html
     assert "work-items/work-queue-v0/110-quality-evidence.md" in html
     assert "Review and test this work item" in html
     assert card["actions"][0]["type"] == "Action.OpenUrl"
     assert card["actions"][0]["url"] == "http://controller.local/work-items/work-queue-v0"
     assert card["actions"][1]["type"] == "Action.Submit"
+    submit_data = card["actions"][1]["data"]
+    assert "title" not in submit_data
+    assert "summary" not in submit_data
+    assert "approval_context" not in submit_data
+    assert "trace_context" not in submit_data
+    assert "requested_at" not in submit_data
     rendered_card = json.dumps(card)
     assert "Implemented queue capture and QA evidence." in rendered_card
     assert "work-items/work-queue-v0/110-quality-evidence.md" in rendered_card
@@ -154,6 +378,52 @@ def test_teams_ingress_records_human_response_submit(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     journal = EventJournal(state_root, mesh_config.project.project_id)
     message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    store = FileHumanGateRequestStore(state_root, mesh_config.project.project_id)
+    request, _ = store.ensure_request(
+        work_item_id="slice-release",
+        work_item_type="slice",
+        lifecycle_state="release_review",
+        gate=FlowGate(
+            gate_id="release_decision_response",
+            type="human_response",
+            response_type="approve_not_approve",
+            prompt="Record the final release decision for this work item.",
+            requested_from="release-sponsor",
+            channel="approvals",
+            completion_criteria={"accepted_values": ["approved"]},
+        ),
+        response_request_id="human-response-1",
+    )
+    request_payload = {
+        "response_request_id": request.response_request_id,
+        "gate_id": request.gate_id,
+        "response_type": request.response_type,
+        "prompt": request.prompt,
+        "project_id": mesh_config.project.project_id,
+        "role_id": "release-manager",
+        "work_item_id": "slice-release",
+        "work_item_type": "slice",
+        "lifecycle_state": "release_review",
+        "title": "Release local runtime",
+        "summary": "Old submit summary must not be authority.",
+        "correlation_id": "corr-release",
+        "approval_context": {
+            "work_performed_summary": "Durable request-time release context.",
+            "artifact_paths": ["work-items/slice-release/140-release-record.md"],
+            "status_url": "http://controller.local/work-items/slice-release",
+        },
+        "response_template": {
+            "input_mode": "choice",
+            "options": [
+                {"label": "Approve", "value": "approved"},
+                {"label": "Not Approve", "value": "not_approved"},
+            ],
+        },
+    }
+    store.record_decision_context(
+        request.response_request_id,
+        decision_context=build_requested_approval_decision(request_payload).to_dict(),
+    )
     ingress = TeamsBotIngress(
         connector_id="teams-bot-listener",
         project_id=mesh_config.project.project_id,
@@ -190,6 +460,10 @@ def test_teams_ingress_records_human_response_submit(tmp_path: Path) -> None:
     assert [action["title"] for action in completed_card["actions"]] == ["Approve"]
     assert completed_card["actions"][0]["isEnabled"] is False
     assert completed_card["actions"][0]["data"]["action"] == "human_response.completed"
+    rendered_completed = json.dumps(completed_card)
+    assert "Release decision recorded" in rendered_completed
+    assert "Durable request-time release context." in rendered_completed
+    assert "Old submit summary must not be authority." not in rendered_completed
     assert message_store.pending_count("release-manager") == 1
     message = message_store.claim_next(
         "release-manager",
@@ -199,11 +473,54 @@ def test_teams_ingress_records_human_response_submit(tmp_path: Path) -> None:
     assert message.type == "human_response.received"
     assert message.payload["response_value"] == "approved"
     assert message.payload["responder"] == "Nich"
+    assert store.read(request.response_request_id).status == "completed"  # type: ignore[union-attr]
 
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_bot_activity_received" in event_types
     assert "human_response_received_from_teams" in event_types
     assert "human_response_completion_card_returned" in event_types
+
+
+def test_teams_ingress_returns_non_final_card_without_durable_request(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    _seed_release_approval_context(state_root, project_id=mesh_config.project.project_id)
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+    )
+
+    result = ingress.receive_activity(
+        {
+            "type": "invoke",
+            "id": "activity/missing",
+            "from": {"id": "user-1", "name": "Nich"},
+            "value": {
+                "action": "human_response.submit",
+                "role_id": "release-manager",
+                "work_item_id": "slice-release",
+                "work_item_type": "slice",
+                "lifecycle_state": "release_review",
+                "gate_id": "release_decision_response",
+                "response_type": "approve_not_approve",
+                "response_request_id": "missing-human-response",
+                "response_value": "approved",
+                "correlation_id": "corr-release",
+            },
+        }
+    )
+
+    rendered_card = json.dumps(result["value"])
+    assert "Decision received for validation" in rendered_card
+    assert "Release decision recorded" not in rendered_card
+    assert message_store.pending_count("release-manager") == 0
 
 
 def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
@@ -694,6 +1011,7 @@ def test_teams_ingress_journals_unmapped_channel_message(
     state_root = tmp_path / "state"
     journal = EventJournal(state_root, mesh_config.project.project_id)
     message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    _seed_release_approval_context(state_root, project_id=mesh_config.project.project_id)
     ingress = TeamsBotIngress(
         connector_id="teams-bot-listener",
         project_id=mesh_config.project.project_id,
@@ -1026,6 +1344,465 @@ def test_graph_teams_channel_ingress_requires_real_all_agents_mention(
     assert skipped[0]["reason"] == "missing_channel_mention"
 
 
+def test_bot_known_parent_threaded_reply_binds_before_direct_work(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+    channel = teams_config.channels["engineering"]
+
+    root = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-parent-1",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "Please build the parent feature.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+    reply = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-reply-1",
+            "replyToId": "activity-parent-1",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "<at>AM-Product Manager</at> Please include this context.",
+            "entities": [
+                {
+                    "type": "mention",
+                    "text": "<at>AM-Product Manager</at>",
+                    "mentioned": {"id": "bot-product-manager", "name": "AM-Product Manager"},
+                }
+            ],
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+
+    assert root["routed"] is True
+    assert reply["routed"] is True
+    assert reply["target_role"] == "business-analyst"
+    assert len(work_queue.list_items()) == 1
+    assert message_store.pending_count("product-manager") == 0
+    assert connector_outbox.pending_count("engineering") == 2
+    contexts = ingress.threaded_contexts.list_contexts(root["work_item_id"])
+    assert len(contexts) == 1
+    assert contexts[0].parent_work_item_id == root["work_item_id"]
+    assert contexts[0].mentioned_roles == ("product-manager",)
+    assert contexts[0].attention_state == "pending"
+
+    events = journal.read_all()
+    event_types = [event["event_type"] for event in events]
+    assert "threaded_context.captured" in event_types
+    assert "threaded_context.owner_attention.routed" in event_types
+    assert "teams_channel_message_routed" in event_types
+    assert len([event for event in events if event["event_type"] == "queue_item_created"]) == 1
+
+
+def test_explicit_linked_new_work_threaded_reply_uses_governed_intake(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    channel = teams_config.channels["engineering"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+
+    root = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-linked-parent",
+            "text": "Please build the parent feature.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+    linked = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-linked-reply",
+            "replyToId": "activity-linked-parent",
+            "text": "Please create a new slice for this follow-up.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+
+    assert root["routed"] is True
+    assert linked["status"] == "accepted"
+    assert len(work_queue.list_items()) == 2
+    parent_contexts = ingress.threaded_contexts.list_contexts(root["work_item_id"])
+    assert len(parent_contexts) == 1
+    assert parent_contexts[0].context_kind == "linked_new_work"
+    assert parent_contexts[0].reason == "explicit new-work wording was detected"
+    messages = [
+        message_store.claim_next(
+            "business-analyst",
+            "agentic-mesh-dev.business-analyst.1",
+        ),
+        message_store.claim_next(
+            "business-analyst",
+            "agentic-mesh-dev.business-analyst.1",
+        ),
+    ]
+    linked_message = [
+        message
+        for message in messages
+        if message is not None and message.payload["parent_work_item_id"]
+    ][0]
+    assert linked_message.type == "sponsor_intake.requested"
+    linked_item = work_queue.get(linked_message.payload["queue_item_id"])
+    assert linked_item is not None
+    assert linked_item.metadata["intake"] == "linked_new_work_from_threaded_context"
+    assert linked_item.metadata["parent_work_item_id"] == root["work_item_id"]
+    assert (
+        linked_item.metadata["parent_threaded_context_id"]
+        == parent_contexts[0].context_id
+    )
+
+
+def test_ambiguous_known_parent_threaded_reply_stays_parent_context(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    channel = teams_config.channels["engineering"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+
+    root = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-ambiguous-parent",
+            "text": "Please build the parent feature.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+    reply = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-ambiguous-reply",
+            "replyToId": "activity-ambiguous-parent",
+            "text": "<at>AM-Product Manager</at> please handle this",
+            "entities": [
+                {
+                    "type": "mention",
+                    "text": "<at>AM-Product Manager</at>",
+                    "mentioned": {"id": "bot-product-manager", "name": "AM-Product Manager"},
+                }
+            ],
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+
+    assert root["routed"] is True
+    assert reply["status"] == "accepted"
+    assert len(work_queue.list_items()) == 1
+    assert message_store.pending_count("product-manager") == 0
+    assert message_store.pending_count("business-analyst") == 2
+    contexts = ingress.threaded_contexts.list_contexts(root["work_item_id"])
+    assert len(contexts) == 1
+    assert contexts[0].context_kind == "parent_context"
+    assert contexts[0].mentioned_roles == ("product-manager",)
+
+
+def test_unknown_parent_threaded_reply_is_observable_without_binding(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    channel = teams_config.channels["engineering"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+
+    result = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-unknown-reply",
+            "replyToId": "activity-missing-parent",
+            "text": "Please include this context.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+
+    assert result == {"status": "accepted", "activity_id": "activity-unknown-reply"}
+    assert ingress.threaded_contexts.list_contexts() == []
+    assert work_queue.list_items() == []
+    assert message_store.pending_count("business-analyst") == 0
+    assert connector_outbox.pending_count("engineering") == 0
+    parent_events = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "threaded_context.parent_not_verified"
+    ]
+    assert len(parent_events) == 1
+    assert parent_events[0]["reason"] == "parent_not_verified"
+
+
+def test_graph_known_parent_reply_uses_reply_fetching(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = GraphTeamsChannelIngressAdapter(
+        connector_id="teams-graph-ingress",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        connector_config=teams_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token="token",
+        connector_outbox=connector_outbox,
+    )
+    ingress._list_channel_messages = lambda channel, max_messages: [
+        {
+            "id": "graph-parent-1",
+            "createdDateTime": "2026-06-03T12:31:24.072Z",
+            "body": {"content": "<p>Please build the parent feature.</p>"},
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [],
+        }
+    ]
+    ingress._list_channel_replies = lambda channel, root_message_id, max_messages: [
+        {
+            "id": "graph-reply-1",
+            "createdDateTime": "2026-06-03T12:32:24.072Z",
+            "body": {"content": "<p>Please include this context.</p>"},
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [],
+        }
+    ]
+
+    result = ingress.process_once("engineering", max_messages=5)
+
+    assert result["routed"] == 2
+    first_message = message_store.claim_next(
+        "business-analyst",
+        "agentic-mesh-dev.business-analyst.1",
+    )
+    assert first_message is not None
+    contexts = ingress.ingress.threaded_contexts.list_contexts(
+        first_message.payload["work_item_id"]
+    )
+    assert len(contexts) == 1
+    assert contexts[0].source_scope == "engineering"
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "teams_graph_channel_message_received" in event_types
+    assert "threaded_context.captured" in event_types
+
+
+def test_bot_and_graph_duplicate_threaded_reply_converges_to_one_context(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    channel = teams_config.channels["engineering"]
+    bot = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+    bot.receive_activity(
+        {
+            "type": "message",
+            "id": "cross-parent-1",
+            "text": "Please build the parent feature.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+    bot_reply = bot.receive_activity(
+        {
+            "type": "message",
+            "id": "cross-reply-1",
+            "replyToId": "cross-parent-1",
+            "text": "Please include this context.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+    graph = GraphTeamsChannelIngressAdapter(
+        connector_id="teams-graph-ingress",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        connector_config=teams_config,
+        message_store=message_store,
+        journal=journal,
+        project_config=mesh_config.project,
+        token="token",
+        connector_outbox=connector_outbox,
+    )
+    graph._list_channel_messages = lambda channel_name, max_messages: [
+        {
+            "id": "cross-parent-1",
+            "createdDateTime": "2026-06-03T12:31:24.072Z",
+            "body": {"content": "<p>Please build the parent feature.</p>"},
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [],
+        }
+    ]
+    graph._list_channel_replies = lambda channel_name, root_message_id, max_messages: [
+        {
+            "id": "graph-cross-reply-different-delivery-id",
+            "createdDateTime": "2026-06-03T12:32:24.072Z",
+            "body": {"content": "<p>Please include this context.</p>"},
+            "from": {"user": {"id": "user-1", "displayName": "Nich"}},
+            "mentions": [],
+        }
+    ]
+
+    graph_result = graph.process_once("engineering", max_messages=5)
+
+    assert bot_reply["routed"] is True
+    assert graph_result["routed"] == 0
+    all_contexts = bot.threaded_contexts.list_contexts()
+    assert len(all_contexts) == 1
+    assert len(work_queue.list_items()) == 1
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "threaded_context.duplicate_detected" in event_types
+    assert len(
+        [event for event in journal.read_all() if event["event_type"] == "threaded_context.receipt.queued"]
+    ) == 1
+
+
 def test_graph_teams_channel_ingress_cursor_suppresses_duplicates(
     tmp_path: Path,
 ) -> None:
@@ -1109,6 +1886,7 @@ def test_teams_ingress_updates_original_human_response_card(tmp_path: Path) -> N
     state_root = tmp_path / "state"
     journal = EventJournal(state_root, mesh_config.project.project_id)
     message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    _seed_release_approval_context(state_root, project_id=mesh_config.project.project_id)
     ingress = TeamsBotIngress(
         connector_id="teams-bot-listener",
         project_id=mesh_config.project.project_id,
@@ -1161,6 +1939,7 @@ def test_teams_ingress_updates_original_human_response_card(tmp_path: Path) -> N
 
 
 def test_bot_connector_selects_source_role_for_handoff_sender(monkeypatch) -> None:
+    monkeypatch.delenv("AGENTIC_MESH_STATUS_BASE_URL", raising=False)
     monkeypatch.setenv(
         "AGENTIC_MESH_AUTH_ADMIN_URL",
         "http://controller.local/auth/credentials",
@@ -1185,7 +1964,14 @@ def test_bot_connector_selects_source_role_for_handoff_sender(monkeypatch) -> No
     rendered = connector._render_text(message)
     assert "platform_readiness" in rendered
     assert "implementation" in rendered
-    assert "http://controller.local/work-items/slice-bot-sender" in rendered
+    assert "http://controller.local/work-items/slice-bot-sender" not in rendered
+
+    monkeypatch.setenv("AGENTIC_MESH_STATUS_BASE_URL", "https://status.example.com")
+    rendered_with_status_base = connector._render_text(message)
+    assert (
+        "https://status.example.com/work-items/slice-bot-sender"
+        in rendered_with_status_base
+    )
 
 
 def test_bot_connector_attaches_human_response_card() -> None:
@@ -1231,9 +2017,7 @@ def test_bot_connector_attaches_human_response_card() -> None:
     ]
     assert card["actions"][0]["data"]["action"] == "human_response.submit"
     assert card["actions"][0]["data"]["response_value"] == "approved"
-    assert card["actions"][0]["data"]["trace_context"] == {
-        "trace_id": "1234567890abcdef1234567890abcdef"
-    }
+    assert "trace_context" not in card["actions"][0]["data"]
 
 
 def test_bot_connector_renders_sponsor_directive_acknowledgement() -> None:
@@ -1453,6 +2237,11 @@ def test_teams_ingress_human_response_joins_trace_context(tmp_path: Path) -> Non
         state_root = tmp_path / "state"
         journal = EventJournal(state_root, mesh_config.project.project_id)
         message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+        _seed_release_approval_context(
+            state_root,
+            project_id=mesh_config.project.project_id,
+            correlation_id="corr-1234567890abcdef1234567890abcdef",
+        )
         ingress = TeamsBotIngress(
             connector_id="teams-bot-listener",
             project_id=mesh_config.project.project_id,
@@ -1496,4 +2285,22 @@ def test_teams_ingress_human_response_joins_trace_context(tmp_path: Path) -> Non
         span.trace_context["trace_id"] == "1234567890abcdef1234567890abcdef"
         for span in sink.spans
         if span.name in {"teams.receive", "human_response.wait", "work.enqueue"}
+    )
+
+
+def test_connector_status_link_does_not_fall_back_to_auth_admin_url(monkeypatch) -> None:
+    monkeypatch.delenv("AGENTIC_MESH_STATUS_BASE_URL", raising=False)
+    monkeypatch.setenv("AGENTIC_MESH_AUTH_ADMIN_URL", "http://127.0.0.1:8100/auth/status")
+    assert _work_item_status_url("work-activation") == ""
+
+    monkeypatch.setenv("AGENTIC_MESH_STATUS_BASE_URL", "http://127.0.0.1:8100")
+    assert _work_item_status_url("work-activation") == ""
+
+    monkeypatch.setenv("AGENTIC_MESH_STATUS_BASE_URL", "http://controller.local")
+    assert _work_item_status_url("work-activation") == ""
+
+    monkeypatch.setenv("AGENTIC_MESH_STATUS_BASE_URL", "https://status.example.com")
+    assert (
+        _work_item_status_url("work-activation")
+        == "https://status.example.com/work-items/work-activation"
     )

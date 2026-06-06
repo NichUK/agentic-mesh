@@ -8,6 +8,7 @@ The current architecture direction is recorded in:
 
 - `docs/architecture/agentic-mesh-design.md`
 - `docs/architecture/decisions.md#adr-001---agentic-mesh-enterprise-runtime-direction`
+- `docs/architecture/risk-register.md`
 
 ## Direction Summary
 

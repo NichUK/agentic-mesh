@@ -5,6 +5,7 @@ import yaml
 import pytest
 
 from agentic_mesh.config import ConfigError
+from agentic_mesh.config import _control_plane_policy_from_dict
 from agentic_mesh.config import _role_template_from_dict
 from agentic_mesh.config import load_mesh_config
 
@@ -40,6 +41,14 @@ def test_project_schema_and_flow_template_files_exist() -> None:
     assert "projectMesh" in schema["$defs"]
     assert "flowConsult" in schema["$defs"]
     assert "sponsorInitiatedWork" in schema["$defs"]
+    assert "notificationPolicy" in schema["$defs"]
+    assert "controlPlanePolicy" in schema["$defs"]
+    assert "projectGateway" in schema["$defs"]
+    assert "gateways" in schema["properties"]
+    control_plane_schema = schema["$defs"]["controlPlanePolicy"]["properties"]
+    assert control_plane_schema["binding_mode"]["default"] == "local_private"
+    assert control_plane_schema["api_enabled"]["default"] is False
+    assert control_plane_schema["mcp_enabled"]["default"] is False
     reasoning_effort_schema = schema["$defs"]["worker"]["properties"]["reasoning_effort"]
     assert reasoning_effort_schema["default"] == "medium"
     assert "high" in reasoning_effort_schema["enum"]
@@ -199,6 +208,70 @@ def test_loads_teams_connector_role_bot_mapping() -> None:
     assert teams.role_bots["engineering"].display_name == "AM-Engineering"
     assert teams.role_bots["engineering"].bot_id_ref == "teams-bot-engineering-app-id"
     assert teams.role_bots["engineering"].secret_ref == "teams-bot-engineering-secret"
+    gateway = mesh_config.project.gateways["agentic-mesh"]
+    assert gateway.no_delivery_work is True
+    assert gateway.raw_retention_mode == "reference_only"
+    assert gateway.default_owner_role == "delivery-manager"
+    assert gateway.teams is not None
+    assert gateway.teams.connector == "teams"
+    assert gateway.teams.dm_enabled is True
+    assert gateway.teams.intake_channels == ["all-agents"]
+    assert gateway.teams.process_role_channels_by_default is False
+    assert gateway.teams.bot.display_name == "AM-Agentic Mesh"
+    assert gateway.teams.bot.bot_id_ref == "teams-bot-agentic-mesh-app-id"
+    notification_policy = mesh_config.project.notification_policy
+    assert notification_policy.schema_version == "notification-policy-v0"
+    assert notification_policy.defaults["routine_lifecycle_events"] == "dashboard_only"
+    assert notification_policy.surfaces["intake"].route == "all-agents"
+    assert notification_policy.surfaces["approvals"].route == "approvals"
+    assert notification_policy.surfaces["status_fallback"].label == "project status fallback"
+    assert (
+        notification_policy.event_overrides["lifecycle.handoff_requested"].visibility
+        == "dashboard_only"
+    )
+    control_plane = mesh_config.project.control_plane
+    assert control_plane.schema_version == "control-plane-policy-v0"
+    assert control_plane.binding_mode == "local_private"
+    assert control_plane.api_enabled is False
+    assert control_plane.mcp_enabled is False
+    assert control_plane.remote_promotion_enabled is False
+    assert control_plane.support_read_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("field_name", "bad_value"),
+    [
+        ("api_enabled", "false"),
+        ("api_enabled", "no"),
+        ("api_enabled", 0),
+        ("api_enabled", None),
+        ("mcp_enabled", "false"),
+        ("mcp_enabled", "no"),
+        ("mcp_enabled", 0),
+        ("mcp_enabled", None),
+        ("remote_promotion_enabled", "false"),
+        ("remote_promotion_enabled", "no"),
+        ("remote_promotion_enabled", 0),
+        ("remote_promotion_enabled", None),
+        ("support_read_enabled", "false"),
+        ("support_read_enabled", "no"),
+        ("support_read_enabled", 0),
+        ("support_read_enabled", None),
+    ],
+)
+def test_control_plane_policy_rejects_non_boolean_flags(
+    field_name: str,
+    bad_value: object,
+) -> None:
+    with pytest.raises(ConfigError, match=f"control_plane.{field_name} must be a boolean"):
+        _control_plane_policy_from_dict(
+            {
+                "control_plane": {
+                    "binding_mode": "remote_enabled",
+                    field_name: bad_value,
+                }
+            }
+        )
 
 
 def test_loads_project_roles_and_instances() -> None:

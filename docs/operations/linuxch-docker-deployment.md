@@ -36,10 +36,10 @@ Deployment was started on `linuxch` under:
 /home/nich/agentic-mesh
 ```
 
-The Compose stack is running with:
+The Compose stack is running with the staged linuxch helper:
 
 ```powershell
-docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml up -d
+sh scripts/deploy-linuxch-compose.sh up -d
 ```
 
 Verified from the VM and local network:
@@ -75,17 +75,24 @@ docs/operations/sdlc-teams-smoke-test.md
 Use the base compose file plus the Linux VM overlay:
 
 ```powershell
-docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml up -d
+sh scripts/deploy-linuxch-compose.sh up -d
 ```
 
 Build the local dogfood image only when the Agentic Mesh runtime code changes:
 
 ```powershell
-docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml --profile build-image build runtime-image
+sh scripts/deploy-linuxch-compose.sh --profile build-image build runtime-image
 ```
 
 That build step must not be required for organization or project configuration
 changes.
+
+On `linuxch`, Docker is currently installed through Snap. The Snap-constrained
+`docker compose` command cannot reliably read Compose files directly from the
+`/mnt/nixnas` CIFS mount, even when normal shell commands can read them. The
+helper stages the Compose files under `$HOME/agentic-mesh-compose-run/` and
+then runs Docker Compose from that readable location while preserving
+`AGENTIC_MESH_WORKSPACE_HOST_PATH`.
 
 The overlay adds:
 

@@ -95,6 +95,9 @@
     "handoff_targets": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilityProfile"
     }
   },
   "$defs": {
@@ -125,6 +128,104 @@
           "default": []
         }
       }
+    },
+    "capabilityProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "role-capability-profile-v0",
+          "default": "role-capability-profile-v0"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability" },
+          "default": []
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_id", "category", "requirement", "display_name"],
+      "properties": {
+        "capability_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$" },
+        "category": {
+          "type": "string",
+          "enum": ["logical_tool", "skill", "runtime_package", "mount", "external_connector", "validation_command", "worker_capability", "document_library", "compatibility_default_tool"]
+        },
+        "requirement": {
+          "type": "string",
+          "enum": ["required", "optional", "restricted", "not_applicable"]
+        },
+        "display_name": { "type": "string" },
+        "description": { "type": "string" },
+        "validation": { "$ref": "#/$defs/capabilityValidation" },
+        "affects": { "$ref": "#/$defs/capabilityAffects" },
+        "fallback": { "$ref": "#/$defs/capabilityFallback" },
+        "waiver": { "$ref": "#/$defs/capabilityWaiver" },
+        "severity": { "type": "string" },
+        "impact": { "type": "string" },
+        "next_action": { "type": "string" },
+        "action_owner": { "type": "string" }
+      }
+    },
+    "capabilityValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["command", "python_import", "logical_mount", "connector_config", "document_library", "worker_auth", "configured"]
+        },
+        "command": {
+          "oneOf": [
+            { "type": "string", "not": { "pattern": "[;&|`$<>]" } },
+            { "type": "array", "items": { "type": "string", "not": { "pattern": "[;&|`$<>]" } }, "minItems": 1, "maxItems": 4 }
+          ]
+        },
+        "target": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "freshness_seconds": { "type": "integer", "minimum": 60 },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 30 }
+      }
+    },
+    "capabilityAffects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lifecycle_states": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "work_item_types": { "type": "array", "items": { "type": "string" }, "default": [] }
+      }
+    },
+    "capabilityFallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "policy_summary", "residual_impact"],
+      "properties": {
+        "owner": { "type": "string" },
+        "policy_summary": { "type": "string" },
+        "residual_impact": { "type": "string" },
+        "review_point": { "type": "string" },
+        "allowed_scope": { "type": "string" }
+      }
+    },
+    "capabilityWaiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "reason", "residual_impact"],
+      "properties": {
+        "owner": { "type": "string" },
+        "reason": { "type": "string" },
+        "residual_impact": { "type": "string" },
+        "expires_at": { "type": "string" },
+        "review_point": { "type": "string" }
+      },
+      "anyOf": [
+        { "required": ["expires_at"] },
+        { "required": ["review_point"] }
+      ]
     },
     "standardsReference": {
       "type": "object",

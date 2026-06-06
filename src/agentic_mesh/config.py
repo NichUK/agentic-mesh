@@ -9,8 +9,15 @@ from agentic_mesh.models import (
     AuthBinding,
     AuthCredential,
     AuthMethod,
+    CapabilityAffectsConfig,
+    CapabilityConfig,
+    CapabilityFallbackConfig,
+    CapabilityProfileConfig,
+    CapabilityValidationConfig,
+    CapabilityWaiverConfig,
     ConnectorChannelConfig,
     ConnectorIngressConfig,
+    ControlPlanePolicyConfig,
     DocumentAccountability,
     DocumentLibraryConfig,
     FlowConsult,
@@ -18,8 +25,16 @@ from agentic_mesh.models import (
     FlowGate,
     FlowState,
     FlowVisualizationConfig,
+    GatewayBotConfig,
+    GatewayConfig,
+    GatewayTeamsConfig,
+    HumanGatePolicyConfig,
     MeshConfig,
     NamingDefaults,
+    NotificationCompatibilityConfig,
+    NotificationEventOverrideConfig,
+    NotificationPolicyConfig,
+    NotificationSurfaceConfig,
     OrganizationConfig,
     ProjectConfig,
     ProjectConnectorConfig,
@@ -37,6 +52,65 @@ from agentic_mesh.models import (
     TeamsRoleBotConfig,
     WorkerConfig,
 )
+
+
+CAPABILITY_SCHEMA_VERSION = "role-capability-profile-v0"
+CAPABILITY_ID_RE = "abcdefghijklmnopqrstuvwxyz0123456789_.-"
+ALLOWED_CAPABILITY_CATEGORIES = {
+    "logical_tool",
+    "skill",
+    "runtime_package",
+    "mount",
+    "external_connector",
+    "validation_command",
+    "worker_capability",
+    "document_library",
+    "compatibility_default_tool",
+}
+ALLOWED_CAPABILITY_REQUIREMENTS = {
+    "required",
+    "optional",
+    "restricted",
+    "not_applicable",
+}
+ALLOWED_VALIDATION_KINDS = {
+    "command",
+    "python_import",
+    "logical_mount",
+    "connector_config",
+    "document_library",
+    "worker_auth",
+    "configured",
+}
+MUTATING_COMMAND_WORDS = {
+    "apt",
+    "apt-get",
+    "brew",
+    "cargo",
+    "chmod",
+    "chown",
+    "curl",
+    "docker",
+    "helm",
+    "install",
+    "kubectl",
+    "mkdir",
+    "mv",
+    "npm",
+    "pip",
+    "pnpm",
+    "rm",
+    "rsync",
+    "scp",
+    "service",
+    "systemctl",
+    "terraform",
+    "touch",
+    "wget",
+    "yarn",
+}
+
+GATEWAY_RAW_RETENTION_MODES = {"none", "reference_only", "support_audited"}
 
 
 class ConfigError(ValueError):
@@ -58,6 +132,237 @@ def _string_list(data: dict[str, Any], key: str, path: Path) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ConfigError(f"{path} {key} must be a list of strings")
     return [str(item) for item in value]
+
+
+def _capability_id(value: Any, owner: str) -> str:
+    capability_id = str(value or "")
+    if not capability_id:
+        raise ConfigError(f"{owner}.capability_id is required")
+    if capability_id[0] not in "abcdefghijklmnopqrstuvwxyz0123456789":
+        raise ConfigError(f"{owner}.capability_id must start with a lowercase letter or digit")
+    if any(char not in CAPABILITY_ID_RE for char in capability_id):
+        raise ConfigError(f"{owner}.capability_id contains unsafe characters")
+    if "/" in capability_id or "\\" in capability_id or ".." in capability_id:
+        raise ConfigError(f"{owner}.capability_id must be a safe logical id")
+    return capability_id
+
+
+def _logical_ref(value: Any, owner: str) -> str:
+    ref = str(value or "")
+    if not ref:
+        raise ConfigError(f"{owner} must not be empty")
+    if ref.startswith(("/", "\\", "file:", "http:", "https:")):
+        raise ConfigError(f"{owner} must be a logical reference, not a path or URL")
+    if "/" in ref or "\\" in ref or ".." in ref:
+        raise ConfigError(f"{owner} must be path-safe")
+    return ref
+
+
+def _secret_ref(value: Any, owner: str) -> str:
+    ref = _logical_ref(value, owner)
+    lowered = ref.casefold()
+    if any(term in lowered for term in {"bearer", "token=", "password=", "secret="}):
+        raise ConfigError(f"{owner} must be a logical secret reference, not a secret value")
+    if len(ref) > 120:
+        raise ConfigError(f"{owner} must be a bounded logical secret reference")
+    return ref
+
+
+def _capability_validation_from_dict(
+    value: Any,
+    owner: str,
+) -> CapabilityValidationConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError(f"{owner}.validation must be a mapping")
+    kind = str(value.get("kind", ""))
+    if kind not in ALLOWED_VALIDATION_KINDS:
+        raise ConfigError(
+            f"{owner}.validation.kind must be one of: "
+            f"{', '.join(sorted(ALLOWED_VALIDATION_KINDS))}"
+        )
+
+    command: list[str] = []
+    if kind == "command":
+        raw_command = value.get("command")
+        if isinstance(raw_command, str):
+            import shlex
+
+            try:
+                command = shlex.split(raw_command)
+            except ValueError as exc:
+                raise ConfigError(f"{owner}.validation.command is malformed") from exc
+        elif isinstance(raw_command, list) and all(
+            isinstance(item, str) for item in raw_command
+        ):
+            command = [str(item) for item in raw_command]
+        else:
+            raise ConfigError(f"{owner}.validation.command must be a string or string list")
+        if not command:
+            raise ConfigError(f"{owner}.validation.command must not be empty")
+        if len(command) > 4:
+            raise ConfigError(f"{owner}.validation.command must be a bounded status check")
+        unsafe_tokens = {"|", "&&", "||", ";", ">", ">>", "<", "$(", "`"}
+        if any(token in item for item in command for token in unsafe_tokens):
+            raise ConfigError(f"{owner}.validation.command must not use shell syntax")
+        if command[0] in MUTATING_COMMAND_WORDS or any(
+            part in MUTATING_COMMAND_WORDS for part in command[1:]
+        ):
+            raise ConfigError(f"{owner}.validation.command appears mutating")
+
+    target = value.get("target")
+    if target is not None:
+        target = _logical_ref(target, f"{owner}.validation.target")
+    try:
+        freshness_seconds = int(value.get("freshness_seconds", 86400))
+        timeout_seconds = int(value.get("timeout_seconds", 5))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{owner}.validation freshness and timeout must be integers") from exc
+    if freshness_seconds < 60:
+        raise ConfigError(f"{owner}.validation.freshness_seconds must be at least 60")
+    if timeout_seconds < 1 or timeout_seconds > 30:
+        raise ConfigError(f"{owner}.validation.timeout_seconds must be between 1 and 30")
+    return CapabilityValidationConfig(
+        kind=kind,
+        command=command,
+        target=str(target) if target is not None else None,
+        freshness_seconds=freshness_seconds,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _capability_fallback_from_dict(value: Any, owner: str) -> CapabilityFallbackConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError(f"{owner}.fallback must be a mapping")
+    required = ["owner", "policy_summary", "residual_impact"]
+    missing = [field for field in required if not value.get(field)]
+    if missing:
+        raise ConfigError(f"{owner}.fallback missing required fields: {', '.join(missing)}")
+    return CapabilityFallbackConfig(
+        owner=str(value["owner"]),
+        policy_summary=str(value["policy_summary"]),
+        residual_impact=str(value["residual_impact"]),
+        review_point=(
+            str(value["review_point"]) if value.get("review_point") is not None else None
+        ),
+        allowed_scope=(
+            str(value["allowed_scope"]) if value.get("allowed_scope") is not None else None
+        ),
+    )
+
+
+def _capability_waiver_from_dict(value: Any, owner: str) -> CapabilityWaiverConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError(f"{owner}.waiver must be a mapping")
+    required = ["owner", "reason", "residual_impact"]
+    missing = [field for field in required if not value.get(field)]
+    if missing:
+        raise ConfigError(f"{owner}.waiver missing required fields: {', '.join(missing)}")
+    if not value.get("expires_at") and not value.get("review_point"):
+        raise ConfigError(f"{owner}.waiver requires expires_at or review_point")
+    return CapabilityWaiverConfig(
+        owner=str(value["owner"]),
+        reason=str(value["reason"]),
+        residual_impact=str(value["residual_impact"]),
+        expires_at=str(value["expires_at"]) if value.get("expires_at") is not None else None,
+        review_point=str(value["review_point"]) if value.get("review_point") is not None else None,
+    )
+
+
+def _capability_affects_from_dict(value: Any, owner: str) -> CapabilityAffectsConfig:
+    if value is None:
+        return CapabilityAffectsConfig()
+    if not isinstance(value, dict):
+        raise ConfigError(f"{owner}.affects must be a mapping")
+    lifecycle_states = value.get("lifecycle_states", []) or []
+    work_item_types = value.get("work_item_types", []) or []
+    if not isinstance(lifecycle_states, list) or not all(
+        isinstance(item, str) for item in lifecycle_states
+    ):
+        raise ConfigError(f"{owner}.affects.lifecycle_states must be a list of strings")
+    if not isinstance(work_item_types, list) or not all(
+        isinstance(item, str) for item in work_item_types
+    ):
+        raise ConfigError(f"{owner}.affects.work_item_types must be a list of strings")
+    return CapabilityAffectsConfig(
+        lifecycle_states=[str(item) for item in lifecycle_states],
+        work_item_types=[str(item) for item in work_item_types],
+    )
+
+
+def _capability_profile_from_dict(
+    value: Any,
+    owner: str,
+    *,
+    source_path: str,
+) -> CapabilityProfileConfig:
+    if value is None:
+        return CapabilityProfileConfig()
+    if not isinstance(value, dict):
+        raise ConfigError(f"{owner}.capabilities must be a mapping")
+    schema_version = str(value.get("schema_version", CAPABILITY_SCHEMA_VERSION))
+    if schema_version != CAPABILITY_SCHEMA_VERSION:
+        raise ConfigError(f"{owner}.capabilities.schema_version must be {CAPABILITY_SCHEMA_VERSION}")
+    raw_capabilities = value.get("capabilities", []) or []
+    if not isinstance(raw_capabilities, list):
+        raise ConfigError(f"{owner}.capabilities.capabilities must be a list")
+    capabilities: list[CapabilityConfig] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(raw_capabilities):
+        item_owner = f"{owner}.capabilities.capabilities[{index}]"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{item_owner} must be a mapping")
+        capability_id = _capability_id(item.get("capability_id"), item_owner)
+        category = str(item.get("category", "logical_tool"))
+        if category not in ALLOWED_CAPABILITY_CATEGORIES:
+            raise ConfigError(
+                f"{item_owner}.category must be one of: "
+                f"{', '.join(sorted(ALLOWED_CAPABILITY_CATEGORIES))}"
+            )
+        requirement = str(item.get("requirement", "optional"))
+        if requirement not in ALLOWED_CAPABILITY_REQUIREMENTS:
+            raise ConfigError(
+                f"{item_owner}.requirement must be one of: "
+                f"{', '.join(sorted(ALLOWED_CAPABILITY_REQUIREMENTS))}"
+            )
+        key = (capability_id, category)
+        if key in seen:
+            raise ConfigError(f"{item_owner} duplicates capability {capability_id}/{category}")
+        seen.add(key)
+        fallback = _capability_fallback_from_dict(item.get("fallback"), item_owner)
+        waiver = _capability_waiver_from_dict(item.get("waiver"), item_owner)
+        if requirement == "restricted" and not item.get("next_action"):
+            raise ConfigError(f"{item_owner}.next_action is required for restricted capabilities")
+        capabilities.append(
+            CapabilityConfig(
+                capability_id=capability_id,
+                category=category,
+                requirement=requirement,
+                display_name=str(
+                    item.get("display_name") or capability_id.replace(".", " ").title()
+                ),
+                description=str(item.get("description", "")),
+                validation=_capability_validation_from_dict(
+                    item.get("validation"),
+                    item_owner,
+                ),
+                affects=_capability_affects_from_dict(item.get("affects"), item_owner),
+                fallback=fallback,
+                waiver=waiver,
+                severity=str(item.get("severity", "medium")),
+                impact=str(item.get("impact", "")),
+                next_action=str(item.get("next_action", "")),
+                action_owner=str(item.get("action_owner", "")),
+                configured_source=str(item.get("configured_source", "")),
+                source_path=source_path,
+            )
+        )
+    return CapabilityProfileConfig(schema_version=schema_version, capabilities=capabilities)
 
 
 def _decision_rights_from_dict(data: dict[str, Any], path: Path) -> dict[str, list[str]]:
@@ -166,6 +471,11 @@ def _role_template_from_dict(data: dict[str, Any], path: Path) -> RoleTemplate:
         core_workflows=_core_workflows_from_dict(data, path),
         standards_references=_standards_references_from_dict(data, path),
         anti_patterns=_string_list(data, "anti_patterns", path),
+        capabilities=_capability_profile_from_dict(
+            data.get("capabilities"),
+            f"{path}",
+            source_path=str(path),
+        ),
     )
 
 
@@ -211,6 +521,11 @@ def _organization_from_dict(data: dict[str, Any], path: Path) -> OrganizationCon
         work_intake_defaults=dict(data.get("work_intake_defaults", {})),
         handoff_defaults=dict(data.get("handoff_defaults", {})),
         security_defaults=dict(data.get("security_defaults", {})),
+        capability_defaults=_capability_profile_from_dict(
+            data.get("capability_defaults"),
+            f"{path}",
+            source_path=str(path),
+        ),
     )
 
 
@@ -469,6 +784,29 @@ def _project_role_from_dict(
             f"Role {role_id} worker sandbox_mode must be one of: "
             f"{', '.join(sorted(allowed_sandbox_modes))}"
         )
+    timeout_seconds = _optional_worker_seconds(
+        role_id,
+        worker,
+        "timeout_seconds",
+    )
+    progress_window_seconds = _optional_worker_seconds(
+        role_id,
+        worker,
+        "progress_window_seconds",
+    )
+    max_timeout_seconds = _optional_worker_seconds(
+        role_id,
+        worker,
+        "max_timeout_seconds",
+    )
+    if (
+        timeout_seconds is not None
+        and max_timeout_seconds is not None
+        and timeout_seconds > max_timeout_seconds
+    ):
+        raise ConfigError(
+            f"Role {role_id} worker.timeout_seconds must be <= max_timeout_seconds"
+        )
     return ProjectRoleOverride(
         role_id=role_id,
         template=str(data.get("template", role_id)),
@@ -485,11 +823,35 @@ def _project_role_from_dict(
                 auth_methods,
                 auth_credentials,
             ),
+            timeout_seconds=timeout_seconds,
+            progress_window_seconds=progress_window_seconds,
+            max_timeout_seconds=max_timeout_seconds,
         ),
         instructions=list(data.get("instructions", [])),
         write_paths=list(data.get("write_paths", [])),
         channels=dict(data.get("channels", {})),
+        capabilities=_capability_profile_from_dict(
+            data.get("capabilities"),
+            f"Project role {role_id}",
+            source_path=f"project.roles.{role_id}",
+        ),
     )
+
+
+def _optional_worker_seconds(
+    role_id: str,
+    worker: dict[str, Any],
+    key: str,
+) -> int | None:
+    if key not in worker or worker.get(key) is None:
+        return None
+    try:
+        value = int(worker[key])
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"Role {role_id} worker.{key} must be an integer") from exc
+    if value < 60:
+        raise ConfigError(f"Role {role_id} worker.{key} must be at least 60 seconds")
+    return value
 
 
 def _project_workspace_from_dict(data: dict[str, Any], project_id: str) -> ProjectWorkspaceConfig:
@@ -756,6 +1118,387 @@ def _project_connectors_from_dict(
         )
 
     return connectors
+
+
+def _project_gateways_from_dict(
+    data: dict[str, Any],
+    *,
+    connectors: dict[str, ProjectConnectorConfig],
+    roles: dict[str, ProjectRoleOverride],
+    notification_policy: NotificationPolicyConfig,
+) -> dict[str, GatewayConfig]:
+    gateways_data = data.get("gateways", {}) or {}
+    if not isinstance(gateways_data, dict):
+        raise ConfigError("Project gateways must be a mapping")
+
+    gateways: dict[str, GatewayConfig] = {}
+    for gateway_id, gateway_data in gateways_data.items():
+        gateway_ref = _logical_ref(gateway_id, f"Project gateways.{gateway_id}")
+        if not isinstance(gateway_data, dict):
+            raise ConfigError(f"Gateway {gateway_id} must be a mapping")
+        enabled = bool(gateway_data.get("enabled", True))
+        no_delivery_work = bool(gateway_data.get("no_delivery_work", True))
+        if not no_delivery_work:
+            raise ConfigError(
+                f"Gateway {gateway_id}.no_delivery_work cannot be disabled in V0"
+            )
+        raw_retention_mode = str(
+            gateway_data.get("raw_retention_mode", "reference_only")
+        )
+        if raw_retention_mode not in GATEWAY_RAW_RETENTION_MODES:
+            raise ConfigError(
+                f"Gateway {gateway_id}.raw_retention_mode must be one of: "
+                f"{', '.join(sorted(GATEWAY_RAW_RETENTION_MODES))}"
+            )
+        default_owner_role = str(gateway_data.get("default_owner_role", "delivery-manager"))
+        if default_owner_role not in roles:
+            raise ConfigError(
+                f"Gateway {gateway_id}.default_owner_role references unknown role "
+                f"{default_owner_role}"
+            )
+
+        teams_config = None
+        teams_data = gateway_data.get("teams")
+        if teams_data is not None:
+            if not isinstance(teams_data, dict):
+                raise ConfigError(f"Gateway {gateway_id}.teams must be a mapping")
+            connector_id = str(teams_data.get("connector", "teams"))
+            if connector_id not in connectors:
+                raise ConfigError(
+                    f"Gateway {gateway_id}.teams.connector references unknown connector "
+                    f"{connector_id}"
+                )
+            bot_data = teams_data.get("bot") or {}
+            if not isinstance(bot_data, dict):
+                raise ConfigError(f"Gateway {gateway_id}.teams.bot must be a mapping")
+            bot = GatewayBotConfig(
+                display_name=str(bot_data.get("display_name") or gateway_ref),
+                bot_id_ref=_secret_ref(
+                    bot_data.get("bot_id_ref"),
+                    f"Gateway {gateway_id}.teams.bot.bot_id_ref",
+                ),
+                secret_ref=_secret_ref(
+                    bot_data.get("secret_ref"),
+                    f"Gateway {gateway_id}.teams.bot.secret_ref",
+                ),
+            )
+            intake_channels = teams_data.get("intake_channels", []) or []
+            if not isinstance(intake_channels, list) or not all(
+                isinstance(item, str) for item in intake_channels
+            ):
+                raise ConfigError(
+                    f"Gateway {gateway_id}.teams.intake_channels must be a list of strings"
+                )
+            connector_channels = connectors[connector_id].channels
+            unknown_channels = [
+                channel for channel in intake_channels if channel not in connector_channels
+            ]
+            if unknown_channels:
+                raise ConfigError(
+                    f"Gateway {gateway_id}.teams.intake_channels references unknown "
+                    f"connector channel(s): {', '.join(unknown_channels)}"
+                )
+            process_role_channels = bool(
+                teams_data.get("process_role_channels_by_default", False)
+            )
+            if process_role_channels:
+                raise ConfigError(
+                    f"Gateway {gateway_id}.teams.process_role_channels_by_default "
+                    "must remain false in V0"
+                )
+            fallback_surface = str(teams_data.get("fallback_surface", "status_fallback"))
+            approvals_surface = str(teams_data.get("approvals_surface", "approvals"))
+            for surface in [fallback_surface, approvals_surface]:
+                if surface not in notification_policy.surfaces:
+                    raise ConfigError(
+                        f"Gateway {gateway_id}.teams references unknown notification "
+                        f"surface {surface}"
+                    )
+            teams_config = GatewayTeamsConfig(
+                connector=connector_id,
+                bot=bot,
+                dm_enabled=bool(teams_data.get("dm_enabled", True)),
+                intake_channels=[str(channel) for channel in intake_channels],
+                process_role_channels_by_default=process_role_channels,
+                fallback_surface=fallback_surface,
+                approvals_surface=approvals_surface,
+            )
+
+        gateways[gateway_ref] = GatewayConfig(
+            gateway_id=gateway_ref,
+            enabled=enabled,
+            no_delivery_work=True,
+            raw_retention_mode=raw_retention_mode,
+            default_owner_role=default_owner_role,
+            teams=teams_config,
+            authorization_policy=str(
+                gateway_data.get("authorization_policy", "gateway-v0-default")
+            ),
+        )
+    return gateways
+
+
+def _notification_policy_from_dict(
+    data: dict[str, Any],
+    connectors: dict[str, ProjectConnectorConfig],
+) -> NotificationPolicyConfig:
+    policy_data = data.get("notification_policy", {}) or {}
+    if not isinstance(policy_data, dict):
+        raise ConfigError("Project notification_policy must be a mapping")
+
+    schema_version = str(
+        policy_data.get("schema_version", "notification-policy-v0")
+    )
+    if schema_version != "notification-policy-v0":
+        raise ConfigError("Project notification_policy.schema_version must be notification-policy-v0")
+
+    allowed_visibility = {"notify", "dashboard_only", "suppress", "blocked_unroutable"}
+    defaults_data = policy_data.get("defaults", {}) or {}
+    if not isinstance(defaults_data, dict):
+        raise ConfigError("Project notification_policy.defaults must be a mapping")
+    defaults: dict[str, str] = {
+        "routine_lifecycle_events": "dashboard_only",
+        "action_needed_events": "notify",
+        "completion_events": "notify",
+        "fallback_notices": "notify",
+    }
+    for key, value in defaults_data.items():
+        visibility = str(value)
+        if visibility not in allowed_visibility:
+            raise ConfigError(
+                f"Project notification_policy.defaults.{key} must be one of: "
+                f"{', '.join(sorted(allowed_visibility))}"
+            )
+        defaults[str(key)] = visibility
+
+    surfaces_data = policy_data.get("surfaces", {}) or {}
+    if not isinstance(surfaces_data, dict):
+        raise ConfigError("Project notification_policy.surfaces must be a mapping")
+    surfaces: dict[str, NotificationSurfaceConfig] = {}
+    for surface_id, surface_data in surfaces_data.items():
+        if not isinstance(surface_data, dict):
+            raise ConfigError(
+                f"Project notification_policy.surfaces.{surface_id} must be a mapping"
+            )
+        connector_id = str(surface_data.get("connector", ""))
+        route = str(surface_data.get("route", ""))
+        if connector_id not in connectors:
+            raise ConfigError(
+                f"Project notification_policy.surfaces.{surface_id} references "
+                f"unknown connector {connector_id}"
+            )
+        if route not in connectors[connector_id].channels:
+            raise ConfigError(
+                f"Project notification_policy.surfaces.{surface_id} route {route} "
+                f"is not a configured channel for connector {connector_id}"
+            )
+        surfaces[str(surface_id)] = NotificationSurfaceConfig(
+            surface_id=str(surface_id),
+            connector=connector_id,
+            route=route,
+            label=str(surface_data.get("label", surface_id)),
+        )
+
+    def parse_override(owner: str, override_data: Any) -> NotificationEventOverrideConfig:
+        if not isinstance(override_data, dict):
+            raise ConfigError(f"{owner} must be a mapping")
+        visibility = str(override_data.get("visibility", "dashboard_only"))
+        if visibility not in allowed_visibility:
+            raise ConfigError(
+                f"{owner}.visibility must be one of: {', '.join(sorted(allowed_visibility))}"
+            )
+        preferred_surface = override_data.get("preferred_surface")
+        if preferred_surface is not None and str(preferred_surface) not in surfaces:
+            raise ConfigError(
+                f"{owner}.preferred_surface references unknown notification surface "
+                f"{preferred_surface}"
+            )
+        return NotificationEventOverrideConfig(
+            visibility=visibility,
+            preferred_surface=str(preferred_surface) if preferred_surface is not None else None,
+        )
+
+    event_overrides_data = policy_data.get("event_overrides", {}) or {}
+    if not isinstance(event_overrides_data, dict):
+        raise ConfigError("Project notification_policy.event_overrides must be a mapping")
+    event_overrides = {
+        str(event_kind): parse_override(
+            f"Project notification_policy.event_overrides.{event_kind}",
+            override_data,
+        )
+        for event_kind, override_data in event_overrides_data.items()
+    }
+
+    role_overrides_data = policy_data.get("role_overrides", {}) or {}
+    if not isinstance(role_overrides_data, dict):
+        raise ConfigError("Project notification_policy.role_overrides must be a mapping")
+    role_overrides: dict[str, dict[str, NotificationEventOverrideConfig]] = {}
+    for role_id, role_data in role_overrides_data.items():
+        if not isinstance(role_data, dict):
+            raise ConfigError(
+                f"Project notification_policy.role_overrides.{role_id} must be a mapping"
+            )
+        role_overrides[str(role_id)] = {
+            str(event_kind): parse_override(
+                f"Project notification_policy.role_overrides.{role_id}.{event_kind}",
+                override_data,
+            )
+            for event_kind, override_data in role_data.items()
+        }
+
+    compatibility_data = policy_data.get("compatibility", {}) or {}
+    if not isinstance(compatibility_data, dict):
+        raise ConfigError("Project notification_policy.compatibility must be a mapping")
+    role_channels_default_visibility = str(
+        compatibility_data.get("role_channels_default_visibility", "dashboard_only")
+    )
+    if role_channels_default_visibility not in allowed_visibility:
+        raise ConfigError(
+            "Project notification_policy.compatibility.role_channels_default_visibility "
+            f"must be one of: {', '.join(sorted(allowed_visibility))}"
+        )
+
+    return NotificationPolicyConfig(
+        schema_version=schema_version,
+        defaults=defaults,
+        surfaces=surfaces,
+        event_overrides=event_overrides,
+        role_overrides=role_overrides,
+        compatibility=NotificationCompatibilityConfig(
+            role_channels_enabled=bool(
+                compatibility_data.get("role_channels_enabled", True)
+            ),
+            role_channels_default_visibility=role_channels_default_visibility,
+        ),
+    )
+
+
+def _control_plane_policy_from_dict(data: dict[str, Any]) -> ControlPlanePolicyConfig:
+    policy_data = data.get("control_plane", {}) or {}
+    if not isinstance(policy_data, dict):
+        raise ConfigError("Project control_plane must be a mapping")
+
+    schema_version = str(
+        policy_data.get("schema_version", "control-plane-policy-v0")
+    )
+    if schema_version != "control-plane-policy-v0":
+        raise ConfigError(
+            "Project control_plane.schema_version must be control-plane-policy-v0"
+        )
+
+    binding_mode = str(policy_data.get("binding_mode", "local_private"))
+    if binding_mode not in {"local_private", "remote_enabled"}:
+        raise ConfigError(
+            "Project control_plane.binding_mode must be one of: local_private, "
+            "remote_enabled"
+        )
+
+    safe_external_base_url = policy_data.get("safe_external_base_url")
+    if safe_external_base_url is not None:
+        safe_external_base_url = str(safe_external_base_url)
+        if not safe_external_base_url.startswith("https://"):
+            raise ConfigError(
+                "Project control_plane.safe_external_base_url must start with https://"
+            )
+        if any(marker in safe_external_base_url for marker in ["..", "@", "\\"]):
+            raise ConfigError(
+                "Project control_plane.safe_external_base_url contains unsafe text"
+            )
+
+    api_enabled = _control_plane_bool(policy_data, "api_enabled", False)
+    mcp_enabled = _control_plane_bool(policy_data, "mcp_enabled", False)
+    if binding_mode == "local_private" and (api_enabled or mcp_enabled):
+        raise ConfigError(
+            "Project control_plane API/MCP exposure requires binding_mode remote_enabled"
+        )
+
+    return ControlPlanePolicyConfig(
+        schema_version=schema_version,
+        binding_mode=binding_mode,
+        api_enabled=api_enabled,
+        mcp_enabled=mcp_enabled,
+        remote_promotion_enabled=_control_plane_bool(
+            policy_data, "remote_promotion_enabled", False
+        ),
+        support_read_enabled=_control_plane_bool(
+            policy_data, "support_read_enabled", False
+        ),
+        safe_external_base_url=safe_external_base_url,
+    )
+
+
+def _control_plane_bool(
+    policy_data: dict[str, Any],
+    field_name: str,
+    default: bool,
+) -> bool:
+    if field_name not in policy_data:
+        return default
+
+    value = policy_data[field_name]
+    if isinstance(value, bool):
+        return value
+
+    raise ConfigError(f"Project control_plane.{field_name} must be a boolean")
+
+
+def _human_gate_policy_from_dict(data: dict[str, Any]) -> HumanGatePolicyConfig:
+    policy_data = data.get("human_gate_policy", {}) or {}
+    if not isinstance(policy_data, dict):
+        raise ConfigError("Project human_gate_policy must be a mapping")
+    forbidden = {
+        "tenant_id",
+        "team_id",
+        "channel_id",
+        "user_id",
+        "bot_id",
+        "secret_ref",
+        "credential_ref",
+        "mount_ref",
+        "provider",
+        "service_url",
+        "external_url",
+    }
+    for key in policy_data:
+        if str(key) in forbidden:
+            raise ConfigError(
+                f"Project human_gate_policy.{key} is not allowed; use logical gate and route names"
+            )
+    schema_version = str(policy_data.get("schema_version", "human-gate-policy-v0"))
+    if schema_version != "human-gate-policy-v0":
+        raise ConfigError(
+            "Project human_gate_policy.schema_version must be human-gate-policy-v0"
+        )
+    strategy = str(policy_data.get("sponsor_approval_before_build", "not_required"))
+    if strategy not in {"not_required", "required_before_implementation"}:
+        raise ConfigError(
+            "Project human_gate_policy.sponsor_approval_before_build must be one of: "
+            "not_required, required_before_implementation"
+        )
+    work_item_types = [
+        str(item) for item in policy_data.get("work_item_types", []) or []
+    ]
+    gate_id = str(policy_data.get("gate_id", "pre_implementation_sponsor_approval"))
+    channel = str(policy_data.get("channel", "approvals"))
+    response_type = str(policy_data.get("response_type", "approve_not_approve"))
+    requested_from = str(policy_data.get("requested_from", "release-sponsor"))
+    for field_name, value in {
+        "gate_id": gate_id,
+        "channel": channel,
+        "response_type": response_type,
+        "requested_from": requested_from,
+    }.items():
+        if not value or any(marker in value for marker in ["/", "\\", "..", "://"]):
+            raise ConfigError(f"Project human_gate_policy.{field_name} is unsafe")
+    return HumanGatePolicyConfig(
+        schema_version=schema_version,
+        sponsor_approval_before_build=strategy,
+        work_item_types=work_item_types,
+        gate_id=gate_id,
+        response_type=response_type,
+        requested_from=requested_from,
+        channel=channel,
+    )
 
 
 def _document_accountabilities_from_dict(
@@ -1130,7 +1873,21 @@ def load_mesh_config(
     meshes = _project_meshes_from_dict(project_data, roles)
     connectors = _project_connectors_from_dict(project_data, roles)
     _validate_role_channels(roles, connectors)
+    notification_policy = _notification_policy_from_dict(project_data, connectors)
+    gateways = _project_gateways_from_dict(
+        project_data,
+        connectors=connectors,
+        roles=roles,
+        notification_policy=notification_policy,
+    )
+    control_plane = _control_plane_policy_from_dict(project_data)
+    human_gate_policy = _human_gate_policy_from_dict(project_data)
     document_accountabilities = _document_accountabilities_from_dict(project_data, roles)
+    capability_defaults = _capability_profile_from_dict(
+        project_data.get("capability_defaults"),
+        f"{project_path}",
+        source_path=str(project_path),
+    )
     flow = _flow_from_dict(
         project_data,
         roles,
@@ -1146,11 +1903,16 @@ def load_mesh_config(
         goal=goal,
         auth_credentials=auth_credentials,
         connectors=connectors,
+        gateways=gateways,
+        notification_policy=notification_policy,
+        control_plane=control_plane,
+        human_gate_policy=human_gate_policy,
         document_accountabilities=document_accountabilities,
         flow=flow,
         document_library=document_library,
         role_memory=role_memory,
         meshes=meshes,
+        capability_defaults=capability_defaults,
     )
 
     instances: dict[str, RoleInstanceConfig] = {}
