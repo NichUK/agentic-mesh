@@ -555,7 +555,15 @@ class FileHumanGateRequestStore:
             return False, "terminal_request", request
         if reason is None and authoritative and not authenticated:
             reason = "connector_origin_unauthenticated"
-        if reason is None and response_value not in _allowed_values(request):
+        accepts_free_text = (
+            not request.accepted_values
+            and request.response_type in {"single_line_text", "multiline_text"}
+        )
+        if (
+            reason is None
+            and not accepts_free_text
+            and response_value not in _allowed_values(request)
+        ):
             reason = "unrecognized_response_value"
         if reason is not None:
             updated = _replace_request(
@@ -569,6 +577,35 @@ class FileHumanGateRequestStore:
             )
             self._write_request(updated)
             return False, reason, updated
+
+        if not request.accepted_values and request.response_type in {
+            "single_line_text",
+            "multiline_text",
+        }:
+            if isinstance(response_value, str) and response_value.strip():
+                updated = _replace_request(
+                    request,
+                    status="completed",
+                    status_reason=None,
+                    response_value=_safe_response_value(response_value),
+                    responder=responder,
+                    completed_at=utc_now_iso(),
+                    updated_at=utc_now_iso(),
+                    active=False,
+                )
+                self._write_request(updated)
+                return True, "accepted", updated
+            updated = _replace_request(
+                request,
+                status="invalid_response",
+                status_reason="empty_text_response",
+                response_value=_safe_response_value(response_value),
+                responder=responder,
+                updated_at=utc_now_iso(),
+                active=True,
+            )
+            self._write_request(updated)
+            return False, "empty_text_response", updated
 
         accepted = set(request.accepted_values or [])
         if response_value in accepted:

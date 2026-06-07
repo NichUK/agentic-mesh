@@ -753,6 +753,14 @@ questions, propose explicit assumptions when appropriate, and work with other
 roles through the configured flow to advance the goal. If a task, handoff,
 artifact, or recommendation does not advance the goal or reduce a meaningful
 risk to it, say so and keep the work scoped.
+Run focused verification for the acceptance criteria and changed areas. Run
+broader regression checks when feasible, but if a broad regression fails for
+pre-existing, environmental, or clearly unrelated reasons, do not block the
+work item solely for that reason after focused acceptance evidence has passed.
+Document the unrelated failure as residual/release risk and continue through
+the configured handoff. Block only when focused acceptance evidence is missing,
+the failure is plausibly caused by this work, or the configured release criteria
+explicitly require the failing check to pass.
 Prefer configured lifecycle handoffs. If a genuinely warranted handoff needs to
 go outside the configured route, include `lifecycle_state` for a state owned by
 the target role and include `out_of_flow_reason` explaining why the exception is

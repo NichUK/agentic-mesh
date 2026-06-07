@@ -680,6 +680,47 @@ def test_controller_status_dashboard_routes_are_safe_and_read_only(
         thread.join(timeout=5)
 
 
+def test_status_dashboard_reuses_journal_events_for_work_item_rows(
+    tmp_path: Path,
+) -> None:
+    project_id = "example-project"
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, project_id)
+    for index in range(3):
+        journal.append(
+            "work_completed",
+            project_id=project_id,
+            role_id="product-manager",
+            role_instance_id="example-project.product-manager.1",
+            work_item_id=f"work-cache-{index}",
+            work_item_type="slice",
+            lifecycle_state="product_definition",
+            message_id=f"msg-cache-{index}",
+            status="completed",
+        )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=state_root,
+        workspace_root=tmp_path,
+    )
+
+    original_open = Path.open
+    journal_open_count = 0
+
+    def counting_open(path: Path, *args, **kwargs):
+        nonlocal journal_open_count
+        if path.name == "events.jsonl":
+            journal_open_count += 1
+        return original_open(path, *args, **kwargs)
+
+    with patch.object(Path, "open", counting_open):
+        payload = service.status_dashboard_payload("work-items.json")
+
+    assert len(payload["work_items"]) == 3
+    assert journal_open_count == 2
+
+
 def test_controller_status_dashboard_isolates_corrupt_queue_item(
     tmp_path: Path,
 ) -> None:

@@ -131,6 +131,24 @@ AGENTIC_MESH_WORKSPACE_ROOT=/mesh/workspaces/agentic-mesh
 AGENTIC_MESH_STATE_ROOT=/mesh/project/state
 ```
 
+Do not rely on workspace source edits becoming active inside already-running
+containers. A self-development slice may update the mounted workspace, but the
+running services should continue to import the packaged runtime from the image
+until a deployment activation step rebuilds or replaces the image and restarts
+or reloads the affected services.
+
+For dogfood runtime-code changes, a slice is not fully deployed until activation
+evidence records:
+
+- the Git commit or branch used to build the runtime image
+- the image tag or package version activated
+- the services restarted or reloaded
+- smoke-test URLs, commands, or health checks proving the new runtime is active
+
+Manual container hotpatching should be treated as emergency recovery only. Any
+hotpatch must be reconciled into source and followed by a normal build and
+activation step before the system is considered stable again.
+
 On `linuxch`, the workspace mount can be moved onto the mounted nichserv/NAS
 share by setting this Compose environment variable in the compose directory
 `.env` file:

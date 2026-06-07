@@ -358,6 +358,8 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert "Role capability context:" in prompt
     assert "availability has not been validated" in prompt
     assert "document-library.read" in prompt
+    assert "broader regression checks when feasible" in prompt
+    assert "clearly unrelated reasons" in prompt
 
 
 def test_agent_result_schema_is_strict_for_nested_handoff_payload() -> None:

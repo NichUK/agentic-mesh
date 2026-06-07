@@ -22,6 +22,7 @@ from agentic_mesh.journal import EventJournal
 from agentic_mesh.human_gates import FileHumanGateRequestStore
 from agentic_mesh.human_response_submissions import HumanResponseSubmissionService
 from agentic_mesh.human_response_submissions import HumanResponseSubmissionResult
+from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_PROBLEM_STATUS_UPDATED
 from agentic_mesh.messaging import MESSAGE_TYPE_ROUTE_STATUS_UPDATED
@@ -42,6 +43,7 @@ from agentic_mesh.gateway import GatewayStore
 from agentic_mesh.gateway import event_from_message
 from agentic_mesh.notification_display import build_notification_display_facts
 from agentic_mesh.notifications import MESSAGE_TYPE_NOTIFICATION_EVENT
+from agentic_mesh.notifications import redacted_error_class
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.threaded_context import BindingResult
@@ -512,6 +514,11 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
         self.journal = journal
         self.secrets = secrets
         self.service_url = service_url.rstrip("/")
+        self.threaded_contexts = FileThreadedContextStore(
+            outbox.root.parents[2],
+            project_id,
+            journal,
+        )
 
     def process_once(self, channel: str) -> bool:
         message = self.outbox.claim_next(channel, self.connector_id)
@@ -601,6 +608,7 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
                 teams_activity_id=response.get("activityId"),
                 teams_conversation_id=response.get("id"),
             )
+            self._seed_thread_route_from_sent_message(message, response)
             self.outbox.complete(message, "sent")
         return True
 
@@ -786,6 +794,61 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
         if message.type == "gateway.receipt":
             return _html_to_teams_xml_text(render_gateway_receipt_html(message))
         return html.escape(json.dumps(message.payload, indent=2))
+
+    def _seed_thread_route_from_sent_message(
+        self,
+        message: ConnectorMessage,
+        response: dict[str, Any],
+    ) -> None:
+        payload = message.payload
+        work_item_id = payload.get("work_item_id")
+        if not work_item_id:
+            return
+        activity_id = response.get("activityId") or response.get("id")
+        if not activity_id:
+            return
+        source_anchor = payload.get("source_anchor")
+        source_anchor_ref = (
+            source_anchor.get("source_anchor_ref")
+            if isinstance(source_anchor, dict)
+            else None
+        )
+        owner_role = payload.get("role_id") or payload.get("target_role")
+        try:
+            for connector_id in {self.connector_id, "teams-shared"}:
+                self.threaded_contexts.upsert_route(
+                    ThreadRouteRecord.create(
+                        connector_type="teams",
+                        connector_id=connector_id,
+                        source_scope=message.channel,
+                        root_message_ref=str(activity_id),
+                        parent_work_item_id=str(work_item_id),
+                        parent_work_item_type=str(
+                            payload.get("work_item_type") or "slice"
+                        ),
+                        lifecycle_state=(
+                            str(payload.get("lifecycle_state"))
+                            if payload.get("lifecycle_state")
+                            else None
+                        ),
+                        owner_role=str(owner_role) if owner_role else None,
+                        source_anchor_ref=(
+                            str(source_anchor_ref) if source_anchor_ref else None
+                        ),
+                    )
+                )
+        except Exception as exc:
+            self.journal.append(
+                "threaded_context.sent_route_index_failed",
+                project_id=self.project_id,
+                connector_type="teams",
+                connector_id=self.connector_id,
+                channel=message.channel,
+                message_id=message.message_id,
+                work_item_id=work_item_id,
+                reason=redacted_error_class(exc),
+                correlation_id=message.correlation_id,
+            )
 
 
 def render_threaded_context_receipt_html(message: ConnectorMessage) -> str:
@@ -974,6 +1037,8 @@ def render_sdlc_handoff_html(message: ConnectorMessage) -> str:
 def render_human_response_request_html(message: ConnectorMessage) -> str:
     payload = message.payload
     view = _approval_decision_view(payload)
+    if _is_sponsor_clarification_request(payload, view):
+        return _render_sponsor_clarification_request_html(payload, view)
     prompt = html.escape(_request_heading(view, payload))
     raw_work_item_id = view.work_item_id or "unknown"
     work_item_id = html.escape(raw_work_item_id)
@@ -1009,6 +1074,30 @@ def render_human_response_request_html(message: ConnectorMessage) -> str:
         f"<p><strong>Artifacts:</strong> {artifact_text}</p>"
         f"{test_link}"
         f"{status_link}"
+    )
+
+
+def _render_sponsor_clarification_request_html(
+    payload: dict[str, Any],
+    view: ApprovalDecisionViewModel,
+) -> str:
+    raw_work_item_id = view.work_item_id or "unknown"
+    title = html.escape(view.title or "Sponsor input needed")
+    work_item_id = html.escape(raw_work_item_id)
+    lifecycle_state = html.escape(view.lifecycle_state or "unknown")
+    request_id = html.escape(view.response_request_id or "unknown")
+    summary = html.escape(view.description_summary)
+    prompt = _text_to_html_lines(str(payload.get("prompt") or view.decision_scope))
+    response_hint = "Reply in this Teams thread or use the response box on the card."
+    return (
+        f"<p><strong>Sponsor input needed: {title}</strong></p>"
+        f"<p>{summary}</p>"
+        f"<p><strong>Questions / requested input:</strong><br/>{prompt}</p>"
+        f"<p><strong>How to answer:</strong> {response_hint}</p>"
+        f"<p>Work item <code>{work_item_id}</code>; lifecycle "
+        f"<code>{lifecycle_state}</code>; request <code>{request_id}</code>.</p>"
+        f"{_timeout_html(payload)}"
+        f"{_work_item_status_link_html(raw_work_item_id, paragraph=True)}"
     )
 
 
@@ -1318,6 +1407,13 @@ def _truncate(value: str, max_length: int) -> str:
     return f"{value[: max_length - 3].rstrip()}..."
 
 
+def _text_to_html_lines(value: str) -> str:
+    return "<br/>".join(
+        html.escape(line) if line.strip() else "&nbsp;"
+        for line in value.strip().splitlines()
+    )
+
+
 def _short_ref(value: str) -> str | None:
     if not value:
         return None
@@ -1329,6 +1425,13 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
     response_template = payload.get("response_template") or {}
     input_mode = response_template.get("input_mode")
     view = _approval_decision_view(payload)
+    if _is_sponsor_clarification_request(payload, view):
+        return _build_sponsor_clarification_card(
+            payload=payload,
+            response_template=response_template,
+            input_mode=input_mode,
+            view=view,
+        )
     artifact_text = "\n".join(
         f"- {item.get('path') or item.get('label')}"
         for item in view.artifacts[: view.artifact_inline_limit]
@@ -1414,6 +1517,105 @@ def build_human_response_card(message: ConnectorMessage) -> dict[str, Any]:
         {
             "type": "Action.Submit",
             "title": "Submit",
+            "msTeams": {"feedback": {"hide": True}},
+            "data": human_response_submit_data(payload),
+        }
+    )
+    return card
+
+
+def _build_sponsor_clarification_card(
+    *,
+    payload: dict[str, Any],
+    response_template: dict[str, Any],
+    input_mode: str | None,
+    view: ApprovalDecisionViewModel,
+) -> dict[str, Any]:
+    prompt = str(payload.get("prompt") or view.decision_scope)
+    body: list[dict[str, Any]] = [
+        {
+            "type": "TextBlock",
+            "text": "Sponsor input needed",
+            "weight": "Bolder",
+            "size": "Medium",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": view.title,
+            "weight": "Bolder",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": view.description_summary,
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": "Questions / requested input",
+            "weight": "Bolder",
+            "spacing": "Medium",
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": prompt,
+            "wrap": True,
+        },
+        {
+            "type": "TextBlock",
+            "text": "Reply in this Teams thread or use the response box below.",
+            "isSubtle": True,
+            "wrap": True,
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "Work item", "value": view.work_item_id},
+                {"title": "Lifecycle", "value": view.lifecycle_state},
+                {"title": "Request", "value": view.response_request_id},
+                {"title": "Timeout", "value": _timeout_text(payload)},
+            ],
+        },
+    ]
+    card: dict[str, Any] = {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": body,
+        "actions": [],
+    }
+    status_url = view.status_url or _work_item_status_url(view.work_item_id)
+    if status_url:
+        card["actions"].append(
+            {
+                "type": "Action.OpenUrl",
+                "title": "Open work item",
+                "url": str(status_url),
+            }
+        )
+    if input_mode == "choice":
+        card["actions"].extend(
+            [
+                {
+                    "type": "Action.Submit",
+                    "title": str(option["label"]),
+                    "msTeams": {"feedback": {"hide": True}},
+                    "data": human_response_submit_data(
+                        payload,
+                        response_value=option["value"],
+                    ),
+                }
+                for option in response_template.get("options", [])
+            ]
+        )
+        return card
+    card["body"].append(input_for_template(response_template))
+    card["actions"].append(
+        {
+            "type": "Action.Submit",
+            "title": "Submit answer",
             "msTeams": {"feedback": {"hide": True}},
             "data": human_response_submit_data(payload),
         }
@@ -1629,6 +1831,16 @@ def _request_heading(
     if view.gate_id == "release_decision_response":
         return "Release approval requested"
     return str(payload.get("prompt") or "Human response requested")
+
+
+def _is_sponsor_clarification_request(
+    payload: dict[str, Any],
+    view: ApprovalDecisionViewModel,
+) -> bool:
+    return (
+        str(view.gate_id or payload.get("gate_id") or "")
+        == "sponsor_clarification_response"
+    )
 
 
 def response_value_label(
@@ -1853,6 +2065,12 @@ class TeamsBotIngress:
             text=text,
         )
         if threaded_result is not None:
+            if threaded_result.status == "bound" and threaded_result.context is not None:
+                human_response_message = self._submit_threaded_context_human_response(
+                    threaded_result.context,
+                )
+                if human_response_message is not None:
+                    return human_response_message
             if (
                 threaded_result.status == "bound"
                 and threaded_result.context is not None
@@ -2010,6 +2228,91 @@ class TeamsBotIngress:
             correlation_id=queued.correlation_id,
         )
         return queued
+
+    def _submit_threaded_context_human_response(
+        self,
+        context,
+    ) -> Message | None:
+        requests = [
+            request
+            for request in self.human_gate_store.read_by_work_item(
+                context.parent_work_item_id
+            )
+            if request.active
+            and request.lifecycle_state == context.lifecycle_state
+            and request.status
+            in {
+                "request_pending_delivery",
+                "waiting_for_response",
+                "invalid_response",
+            }
+        ]
+        if not requests:
+            return None
+        request = requests[-1]
+        if not context.owner_role:
+            self.journal.append(
+                "threaded_context.human_response_unroutable",
+                project_id=self.project_id,
+                connector_type=context.connector_type,
+                connector_id=context.connector_id,
+                parent_work_item_id=context.parent_work_item_id,
+                threaded_context_id=context.context_id,
+                lifecycle_state=request.lifecycle_state,
+                gate_id=request.gate_id,
+                response_request_id=request.response_request_id,
+                reason="missing_owner_role",
+                correlation_id=context.correlation_id,
+            )
+            return None
+        result = self.human_response_submission_service.submit(
+            target_role=str(context.owner_role),
+            work_item_id=request.work_item_id,
+            work_item_type=request.work_item_type or context.parent_work_item_type,
+            lifecycle_state=request.lifecycle_state,
+            gate_id=request.gate_id,
+            response_type=request.response_type,
+            approval_request_id=request.approval_request_id,
+            response_request_id=request.response_request_id,
+            responder=context.actor_label,
+            response_value=context.sanitized_text,
+            source=f"teams:{context.connector_id}:{context.source_scope}:thread",
+            authenticated=True,
+            correlation_id=context.correlation_id,
+        )
+        self.journal.append(
+            "threaded_context.human_response_submitted",
+            project_id=self.project_id,
+            connector_type=context.connector_type,
+            connector_id=context.connector_id,
+            parent_work_item_id=context.parent_work_item_id,
+            threaded_context_id=context.context_id,
+            lifecycle_state=request.lifecycle_state,
+            gate_id=request.gate_id,
+            response_request_id=request.response_request_id,
+            validation_reason=result.validation_reason,
+            final=result.final,
+            message_id=result.message_id,
+            correlation_id=context.correlation_id,
+        )
+        if not result.final or not result.message_id:
+            return None
+        return Message(
+            message_id=result.message_id,
+            role_id=str(context.owner_role),
+            type=MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED,
+            payload={
+                "work_item_id": request.work_item_id,
+                "work_item_type": request.work_item_type,
+                "lifecycle_state": request.lifecycle_state,
+                "gate_id": request.gate_id,
+                "response_request_id": request.response_request_id,
+            },
+            source=f"teams:{context.connector_id}:{context.source_scope}:thread",
+            created_at=context.received_at,
+            correlation_id=context.correlation_id,
+            trace_context={},
+        )
 
     def _queue_threaded_context_receipt(
         self,

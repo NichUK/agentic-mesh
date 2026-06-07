@@ -1,6 +1,3 @@
-include:
-  - docker-compose.yml
-
 services:
   teams-bot-listener:
     image: agentic-mesh:local
@@ -13,7 +10,6 @@ services:
       AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
       AGENTIC_MESH_AUTH_ADMIN_URL: http://10.0.0.65:8100/auth/credentials
       AGENTIC_MESH_STATUS_BASE_URL: ${AGENTIC_MESH_STATUS_BASE_URL:-}
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
@@ -21,8 +17,8 @@ services:
     ports:
       - "3978:3978"
     volumes:
-      - ../../../../..:/mesh/system:ro
-      - ../..:/mesh/project
+      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
     working_dir: /mesh/workspaces/agentic-mesh
     restart: unless-stopped
@@ -93,15 +89,3 @@ services:
 networks:
   observability:
     external: true
-Updated `examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml` to include the base Compose file for standalone validation:
-
-include:
-  - docker-compose.yml
-
-Note: the current dirty-tree diff also contains an existing `PYTHONPATH: /mesh/workspaces/agentic-mesh/src` addition in the same file; it was preserved and not broadened.
-Updated `examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml` to include the base Compose file for standalone validation:
-
-include:
-  - docker-compose.yml
-
-Note: the current dirty-tree diff also contains an existing `PYTHONPATH: /mesh/workspaces/agentic-mesh/src` addition in the same file; it was preserved and not broadened.

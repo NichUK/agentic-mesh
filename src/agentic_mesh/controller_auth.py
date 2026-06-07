@@ -88,6 +88,7 @@ class ControllerAuthService:
         self._sessions: dict[str, OAuthLoginSession] = {}
         self._lock = Lock()
         self._mesh_config_cache: MeshConfig | None = None
+        self._journal_events_cache: dict[str, list[dict[str, Any]]] | None = None
 
     def load_config(self) -> MeshConfig:
         if self._mesh_config_cache is None:
@@ -874,13 +875,18 @@ class ControllerAuthService:
                 "agentic_mesh.schema_version": status_dashboard.SCHEMA_VERSION,
             },
         ):
-            payload = status_dashboard.build_status_dashboard(
-                mesh_config=mesh_config,
-                state_root=self.state_root,
-                workspace_root=self.workspace_root,
-                work_item_status=self.work_item_status,
-                artifact_exists=lambda path: self.resolve_artifact_path(path) is not None,
-            )
+            previous_cache = self._journal_events_cache
+            self._journal_events_cache = {}
+            try:
+                payload = status_dashboard.build_status_dashboard(
+                    mesh_config=mesh_config,
+                    state_root=self.state_root,
+                    workspace_root=self.workspace_root,
+                    work_item_status=self.work_item_status,
+                    artifact_exists=lambda path: self.resolve_artifact_path(path) is not None,
+                )
+            finally:
+                self._journal_events_cache = previous_cache
         telemetry.emit_log(
             {
                 "event_type": "status_dashboard_read",
@@ -970,8 +976,14 @@ class ControllerAuthService:
         return (effective_workspace_root / configured_root).resolve()
 
     def _journal_events(self, project_id: str) -> list[dict[str, Any]]:
+        if self._journal_events_cache is not None:
+            cached = self._journal_events_cache.get(project_id)
+            if cached is not None:
+                return cached
         path = self.state_root / "projects" / project_id / "journal" / "events.jsonl"
         if not path.exists():
+            if self._journal_events_cache is not None:
+                self._journal_events_cache[project_id] = []
             return []
         with path.open("r", encoding="utf-8") as handle:
             events = []
@@ -984,6 +996,8 @@ class ControllerAuthService:
                     continue
                 if isinstance(event, dict):
                     events.append(event)
+            if self._journal_events_cache is not None:
+                self._journal_events_cache[project_id] = events
             return events
 
     def _queue_entries(self, project_id: str, work_item_id: str) -> list[dict[str, Any]]:

@@ -67,6 +67,15 @@ def build_human_response_request(
         "summary": source_message.payload.get("summary"),
         "queue_item_id": source_message.payload.get("queue_item_id"),
         "source_anchor": source_message.payload.get("source_anchor"),
+        "teams_activity_id": source_message.payload.get("teams_activity_id"),
+        "teams_reply_to_activity_id": source_message.payload.get(
+            "teams_reply_to_activity_id"
+        )
+        or source_message.payload.get("teams_activity_id"),
+        "teams_conversation_id": source_message.payload.get("teams_conversation_id"),
+        "teams_service_url": source_message.payload.get("teams_service_url"),
+        "teams_channel_id": source_message.payload.get("teams_channel_id"),
+        "teams_team_id": source_message.payload.get("teams_team_id"),
     }
     if approval_context:
         payload["approval_context"] = approval_context

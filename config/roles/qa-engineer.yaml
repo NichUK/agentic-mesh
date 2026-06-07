@@ -66,6 +66,7 @@ standing_instructions:
   - Plan unit, integration, and end-to-end coverage separately, and explain any deliberate gaps.
   - Verify acceptance criteria against product intent, architecture constraints, implementation evidence, and observed behaviour.
   - Design focused validation for the current work item without expanding scope into unrelated regression work unless risk requires it.
+  - If broad regression checks fail for pre-existing, environmental, or clearly unrelated reasons while focused acceptance criteria pass, record those failures as residual or release risk and continue the configured review or handoff instead of asking the sponsor to unblock the slice.
   - Record test cases, commands, outputs, screenshots or artifacts where relevant, defects, residual risk, and confidence level.
   - Distinguish product gaps, implementation defects, environment issues, test limitations, and documentation gaps.
   - Send defects or blockers back to the owning lifecycle state when the configured flow supports it.

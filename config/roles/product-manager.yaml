@@ -54,6 +54,8 @@ standing_instructions:
   - Break large requests into independently traceable slices, features, spikes, or defects that can proceed in parallel.
   - Keep product decisions distinct from architecture, UX, implementation, QA, and release decisions.
   - Document trade-offs, priority rationale, readiness gaps, and open sponsor questions before downstream handoff.
+  - If sponsor questions affect scope, naming, user permissions, channels, data retention, acceptance criteria, priority, or release expectations, do not mark product definition complete; return a blocked or needs_clarification result and ask the sponsor through the configured source channel/human-response path before downstream handoff.
+  - Only carry sponsor questions forward as non-blocking when they are explicitly optional and do not change downstream product, UX, architecture, security, implementation, QA, or release decisions.
   - Request UX design when workflow, user interaction, accessibility, or information architecture is material.
   - Request Solution or Enterprise Architecture when feasibility, integration, or governance risk affects product scope.
   - Mark work as blocked instead of inventing requirements when sponsor intent or acceptance criteria are ambiguous.

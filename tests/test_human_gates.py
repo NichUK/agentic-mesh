@@ -92,6 +92,44 @@ def test_validate_response_completes_only_active_matching_request(tmp_path: Path
     assert record.status == "completed"
 
 
+def test_validate_response_accepts_non_empty_text_clarification(tmp_path: Path) -> None:
+    store = FileHumanGateRequestStore(tmp_path, "agentic-mesh-dev")
+    request, _ = store.ensure_request(
+        work_item_id="work-clarify",
+        work_item_type="slice",
+        lifecycle_state="product_definition",
+        gate=FlowGate(
+            gate_id="sponsor_clarification_response",
+            type="human_response",
+            response_type="multiline_text",
+            prompt="Please answer the Product Manager questions.",
+            requested_from="sponsor",
+            channel="all-agents",
+        ),
+    )
+    store.mark_enqueue_succeeded(
+        request.response_request_id,
+        connector_message_id="conn-msg-clarify",
+    )
+
+    accepted, reason, record = store.validate_response(
+        project_id="agentic-mesh-dev",
+        work_item_id="work-clarify",
+        work_item_type="slice",
+        lifecycle_state="product_definition",
+        gate_id="sponsor_clarification_response",
+        response_type="multiline_text",
+        response_request_id=request.response_request_id,
+        responder="Nicholas Overend",
+        response_value="Use a single gateway bot and keep specialist work in the team.",
+    )
+
+    assert accepted is True
+    assert reason == "accepted"
+    assert record is not None
+    assert record.status == "completed"
+
+
 def test_request_store_persists_decision_context_and_idempotent_duplicate(
     tmp_path: Path,
 ) -> None:

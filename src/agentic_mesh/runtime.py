@@ -23,6 +23,7 @@ from agentic_mesh.messaging import build_sdlc_handoff_connector_message
 from agentic_mesh.messaging import build_sponsor_directive_status_message
 from agentic_mesh.models import AgentRunResult
 from agentic_mesh.models import ConnectorMessage
+from agentic_mesh.models import FlowGate
 from agentic_mesh.models import FlowState
 from agentic_mesh.models import Message
 from agentic_mesh.models import ProjectConfig
@@ -158,6 +159,13 @@ class AgentRuntime:
             return self._run_direct_directive(instance_id, instance_config, message)
         state_id = message.payload.get("lifecycle_state", self.project.flow.entry_state)
         flow_state = self.project.flow.states[state_id]
+        if message.type == MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED:
+            return self._handle_human_response_received(
+                instance_id=instance_id,
+                instance_config=instance_config,
+                message=message,
+                state_id=state_id,
+            )
         if flow_state.owner_role != instance_config.role_id:
             raise ValueError(
                 f"Message state {state_id} is owned by {flow_state.owner_role}, "
@@ -426,7 +434,44 @@ class AgentRuntime:
                 self._write_run_state(
                     instance_config=instance_config,
                     message=message,
-                    run_state="completed" if is_valid else "blocked",
+                    run_state="completed",
+                    evidence_source="worker_completed",
+                )
+                return True
+
+            if result.status == "needs_clarification":
+                clarification_gate = self._sponsor_clarification_gate(
+                    result=result,
+                    source_message=message,
+                )
+                if self._request_human_responses(
+                    gates=[clarification_gate],
+                    source_message=message,
+                    source_instance=instance_config,
+                    flow_state=flow_state,
+                    trace_attributes=agent_attrs,
+                ):
+                    self.message_store.complete(
+                        message,
+                        "waiting_for_human_response",
+                        result_message=result.message,
+                    )
+                    self._write_run_state(
+                        instance_config=instance_config,
+                        message=message,
+                        run_state="completed",
+                        evidence_source="worker_completed",
+                    )
+                    return True
+                self.message_store.complete(
+                    message,
+                    "needs_clarification",
+                    result_message=result.message,
+                )
+                self._write_run_state(
+                    instance_config=instance_config,
+                    message=message,
+                    run_state="failed",
                     evidence_source="worker_completed",
                 )
                 return True
@@ -437,154 +482,13 @@ class AgentRuntime:
                 if gate.type == "human_response"
             ]
             if human_gates:
-                for gate in human_gates:
-                    try:
-                        gate_request, created_request = (
-                            self.human_gate_store.ensure_request(
-                                work_item_id=str(
-                                    message.payload.get("work_item_id")
-                                    or message.message_id
-                                ),
-                                work_item_type=message.payload.get("work_item_type"),
-                                lifecycle_state=state_id,
-                                gate=gate,
-                            )
-                        )
-                    except Exception:
-                        self.journal.append(
-                            "human_response_request_failed",
-                            project_id=instance_config.project_id,
-                            role_id=instance_config.role_id,
-                            role_instance_id=instance_id,
-                            work_item_id=message.payload.get("work_item_id"),
-                            work_item_type=message.payload.get("work_item_type"),
-                            lifecycle_state=state_id,
-                            gate_id=gate.gate_id,
-                            response_type=gate.response_type,
-                            correlation_id=message.correlation_id,
-                            reason="approval_request_persistence_failed",
-                        )
-                        continue
-                    if self.connector_outbox is None:
-                        try:
-                            self.human_gate_store.mark_failed(
-                                gate_request.response_request_id,
-                                reason="approval_request_outbox_unavailable",
-                            )
-                        except HumanGateStoreError:
-                            pass
-                        self.journal.append(
-                            "human_response_request_unroutable",
-                            project_id=instance_config.project_id,
-                            role_id=instance_config.role_id,
-                            role_instance_id=instance_id,
-                            work_item_id=message.payload.get("work_item_id"),
-                            work_item_type=message.payload.get("work_item_type"),
-                            lifecycle_state=state_id,
-                            gate_id=gate.gate_id,
-                            response_request_id=gate_request.response_request_id,
-                            response_type=gate.response_type,
-                            correlation_id=message.correlation_id,
-                            reason="approval_request_outbox_unavailable",
-                        )
-                        continue
-                    if not created_request and gate_request.status == "waiting_for_response":
-                        self.journal.append(
-                            "human_response_request_reused",
-                            project_id=instance_config.project_id,
-                            role_id=instance_config.role_id,
-                            role_instance_id=instance_id,
-                            work_item_id=message.payload.get("work_item_id"),
-                            work_item_type=message.payload.get("work_item_type"),
-                            lifecycle_state=state_id,
-                            gate_id=gate.gate_id,
-                            response_request_id=gate_request.response_request_id,
-                            response_type=gate.response_type,
-                            correlation_id=message.correlation_id,
-                        )
-                        continue
-
-                    with telemetry.start_span(
-                        "human_response.request.ensure",
-                        correlation_id=message.correlation_id,
-                        trace_context=message.trace_context,
-                        attributes=telemetry.span_attributes(
-                            **agent_attrs,
-                            gate_id=gate.gate_id,
-                            response_type=gate.response_type,
-                            channel=gate.channel,
-                        ),
-                    ) as response_trace_context:
-                        request = build_human_response_request(
-                            gate=gate,
-                            response_type=(
-                                self.response_types.get(gate.response_type)
-                                if gate.response_type
-                                else None
-                            ),
-                            source_message=replace(message, trace_context=response_trace_context),
-                            source_instance=instance_config,
-                            flow_state=flow_state,
-                            approval_context=self._build_approval_context(
-                                source_message=message,
-                                flow_state=flow_state,
-                            ),
-                            response_request_id=gate_request.response_request_id,
-                            approval_request_id=gate_request.approval_request_id
-                            or gate_request.response_request_id,
-                            notification_attempt_id=(
-                                gate_request.current_notification_attempt_id
-                            ),
-                        )
-                        try:
-                            request = self.connector_outbox.enqueue(request)
-                            self.human_gate_store.mark_enqueue_succeeded(
-                                gate_request.response_request_id,
-                                connector_message_id=request.message_id,
-                            )
-                        except Exception:
-                            self.human_gate_store.mark_failed(
-                                gate_request.response_request_id,
-                                reason="approval_request_enqueue_failed",
-                            )
-                            self.journal.append(
-                                "human_response_request_failed",
-                                project_id=instance_config.project_id,
-                                role_id=instance_config.role_id,
-                                role_instance_id=instance_id,
-                                work_item_id=message.payload.get("work_item_id"),
-                                work_item_type=message.payload.get("work_item_type"),
-                                lifecycle_state=state_id,
-                                gate_id=gate.gate_id,
-                                response_request_id=gate_request.response_request_id,
-                                response_type=gate.response_type,
-                                channel=gate.channel,
-                                correlation_id=message.correlation_id,
-                                reason="approval_request_enqueue_failed",
-                            )
-                            continue
-                        self.journal.append(
-                            "human_response_requested",
-                            project_id=instance_config.project_id,
-                            role_id=instance_config.role_id,
-                            role_instance_id=instance_id,
-                            work_item_id=message.payload.get("work_item_id"),
-                            work_item_type=message.payload.get("work_item_type"),
-                            lifecycle_state=state_id,
-                            gate_id=gate.gate_id,
-                            response_request_id=request.payload["response_request_id"],
-                            approval_request_id=request.payload.get(
-                                "approval_request_id"
-                            ),
-                            notification_attempt_id=request.payload.get(
-                                "notification_attempt_id"
-                            ),
-                            response_type=gate.response_type,
-                            channel=request.channel,
-                            connector_message_id=request.message_id,
-                            correlation_id=message.correlation_id,
-                        )
-
+                self._request_human_responses(
+                    gates=human_gates,
+                    source_message=message,
+                    source_instance=instance_config,
+                    flow_state=flow_state,
+                    trace_attributes=agent_attrs,
+                )
                 self.message_store.complete(message, "waiting_for_human_response")
                 self._write_run_state(
                     instance_config=instance_config,
@@ -603,13 +507,74 @@ class AgentRuntime:
                 )
                 for handoff in result.handoffs
             ]
+            if not routes and result.status == "completed":
+                completed_handoff = flow_state.handoffs.get("completed")
+                if completed_handoff is not None:
+                    routes.append(
+                        RouteRequest(
+                            target_role=completed_handoff.target_role,
+                            message_type=completed_handoff.message_type,
+                            payload={},
+                            origin="implicit_completed_handoff",
+                        )
+                    )
+                    self.journal.append(
+                        "implicit_completed_handoff_created",
+                        project_id=instance_config.project_id,
+                        role_id=instance_config.role_id,
+                        role_instance_id=instance_id,
+                        work_item_id=message.payload.get("work_item_id"),
+                        work_item_type=message.payload.get("work_item_type"),
+                        lifecycle_state=state_id,
+                        target_role=completed_handoff.target_role,
+                        target_lifecycle_state=completed_handoff.target_state,
+                        message_type=completed_handoff.message_type,
+                        message_id=message.message_id,
+                        correlation_id=message.correlation_id,
+                        reason="worker_completed_non_terminal_state_without_route",
+                    )
             for route_request in routes:
-                normalized = self._normalise_route(
-                    route=route_request,
-                    source_message=message,
-                    source_instance=instance_config,
-                    flow_state=flow_state,
-                )
+                try:
+                    normalized = self._normalise_route(
+                        route=route_request,
+                        source_message=message,
+                        source_instance=instance_config,
+                        flow_state=flow_state,
+                    )
+                    if not isinstance(normalized, ProblemStatus):
+                        self._deliver_route(
+                            route=normalized,
+                            source_instance=instance_config,
+                            source_message=message,
+                            source_lifecycle_state=state_id,
+                            trace_attributes=agent_attrs,
+                        )
+                        continue
+                except Exception as exc:
+                    self.journal.append(
+                        "route_delivery_failed",
+                        project_id=instance_config.project_id,
+                        role_id=instance_config.role_id,
+                        role_instance_id=instance_id,
+                        work_item_id=message.payload.get("work_item_id"),
+                        work_item_type=message.payload.get("work_item_type"),
+                        lifecycle_state=state_id,
+                        target_role=route_request.target_role,
+                        message_type=route_request.message_type,
+                        correlation_id=message.correlation_id,
+                        failure_type=type(exc).__name__,
+                        failure_message=str(exc),
+                    )
+                    normalized = self._malformed_route_problem(
+                        route=route_request,
+                        source_message=message,
+                        source_instance=instance_config,
+                        flow_state=flow_state,
+                        reason=(
+                            "Runtime failed while validating or delivering a route: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    )
                 if isinstance(normalized, ProblemStatus):
                     self._record_problem_status(
                         normalized,
@@ -624,15 +589,12 @@ class AgentRuntime:
                         evidence_source="problem_status",
                     )
                     return True
-                self._deliver_route(
-                    route=normalized,
-                    source_instance=instance_config,
-                    source_message=message,
-                    source_lifecycle_state=state_id,
-                    trace_attributes=agent_attrs,
-                )
 
-            self.message_store.complete(message, result.status)
+            self.message_store.complete(
+                message,
+                result.status,
+                result_message=result.message,
+            )
             self._write_run_state(
                 instance_config=instance_config,
                 message=message,
@@ -640,6 +602,264 @@ class AgentRuntime:
                 evidence_source="worker_completed",
             )
             return True
+
+    def _handle_human_response_received(
+        self,
+        *,
+        instance_id: str,
+        instance_config,
+        message: Message,
+        state_id: str,
+    ) -> bool:
+        authoritative = str(message.source or "").startswith("teams:")
+        is_valid, validation_reason, request_record = (
+            self.human_gate_store.validate_response(
+                project_id=instance_config.project_id,
+                work_item_id=str(message.payload.get("work_item_id") or ""),
+                work_item_type=message.payload.get("work_item_type"),
+                lifecycle_state=state_id,
+                gate_id=str(message.payload.get("gate_id") or ""),
+                response_type=str(message.payload.get("response_type") or ""),
+                response_request_id=str(message.payload.get("response_request_id") or ""),
+                responder=(
+                    str(message.payload.get("responder"))
+                    if message.payload.get("responder") is not None
+                    else None
+                ),
+                response_value=message.payload.get("response_value"),
+                authenticated=bool(
+                    message.payload.get("connector_origin_authenticated", False)
+                ),
+                authoritative=authoritative,
+            )
+        )
+        if validation_reason == "duplicate_same_value":
+            event_type = "human_response_duplicate"
+        elif validation_reason == "not_approved":
+            event_type = "human_response_not_approved"
+        elif is_valid:
+            event_type = "human_response_recorded"
+        else:
+            event_type = "human_response_invalid"
+        self.journal.append(
+            event_type,
+            project_id=instance_config.project_id,
+            role_id=instance_config.role_id,
+            role_instance_id=instance_id,
+            work_item_id=message.payload.get("work_item_id"),
+            work_item_type=message.payload.get("work_item_type"),
+            lifecycle_state=state_id,
+            gate_id=message.payload.get("gate_id"),
+            response_request_id=message.payload.get("response_request_id"),
+            approval_request_id=(
+                request_record.approval_request_id
+                if request_record
+                else message.payload.get("approval_request_id")
+            ),
+            response_type=message.payload.get("response_type"),
+            response_status=(request_record.status if request_record else "unknown"),
+            validation_result=validation_reason,
+            validation_reason=validation_reason,
+            correlation_id=message.correlation_id,
+        )
+        satisfied = is_valid and validation_reason != "duplicate_same_value"
+        self.message_store.complete(
+            message,
+            "completed_after_human_response"
+            if satisfied
+            else "human_response_not_satisfied",
+        )
+        self._write_run_state(
+            instance_config=instance_config,
+            message=message,
+            run_state="completed" if satisfied else "failed",
+            evidence_source="journal_event",
+        )
+        return True
+
+    def _sponsor_clarification_gate(
+        self,
+        *,
+        result: AgentRunResult,
+        source_message: Message,
+    ) -> FlowGate:
+        prompt = result.message.strip() or (
+            "Please answer the open sponsor clarification questions for this work item."
+        )
+        channel = str(source_message.payload.get("source_channel") or "all-agents")
+        return FlowGate(
+            gate_id="sponsor_clarification_response",
+            type="human_response",
+            response_type="multiline_text",
+            prompt=prompt,
+            requested_from="sponsor",
+            channel=channel,
+            timeout="PT48H",
+            on_timeout="escalate",
+            completion_criteria={},
+        )
+
+    def _request_human_responses(
+        self,
+        *,
+        gates: list[FlowGate],
+        source_message: Message,
+        source_instance,
+        flow_state: FlowState,
+        trace_attributes: dict,
+    ) -> bool:
+        any_enqueued = False
+        for gate in gates:
+            try:
+                gate_request, created_request = (
+                    self.human_gate_store.ensure_request(
+                        work_item_id=str(
+                            source_message.payload.get("work_item_id")
+                            or source_message.message_id
+                        ),
+                        work_item_type=source_message.payload.get("work_item_type"),
+                        lifecycle_state=flow_state.state_id,
+                        gate=gate,
+                    )
+                )
+            except Exception:
+                self.journal.append(
+                    "human_response_request_failed",
+                    project_id=source_instance.project_id,
+                    role_id=source_instance.role_id,
+                    role_instance_id=source_instance.instance_id,
+                    work_item_id=source_message.payload.get("work_item_id"),
+                    work_item_type=source_message.payload.get("work_item_type"),
+                    lifecycle_state=flow_state.state_id,
+                    gate_id=gate.gate_id,
+                    response_type=gate.response_type,
+                    correlation_id=source_message.correlation_id,
+                    reason="approval_request_persistence_failed",
+                )
+                continue
+            if self.connector_outbox is None:
+                try:
+                    self.human_gate_store.mark_failed(
+                        gate_request.response_request_id,
+                        reason="approval_request_outbox_unavailable",
+                    )
+                except HumanGateStoreError:
+                    pass
+                self.journal.append(
+                    "human_response_request_unroutable",
+                    project_id=source_instance.project_id,
+                    role_id=source_instance.role_id,
+                    role_instance_id=source_instance.instance_id,
+                    work_item_id=source_message.payload.get("work_item_id"),
+                    work_item_type=source_message.payload.get("work_item_type"),
+                    lifecycle_state=flow_state.state_id,
+                    gate_id=gate.gate_id,
+                    response_request_id=gate_request.response_request_id,
+                    response_type=gate.response_type,
+                    correlation_id=source_message.correlation_id,
+                    reason="approval_request_outbox_unavailable",
+                )
+                continue
+            if not created_request and gate_request.status == "waiting_for_response":
+                self.journal.append(
+                    "human_response_request_reused",
+                    project_id=source_instance.project_id,
+                    role_id=source_instance.role_id,
+                    role_instance_id=source_instance.instance_id,
+                    work_item_id=source_message.payload.get("work_item_id"),
+                    work_item_type=source_message.payload.get("work_item_type"),
+                    lifecycle_state=flow_state.state_id,
+                    gate_id=gate.gate_id,
+                    response_request_id=gate_request.response_request_id,
+                    response_type=gate.response_type,
+                    correlation_id=source_message.correlation_id,
+                )
+                any_enqueued = True
+                continue
+
+            with telemetry.start_span(
+                "human_response.request.ensure",
+                correlation_id=source_message.correlation_id,
+                trace_context=source_message.trace_context,
+                attributes=telemetry.span_attributes(
+                    **trace_attributes,
+                    gate_id=gate.gate_id,
+                    response_type=gate.response_type,
+                    channel=gate.channel,
+                ),
+            ) as response_trace_context:
+                request = build_human_response_request(
+                    gate=gate,
+                    response_type=(
+                        self.response_types.get(gate.response_type)
+                        if gate.response_type
+                        else None
+                    ),
+                    source_message=replace(
+                        source_message,
+                        trace_context=response_trace_context,
+                    ),
+                    source_instance=source_instance,
+                    flow_state=flow_state,
+                    approval_context=self._build_approval_context(
+                        source_message=source_message,
+                        flow_state=flow_state,
+                    ),
+                    response_request_id=gate_request.response_request_id,
+                    approval_request_id=gate_request.approval_request_id
+                    or gate_request.response_request_id,
+                    notification_attempt_id=(
+                        gate_request.current_notification_attempt_id
+                    ),
+                )
+                try:
+                    request = self.connector_outbox.enqueue(request)
+                    self.human_gate_store.mark_enqueue_succeeded(
+                        gate_request.response_request_id,
+                        connector_message_id=request.message_id,
+                    )
+                except Exception:
+                    self.human_gate_store.mark_failed(
+                        gate_request.response_request_id,
+                        reason="approval_request_enqueue_failed",
+                    )
+                    self.journal.append(
+                        "human_response_request_failed",
+                        project_id=source_instance.project_id,
+                        role_id=source_instance.role_id,
+                        role_instance_id=source_instance.instance_id,
+                        work_item_id=source_message.payload.get("work_item_id"),
+                        work_item_type=source_message.payload.get("work_item_type"),
+                        lifecycle_state=flow_state.state_id,
+                        gate_id=gate.gate_id,
+                        response_request_id=gate_request.response_request_id,
+                        response_type=gate.response_type,
+                        channel=gate.channel,
+                        correlation_id=source_message.correlation_id,
+                        reason="approval_request_enqueue_failed",
+                    )
+                    continue
+                any_enqueued = True
+                self.journal.append(
+                    "human_response_requested",
+                    project_id=source_instance.project_id,
+                    role_id=source_instance.role_id,
+                    role_instance_id=source_instance.instance_id,
+                    work_item_id=source_message.payload.get("work_item_id"),
+                    work_item_type=source_message.payload.get("work_item_type"),
+                    lifecycle_state=flow_state.state_id,
+                    gate_id=gate.gate_id,
+                    response_request_id=request.payload["response_request_id"],
+                    approval_request_id=request.payload.get("approval_request_id"),
+                    notification_attempt_id=request.payload.get(
+                        "notification_attempt_id"
+                    ),
+                    response_type=gate.response_type,
+                    channel=request.channel,
+                    connector_message_id=request.message_id,
+                    correlation_id=source_message.correlation_id,
+                )
+        return any_enqueued
 
     def _write_run_state(
         self,
@@ -687,7 +907,7 @@ class AgentRuntime:
             flow_state=flow_state,
         )
         if isinstance(route, ProblemStatus):
-            raise ValueError(route.reason)
+            return route
         return replace(handoff, payload=route.to_dict())
 
     def _normalise_route(
@@ -882,9 +1102,11 @@ class AgentRuntime:
             correlation_id=source_message.correlation_id,
             lifecycle_state=flow_state.state_id,
             attempted_target_role=route.target_role,
+            attempted_message_type=route.message_type,
             attempted_lifecycle_state=attempted_lifecycle_state
             or route.payload.get("lifecycle_state"),
             expected_owner=expected_owner,
+            route_validation_errors=(reason,),
             status_url=self._work_item_status_url(
                 str(source_message.payload.get("work_item_id") or source_message.message_id)
             ),

@@ -166,6 +166,42 @@ class MalformedRouteWorker(WorkerAdapter):
         )
 
 
+class MalformedHandoffWorker(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="Emit malformed legacy handoff for runtime recovery.",
+            handoffs=[
+                Handoff(
+                    target_role="engineering",
+                    message_type="sdlc.implementation",
+                    payload={"lifecycle_state": "implementation"},
+                )
+            ],
+        )
+
+
+class ClarificationWorker(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="needs_clarification",
+            message=(
+                "Sponsor input needed: should the gateway support Teams DMs "
+                "as well as all-agents channel messages?"
+            ),
+        )
+
+
 class IndexedPublicationWorker(WorkerAdapter):
     def __init__(self, *, maintain_work_item_index: bool | None = None) -> None:
         self.maintain_work_item_index = maintain_work_item_index
@@ -463,6 +499,67 @@ def test_runtime_marks_misrouted_claim_failed_instead_of_leaving_claimed(
         "work_completed",
     ]
     assert events[-1]["status"] == "failed"
+
+
+def test_needs_clarification_result_requests_durable_sponsor_response(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        ClarificationWorker(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+    message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type="sdlc.product_definition",
+            payload={
+                "title": "Gateway bot",
+                "summary": "Define the gateway bot product shape.",
+                "work_item_id": "work-gateway",
+                "work_item_type": "slice",
+                "lifecycle_state": "product_definition",
+                "source_channel": "all-agents",
+                "teams_activity_id": "activity-root",
+                "teams_reply_to_activity_id": "activity-root",
+                "teams_conversation_id": "conversation-1",
+                "teams_service_url": "https://smba.trafficmanager.net/uk/",
+            },
+            source="test",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+
+    request = connector_outbox.claim_next("all-agents", "test-connector")
+    assert request is not None
+    assert request.type == "human_response.requested"
+    assert request.payload["gate_id"] == "sponsor_clarification_response"
+    assert request.payload["response_type"] == "multiline_text"
+    assert request.payload["teams_reply_to_activity_id"] == "activity-root"
+    gate_store = FileHumanGateRequestStore(state_root, mesh_config.project.project_id)
+    stored = gate_store.read(request.payload["response_request_id"])
+    assert stored is not None
+    assert stored.status == "waiting_for_response"
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "human_response_requested" in event_types
 
 
 def test_runtime_normalises_worker_handoff_payload_from_flow(tmp_path: Path) -> None:
@@ -1037,6 +1134,54 @@ def test_malformed_route_records_structured_problem_status_fields(
     assert current["attempted_lifecycle_state"] == "implementation"
     assert current["expected_owner"] == "engineering"
     assert current["matched_configured_route"] is None
+    assert current["route_validation_errors"]
+
+
+def test_malformed_legacy_handoff_records_structured_problem_status(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(tmp_path / "state", mesh_config.project.project_id, journal)
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        MalformedHandoffWorker(),
+    )
+
+    message_store.enqueue(
+        Message.create(
+            role_id="qa-engineer",
+            message_type="sdlc.quality_review",
+            payload={
+                "title": "Malformed handoff probe",
+                "summary": "Probe legacy handoff recovery.",
+                "work_item_id": "work-malformed-handoff",
+                "work_item_type": "slice",
+                "lifecycle_state": "quality_review",
+            },
+            source="test",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.qa-engineer.1",
+        mesh_config.instances["agentic-mesh-dev.qa-engineer.1"],
+    )
+
+    assert message_store.pending_count("engineering") == 0
+    current = ProblemStatusStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+    ).read_current("work-malformed-handoff")
+    assert current is not None
+    assert current["status"] == "needs_runtime_recovery"
+    assert current["failure_class"] == "malformed_handoff"
+    assert current["attempted_target_role"] == "engineering"
+    assert current["attempted_lifecycle_state"] == "implementation"
     assert current["route_validation_errors"]
 
 

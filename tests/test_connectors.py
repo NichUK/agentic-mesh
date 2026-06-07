@@ -373,6 +373,54 @@ def test_human_response_rendering_includes_approval_context() -> None:
     assert "work-items/work-queue-v0/110-quality-evidence.md" in rendered_card
 
 
+def test_sponsor_clarification_card_uses_readable_question_layout() -> None:
+    message = ConnectorMessage.create(
+        channel="all-agents",
+        message_type="human_response.requested",
+        payload={
+            "response_request_id": "human-response-clarify",
+            "gate_id": "sponsor_clarification_response",
+            "response_type": "multiline_text",
+            "prompt": (
+                "Please answer these before product definition continues:\n"
+                "1. What should the gateway bot be called?\n"
+                "2. Should it support Teams DMs as well as channel posts?"
+            ),
+            "project_id": "agentic-mesh-dev",
+            "role_id": "product-manager",
+            "role_instance_id": "agentic-mesh-dev.product-manager.1",
+            "work_item_id": "work-gateway",
+            "work_item_type": "slice",
+            "lifecycle_state": "product_definition",
+            "title": "Agentic Mesh conversational gateway bot",
+            "summary": "Define the gateway bot product shape.",
+            "timeout": "PT48H",
+            "on_timeout": "escalate",
+            "response_template": {"input_mode": "multiline_text"},
+            "approval_context": {
+                "description_summary": "Define the gateway bot product shape.",
+                "status_url": "http://controller.local/work-items/work-gateway",
+            },
+        },
+        source="agentic-mesh-dev.product-manager.1",
+    )
+
+    html = render_human_response_request_html(message)
+    card = build_human_response_card(message)
+    rendered_card = json.dumps(card)
+
+    assert "Sponsor input needed" in html
+    assert "Questions / requested input" in html
+    assert "What should the gateway bot be called?" in html
+    assert "Work performed:" not in rendered_card
+    assert "Sponsor input needed" in rendered_card
+    assert "Questions / requested input" in rendered_card
+    assert "What should the gateway bot be called?" in rendered_card
+    assert card["body"][-1]["type"] == "Input.Text"
+    assert card["body"][-1]["isMultiline"] is True
+    assert card["actions"][-1]["title"] == "Submit answer"
+
+
 def test_teams_ingress_records_human_response_submit(tmp_path: Path) -> None:
     mesh_config = load_mesh_config(Path.cwd())
     state_root = tmp_path / "state"
@@ -1426,6 +1474,104 @@ def test_bot_known_parent_threaded_reply_binds_before_direct_work(
     assert "threaded_context.owner_attention.routed" in event_types
     assert "teams_channel_message_routed" in event_types
     assert len([event for event in events if event["event_type"] == "queue_item_created"]) == 1
+
+
+def test_threaded_reply_to_active_clarification_submits_human_response(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+    channel = teams_config.channels["business-analysis"]
+    root = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-clarification-parent",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "Please define the gateway bot.",
+            "entities": [],
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+    assert root["routed"] is True
+    work_item_id = root["work_item_id"]
+    store = FileHumanGateRequestStore(state_root, mesh_config.project.project_id)
+    request, _ = store.ensure_request(
+        work_item_id=work_item_id,
+        work_item_type="slice",
+        lifecycle_state="business_analysis",
+        gate=FlowGate(
+            gate_id="sponsor_clarification_response",
+            type="human_response",
+            response_type="multiline_text",
+            prompt="Please answer the open sponsor questions.",
+            requested_from="sponsor",
+            channel="business-analysis",
+        ),
+    )
+    store.mark_enqueue_succeeded(
+        request.response_request_id,
+        connector_message_id="conn-msg-clarification",
+    )
+
+    reply = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-clarification-reply",
+            "replyToId": "activity-clarification-parent",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "Use one gateway bot named agentic-mesh and support Teams DMs.",
+            "from": {"id": "user-1", "name": "Nich"},
+            "conversation": {"id": "conversation-1"},
+            "channelData": {
+                "team": {"id": teams_config.team_id},
+                "channel": {"id": channel.channel_id, "name": channel.name},
+            },
+        }
+    )
+
+    assert reply["status"] == "accepted"
+    assert reply["message_id"].startswith("msg-")
+    received = message_store.claim_next("business-analyst", "test-ba")
+    assert received is not None
+    while received.type != "human_response.received":
+        message_store.complete(received.claimed("test-ba"), "test-drain")
+        received = message_store.claim_next("business-analyst", "test-ba")
+        assert received is not None
+    assert received.payload["work_item_id"] == work_item_id
+    assert received.payload["gate_id"] == "sponsor_clarification_response"
+    assert received.payload["response_value"] == (
+        "Use one gateway bot named agentic-mesh and support Teams DMs."
+    )
+    stored = store.read(request.response_request_id)
+    assert stored is not None
+    assert stored.status == "completed"
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "threaded_context.human_response_submitted" in event_types
 
 
 def test_explicit_linked_new_work_threaded_reply_uses_governed_intake(
