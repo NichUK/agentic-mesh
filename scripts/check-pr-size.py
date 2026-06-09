@@ -7,6 +7,10 @@ import sys
 from dataclasses import dataclass
 
 
+class GitCommandError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class DiffSize:
     files: int
@@ -26,13 +30,29 @@ class FileChange:
 
 def git_diff_numstat(*args: str) -> str:
     command = ["git", "diff", "--numstat", "--find-renames", *args]
-    return subprocess.check_output(command, text=True, encoding="utf-8")
+    return run_git_command(command)
 
 
 def git_untracked_files() -> list[str]:
     command = ["git", "ls-files", "--others", "--exclude-standard"]
-    output = subprocess.check_output(command, text=True, encoding="utf-8")
+    output = run_git_command(command)
     return [line for line in output.splitlines() if line.strip()]
+
+
+def run_git_command(command: list[str]) -> str:
+    try:
+        return subprocess.check_output(
+            command,
+            text=True,
+            encoding="utf-8",
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise GitCommandError("git is not installed or not on PATH.") from exc
+    except subprocess.CalledProcessError as exc:
+        cmd = " ".join(command)
+        details = exc.stderr.strip() if exc.stderr else "no git error output"
+        raise GitCommandError(f"`{cmd}` failed: {details}") from exc
 
 
 def added_lines_for_untracked(path: str) -> int:
@@ -87,11 +107,18 @@ def main() -> int:
     parser.add_argument(
         "--committed-only",
         action="store_true",
-        help="Ignore staged and unstaged working-tree changes.",
+        help="Ignore staged, unstaged, and untracked working-tree changes.",
     )
     args = parser.parse_args()
 
-    size = measure_diff(args.base, include_uncommitted=not args.committed_only)
+    try:
+        size = measure_diff(args.base, include_uncommitted=not args.committed_only)
+    except GitCommandError as exc:
+        print(f"PR size check could not run: {exc}")
+        print(
+            "Ensure this command runs inside a git repository and --base points to a valid ref."
+        )
+        return 2
     print(
         "PR size against "
         f"{args.base}: {size.files} files, {size.added} added, "

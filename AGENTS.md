@@ -189,7 +189,7 @@ Before committing:
 
 - Keep commits focused around one product or implementation slice.
 - Review `git diff --stat` and the staged diff.
-- Run `python scripts/check-pr-size.py --base origin/develop` before pushing
+- Run `python scripts/check-pr-size.py --base origin/develop --committed-only` before pushing
   a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
 - Run `python -m agentic_mesh.cli validate-config` for config or project
