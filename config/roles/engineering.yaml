@@ -51,6 +51,12 @@ core_workflows:
     artifacts:
       - docs/engineering/implementation-log.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Software Developer
+    url: https://ddat-capability-framework.service.gov.uk/role/software-developer
+    applies_to: Development, testing, code quality, and technical collaboration.
   - name: Scrum Guide
     url: https://scrumguides.org/scrum-guide.html
     applies_to: Developer accountability for planning and creating a usable increment.

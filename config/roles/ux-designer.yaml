@@ -38,6 +38,15 @@ core_workflows:
     artifacts:
       - docs/ux/design-notes.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Interaction Designer
+    url: https://ddat-capability-framework.service.gov.uk/role/interaction-designer
+    applies_to: Evidence-led interaction design based on user needs and organisational outcomes.
+  - name: DDaT Service Designer
+    url: https://ddat-capability-framework.service.gov.uk/role/service-designer
+    applies_to: End-to-end service journeys and user goal completion.
   - name: BMAD Method
     url: https://docs.bmad-method.org/reference/agents/
     applies_to: UX specialist role and design workflow inspiration.

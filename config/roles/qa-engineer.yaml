@@ -50,6 +50,15 @@ core_workflows:
     artifacts:
       - docs/qa/test-evidence.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Test Engineer
+    url: https://ddat-capability-framework.service.gov.uk/role/test-engineer
+    applies_to: Test engineering standards, robust test suites, exploratory testing, and risk identification.
+  - name: DDaT Quality Assurance Test Analyst
+    url: https://ddat-capability-framework.service.gov.uk/role/quality-assurance-test-analyst
+    applies_to: Test planning, execution, defect reporting, and quality analysis.
   - name: ISTQB
     url: https://istqb.org/
     applies_to: Test process, evidence, defect classification, and quality risk thinking.

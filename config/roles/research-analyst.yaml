@@ -38,6 +38,12 @@ core_workflows:
     artifacts:
       - docs/research/findings.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT User Researcher
+    url: https://ddat-capability-framework.service.gov.uk/role/user-researcher
+    applies_to: Research planning, evidence gathering, user understanding, and communicating findings.
   - name: SFIA
     url: https://sfia-online.org/
     applies_to: Research, analysis, and professional evidence quality.

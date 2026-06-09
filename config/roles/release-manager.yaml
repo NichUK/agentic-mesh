@@ -39,6 +39,12 @@ core_workflows:
     artifacts:
       - docs/releases/release-records.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT IT Service Manager
+    url: https://ddat-capability-framework.service.gov.uk/role/it-service-manager
+    applies_to: Service delivery, operational readiness, and release/service coordination.
   - name: NIST SSDF
     url: https://csrc.nist.gov/pubs/sp/800/218/final
     applies_to: Release evidence, secure delivery, and vulnerability/risk handling.

@@ -38,6 +38,12 @@ core_workflows:
     artifacts:
       - docs/architecture/solution-notes.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Solution Architect
+    url: https://ddat-capability-framework.service.gov.uk/role/solution-architect
+    applies_to: Solution-level architecture, constraints, integration choices, and delivery risk.
   - name: TOGAF
     url: https://www.opengroup.org/togaf
     applies_to: Architecture content, governance alignment, and traceable design decisions.
