@@ -27,6 +27,8 @@ from agentic_mesh.models import (
     RoleInstanceConfig,
     utc_now_iso,
 )
+from agentic_mesh.prompt_audit import document_library_root_for
+from agentic_mesh.prompt_audit import write_work_item_prompt_audit
 from agentic_mesh.problem_status import ProblemStatus
 from agentic_mesh.problem_status import worker_problem_status
 from agentic_mesh.worker_runs import FileWorkerRunStore
@@ -360,6 +362,7 @@ class CodexCliWorkerAdapter(WorkerAdapter):
         self.workspace_root = workspace_root
         self.state_root = state_root
         self.secret_root = state_root / "secrets"
+        self.document_library_root = document_library_root_for(project, workspace_root)
 
     def run(
         self,
@@ -417,6 +420,26 @@ class CodexCliWorkerAdapter(WorkerAdapter):
             env.update(auth_env_or_error)
             timeout_policy = resolve_worker_timeout_policy(instance)
             prompt = self._prompt(instance, message, flow_state)
+            try:
+                write_work_item_prompt_audit(
+                    document_library_root=self.document_library_root,
+                    instance=instance,
+                    message=message,
+                    flow_state=flow_state,
+                    prompt=prompt,
+                    command=command,
+                    workspace_root=self.workspace_root,
+                )
+            except Exception as exc:
+                return worker_failure_outcome(
+                    instance=instance,
+                    message=message,
+                    flow_state=flow_state,
+                    failure_class="publication_failed",
+                    recovery_action="operator_review",
+                    retryable=True,
+                    reason=f"Runtime could not persist full worker prompt audit evidence: {exc.__class__.__name__}.",
+                )
             session_probe_started_at = time.time()
             codex_home = env.get("CODEX_HOME")
             session_markers = [
