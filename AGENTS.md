@@ -189,6 +189,8 @@ Before committing:
 
 - Keep commits focused around one product or implementation slice.
 - Review `git diff --stat` and the staged diff.
+- Run `python scripts/check-pr-size.py --base origin/develop` before pushing
+  a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
 - Run `python -m agentic_mesh.cli validate-config` for config or project
   boundary changes.
@@ -201,6 +203,11 @@ Commit hygiene:
 
 - Use clear imperative commit messages, for example
   `Move Compose outputs under project folder`.
+- Keep PRs reviewable: target one focused slice, prefer under 1,500 changed
+  lines, and do not merge a PR over 5,000 changed lines or 50 files without a
+  documented generated-artifact exception.
+- If GitHub Copilot refuses review because the PR is too large, split the PR
+  rather than merging it.
 - Do not mix unrelated changes from the old `C:\Dev\dev-team-ai` prototype repo
   into this repository.
 - Do not squash unrelated user changes into your commit.
