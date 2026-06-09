@@ -344,6 +344,11 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert "<safe-outputs>" in prompt
     assert "python -m agentic_mesh.cli safe-output <tool-name> ." in prompt
     assert "Do not return legacy final JSON" in prompt
+    assert "MANDATORY FINISH CONTRACT" in prompt
+    assert "You MUST call at least one safe-output tool during this run." in prompt
+    assert "You MUST call at least one terminal safe-output tool before finishing." in prompt
+    assert "The terminal safe-output call is the only valid completion signal." in prompt
+    assert "status.report_progress` does not complete the run" in prompt
     assert "Durable claim discipline" in prompt
     assert "unless you emitted the corresponding safe-output call" in prompt
     assert "Never say you created, restarted, promoted, updated" in prompt

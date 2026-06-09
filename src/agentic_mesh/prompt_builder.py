@@ -91,6 +91,13 @@ than bypassing runtime boundaries.
                             "`route.raise_blocker` or `report_incomplete`; do not "
                             "describe the mutation as complete."
                         ),
+                        (
+                            "Mandatory finish contract: every run MUST emit at least "
+                            "one safe-output call, and MUST emit at least one terminal "
+                            "safe-output call before finishing. A final chat answer, "
+                            "stdout, stderr, markdown file, or returned JSON is not a "
+                            "valid finish signal."
+                        ),
                     ]
                 ),
             ),
@@ -200,6 +207,14 @@ Use safe-output tools for every durable effect. Do not return legacy final JSON
 with document_updates, handoffs, or routes. Do not rely on unreported filesystem
 edits. If no durable work is appropriate, call `noop` or `status.report_completion`
 with a concise reason.
+
+MANDATORY FINISH CONTRACT:
+- You MUST call at least one safe-output tool during this run.
+- You MUST call at least one terminal safe-output tool before finishing.
+- The terminal safe-output call is the only valid completion signal.
+- `status.report_progress` does not complete the run.
+- Do not rely on final prose, stdout, stderr, markdown files, filesystem edits,
+  or returned JSON to finish the run.
 
 Never say you created, restarted, promoted, updated, linked, asked, blocked,
 handed off, consulted, registered, recorded, or completed a durable thing unless

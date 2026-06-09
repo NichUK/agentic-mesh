@@ -314,19 +314,32 @@ def safe_output_tools_prompt() -> str:
         "",
         "python -m agentic_mesh.cli safe-output <tool-name> . < /tmp/payload.json",
         "",
-        "The payload file must contain one JSON object. Do not use placeholder calls.",
-        "You must call at least one terminal tool before finishing.",
+        "The payload file MUST contain one JSON object.",
+        "You MUST call at least one safe-output tool during every agent run.",
+        "You MUST call at least one terminal safe-output tool before finishing.",
+        "The terminal safe-output call is the only valid way to finish a run.",
+        (
+            "Plain text, stdout, stderr, final answers, markdown files, or JSON "
+            "returned to the worker are NOT durable outcomes and do NOT complete "
+            "the run."
+        ),
+        (
+            "`status.report_progress` is non-terminal; use it for updates during "
+            "long work, then finish with a terminal tool."
+        ),
+        "Do NOT use placeholder, speculative, or fake safe-output calls.",
+        "Do NOT say work is complete unless the terminal tool truthfully represents the run state.",
         "",
-        "Available tools:",
+        "Terminal tools:",
     ]
-    lines.extend(f"- {tool}" for tool in SAFE_OUTPUT_TOOLS)
+    lines.extend(f"- {tool}" for tool in sorted(TERMINAL_SAFE_OUTPUT_TOOLS))
     lines.extend(
         [
             "",
-            "Terminal tools:",
-            *[f"- {tool}" for tool in sorted(TERMINAL_SAFE_OUTPUT_TOOLS)],
+            "Available tools:",
         ]
     )
+    lines.extend(f"- {tool}" for tool in SAFE_OUTPUT_TOOLS)
     return "\n".join(lines)
 
 
