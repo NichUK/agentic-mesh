@@ -9,6 +9,7 @@ from agentic_mesh.models import AuthBinding, AuthMethod, RoleInstanceConfig
 class AuthInjectionPlan:
     role_instance_id: str
     adapter: str
+    credential_ref: str | None
     method: str | None
     category: str | None
     env_vars: list[str]
@@ -28,6 +29,7 @@ class AuthResolver:
             return AuthInjectionPlan(
                 role_instance_id=instance.instance_id,
                 adapter=adapter,
+                credential_ref=None,
                 method=None,
                 category=None,
                 env_vars=[],
@@ -39,6 +41,7 @@ class AuthResolver:
         return AuthInjectionPlan(
             role_instance_id=instance.instance_id,
             adapter=adapter,
+            credential_ref=binding.credential_ref,
             method=method.method_id,
             category=method.category,
             env_vars=method.env_vars,

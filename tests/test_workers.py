@@ -1,0 +1,589 @@
+import os
+import sys
+import json
+import time
+from pathlib import Path
+
+from agentic_mesh.cli import build_runtime
+from agentic_mesh.cli import project_workspace_root
+from agentic_mesh.config import load_mesh_config
+from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
+from agentic_mesh.models import Message
+from agentic_mesh.storage import FileMessageStore
+from agentic_mesh import workers
+from agentic_mesh.workers import AGENT_RESULT_SCHEMA
+from agentic_mesh.workers import ConfiguredWorkerAdapter
+from agentic_mesh.workers import parse_agent_result
+from agentic_mesh.workers import result_from_payload
+from agentic_mesh.workers import summarize_worker_failure
+
+
+def test_parse_agent_result_accepts_structured_worker_json() -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    flow_state = mesh_config.project.flow.states["business_analysis"]
+
+    result = result_from_payload(
+        parse_agent_result(
+            """
+            {
+              "status": "completed",
+              "message": "Analysed the project.",
+              "document_updates": [
+                {
+                  "path": "documents/analysis/business-analyst.md",
+                  "content": "# Business Analyst Worklist\\n\\nActual analysis."
+                }
+              ],
+              "handoffs": []
+            }
+            """
+        ),
+        flow_state,
+    )
+
+    assert result.status == "completed"
+    assert result.document_updates[0].path == "documents/analysis/business-analyst.md"
+
+
+def test_parse_agent_result_accepts_optional_document_index_metadata() -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    flow_state = mesh_config.project.flow.states["business_analysis"]
+
+    result = result_from_payload(
+        parse_agent_result(
+            """
+            {
+              "status": "completed",
+              "message": "Analysed the project.",
+              "document_updates": [
+                {
+                  "path": "work-items/{work_item_id}/10-business-brief.md",
+                  "content": "# Business Analyst Worklist",
+                  "purpose": "Business framing.",
+                  "review_status": "approved",
+                  "index_summary": "Index metadata summary.",
+                  "maintain_work_item_index": true
+                }
+              ],
+              "handoffs": []
+            }
+            """
+        ),
+        flow_state,
+    )
+
+    update = result.document_updates[0]
+    assert update.purpose == "Business framing."
+    assert update.review_status == "approved"
+    assert update.index_summary == "Index metadata summary."
+    assert update.maintain_work_item_index is True
+
+
+def test_parse_agent_result_accepts_first_class_routes() -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    flow_state = mesh_config.project.flow.states["quality_review"]
+
+    result = result_from_payload(
+        parse_agent_result(
+            """
+            {
+              "status": "completed",
+              "message": "QA correction requested.",
+              "document_updates": [],
+              "routes": [
+                {
+                  "target_role": "engineering",
+                  "message_type": "sdlc.consult.implementation",
+                  "payload": {
+                    "title": "Correction",
+                    "summary": "Fix DEF-QA-LIFE-001.",
+                    "work_item_id": "work-correction",
+                    "work_item_type": "slice",
+                    "previous_lifecycle_state": "quality_review",
+                    "lifecycle_state": "implementation",
+                    "source_message_id": null,
+                    "out_of_flow": null,
+                    "out_of_flow_reason": null,
+                    "review_status": "changes_requested",
+                    "defect_id": "DEF-QA-LIFE-001",
+                    "required_change": "Route through the configured consult.",
+                    "evidence_required": "Attach implementation evidence."
+                  }
+                }
+              ],
+              "handoffs": []
+            }
+            """
+        ),
+        flow_state,
+    )
+
+    assert result.routes[0].target_role == "engineering"
+    assert result.routes[0].payload["defect_id"] == "DEF-QA-LIFE-001"
+
+
+def test_agent_result_schema_exposes_first_class_routes() -> None:
+    route_payload_schema = (
+        AGENT_RESULT_SCHEMA["properties"]["routes"]["items"]["properties"]["payload"]
+    )
+
+    assert route_payload_schema["additionalProperties"] is False
+    assert "defect_id" in route_payload_schema["properties"]
+    assert "required_change" in route_payload_schema["properties"]
+    assert "evidence_required" in route_payload_schema["properties"]
+
+
+def test_agent_result_schema_is_strict_for_openai_structured_output() -> None:
+    def assert_strict_object(schema: dict) -> None:
+        if schema.get("type") == "object":
+            properties = schema.get("properties", {})
+            required = set(schema.get("required", []))
+            assert required == set(properties), schema
+        if "properties" in schema:
+            for value in schema["properties"].values():
+                if isinstance(value, dict):
+                    assert_strict_object(value)
+        items = schema.get("items")
+        if isinstance(items, dict):
+            assert_strict_object(items)
+
+    assert_strict_object(AGENT_RESULT_SCHEMA)
+
+
+def test_configured_worker_blocks_when_codex_secret_is_missing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(workers.shutil, "which", lambda command: "codex")
+    mesh_config = load_mesh_config(Path.cwd())
+    worker = ConfiguredWorkerAdapter(
+        project=mesh_config.project,
+        auth_methods=mesh_config.auth_methods,
+        workspace_root=tmp_path / "workspace",
+        state_root=tmp_path / "state",
+    )
+    flow_state = mesh_config.project.flow.states["product_definition"]
+    message = Message.create(
+        role_id="product-manager",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={
+            "title": "Adopt this project",
+            "summary": "Analyse the repo.",
+            "work_item_id": "work-adoption",
+            "work_item_type": "directive",
+        },
+        source="test",
+    )
+
+    result = worker.run(
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+        message,
+        flow_state,
+    )
+
+    assert result.problem_status is not None
+    assert result.problem_status.status == "needs_runtime_recovery"
+    assert result.problem_status.problem_kind == "worker_failed"
+    assert result.problem_status.failure_class == "auth_missing"
+    assert result.problem_status.recovery_action == "repair_auth"
+    assert result.problem_status.artifact_paths == ()
+
+
+def test_configured_worker_points_missing_oauth_to_auth_ui(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: oauth-example
+name: OAuth Example
+workspace:
+  root: .
+  default_repository: oauth-example
+  repositories:
+    oauth-example:
+      type: git
+      path: .
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        credential: codex-product-oauth
+    instructions: []
+    write_paths: []
+    channels: {}
+flow:
+  flow_id: oauth-example-flow
+  entry_state: product_definition
+  work_item_types:
+    - slice
+  states:
+    product_definition:
+      owner_role: product-manager
+      purpose: Define work.
+      artifact_path: docs/product/stories.md
+      handoffs: {}
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(workers.shutil, "which", lambda command: "codex")
+    monkeypatch.setenv(
+        "AGENTIC_MESH_AUTH_ADMIN_URL",
+        "https://mesh.example/auth/credentials",
+    )
+    mesh_config = load_mesh_config(Path.cwd(), project_file=str(project_file))
+    worker = ConfiguredWorkerAdapter(
+        project=mesh_config.project,
+        auth_methods=mesh_config.auth_methods,
+        workspace_root=tmp_path / "workspace",
+        state_root=tmp_path / "state",
+    )
+    flow_state = mesh_config.project.flow.states["product_definition"]
+    message = Message.create(
+        role_id="product-manager",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"title": "Do work", "summary": "Needs OAuth"},
+        source="test",
+    )
+
+    result = worker.run(
+        mesh_config.instances["oauth-example.product-manager.1"],
+        message,
+        flow_state,
+    )
+
+    assert result.problem_status is not None
+    assert result.problem_status.status == "needs_runtime_recovery"
+    assert result.problem_status.failure_class == "auth_missing"
+    assert "sign in with OpenAI" in result.problem_status.reason
+    assert "codex-product-oauth" not in result.problem_status.reason
+
+
+def test_configured_worker_uses_current_codex_exec_flags(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(workers.shutil, "which", lambda command: "codex")
+    mesh_config = load_mesh_config(Path.cwd())
+    instance = mesh_config.instances["agentic-mesh-dev.product-manager.1"]
+    mount_ref = instance.override.worker.auth.mount_ref
+    assert mount_ref is not None
+    (tmp_path / "state" / "worker_mounts" / mount_ref).mkdir(parents=True)
+    (tmp_path / "workspace").mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        captured["prompt"] = kwargs["input_text"]
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(
+            """
+{
+  "status": "completed",
+  "message": "Smoke passed.",
+  "document_updates": [
+    {
+      "path": "documents/analysis/product-manager.md",
+      "content": "# Smoke passed"
+    }
+  ],
+  "handoffs": []
+}
+""".strip(),
+            encoding="utf-8",
+        )
+
+        class Completed:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+            timed_out = False
+
+        return Completed()
+
+    monkeypatch.setattr(workers, "run_progress_aware_command", fake_run)
+    worker = ConfiguredWorkerAdapter(
+        project=mesh_config.project,
+        auth_methods=mesh_config.auth_methods,
+        workspace_root=tmp_path / "workspace",
+        state_root=tmp_path / "state",
+    )
+    message = Message.create(
+        role_id="product-manager",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"title": "Smoke", "summary": "Check command flags."},
+        source="test",
+    )
+
+    result = worker.run(
+        instance,
+        message,
+        mesh_config.project.flow.states["product_definition"],
+    )
+
+    command = captured["command"]
+    assert result.status == "completed"
+    assert "--ask-for-approval" not in command
+    assert "--sandbox" in command
+    assert "danger-full-access" in command
+    assert "-c" in command
+    assert "model_reasoning_effort=high" in command
+    assert captured["env"]["CODEX_HOME"] == str(
+        tmp_path / "state" / "worker_mounts" / mount_ref
+    )
+    prompt = str(captured["prompt"])
+    assert "Project goal:" in prompt
+    assert "Build Agentic Mesh into an open-core" in prompt
+    assert "pluggable connectors" in prompt
+    assert "current_focus" not in prompt
+    assert "Project workspace:" in prompt
+    assert '"workspace_root": "examples/projects/agentic-mesh-dev"' in prompt
+    assert '"default_repository": "agentic-mesh"' in prompt
+    assert '"path": "../../.."' in prompt
+    assert "Document library and role memory:" in prompt
+    assert "Role charter:" in prompt
+    assert "role_profile" in prompt
+    assert "decision_rights" in prompt
+    assert "core_workflows" in prompt
+    assert "Role capability context:" in prompt
+    assert "availability has not been validated" in prompt
+    assert "document-library.read" in prompt
+    assert "broader regression checks when feasible" in prompt
+    assert "clearly unrelated reasons" in prompt
+
+
+def test_agent_result_schema_is_strict_for_nested_handoff_payload() -> None:
+    handoff_payload_schema = (
+        AGENT_RESULT_SCHEMA["properties"]["handoffs"]["items"]["properties"]["payload"]
+    )
+
+    assert handoff_payload_schema["type"] == "object"
+    assert handoff_payload_schema["additionalProperties"] is False
+    assert "lifecycle_state" in handoff_payload_schema["properties"]
+    assert "out_of_flow_reason" in handoff_payload_schema["properties"]
+    assert set(handoff_payload_schema["required"]) == set(
+        handoff_payload_schema["properties"]
+    )
+
+
+def test_parse_agent_result_rejects_runtime_recovery_as_role_status() -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    flow_state = mesh_config.project.flow.states["implementation"]
+
+    try:
+        result_from_payload(
+            {
+                "status": "needs_runtime_recovery",
+                "message": "Runtime should own this.",
+                "document_updates": [],
+                "handoffs": [],
+            },
+            flow_state,
+        )
+    except ValueError as exc:
+        assert "unsupported status" in str(exc)
+    else:
+        raise AssertionError("needs_runtime_recovery must not parse as a role result")
+
+
+def test_codex_timeout_returns_worker_recovery_problem(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(workers.shutil, "which", lambda command: "codex")
+    mesh_config = load_mesh_config(Path.cwd())
+    instance = mesh_config.instances["agentic-mesh-dev.product-manager.1"]
+    mount_ref = instance.override.worker.auth.mount_ref
+    assert mount_ref is not None
+    (tmp_path / "state" / "worker_mounts" / mount_ref).mkdir(parents=True)
+    (tmp_path / "workspace").mkdir()
+
+    def fake_run(command, **kwargs):
+        class Completed:
+            returncode = -9
+            stdout = "raw provider output with /tmp/secret/path"
+            stderr = "secret_ref=should-not-leak"
+            timed_out = True
+            started_at = 0.0
+            progress_observed_at = "2026-06-05T00:00:00+00:00"
+
+        return Completed()
+
+    monkeypatch.setattr(workers, "run_progress_aware_command", fake_run)
+    worker = ConfiguredWorkerAdapter(
+        project=mesh_config.project,
+        auth_methods=mesh_config.auth_methods,
+        workspace_root=tmp_path / "workspace",
+        state_root=tmp_path / "state",
+    )
+    message = Message.create(
+        role_id="product-manager",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"title": "Timeout", "summary": "No valid result."},
+        source="test",
+    )
+
+    outcome = worker.run(
+        instance,
+        message,
+        mesh_config.project.flow.states["product_definition"],
+    )
+
+    assert outcome.problem_status is not None
+    assert outcome.problem_status.status == "needs_runtime_recovery"
+    assert outcome.problem_status.problem_kind == "worker_failed"
+    assert outcome.problem_status.failure_class == "timeout"
+    assert outcome.problem_status.retryable is True
+    assert "secret_ref" not in outcome.problem_status.to_dict()
+
+
+def test_progress_aware_command_allows_progress_past_soft_timeout(tmp_path: Path) -> None:
+    completed = workers.run_progress_aware_command(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys,time\n"
+                "for i in range(5):\n"
+                " print(f'tick {i}', flush=True)\n"
+                " time.sleep(0.2)\n"
+            ),
+        ],
+        input_text="",
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=None,
+        progress_window_seconds=1,
+        progress_paths=[],
+    )
+
+    assert completed.timed_out is False
+    assert completed.returncode == 0
+    assert "tick 4" in completed.stdout
+
+
+def test_progress_aware_command_times_out_when_quiet(tmp_path: Path) -> None:
+    completed = workers.run_progress_aware_command(
+        [sys.executable, "-c", "import time; time.sleep(2)"],
+        input_text="",
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=None,
+        progress_window_seconds=0.2,
+        progress_paths=[],
+    )
+
+    assert completed.timed_out is True
+    assert completed.returncode == -9
+
+
+def test_progress_aware_command_uses_completion_probe(tmp_path: Path) -> None:
+    completed = workers.run_progress_aware_command(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import time\n"
+                "while True:\n"
+                " print('still running', flush=True)\n"
+                " time.sleep(0.1)\n"
+            ),
+        ],
+        input_text="",
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=None,
+        progress_window_seconds=5,
+        progress_paths=[],
+        completion_probe=lambda: '{"status":"completed","message":"done","document_updates":[],"handoffs":[],"routes":[]}',
+    )
+
+    assert completed.completed_from_probe is True
+    assert completed.timed_out is False
+    assert completed.returncode == 0
+    assert '"message":"done"' in completed.stdout
+
+
+def test_codex_session_completed_result_reads_task_complete(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions" / "2026" / "06" / "06"
+    session_dir.mkdir(parents=True)
+    session_path = session_dir / "rollout-2026-06-06T16-38-55.jsonl"
+    result = {
+        "status": "completed",
+        "message": "Recovered from session log.",
+        "document_updates": [],
+        "handoffs": [],
+        "routes": [],
+    }
+    session_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "event_msg", "payload": {"type": "token_count"}}),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "last_agent_message": json.dumps(result),
+                        },
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    recovered = workers.codex_session_completed_result(
+        codex_home,
+        started_at=time.time() - 1,
+        required_markers=["Recovered from session log."],
+    )
+
+    assert recovered == json.dumps(result)
+    assert (
+        workers.codex_session_completed_result(
+            codex_home,
+            started_at=time.time() - 1,
+            required_markers=["work-other"],
+        )
+        is None
+    )
+
+
+def test_summarize_worker_failure_keeps_error_tail() -> None:
+    detail = "banner\n" + ("prompt\n" * 500) + "ERROR: invalid_json_schema"
+
+    summary = summarize_worker_failure(detail, max_length=80)
+
+    assert summary.startswith("...")
+    assert "ERROR: invalid_json_schema" in summary
+    assert "banner" not in summary
+
+
+def test_build_runtime_uses_configured_worker_adapter(tmp_path: Path) -> None:
+    mesh_config, _, message_store, _, _, runtime = build_runtime(
+        Path.cwd(),
+        "examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml",
+        tmp_path / "workspace",
+        tmp_path / "state",
+    )
+
+    assert isinstance(runtime.worker, ConfiguredWorkerAdapter)
+    assert isinstance(message_store, FileMessageStore)
+    assert project_workspace_root(tmp_path / "workspace", mesh_config) == (
+        tmp_path / "workspace" / "examples" / "projects" / "agentic-mesh-dev"
+    ).resolve()
+    assert runtime.artifact_store.workspace_root == (
+        tmp_path / "workspace" / "examples" / "projects" / "agentic-mesh-dev"
+    ).resolve()

@@ -169,13 +169,13 @@ for real work:
 
 ```yaml
 workspace:
-  root: .
+  root: examples/projects/agentic-mesh-dev
   default_repository: agentic-mesh
   repositories:
     agentic-mesh:
       type: git
-      path: .
-      default_branch: main
+      path: ../../..
+      default_branch: develop
 ```
 
 `workspace.root` is resolved under `AGENTIC_MESH_WORKSPACE_ROOT` unless it is
@@ -205,6 +205,35 @@ AGENTIC_MESH_STATE_ROOT
 This supports a single centrally published runtime image per container type,
 with organization and project configuration mounted from external volumes,
 repositories, or managed configuration stores.
+
+## Dogfood Runtime Activation Boundary
+
+When Agentic Mesh is used to improve Agentic Mesh itself, the development
+workspace is still only project input. The running control-plane, listener, and
+role-agent services must import code from an installed runtime image or package,
+not from the mutable workspace being edited by the slice.
+
+Self-development therefore has two distinct stages:
+
+1. The dogfood team changes the project repository, writes slice evidence, and
+   commits the source change like any other project work.
+2. A deployment or activation step builds or selects the runtime image/package,
+   runs smoke checks, and restarts or reloads the affected services from that
+   released artifact.
+
+The project workspace may be mounted into containers so agents can inspect and
+edit the repository, but it must not be the authoritative import path for the
+live runtime unless the deployment profile is explicitly running in a developer
+hot-reload mode. Production and dogfood-stable profiles should keep runtime
+code immutable during a slice and should record activation evidence before a
+work item is considered deployed.
+
+This separation prevents three classes of failures:
+
+- source changes that are present in Git but absent from running containers
+- live hotpatches that fix the runtime but are not reconciled back to source
+- self-hosted slices that mutate the worker/runtime while those same services
+  are mid-flow
 
 ## Open Questions
 

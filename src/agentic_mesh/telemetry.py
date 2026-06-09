@@ -193,6 +193,7 @@ def _create_metric_instruments() -> None:
     for name in [
         "agentic_mesh.role_queue.pending",
         "agentic_mesh.connector_outbox.pending",
+        "agentic_mesh.work_queue.depth",
     ]:
         _meter.create_observable_gauge(
             name,
@@ -235,7 +236,7 @@ def span_attributes(**fields: Any) -> dict[str, Any]:
     attrs = {key: value for key, value in fields.items() if value is not None}
     human_response_value = attrs.get("human_response_value", attrs.get("response_value"))
     if human_response_value is not None:
-        attrs["human_response.value"] = human_response_value
+        attrs["human_response.value"] = _safe_human_response_value(human_response_value)
     attrs.update({f"resource.{key}": value for key, value in _configured_resource_attributes.items()})
     return attrs
 
@@ -359,6 +360,50 @@ def record_journal_event(event: dict[str, Any]) -> None:
     _record_derived_metric(event)
 
 
+def record_activation_event(event: dict[str, Any]) -> None:
+    from agentic_mesh.activation_evidence import activation_event_allowlist
+
+    safe_event = activation_event_allowlist(event)
+    record_journal_event(safe_event)
+
+
+def record_capability_event(
+    event_type: str,
+    *,
+    project_id: str,
+    role_id: str | None = None,
+    role_instance_id: str | None = None,
+    capability_id: str | None = None,
+    category: str | None = None,
+    status: str | None = None,
+    previous_status: str | None = None,
+    presentation_group: str | None = None,
+    action_owner: str | None = None,
+    snapshot_id: str | None = None,
+    correlation_id: str | None = None,
+    evidence_freshness: str | None = None,
+    redacted_error_class: str | None = None,
+) -> None:
+    record_journal_event(
+        {
+            "event_type": event_type,
+            "project_id": project_id,
+            "role_id": role_id,
+            "role_instance_id": role_instance_id,
+            "capability_id": capability_id,
+            "category": category,
+            "status": status,
+            "previous_status": previous_status,
+            "presentation_group": presentation_group,
+            "action_owner": action_owner,
+            "snapshot_id": snapshot_id,
+            "correlation_id": correlation_id,
+            "evidence_freshness": evidence_freshness,
+            "redacted_error_class": redacted_error_class,
+        }
+    )
+
+
 def _record_derived_metric(event: dict[str, Any]) -> None:
     event_type = event.get("event_type")
     attrs = _metric_attrs(**event)
@@ -433,8 +478,16 @@ def _clean_attributes(fields: dict[str, Any]) -> dict[str, Any]:
             attrs[key] = str(value)
     human_response_value = attrs.get("human_response_value", attrs.get("response_value"))
     if human_response_value is not None:
-        attrs["human_response.value"] = human_response_value
+        attrs["human_response.value"] = _safe_human_response_value(human_response_value)
     return attrs
+
+
+def _safe_human_response_value(value: Any) -> Any:
+    if value in {"approved", "not_approved", True, False}:
+        return value
+    if isinstance(value, int | float):
+        return value
+    return "[redacted]"
 
 
 def _metric_attrs(**fields: Any) -> dict[str, Any]:
@@ -450,6 +503,68 @@ def _metric_attrs(**fields: Any) -> dict[str, Any]:
         "gate_id",
         "response_value",
         "work_item_type",
+        "queue_item_id",
+        "queue_status",
+        "owner_role",
+        "connector_type",
+        "source_anchor_ref",
+        "action_type",
+        "receipt_outcome",
+        "actor_type",
+        "correlation_id",
+        "schema_version",
+        "problem_kind",
+        "failure_class",
+        "retryable",
+        "recovery_action",
+        "worker_adapter",
+        "worker_model",
+        "artifact_count",
+        "partial_artifacts_present",
+        "notification_result",
+        "notification_error_class",
+        "notification_state",
+        "capability_id",
+        "category",
+        "previous_status",
+        "presentation_group",
+        "snapshot_id",
+        "evidence_freshness",
+        "redacted_error_class",
+        "recovery_reason_class",
+        "recoverability_class",
+        "recovery_state",
+        "retry_policy_state",
+        "provider_adapter_id",
+        "provider_condition_class",
+        "condition_class",
+        "confidence",
+        "duplicate_guard_result",
+        "alert_severity",
+        "alert_state",
+        "route_label",
+        "redacted_diagnostic_class",
+        "receipt_id",
+        "revision",
+        "run_id",
+        "run_status",
+        "run_condition",
+        "message_id",
+        "worker_adapter",
+        "worker_model",
+        "output_record_count",
+        "output_truncated",
+        "output_sequence",
+        "output_stream",
+        "output_record_kind",
+        "output_byte_count",
+        "output_line_count",
+        "output_content_redacted",
+        "output_redaction_reason",
+        "output_classifier_hints",
+        "safe_excerpt_present",
+        "records_pruned",
+        "terminal_records_kept",
     }
     return {
         key: value

@@ -1,0 +1,17 @@
+# Risk Register
+
+This register captures open delivery and architecture risks that should be
+tracked as Agentic Mesh moves from dogfood recovery into reliable enterprise
+operation.
+
+| ID | Risk | Impact | Current Control | Future Action | Status |
+| --- | --- | --- | --- | --- | --- |
+| RISK-001 | Runtime and dashboard fixes have been hotpatched into live containers before being fully reconciled into Git and tested. | Local and deployed behaviour can drift, making failures hard to reproduce or safely roll back. | Live fixes are being backported to source and committed through PR. | Add a deployment/reload coordinator and require source-controlled deployments for dogfood runtime changes. | Open |
+| RISK-002 | Worker/runtime modules are imported once at process start, so changes still require container restarts. | Stale workers can keep old recovery, routing, or prompt behaviour after a config or code update. | Manual restarts are used during dogfood recovery. | Implement controlled reload/deploy handling for role workers, listener, and control-plane services. | Open |
+| RISK-003 | Connector notification failures can remain visible after the work item has progressed through another route. | Operators may confuse stale notification state with the current work-item blocker. | Status dashboard now suppresses several stale terminal and human-gate cases. | Add notification reconciliation and clearer separation between historical notification evidence and active blockers. | Open |
+| RISK-004 | Human approval cards and release decision receipts do not yet carry enough summary, test, and artifact context. | Sponsors may approve without understanding the work, or need to inspect raw artifacts to find the decision basis. | Work-item pages expose artifacts and unblock guidance. | Improve approval cards with title, description, artifact links, test links or instructions, and release summary. | Open |
+| RISK-005 | Recovery remains partly manual for internal failures such as provider limits, Codex runtime failures, stale claims, and missing evidence. | Work can sit in attention-needed or active states until an operator diagnoses and requeues it. | Recovery records, current-agent status, and work-item actions now expose more state. | Add smart retry polling, provider-condition detection, observability alerts, and operator-safe retry policies. | Open |
+| RISK-006 | Current dashboard pages are useful for recovery but are not yet a live operations console. | Operators lack real-time visibility into what each agent is doing and whether progress is healthy. | Work-item, work-queue, artifact, and current-agent pages exist. | Add push/live updates, current-agent detail, alert surfacing, and fast indexed summaries. | Open |
+| RISK-007 | Large slices can exceed current worker timeouts or appear idle while still doing useful work. | Long-running enterprise tasks may be incorrectly classified as failed or stale. | Worker run records now capture more output and status evidence. | Monitor Codex/worker output streams continuously and use progress-aware timeout policies. | Open |
+| RISK-008 | Documentation artifacts and durable system documents can diverge if slice closure does not explicitly update enterprise documents. | The document library may become evidence-only rather than a maintained enterprise knowledge base. | Document-library standards and artifact viewers are in place. | Require every slice to record durable-documentation impact before closure. | Open |
+

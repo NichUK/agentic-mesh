@@ -8,6 +8,8 @@ services:
       AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project.yaml
       AGENTIC_MESH_STATE_ROOT: /mesh/project/state
       AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
+      AGENTIC_MESH_AUTH_ADMIN_URL: http://10.0.0.65:8100/auth/credentials
+      AGENTIC_MESH_STATUS_BASE_URL: ${AGENTIC_MESH_STATUS_BASE_URL:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
@@ -15,9 +17,9 @@ services:
     ports:
       - "3978:3978"
     volumes:
-      - ../../../../..:/mesh/system:ro
-      - ../..:/mesh/project
-      - ../../../../..:/mesh/workspaces/agentic-mesh
+      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
     working_dir: /mesh/workspaces/agentic-mesh
     restart: unless-stopped
 
@@ -30,6 +32,10 @@ services:
   teams-connector:
     command: python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/project/state/secrets --poll-seconds 5
     restart: unless-stopped
+
+  teams-graph-ingress:
+    profiles:
+      - graph-ingress
 
   otel-collector:
     ports: !reset []

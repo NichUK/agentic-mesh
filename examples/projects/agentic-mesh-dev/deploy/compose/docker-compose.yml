@@ -3,15 +3,17 @@ x-agentic-mesh-env: &agentic-mesh-env
   AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project.yaml
   AGENTIC_MESH_STATE_ROOT: /mesh/project/state
   AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
+  AGENTIC_MESH_AUTH_ADMIN_URL: http://127.0.0.1:8100/auth/credentials
+  AGENTIC_MESH_STATUS_BASE_URL: ${AGENTIC_MESH_STATUS_BASE_URL:-}
   OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
   OTEL_EXPORTER_OTLP_INSECURE: "true"
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc
   OTEL_RESOURCE_ATTRIBUTES: deployment.environment=dogfood
 
 x-agentic-mesh-volumes: &agentic-mesh-volumes
-  - ../../../../..:/mesh/system:ro
-  - ../..:/mesh/project
-  - ../../../../..:/mesh/workspaces/agentic-mesh
+  - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
+  - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
+  - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
 
 x-agentic-mesh-service: &agentic-mesh-service
   image: agentic-mesh:local
@@ -22,7 +24,7 @@ x-agentic-mesh-service: &agentic-mesh-service
 services:
   runtime-image:
     image: agentic-mesh:local
-    build: ../../../../..
+    build: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
     command: python -m agentic_mesh.cli status
     profiles:
       - build-image
@@ -33,7 +35,9 @@ services:
 
   control-plane:
     <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli control-plane-loop --idle-grace-seconds 300 --poll-seconds 5
+    command: python -m agentic_mesh.cli control-plane-loop --idle-grace-seconds 300 --poll-seconds 5 --auth-admin-host 0.0.0.0 --auth-admin-port 8080
+    ports:
+      - "8100:8080"
 
   teams-connector:
     <<: *agentic-mesh-service
@@ -103,7 +107,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.101.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
-      - ../../../../../config/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+      - ${AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH:-../../../../../config/otel/collector.yaml}:/etc/otelcol/config.yaml:ro
     ports:
       - "4317:4317"
       - "4318:4318"

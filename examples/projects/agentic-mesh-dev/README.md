@@ -14,6 +14,8 @@ outputs, runtime state location, and future generated infrastructure artifacts.
 examples/projects/agentic-mesh-dev/
   agentic-mesh/
     project.yaml              # project overlay and role network
+  documents/
+    requirements/             # generated role adoption and analysis outputs
   deploy/
     compose/
       docker-compose.yml      # local dogfood Compose output
@@ -52,7 +54,7 @@ The dogfood Compose output mounts:
 ```text
 /mesh/system                    # system repository, read-only
 /mesh/project                   # this project folder
-/mesh/workspaces/agentic-mesh   # system repo as the dogfood work workspace
+/mesh/workspaces/agentic-mesh   # mounted repository root used to resolve workspace.root
 ```
 
 The project file is:
@@ -66,6 +68,17 @@ Runtime state is:
 ```text
 /mesh/project/state
 ```
+
+The effective project workspace is:
+
+```text
+/mesh/workspaces/agentic-mesh/examples/projects/agentic-mesh-dev
+```
+
+Generated project artifacts such as `documents/analysis/*.md` must land
+inside that effective project workspace. The system repository remains
+available to dogfood agents through the configured `agentic-mesh` repository
+path.
 
 This keeps project deployment artifacts and runtime state inside the project
 folder while still allowing dogfood role agents to work on the system repo.

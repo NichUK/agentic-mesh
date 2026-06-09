@@ -1,5 +1,6 @@
 .pytest_cache/
 __pycache__/
+.live-reconcile/
 *.pyc
 *.egg-info/
 .venv/
@@ -15,4 +16,6 @@ Thumbs.db
 state/
 examples/projects/*/state/
 examples/projects/*/build/
+examples/projects/*/documents/analysis/
+documents/analysis/
 *.log

@@ -42,12 +42,52 @@ flow: ...
 Optional top-level fields are:
 
 ```yaml
+goal: ...
+auth_credentials: ...
 connectors: ...
+document_library: ...
+role_memory: ...
+meshes: ...
 document_accountabilities: ...
 ```
 
 Use lowercase kebab-case for `project_id`, for example
 `agentic-mesh-dev`, `customer-portal`, or `finance-ops`.
+
+## Goal
+
+`goal` is the project north star. Agentic Mesh passes it to every role-agent so
+plans, handoffs, blocker reports, and artifacts stay tied to a focused project
+goal rather than drifting into generic role activity.
+
+```yaml
+goal:
+  description: Build Agentic Mesh into an open-core enterprise role-agent runtime
+    with pluggable connectors for messaging, work intake, repositories, and
+    delivery systems.
+  success_measures:
+    - Work is routed to the smallest appropriate set of roles.
+    - Agents ask necessary clarifying questions before acting on ambiguity.
+    - Agents acknowledge, plan, execute, and report blockers visibly.
+  constraints:
+    - Do not create documents just to record failure or status.
+    - Preserve specialist decision ownership.
+  guidance:
+    - Every action should advance the current focus, reduce a meaningful risk,
+      or clearly explain why progress is blocked.
+```
+
+Fields:
+
+- `description`: durable project goal or mission the mesh is trying to achieve.
+- `success_measures`: observable signs that work is staying on track.
+- `constraints`: project-specific guardrails that role agents must respect.
+- `guidance`: additional steering language for plans, handoffs, and blockers.
+
+The goal is not a hidden controller decision. It is shared context for the
+agents, similar to a sponsor brief or project charter. Roles may still disagree
+or push back, but their reasoning should explain how the proposal advances the
+goal or protects it from risk.
 
 ## Workspace
 
@@ -103,6 +143,83 @@ workspace:
 Runtime state and secrets do not belong in `workspace`. They are mounted and
 configured separately by deployment.
 
+## Document Library
+
+`document_library` declares the durable project document root independently
+from `workspace`. Relative roots resolve under the effective project workspace.
+
+```yaml
+document_library:
+  backend: git
+  root: ../../..
+  structure_policy: togaf-sdlc-v1
+  index_path: docs/00-index/document-library-manifest.json
+  review_log_standard: same-document-review-log-v1
+  versioning: backend
+```
+
+Fields:
+
+- `backend`: `git`, `filesystem`, `onedrive`, or `sharepoint`. Git and
+  filesystem are implemented first; Microsoft-backed libraries are adapter
+  targets.
+- `root`: document-library root path.
+- `structure_policy`: document organization policy, initially
+  `togaf-sdlc-v1`.
+- `index_path`: generated document manifest path under the library root.
+- `review_log_standard`: Markdown commenting convention. V1 uses visible
+  same-document `## Review Log` entries.
+- `versioning`: usually `backend`, meaning Git or OneDrive/SharePoint owns
+  version history.
+
+Use `python -m agentic_mesh.cli document-manifest --write` to generate the
+current library manifest.
+
+## Role Memory
+
+`role_memory` configures the derived, source-linked cache each role can use to
+avoid rereading the entire document library before every task.
+
+```yaml
+role_memory:
+  enabled: true
+  backend: filesystem
+  root: memory/roles
+  provenance_required: true
+  refresh_from_document_library: true
+  team_overlay_root: memory/team-overlays
+```
+
+Documents, ADRs, work-item artifacts, and the event journal remain canonical.
+If role memory disagrees with the document library, the agent should refresh
+memory from the canonical sources.
+
+## Meshes
+
+`meshes` declare peer team meshes and the roles that participate in each one.
+Roles can be shared across meshes where that matches the organization.
+
+```yaml
+meshes:
+  governance:
+    name: Governance Mesh
+    flow: governance
+    roles:
+      - enterprise-architect
+      - delivery-manager
+  sdlc:
+    name: SDLC Mesh
+    flow: sdlc
+    parent_mesh: governance
+    roles:
+      - product-manager
+      - engineering
+      - qa-engineer
+```
+
+Cross-mesh handoffs create linked work items in the receiving mesh. The
+receiving mesh applies its normal flow, reviews, and documentation rules.
+
 ## Roles
 
 `roles` declares the role templates used by the project and how each role is
@@ -116,6 +233,8 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      reasoning_effort: medium
+      sandbox_mode: workspace-write
       auth:
         method: codex_api_key
         secret_ref: openai-customer-portal-engineering-key
@@ -140,6 +259,27 @@ Fields:
 - `write_paths`: project workspace paths the role may write to.
 - `channels`: logical channel aliases used by connectors.
 
+Role templates under `config/roles/` carry the reusable role charter. Project
+roles should normally override local instructions, write paths, tools, and
+channels rather than rewriting the charter.
+
+Role template charters may include:
+
+- `role_profile`: professional stance and operating model.
+- `accountabilities`: durable responsibilities owned by the role.
+- `decision_rights`: decisions the role owns, advises on, or escalates.
+- `boundaries`: areas the role must not take over.
+- `collaboration_style`: review, pushback, consult, and handoff behaviour.
+- `quality_bar`: completion standards before the role marks work done.
+- `memory_focus`: what belongs in source-linked role memory.
+- `core_workflows`: repeatable role workflows with triggers, inputs, outputs,
+  and artifacts.
+- `standards_references`: standards or frameworks that informed the role.
+- `anti_patterns`: common poor role behaviours to avoid.
+
+See `docs/architecture/role-charters.md` and
+`config/schemas/role-template.schema.json`.
+
 `instances` supports parallel workers for the same role. For example,
 Engineering can have two instances competing for the same Engineering queue
 without cloning the role template.
@@ -153,13 +293,26 @@ as the platform matures.
 
 The `worker` block chooses how a role is executed.
 
+Prefer reusable top-level credentials:
+
+```yaml
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+  codex-shared-api-key:
+    method: codex_api_key
+    secret_ref: codex-shared-api-key
+```
+
 ```yaml
 worker:
   adapter: codex-cli
   model: codex
+  reasoning_effort: medium
+  sandbox_mode: workspace-write
   auth:
-    method: codex_access_token
-    secret_ref: codex-customer-portal-product-token
+    credential: codex-product-oauth
 ```
 
 Fields:
@@ -167,22 +320,39 @@ Fields:
 - `adapter`: worker adapter, such as `codex-cli`, `openai-api`,
   `anthropic-api`, `claude-code`, or `manual-human`.
 - `model`: model or execution label used by the adapter.
+- `reasoning_effort`: optional model reasoning effort hint. Supported values
+  are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`. When omitted,
+  Agentic Mesh defaults to `medium`.
+- `sandbox_mode`: optional worker command sandbox hint. Supported values are
+  `read-only`, `workspace-write`, and `danger-full-access`. Worker adapters map
+  this generic setting to their own execution controls. When omitted, Agentic
+  Mesh defaults to `workspace-write`.
 - `auth`: optional auth binding.
 
 Auth binding fields:
 
-- `method`: auth method id from `config/auth-methods.yaml`.
+- `credential`: reusable credential id from top-level `auth_credentials`.
+- `method`: inline auth method id from `config/auth-methods.yaml`; keep this
+  for compatibility or very small examples.
 - `secret_ref`: logical secret name. This is a reference, not a secret value.
 - `mount_ref`: logical mounted credential reference.
 - `env`: non-secret adapter hints or env names.
 - `notes`: optional human-readable detail.
 
+Reusable credential fields:
+
+- `method`: auth method id from `config/auth-methods.yaml`.
+- `secret_ref`: logical secret name for API keys, access tokens, or bearer
+  tokens.
+- `mount_ref`: logical mounted credential reference for OAuth caches.
+- `env`: non-secret adapter hints.
+- `notes`: optional operator guidance.
+
 Examples:
 
 ```yaml
 auth:
-  method: codex_api_key
-  secret_ref: openai-customer-portal-engineering-key
+  credential: codex-shared-api-key
 ```
 
 ```yaml
@@ -198,6 +368,12 @@ auth:
 
 Never place secret values, OAuth tokens, API keys, or credential files in a
 project file.
+
+Multiple Codex OAuth accounts can be active at the same time by giving each
+account a different reusable credential and `mount_ref`. Multiple API keys or
+access tokens work the same way with different `secret_ref` values. Roles can
+share a credential when they should operate under the same account, or use
+separate credentials when attribution, quota, or governance requires it.
 
 ## Connectors
 
@@ -302,6 +478,25 @@ Fields:
 
 Document paths are relative to the project workspace.
 
+## Artifact Viewing
+
+The control-plane status page links each artifact through
+`/artifact-viewer/{artifact_path}` and opens it in a new browser tab. Raw source
+remains available at `/artifacts/{artifact_path}`.
+
+By default, the artifact viewer renders Markdown in-browser and enables Mermaid
+diagrams. Deployments with a richer browser/document renderer, such as a
+SeerSys D8Aroom-style browser plugin, should set:
+
+```text
+AGENTIC_MESH_ARTIFACT_RENDERER_URL_TEMPLATE=https://renderer.example/view?url={artifact_url}&path={artifact_path}
+```
+
+The template may use `{artifact_url}` for the absolute raw artifact URL and
+`{artifact_path}` for the encoded project-relative artifact path. If the
+template has no placeholders, Agentic Mesh appends both values as query
+parameters.
+
 ## Flow
 
 `flow` governs lifecycle states, handoffs, consult routes, gates, artifacts,
@@ -384,7 +579,7 @@ states:
   implementation:
     owner_role: engineering
     purpose: Implement the approved work item and collect implementation evidence.
-    artifact_path: docs/engineering/implementation-log.md
+    artifact_path: work-items/{work_item_id}/100-implementation-log.md
     gates: ...
     consults: ...
     handoffs: ...
@@ -395,6 +590,10 @@ Fields:
 - `owner_role`: role accountable for this lifecycle state.
 - `purpose`: what this state does.
 - `artifact_path`: document or artifact file updated by work in this state.
+  Lifecycle slice work should normally use `work-items/{work_item_id}/...`
+  paths so every work item leaves an enterprise-grade dossier. Durable
+  `docs/...` paths should be used for evergreen project knowledge, standards,
+  ADRs, indexes, and operating guides.
 - `gates`: required checks or human responses.
 - `consults`: allowed bounded role-to-role requests for help.
 - `handoffs`: lifecycle transitions when state work is complete.
@@ -461,7 +660,7 @@ gates:
   - gate_id: product_story_owner_review
     type: document_owner_review
     required_documents:
-      - docs/product/stories.md
+      - work-items/{work_item_id}/20-product-definition.md
     required_review_status: approved
     reviewer_role: product-manager
 ```
@@ -530,6 +729,7 @@ roles:
       - Keep product output concise and traceable to sponsor intent.
     write_paths:
       - docs/product/**
+      - work-items/**
     channels:
       primary: product
       handoff_inbox: product
@@ -545,6 +745,7 @@ roles:
       - src/**
       - tests/**
       - docs/engineering/**
+      - work-items/**
     channels:
       primary: engineering
       handoff_inbox: engineering
@@ -559,7 +760,7 @@ flow:
     product_definition:
       owner_role: product-manager
       purpose: Define product intent and acceptance criteria.
-      artifact_path: docs/product/stories.md
+      artifact_path: work-items/{work_item_id}/20-product-definition.md
       handoffs:
         completed:
           target_state: implementation
@@ -568,7 +769,7 @@ flow:
     implementation:
       owner_role: engineering
       purpose: Implement the configured example work item.
-      artifact_path: docs/engineering/implementation-log.md
+      artifact_path: work-items/{work_item_id}/100-implementation-log.md
       consults:
         product_scope:
           target_state: product_definition

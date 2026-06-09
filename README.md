@@ -30,10 +30,16 @@ Current documentation:
   auth model
 - `docs/architecture/document-lifecycle.md`: document accountability,
   contribution events, and owner-review gates
+- `docs/architecture/document-library.md`: first-class document library,
+  review-log, role-memory, and cross-mesh document practices
+- `docs/architecture/role-charters.md`: expanded role charters and how
+  enterprise standards inform agent roles
 - `docs/architecture/flow-collaboration.md`: consult routes and
   sponsor-initiated tracked work
 - `docs/architecture/human-response-gates.md`: structured human response gates
   and reusable response type templates
+- `docs/architecture/risk-register.md`: open architecture and delivery risks
+  identified during dogfood recovery
 - `docs/architecture/decisions.md`: architecture decisions
 - `docs/architecture.md`: architecture overview
 - `docs/operations/codex-auth.md`: Codex auth strategy for role containers
@@ -79,11 +85,38 @@ Initial direction:
 - queue-aware agent hibernation and wake-up for resource efficiency
 - open source core with commercial enterprise support and extensions
 
+## Standards-Informed Roles And Flows
+
+Agentic Mesh adapts established enterprise and professional standards into
+configurable role templates, project flows, gates, and document
+accountabilities. The standards guide the defaults; they do not lock every
+project into one methodology.
+
+- BMAD informs specialist AI agent roles, named workflows, role-specific
+  capabilities, and artifact-driven handoffs.
+- Scrum informs accountability boundaries, product ownership, developer
+  planning ownership, flow transparency, and impediment handling.
+- SFIA informs focused professional skill profiles and keeps each role clear
+  about responsibility level and capability scope.
+- BABOK informs Business Analyst work such as stakeholder context,
+  elicitation, requirements lifecycle thinking, and separation of facts,
+  assumptions, and recommendations.
+- TOGAF informs Enterprise and Solution Architecture alignment, governance,
+  capability fit, architecture content, and decision traceability.
+- ISTQB and BDD practice inform QA planning, defect/evidence handling, and
+  Given/When/Then behaviour scenarios before implementation.
+- OWASP SAMM and NIST SSDF inform secure SDLC expectations, security review
+  gates, control evidence, and residual-risk recording.
+
+The stock SDLC pack uses these standards to shape role charters and flow gates.
+Projects can override role instructions, tools, document accountabilities,
+flows, and gates to match their operating model.
+
 ## Product Positioning
 
 Agentic Mesh uses role discipline inspired by BMAD-style software delivery
-packs, but its runtime architecture is distributed, containerized, and
-enterprise-oriented.
+packs and enterprise role frameworks, but its runtime architecture is
+distributed, containerized, and enterprise-oriented.
 
 Credit: Agentic Mesh draws inspiration from the
 [BMad Method](https://docs.bmad-method.org/) and its role-guided software

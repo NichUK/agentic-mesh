@@ -36,6 +36,8 @@ Core principles:
 - Projects apply project-specific overrides to role templates.
 - A project can run multiple instances of the same role.
 - Agents own their inbox/outbox/journal and role-specific storage.
+- The document library is canonical project memory. Role memory is a concise,
+  source-linked accelerator and must cite documents, work items, or events.
 - A router routes messages and handoffs but does not make workflow decisions.
 - A control-plane supervises lifecycle, health, hibernation, and wake-up but
   does not make product/architecture/implementation/QA/release decisions.
@@ -115,6 +117,8 @@ When implementing:
 - Avoid hard-wiring Azure, AWS, Teams, Codex, or any specific LLM into product
   semantics.
 - Make runtime state inspectable.
+- Make project documentation visible as it is produced so sponsors can inspect
+  or add direction before work reaches the next lifecycle gate.
 - Preserve role-instance identity across hibernation and wake-up.
 - Use clear config files before building a configuration UI.
 - Keep system-repo artifacts separate from project artifacts. The system repo
@@ -135,6 +139,13 @@ When a human or another agent gives an instruction:
 - If the instruction cannot be started because routing, permissions, connector
   wiring, or required context is missing, say so explicitly and record the
   blocker instead of silently accepting the message.
+- For plan and document review loops, write visible `## Review Log` comments
+  with concrete requested changes and dispositions.
+- Resolve role disagreements through written review loops first. Request
+  mediation only after the configured loop limit, and do not let lifecycle
+  machinery make specialist decisions.
+- Treat sub-slices as real child work items that go through the normal flow,
+  reviews, and evidence capture.
 
 ## Documentation Expectations
 

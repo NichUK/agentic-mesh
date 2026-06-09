@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from agentic_mesh import telemetry
 from agentic_mesh.journal import EventJournal
@@ -36,6 +38,22 @@ class FileMessageStore:
             attributes=attrs,
         ) as trace_context:
             message = replace(message, trace_context=trace_context)
+            duplicate = self._find_active_duplicate(message)
+            if duplicate is not None:
+                self.journal.append(
+                    "message_duplicate_suppressed",
+                    project_id=self.project_id,
+                    role_id=message.role_id,
+                    message_id=message.message_id,
+                    duplicate_of_message_id=duplicate.message_id,
+                    message_type=message.type,
+                    work_item_id=message.payload.get("work_item_id"),
+                    work_item_type=message.payload.get("work_item_type"),
+                    lifecycle_state=message.payload.get("lifecycle_state"),
+                    correlation_id=message.correlation_id,
+                    source=message.source,
+                )
+                return duplicate
             pending = self._pending_dir(message.role_id)
             pending.mkdir(parents=True, exist_ok=True)
             path = pending / f"{message.created_at.replace(':', '')}-{message.message_id}.json"
@@ -54,12 +72,113 @@ class FileMessageStore:
             )
             return message
 
+    def reclaim_stale_claims(
+        self,
+        role_id: str,
+        instance_id: str,
+        max_claim_age_seconds: int,
+    ) -> list[Message]:
+        if max_claim_age_seconds <= 0:
+            return []
+        claimed = self._claimed_dir(role_id, instance_id)
+        if not claimed.exists():
+            return []
+        pending = self._pending_dir(role_id)
+        pending.mkdir(parents=True, exist_ok=True)
+        reclaimed: list[Message] = []
+        for path in sorted(claimed.glob("*.json")):
+            message = self._read_message(path)
+            claim_age_seconds = telemetry.elapsed_seconds(message.claimed_at)
+            if claim_age_seconds is None or claim_age_seconds < max_claim_age_seconds:
+                continue
+            reclaimed_message = replace(message, claimed_by=None, claimed_at=None)
+            target = pending / path.name
+            try:
+                path.replace(target)
+            except FileNotFoundError:
+                continue
+            self._write_message(target, reclaimed_message)
+            reclaimed.append(reclaimed_message)
+            self.journal.append(
+                "work_claim_reclaimed",
+                project_id=self.project_id,
+                role_id=role_id,
+                role_instance_id=instance_id,
+                message_id=message.message_id,
+                work_item_id=message.payload.get("work_item_id"),
+                work_item_type=message.payload.get("work_item_type"),
+                lifecycle_state=message.payload.get("lifecycle_state"),
+                correlation_id=message.correlation_id,
+                claimed_at=message.claimed_at,
+                claim_age_seconds=round(claim_age_seconds, 3),
+                max_claim_age_seconds=max_claim_age_seconds,
+                reason="claim_lease_expired",
+            )
+        return reclaimed
+
+    def reclaim_claims_before(
+        self,
+        role_id: str,
+        instance_id: str,
+        claimed_before: str,
+    ) -> list[Message]:
+        claimed = self._claimed_dir(role_id, instance_id)
+        if not claimed.exists():
+            return []
+        pending = self._pending_dir(role_id)
+        pending.mkdir(parents=True, exist_ok=True)
+        reclaimed: list[Message] = []
+        for path in sorted(claimed.glob("*.json")):
+            message = self._read_message(path)
+            if not self._is_before(message.claimed_at, claimed_before):
+                continue
+            reclaimed_message = replace(message, claimed_by=None, claimed_at=None)
+            target = pending / path.name
+            try:
+                path.replace(target)
+            except FileNotFoundError:
+                continue
+            self._write_message(target, reclaimed_message)
+            reclaimed.append(reclaimed_message)
+            self.journal.append(
+                "work_claim_reclaimed",
+                project_id=self.project_id,
+                role_id=role_id,
+                role_instance_id=instance_id,
+                message_id=message.message_id,
+                work_item_id=message.payload.get("work_item_id"),
+                work_item_type=message.payload.get("work_item_type"),
+                lifecycle_state=message.payload.get("lifecycle_state"),
+                correlation_id=message.correlation_id,
+                claimed_at=message.claimed_at,
+                claimed_before=claimed_before,
+                reason="process_start",
+            )
+        return reclaimed
+
     def claim_next(self, role_id: str, instance_id: str) -> Message | None:
         pending = self._pending_dir(role_id)
         claimed = self._claimed_dir(role_id, instance_id)
         claimed.mkdir(parents=True, exist_ok=True)
         for path in sorted(pending.glob("*.json")):
             original = self._read_message(path)
+            active_conflict = self._find_active_claim_conflict(original)
+            if active_conflict is not None:
+                self.journal.append(
+                    "work_claim_deferred",
+                    project_id=self.project_id,
+                    role_id=role_id,
+                    role_instance_id=instance_id,
+                    message_id=original.message_id,
+                    conflict_message_id=active_conflict.message_id,
+                    conflict_claimed_by=active_conflict.claimed_by,
+                    work_item_id=original.payload.get("work_item_id"),
+                    work_item_type=original.payload.get("work_item_type"),
+                    lifecycle_state=original.payload.get("lifecycle_state"),
+                    correlation_id=original.correlation_id,
+                    reason="same_role_work_item_lifecycle_already_claimed",
+                )
+                continue
             wait_seconds = telemetry.elapsed_seconds(original.created_at)
             wait_attrs = telemetry.span_attributes(
                 project_id=self.project_id,
@@ -112,7 +231,14 @@ class FileMessageStore:
             return message
         return None
 
-    def complete(self, message: Message, status: str) -> None:
+    def complete(
+        self,
+        message: Message,
+        status: str,
+        *,
+        result_message: str | None = None,
+        result_summary: str | None = None,
+    ) -> None:
         if not message.claimed_by:
             raise ValueError("Cannot complete an unclaimed message")
         attrs = telemetry.span_attributes(
@@ -148,10 +274,91 @@ class FileMessageStore:
                 lifecycle_state=message.payload.get("lifecycle_state"),
                 correlation_id=message.correlation_id,
                 status=status,
+                result_message=result_message,
+                result_summary=result_summary
+                or (result_message[:500] if result_message else None),
             )
 
     def pending_count(self, role_id: str) -> int:
         return len(list(self._pending_dir(role_id).glob("*.json")))
+
+    def work_item_summary(
+        self,
+        work_item_id: str,
+        roles: list[str],
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            role_id: {
+                "pending": 0,
+                "claimed": 0,
+                "completed": 0,
+                "completion_statuses": [],
+                "artifact_paths": [],
+            }
+            for role_id in roles
+        }
+        completion_statuses = self._work_item_completion_statuses(work_item_id)
+        for role_id in roles:
+            for state, paths in [
+                ("pending", self._pending_dir(role_id).glob("*.json")),
+                ("completed", self._completed_dir(role_id).glob("*.json")),
+            ]:
+                for path in paths:
+                    message = self._read_message(path)
+                    if message.payload.get("work_item_id") != work_item_id:
+                        continue
+                    summary[role_id][state] += 1
+                    completion_status = completion_statuses.get(
+                        message.message_id,
+                        "completed",
+                    )
+                    if state == "completed":
+                        summary[role_id]["completion_statuses"].append(
+                            completion_status
+                        )
+                    output_path = message.payload.get("output_path")
+                    if output_path and (
+                        state != "completed" or completion_status == "completed"
+                    ):
+                        summary[role_id]["artifact_paths"].append(output_path)
+            claimed_parent = self.root / role_id / "claimed"
+            for path in claimed_parent.glob("*/*.json"):
+                message = self._read_message(path)
+                if message.payload.get("work_item_id") != work_item_id:
+                    continue
+                summary[role_id]["claimed"] += 1
+                output_path = message.payload.get("output_path")
+                if output_path:
+                    summary[role_id]["artifact_paths"].append(output_path)
+        return summary
+
+    def _work_item_completion_statuses(self, work_item_id: str) -> dict[str, str]:
+        statuses: dict[str, str] = {}
+        for event in self.journal.read_all():
+            if event.get("event_type") != "work_completed":
+                continue
+            if event.get("work_item_id") != work_item_id:
+                continue
+            message_id = event.get("message_id")
+            status = event.get("status")
+            if message_id and status:
+                statuses[str(message_id)] = str(status)
+        return statuses
+
+    def mark_work_item_publish_ready(
+        self,
+        work_item_id: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        path = self.root.parent / "work_items" / work_item_id / "publish-ready.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("x", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            return True
+        except FileExistsError:
+            return False
 
     def _pending_dir(self, role_id: str) -> Path:
         return self.root / role_id / "pending"
@@ -169,6 +376,64 @@ class FileMessageStore:
         matches = list(claimed_dir.glob(f"*-{message.message_id}.json"))
         return matches[0] if matches else None
 
+    def _find_active_duplicate(self, message: Message) -> Message | None:
+        key = self._dedupe_key(message)
+        if key is None:
+            return None
+        active_paths = list(self._pending_dir(message.role_id).glob("*.json"))
+        claimed_parent = self.root / message.role_id / "claimed"
+        if claimed_parent.exists():
+            active_paths.extend(claimed_parent.glob("*/*.json"))
+        for path in sorted(active_paths):
+            existing = self._read_message(path)
+            if existing.message_id == message.message_id:
+                continue
+            if self._dedupe_key(existing) == key:
+                return existing
+        return None
+
+    def _find_active_claim_conflict(self, message: Message) -> Message | None:
+        key = self._claim_conflict_key(message)
+        if key is None:
+            return None
+        claimed_parent = self.root / message.role_id / "claimed"
+        if not claimed_parent.exists():
+            return None
+        for path in sorted(claimed_parent.glob("*/*.json")):
+            existing = self._read_message(path)
+            if existing.message_id == message.message_id:
+                continue
+            if self._claim_conflict_key(existing) == key:
+                return existing
+        return None
+
+    @staticmethod
+    def _dedupe_key(message: Message) -> tuple[str, str, str, str, str] | None:
+        work_item_id = message.payload.get("work_item_id")
+        lifecycle_state = message.payload.get("lifecycle_state")
+        if not work_item_id or not lifecycle_state:
+            return None
+        return (
+            message.role_id,
+            message.type,
+            str(work_item_id),
+            str(lifecycle_state),
+            _stable_payload_fingerprint(message.payload),
+        )
+
+    @staticmethod
+    def _claim_conflict_key(message: Message) -> tuple[str, str, str, str] | None:
+        work_item_id = message.payload.get("work_item_id")
+        lifecycle_state = message.payload.get("lifecycle_state")
+        if not work_item_id or not lifecycle_state:
+            return None
+        return (
+            message.role_id,
+            message.type,
+            str(work_item_id),
+            str(lifecycle_state),
+        )
+
     @staticmethod
     def _write_message(path: Path, message: Message) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -181,6 +446,19 @@ class FileMessageStore:
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
         return Message(**data)
+
+    @staticmethod
+    def _is_before(value: str | None, threshold: str) -> bool:
+        if not value:
+            return False
+        try:
+            return datetime.fromisoformat(value) < datetime.fromisoformat(threshold)
+        except ValueError:
+            return value < threshold
+
+
+def _stable_payload_fingerprint(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 class FileConnectorOutbox:

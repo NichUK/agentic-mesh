@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-mesh.local/schemas/role-template.schema.json",
+  "title": "Agentic Mesh Role Template",
+  "description": "Schema for reusable role templates under config/roles.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "role_id",
+    "version",
+    "purpose",
+    "standing_instructions",
+    "default_tools",
+    "documentation_obligations",
+    "handoff_targets"
+  ],
+  "properties": {
+    "role_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "purpose": {
+      "type": "string",
+      "description": "Short role label. The richer persona belongs in role_profile and related charter fields."
+    },
+    "role_profile": {
+      "type": "string",
+      "default": ""
+    },
+    "accountabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "decision_rights": {
+      "type": "object",
+      "description": "Role decision boundaries, commonly owns/advises/escalates.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "default": {}
+    },
+    "boundaries": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "collaboration_style": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "quality_bar": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "memory_focus": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "core_workflows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/coreWorkflow" },
+      "default": []
+    },
+    "standards_references": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/standardsReference" },
+      "default": []
+    },
+    "anti_patterns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "standing_instructions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "default_tools": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "documentation_obligations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "handoff_targets": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilityProfile"
+    }
+  },
+  "$defs": {
+    "coreWorkflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow_id", "trigger", "outputs"],
+      "properties": {
+        "workflow_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "trigger": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "outputs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+    "capabilityProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "role-capability-profile-v0",
+          "default": "role-capability-profile-v0"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability" },
+          "default": []
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_id", "category", "requirement", "display_name"],
+      "properties": {
+        "capability_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$" },
+        "category": {
+          "type": "string",
+          "enum": ["logical_tool", "skill", "runtime_package", "mount", "external_connector", "validation_command", "worker_capability", "document_library", "compatibility_default_tool"]
+        },
+        "requirement": {
+          "type": "string",
+          "enum": ["required", "optional", "restricted", "not_applicable"]
+        },
+        "display_name": { "type": "string" },
+        "description": { "type": "string" },
+        "validation": { "$ref": "#/$defs/capabilityValidation" },
+        "affects": { "$ref": "#/$defs/capabilityAffects" },
+        "fallback": { "$ref": "#/$defs/capabilityFallback" },
+        "waiver": { "$ref": "#/$defs/capabilityWaiver" },
+        "severity": { "type": "string" },
+        "impact": { "type": "string" },
+        "next_action": { "type": "string" },
+        "action_owner": { "type": "string" }
+      }
+    },
+    "capabilityValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["command", "python_import", "logical_mount", "connector_config", "document_library", "worker_auth", "configured"]
+        },
+        "command": {
+          "oneOf": [
+            { "type": "string", "not": { "pattern": "[;&|`$<>]" } },
+            { "type": "array", "items": { "type": "string", "not": { "pattern": "[;&|`$<>]" } }, "minItems": 1, "maxItems": 4 }
+          ]
+        },
+        "target": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "freshness_seconds": { "type": "integer", "minimum": 60 },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 30 }
+      }
+    },
+    "capabilityAffects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lifecycle_states": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "work_item_types": { "type": "array", "items": { "type": "string" }, "default": [] }
+      }
+    },
+    "capabilityFallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "policy_summary", "residual_impact"],
+      "properties": {
+        "owner": { "type": "string" },
+        "policy_summary": { "type": "string" },
+        "residual_impact": { "type": "string" },
+        "review_point": { "type": "string" },
+        "allowed_scope": { "type": "string" }
+      }
+    },
+    "capabilityWaiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "reason", "residual_impact"],
+      "properties": {
+        "owner": { "type": "string" },
+        "reason": { "type": "string" },
+        "residual_impact": { "type": "string" },
+        "expires_at": { "type": "string" },
+        "review_point": { "type": "string" }
+      },
+      "anyOf": [
+        { "required": ["expires_at"] },
+        { "required": ["review_point"] }
+      ]
+    },
+    "standardsReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "applies_to"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "applies_to": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

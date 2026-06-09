@@ -33,15 +33,23 @@ project configuration content.
 Project config can say:
 
 ```yaml
+auth_credentials:
+  codex-agentic-mesh-dev-product:
+    method: codex_oauth_cache
+    mount_ref: codex-agentic-mesh-dev-product-home
+  codex-agentic-mesh-dev-engineering:
+    method: codex_api_key
+    secret_ref: codex-agentic-mesh-dev-engineering-api-key
+
 worker:
   adapter: codex-cli
   model: codex
   auth:
-    secret_ref: codex-agentic-mesh-dev-token
+    credential: codex-agentic-mesh-dev-product
 ```
 
-The local deployment profile resolves `secret_ref` at container start and then
-chooses one of these trusted patterns:
+The local deployment profile resolves the reusable `credential` at container
+start and then chooses one of these trusted patterns:
 
 - Inject `CODEX_ACCESS_TOKEN` as an environment variable for ephemeral
   non-interactive runs.
@@ -85,6 +93,96 @@ Possible future identity strategies:
 
 The credential strategy should be a deployment-policy choice, not a runtime
 semantic baked into roles.
+
+## Local Login Workflow
+
+The preferred local UI is the controller auth page:
+
+```text
+http://127.0.0.1:8100/auth/credentials
+```
+
+In the dogfood Docker Compose profile the control-plane container exposes this
+page on host port `8100`. It lists reusable credentials and shows a single
+`Sign in with OpenAI` button for Codex OAuth credentials. The controller starts
+the Codex device-code login flow, shows the OpenAI sign-in link and one-time
+code, stores the resulting Codex login cache in the isolated credential mount,
+and only shows redacted status. For API keys or access tokens, the same page
+offers a secret-entry form.
+
+Teams and Slack apps should link to this controller page, or to a future
+single-use setup session URL, instead of collecting secrets in chat. Chat
+surfaces can show status cards and buttons such as "Sign in with OpenAI",
+"Replace secret", or "Check status"; the controller remains the owner of
+credential setup, storage, and audit.
+
+For OAuth, create one reusable credential per Codex account and give each one a
+different `mount_ref`:
+
+```yaml
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+  codex-engineering-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-engineering-home
+```
+
+Then log into each account independently:
+
+```powershell
+python -m agentic_mesh.cli codex-auth-login --credential codex-product-oauth
+python -m agentic_mesh.cli codex-auth-login --credential codex-engineering-oauth
+```
+
+Or press `Sign in with OpenAI` in the controller UI.
+
+For terminals that cannot launch a browser, use device auth:
+
+```powershell
+python -m agentic_mesh.cli codex-auth-login --credential codex-product-oauth --device-auth
+```
+
+Check a saved OAuth credential:
+
+```powershell
+python -m agentic_mesh.cli codex-auth-status --credential codex-product-oauth
+```
+
+The CLI sets `CODEX_HOME` to
+`<AGENTIC_MESH_STATE_ROOT>/worker_mounts/<mount_ref>` before running Codex, so
+each account keeps its own `auth.json` and config. Do not reuse a `mount_ref`
+for different accounts.
+
+For API keys or access tokens, define a secret-backed credential:
+
+```yaml
+auth_credentials:
+  codex-shared-api-key:
+    method: codex_api_key
+    secret_ref: codex-shared-api-key
+  codex-release-access-token:
+    method: codex_access_token
+    secret_ref: codex-release-access-token
+```
+
+Store a local secret value without placing it in YAML:
+
+```powershell
+$env:CODEX_KEY = "<redacted>"
+python -m agentic_mesh.cli auth-store-secret --credential codex-shared-api-key --value-env CODEX_KEY
+```
+
+You can also pipe the value:
+
+```powershell
+Get-Content C:\secure\codex-release-token.txt | python -m agentic_mesh.cli auth-store-secret --credential codex-release-access-token --overwrite
+```
+
+Local secret files are written to
+`<AGENTIC_MESH_STATE_ROOT>/secrets/<secret_ref>`. Production deployments should
+resolve the same `secret_ref` through a real secret manager instead.
 
 ## Local Compose Direction
 

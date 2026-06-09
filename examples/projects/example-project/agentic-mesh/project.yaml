@@ -7,6 +7,10 @@ workspace:
     example-project:
       type: git
       path: .
+auth_credentials:
+  codex-example-shared-api-key:
+    method: codex_api_key
+    secret_ref: codex-example-shared-api-key
 roles:
   product-manager:
     template: product-manager
@@ -14,10 +18,13 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      auth:
+        credential: codex-example-shared-api-key
     instructions:
       - Keep product output concise and traceable to sponsor intent.
     write_paths:
       - docs/product/**
+      - work-items/**
     channels:
       primary: product
       handoff_inbox: product
@@ -27,12 +34,15 @@ roles:
     worker:
       adapter: codex-cli
       model: codex
+      auth:
+        credential: codex-example-shared-api-key
     instructions:
       - Treat this as a multi-instance role; claim work atomically and avoid duplicate implementation.
     write_paths:
       - src/**
       - tests/**
       - docs/engineering/**
+      - work-items/**
     channels:
       primary: engineering
       handoff_inbox: engineering
@@ -47,7 +57,7 @@ flow:
     product_definition:
       owner_role: product-manager
       purpose: Define product intent and acceptance criteria for this example project.
-      artifact_path: docs/product/stories.md
+      artifact_path: work-items/{work_item_id}/20-product-definition.md
       handoffs:
         completed:
           target_state: implementation
@@ -56,5 +66,5 @@ flow:
     implementation:
       owner_role: engineering
       purpose: Implement the configured example work item.
-      artifact_path: docs/engineering/implementation-log.md
+      artifact_path: work-items/{work_item_id}/100-implementation-log.md
       handoffs: {}

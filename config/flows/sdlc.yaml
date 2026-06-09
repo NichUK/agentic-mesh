@@ -4,8 +4,16 @@ description: Enterprise-oriented software delivery lifecycle template with accou
 entry_state: business_analysis
 work_item_types:
   - slice
+  - subslice
   - feature
   - spike
+visualization:
+  enabled: true
+  default_format: mermaid
+  group_by:
+    - lifecycle_state
+    - owner_role
+    - gate_type
 sponsor_initiated_work:
   allow_from_any_state: true
   default_work_item_type: spike
@@ -17,7 +25,7 @@ states:
   business_analysis:
     owner_role: business-analyst
     purpose: Frame business context, stakeholders, constraints, and outcome measures.
-    artifact_path: docs/business/briefs.md
+    artifact_path: work-items/{work_item_id}/10-business-brief.md
     consults:
       research_support:
         target_state: business_analysis
@@ -28,7 +36,7 @@ states:
       - gate_id: business_brief_owner_review
         type: document_owner_review
         required_documents:
-          - docs/business/briefs.md
+          - work-items/{work_item_id}/10-business-brief.md
         required_review_status: approved
         reviewer_role: business-analyst
     handoffs:
@@ -38,8 +46,8 @@ states:
         message_type: sdlc.product_definition
   product_definition:
     owner_role: product-manager
-    purpose: Define product intent, slice boundaries, and acceptance criteria.
-    artifact_path: docs/product/stories.md
+    purpose: Define product intent, slice boundaries, acceptance criteria, and sponsor-approved feature scope.
+    artifact_path: work-items/{work_item_id}/20-product-definition.md
     consults:
       business_context:
         target_state: business_analysis
@@ -55,9 +63,20 @@ states:
       - gate_id: product_story_owner_review
         type: document_owner_review
         required_documents:
-          - docs/product/stories.md
+          - work-items/{work_item_id}/20-product-definition.md
         required_review_status: approved
         reviewer_role: product-manager
+      - gate_id: product_definition_sponsor_signoff
+        type: human_response
+        response_type: approve_not_approve
+        prompt: Confirm that the product definition captures the required features, scope boundaries, non-goals, acceptance criteria, and release expectations for this work item before the rest of the SDLC team proceeds.
+        requested_from: sponsor
+        channel: approvals
+        timeout: PT48H
+        on_timeout: escalate
+        completion_criteria:
+          accepted_values:
+            - approved
     handoffs:
       completed:
         target_state: experience_design
@@ -66,7 +85,7 @@ states:
   experience_design:
     owner_role: ux-designer
     purpose: Define user workflows, interaction requirements, and usability implications.
-    artifact_path: docs/ux/design-notes.md
+    artifact_path: work-items/{work_item_id}/30-experience-design.md
     consults:
       product_scope:
         target_state: product_definition
@@ -82,7 +101,7 @@ states:
       - gate_id: ux_owner_review
         type: document_owner_review
         required_documents:
-          - docs/ux/design-notes.md
+          - work-items/{work_item_id}/30-experience-design.md
         required_review_status: approved
         reviewer_role: ux-designer
     handoffs:
@@ -93,7 +112,7 @@ states:
   enterprise_alignment:
     owner_role: enterprise-architect
     purpose: Review enterprise fit, governance implications, integration boundaries, and operating constraints.
-    artifact_path: docs/architecture/enterprise-notes.md
+    artifact_path: work-items/{work_item_id}/40-enterprise-alignment.md
     consults:
       business_context:
         target_state: business_analysis
@@ -114,7 +133,7 @@ states:
       - gate_id: enterprise_architecture_owner_review
         type: document_owner_review
         required_documents:
-          - docs/architecture/enterprise-notes.md
+          - work-items/{work_item_id}/40-enterprise-alignment.md
         required_review_status: approved
         reviewer_role: enterprise-architect
     handoffs:
@@ -125,7 +144,7 @@ states:
   solution_design:
     owner_role: solution-architect
     purpose: Define design constraints, interfaces, and implementation guidance.
-    artifact_path: docs/architecture/solution-notes.md
+    artifact_path: work-items/{work_item_id}/50-solution-design.md
     consults:
       enterprise_context:
         target_state: enterprise_alignment
@@ -151,7 +170,7 @@ states:
       - gate_id: solution_design_owner_review
         type: document_owner_review
         required_documents:
-          - docs/architecture/solution-notes.md
+          - work-items/{work_item_id}/50-solution-design.md
         required_review_status: approved
         reviewer_role: solution-architect
     handoffs:
@@ -162,7 +181,7 @@ states:
   security_review:
     owner_role: security-architect
     purpose: Review security, identity, secrets, trust boundaries, and compliance-sensitive concerns.
-    artifact_path: docs/security/security-decisions.md
+    artifact_path: work-items/{work_item_id}/60-security-review.md
     consults:
       solution_context:
         target_state: solution_design
@@ -183,7 +202,7 @@ states:
       - gate_id: security_owner_review
         type: document_owner_review
         required_documents:
-          - docs/security/security-decisions.md
+          - work-items/{work_item_id}/60-security-review.md
         required_review_status: approved
         reviewer_role: security-architect
     handoffs:
@@ -194,7 +213,7 @@ states:
   platform_readiness:
     owner_role: platform-engineer
     purpose: Confirm local runtime, deployment, observability, and operations implications.
-    artifact_path: docs/platform/operations.md
+    artifact_path: work-items/{work_item_id}/70-platform-readiness.md
     consults:
       solution_context:
         target_state: solution_design
@@ -215,9 +234,109 @@ states:
       - gate_id: platform_owner_review
         type: document_owner_review
         required_documents:
-          - docs/platform/operations.md
+          - work-items/{work_item_id}/70-platform-readiness.md
         required_review_status: approved
         reviewer_role: platform-engineer
+    handoffs:
+      completed:
+        target_state: implementation_planning
+        target_role: engineering
+        message_type: sdlc.implementation_planning
+  implementation_planning:
+    owner_role: engineering
+    purpose: Plan the build before execution, including changed areas, affected roles, implementation sequence, risks, and test hooks.
+    artifact_path: work-items/{work_item_id}/80-implementation-plan.md
+    consults:
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify acceptance criteria, scope, priority, or user-visible behaviour before build planning is locked.
+      solution_context:
+        target_state: solution_design
+        target_role: solution-architect
+        message_type: sdlc.consult.solution_design
+        purpose: Clarify interfaces, adapter boundaries, data contracts, or implementation constraints.
+      security_context:
+        target_state: security_review
+        target_role: security-architect
+        message_type: sdlc.consult.security_review
+        purpose: Clarify security-sensitive implementation details before build starts.
+      platform_context:
+        target_state: platform_readiness
+        target_role: platform-engineer
+        message_type: sdlc.consult.platform_readiness
+        purpose: Clarify deployment, runtime, observability, or operations needs before build starts.
+      documentation_context:
+        target_state: documentation_readiness
+        target_role: technical-writer
+        message_type: sdlc.consult.documentation_readiness
+        purpose: Ask for documentation impact review while implementation is still planned.
+    gates:
+      - gate_id: implementation_plan_peer_review
+        type: plan_review
+        required_documents:
+          - work-items/{work_item_id}/80-implementation-plan.md
+        required_review_status: approved
+        reviewer_role: engineering
+        affected_roles:
+          - product-manager
+          - solution-architect
+          - security-architect
+          - platform-engineer
+          - qa-engineer
+          - technical-writer
+        review_outcomes:
+          - approved
+          - approved_with_comments
+          - changes_requested
+          - subslice_required
+          - blocked_disagreement
+        max_resolution_loops: 2
+    handoffs:
+      completed:
+        target_state: quality_planning
+        target_role: qa-engineer
+        message_type: sdlc.quality_planning
+  quality_planning:
+    owner_role: qa-engineer
+    purpose: Define BDD scenarios and the unit, integration, end-to-end, evidence, and residual-risk test strategy before implementation.
+    artifact_path: work-items/{work_item_id}/90-quality-plan.md
+    consults:
+      product_scope:
+        target_state: product_definition
+        target_role: product-manager
+        message_type: sdlc.consult.product_definition
+        purpose: Clarify expected behaviour, acceptance criteria, or risk tolerance before test planning is locked.
+      implementation_plan:
+        target_state: implementation_planning
+        target_role: engineering
+        message_type: sdlc.consult.implementation_planning
+        purpose: Ask for build plan detail, test hooks, observable outputs, or defect triage assumptions.
+      ux_context:
+        target_state: experience_design
+        target_role: ux-designer
+        message_type: sdlc.consult.experience_design
+        purpose: Clarify usability, accessibility, content, or interaction expectations for BDD scenarios.
+    gates:
+      - gate_id: quality_plan_peer_review
+        type: plan_review
+        required_documents:
+          - work-items/{work_item_id}/90-quality-plan.md
+        required_review_status: approved
+        reviewer_role: qa-engineer
+        affected_roles:
+          - product-manager
+          - engineering
+          - ux-designer
+          - release-manager
+        review_outcomes:
+          - approved
+          - approved_with_comments
+          - changes_requested
+          - subslice_required
+          - blocked_disagreement
+        max_resolution_loops: 2
     handoffs:
       completed:
         target_state: implementation
@@ -226,7 +345,7 @@ states:
   implementation:
     owner_role: engineering
     purpose: Implement the approved work item and collect implementation evidence.
-    artifact_path: docs/engineering/implementation-log.md
+    artifact_path: work-items/{work_item_id}/100-implementation-log.md
     consults:
       product_scope:
         target_state: product_definition
@@ -253,11 +372,16 @@ states:
         target_role: platform-engineer
         message_type: sdlc.consult.platform_readiness
         purpose: Clarify deployment, runtime, observability, or operations requirements.
+      quality_plan:
+        target_state: quality_planning
+        target_role: qa-engineer
+        message_type: sdlc.consult.quality_planning
+        purpose: Clarify BDD scenarios, test strategy, fixtures, or evidence expectations.
     gates:
       - gate_id: implementation_owner_review
         type: document_owner_review
         required_documents:
-          - docs/engineering/implementation-log.md
+          - work-items/{work_item_id}/100-implementation-log.md
         required_review_status: approved
         reviewer_role: engineering
     handoffs:
@@ -268,13 +392,18 @@ states:
   quality_review:
     owner_role: qa-engineer
     purpose: Validate acceptance criteria and record test evidence.
-    artifact_path: docs/qa/test-evidence.md
+    artifact_path: work-items/{work_item_id}/110-quality-evidence.md
     consults:
       implementation_context:
         target_state: implementation
         target_role: engineering
         message_type: sdlc.consult.implementation
         purpose: Ask for implementation details, defect triage, or additional evidence.
+      quality_plan:
+        target_state: quality_planning
+        target_role: qa-engineer
+        message_type: sdlc.consult.quality_planning
+        purpose: Compare observed evidence against the planned BDD, unit, and integration coverage.
       product_scope:
         target_state: product_definition
         target_role: product-manager
@@ -289,7 +418,7 @@ states:
       - gate_id: qa_owner_review
         type: document_owner_review
         required_documents:
-          - docs/qa/test-evidence.md
+          - work-items/{work_item_id}/110-quality-evidence.md
         required_review_status: approved
         reviewer_role: qa-engineer
     handoffs:
@@ -300,7 +429,7 @@ states:
   documentation_readiness:
     owner_role: technical-writer
     purpose: Validate docs, release notes, diagrams, and terminology for the completed work item.
-    artifact_path: docs/technical-writing/documentation-log.md
+    artifact_path: work-items/{work_item_id}/120-documentation-readiness.md
     consults:
       product_context:
         target_state: product_definition
@@ -321,7 +450,7 @@ states:
       - gate_id: documentation_owner_review
         type: document_owner_review
         required_documents:
-          - docs/technical-writing/documentation-log.md
+          - work-items/{work_item_id}/120-documentation-readiness.md
         required_review_status: approved
         reviewer_role: technical-writer
     handoffs:
@@ -332,7 +461,7 @@ states:
   delivery_readiness:
     owner_role: delivery-manager
     purpose: Confirm cross-role evidence, blockers, and release readiness before release review.
-    artifact_path: docs/delivery/status.md
+    artifact_path: work-items/{work_item_id}/130-delivery-readiness.md
     consults:
       product_scope:
         target_state: product_definition
@@ -358,7 +487,7 @@ states:
       - gate_id: delivery_owner_review
         type: document_owner_review
         required_documents:
-          - docs/delivery/status.md
+          - work-items/{work_item_id}/130-delivery-readiness.md
         required_review_status: approved
         reviewer_role: delivery-manager
     handoffs:
@@ -368,8 +497,8 @@ states:
         message_type: sdlc.release_review
   release_review:
     owner_role: release-manager
-    purpose: Confirm release readiness and record release outcome.
-    artifact_path: docs/releases/release-records.md
+    purpose: Confirm release readiness, sponsor-testable evidence where available, rollback plan, and release outcome.
+    artifact_path: work-items/{work_item_id}/140-release-record.md
     consults:
       delivery_context:
         target_state: delivery_readiness
@@ -395,7 +524,7 @@ states:
       - gate_id: release_decision_response
         type: human_response
         response_type: approve_not_approve
-        prompt: Record the final release decision for this work item.
+        prompt: Review the release record, sponsor-testable staging or no-staging disposition, rollback plan, residual risks, and evidence links; approve only when the release can proceed or an explicit exception is acceptable.
         requested_from: release-sponsor
         channel: approvals
         timeout: PT48H
@@ -406,7 +535,7 @@ states:
       - gate_id: release_owner_review
         type: document_owner_review
         required_documents:
-          - docs/releases/release-records.md
+          - work-items/{work_item_id}/140-release-record.md
         required_review_status: approved
         reviewer_role: release-manager
     handoffs: {}
