@@ -4,6 +4,18 @@ import sys
 from pathlib import Path
 
 from agentic_mesh.safe_outputs import load_safe_output_records
+from agentic_mesh.safe_outputs import safe_output_tools_prompt
+
+
+def test_safe_output_tools_prompt_preserves_mandatory_finish_contract() -> None:
+    prompt = safe_output_tools_prompt()
+
+    assert "You MUST call at least one safe-output tool during every agent run." in prompt
+    assert "You MUST call at least one terminal safe-output tool before finishing." in prompt
+    assert "The terminal safe-output call is the only valid way to finish a run." in prompt
+    assert "status.report_progress` is non-terminal" in prompt
+    assert "Do NOT use placeholder, speculative, or fake safe-output calls." in prompt
+    assert prompt.index("Terminal tools:") < prompt.index("Available tools:")
 
 
 def test_safe_output_cli_records_valid_payload(tmp_path: Path) -> None:
