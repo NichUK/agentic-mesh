@@ -11,7 +11,7 @@ Describe the focused slice this PR delivers.
 ## Review Size
 
 - [ ] This PR is one coherent slice.
-- [ ] `python scripts/check-pr-size.py --base origin/develop` passes.
+- [ ] `python scripts/check-pr-size.py --base origin/develop --committed-only` passes.
 - [ ] If the PR exceeds the preferred size range, the reason is documented here.
 
 ## Operational Impact

@@ -83,7 +83,7 @@ git push -u origin codex/<slice-name>
 Check the PR size before pushing:
 
 ```powershell
-python scripts/check-pr-size.py --base origin/develop
+python scripts/check-pr-size.py --base origin/develop --committed-only
 ```
 
 Then open a pull request targeting `develop` and request Copilot review.
