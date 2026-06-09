@@ -676,7 +676,14 @@ class AgentRuntime:
             validation_reason=validation_reason,
             correlation_id=message.correlation_id,
         )
-        satisfied = is_valid and validation_reason != "duplicate_same_value"
+        satisfied = is_valid and (
+            validation_reason != "duplicate_same_value"
+            or (
+                bool(message.payload.get("prevalidated_human_response"))
+                and request_record is not None
+                and request_record.status == "completed"
+            )
+        )
         if satisfied:
             self._enqueue_human_response_continuation(
                 source_instance=instance_config,
