@@ -315,6 +315,8 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
         return True
 
     def _post_message(self, message: ConnectorMessage) -> dict[str, Any]:
+        if not self._delegated_graph_send_allowed(message):
+            raise RuntimeError("GraphDelegatedSendNotAllowed")
         channel_config = self.connector_config.channels[message.channel]
         url = (
             "https://graph.microsoft.com/v1.0/teams/"
@@ -369,6 +371,12 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
             "<p><strong>Agentic Mesh message</strong></p>"
             f"<pre>{html.escape(json.dumps(message.payload, indent=2))}</pre>"
         )
+
+    @staticmethod
+    def _delegated_graph_send_allowed(message: ConnectorMessage) -> bool:
+        if message.type != MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED:
+            return True
+        return message.payload.get("allow_delegated_graph_send") is True
 
 
 def load_graph_token(
@@ -1093,12 +1101,12 @@ def _render_sponsor_clarification_request_html(
     lifecycle_state = html.escape(view.lifecycle_state or "unknown")
     request_id = html.escape(view.response_request_id or "unknown")
     summary = html.escape(view.description_summary)
-    prompt = _text_to_html_lines(str(payload.get("prompt") or view.decision_scope))
+    prompt = _sponsor_prompt_html(str(payload.get("prompt") or view.decision_scope))
     response_hint = "Reply in this Teams thread or use the response box on the card."
     return (
         f"<p><strong>Sponsor input needed: {title}</strong></p>"
         f"<p>{summary}</p>"
-        f"<p><strong>Questions / requested input:</strong><br/>{prompt}</p>"
+        f"<p><strong>Questions / requested input:</strong></p>{prompt}"
         f"<p><strong>How to answer:</strong> {response_hint}</p>"
         f"<p>Work item <code>{work_item_id}</code>; lifecycle "
         f"<code>{lifecycle_state}</code>; request <code>{request_id}</code>.</p>"
@@ -1420,6 +1428,37 @@ def _text_to_html_lines(value: str) -> str:
     )
 
 
+def _split_numbered_prompt(value: str) -> tuple[str, list[tuple[str, str]]]:
+    text = re.sub(r"\s+", " ", value.strip())
+    matches = list(re.finditer(r"(?:^|\s)(\d+)[.)]\s+", text))
+    if len(matches) < 2:
+        return value.strip(), []
+    intro = text[: matches[0].start()].strip()
+    items: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        items.append((match.group(1), text[start:end].strip()))
+    return intro, items
+
+
+def _sponsor_prompt_html(value: str) -> str:
+    intro, items = _split_numbered_prompt(value)
+    if not items:
+        return f"<p>{_text_to_html_lines(value)}</p>"
+    intro_html = f"<p>{html.escape(intro)}</p>" if intro else ""
+    item_html = "".join(f"<li>{html.escape(text)}</li>" for _, text in items)
+    return f"{intro_html}<ol>{item_html}</ol>"
+
+
+def _sponsor_prompt_text(value: str) -> str:
+    intro, items = _split_numbered_prompt(value)
+    if not items:
+        return value.strip()
+    numbered = "\n".join(f"{number}. {text}" for number, text in items)
+    return f"{intro}\n\n{numbered}" if intro else numbered
+
+
 def _short_ref(value: str) -> str | None:
     if not value:
         return None
@@ -1537,7 +1576,7 @@ def _build_sponsor_clarification_card(
     input_mode: str | None,
     view: ApprovalDecisionViewModel,
 ) -> dict[str, Any]:
-    prompt = str(payload.get("prompt") or view.decision_scope)
+    prompt = _sponsor_prompt_text(str(payload.get("prompt") or view.decision_scope))
     body: list[dict[str, Any]] = [
         {
             "type": "TextBlock",

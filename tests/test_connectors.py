@@ -152,6 +152,58 @@ def test_graph_send_failure_records_redacted_error_class(
     assert "graph.microsoft.com/raw" not in rendered
 
 
+def test_graph_connector_refuses_human_response_requests_by_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    outbox = FileConnectorOutbox(state_root, mesh_config.project.project_id, journal)
+    outbox.enqueue(
+        ConnectorMessage.create(
+            channel="all-agents",
+            message_type="human_response.requested",
+            payload={
+                "response_request_id": "human-response-sponsor",
+                "gate_id": "sponsor_clarification_response",
+                "response_type": "multiline_text",
+                "prompt": "Please answer: 1. Name? 2. Channel?",
+                "project_id": mesh_config.project.project_id,
+                "role_id": "product-manager",
+                "work_item_id": "work-sponsor",
+                "lifecycle_state": "product_definition",
+                "title": "Gateway bot",
+                "summary": "Clarify gateway bot product shape.",
+            },
+            source="agentic-mesh-dev.product-manager.1",
+        )
+    )
+
+    def _unexpected_urlopen(*args, **kwargs):
+        raise AssertionError("Graph must not send sponsor questions as a delegated user")
+
+    monkeypatch.setattr("agentic_mesh.connectors.request.urlopen", _unexpected_urlopen)
+    connector = GraphTeamsConnectorAdapter(
+        connector_id="graph-teams",
+        project_id=mesh_config.project.project_id,
+        connector_config=mesh_config.project.connectors["teams"],
+        outbox=outbox,
+        journal=journal,
+        token="fake-token",
+    )
+
+    assert connector.process_once("all-agents") is True
+
+    failure = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "teams_graph_message_failed"
+    ][0]
+    assert failure["error"] == "GraphDelegatedSendNotAllowed"
+    assert failure["message_type"] == "human_response.requested"
+
+
 def test_bot_send_failure_records_redacted_error_class(
     tmp_path: Path,
     monkeypatch,
@@ -382,8 +434,8 @@ def test_sponsor_clarification_card_uses_readable_question_layout() -> None:
             "gate_id": "sponsor_clarification_response",
             "response_type": "multiline_text",
             "prompt": (
-                "Please answer these before product definition continues:\n"
-                "1. What should the gateway bot be called?\n"
+                "Please answer these before product definition continues: "
+                "1. What should the gateway bot be called? "
                 "2. Should it support Teams DMs as well as channel posts?"
             ),
             "project_id": "agentic-mesh-dev",
@@ -411,11 +463,17 @@ def test_sponsor_clarification_card_uses_readable_question_layout() -> None:
 
     assert "Sponsor input needed" in html
     assert "Questions / requested input" in html
+    assert "<ol>" in html
+    assert "<li>What should the gateway bot be called?</li>" in html
     assert "What should the gateway bot be called?" in html
     assert "Work performed:" not in rendered_card
     assert "Sponsor input needed" in rendered_card
     assert "Questions / requested input" in rendered_card
-    assert "What should the gateway bot be called?" in rendered_card
+    prompt_block = next(
+        block for block in card["body"] if block.get("text", "").startswith("Please answer")
+    )
+    assert "1. What should the gateway bot be called?" in prompt_block["text"]
+    assert "2. Should it support Teams DMs" in prompt_block["text"]
     assert card["body"][-1]["type"] == "Input.Text"
     assert card["body"][-1]["isMultiline"] is True
     assert card["actions"][-1]["title"] == "Submit answer"
