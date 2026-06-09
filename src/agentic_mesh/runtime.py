@@ -5,6 +5,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
+from urllib.parse import urlparse
 
 from agentic_mesh import telemetry
 from agentic_mesh.agent_run_state import AgentRunState
@@ -30,8 +31,10 @@ from agentic_mesh.models import ProjectConfig
 from agentic_mesh.models import RouteRequest
 from agentic_mesh.models import ResponseTypeTemplate
 from agentic_mesh.notifications import FileNotificationAttemptStore
+from agentic_mesh.notifications import FileSourceRouteStore
 from agentic_mesh.notifications import NotificationEvent
 from agentic_mesh.notifications import NotificationPolicyEvaluator
+from agentic_mesh.notifications import NotificationRouteResolver
 from agentic_mesh.notifications import StatusLinkBuilder
 from agentic_mesh.notifications import route_resolution_for_surface
 from agentic_mesh.storage import FileConnectorOutbox
@@ -425,11 +428,16 @@ class AgentRuntime:
                         validation_reason=validation_reason,
                         correlation_id=message.correlation_id,
                     )
+                    if is_valid:
+                        self._enqueue_human_response_continuation(
+                            source_instance=instance_config,
+                            source_message=message,
+                            state_id=state_id,
+                            request_record=request_record,
+                        )
                     self.message_store.complete(
                         message,
-                        "completed_after_human_response"
-                        if is_valid
-                        else "invalid_human_response",
+                        "human_response_recorded" if is_valid else "invalid_human_response",
                     )
                 self._write_run_state(
                     instance_config=instance_config,
@@ -480,20 +488,26 @@ class AgentRuntime:
                 gate
                 for gate in flow_state.gates
                 if gate.type == "human_response"
+                and not self._human_gate_satisfied_by_message(gate, message)
             ]
             if human_gates:
-                self._request_human_responses(
+                requested = self._request_human_responses(
                     gates=human_gates,
                     source_message=message,
                     source_instance=instance_config,
                     flow_state=flow_state,
                     trace_attributes=agent_attrs,
                 )
-                self.message_store.complete(message, "waiting_for_human_response")
+                self.message_store.complete(
+                    message,
+                    "waiting_for_human_response"
+                    if requested
+                    else "human_response_request_failed",
+                )
                 self._write_run_state(
                     instance_config=instance_config,
                     message=message,
-                    run_state="completed",
+                    run_state="completed" if requested else "failed",
                     evidence_source="worker_completed",
                 )
                 return True
@@ -663,11 +677,16 @@ class AgentRuntime:
             correlation_id=message.correlation_id,
         )
         satisfied = is_valid and validation_reason != "duplicate_same_value"
+        if satisfied:
+            self._enqueue_human_response_continuation(
+                source_instance=instance_config,
+                source_message=message,
+                state_id=state_id,
+                request_record=request_record,
+            )
         self.message_store.complete(
             message,
-            "completed_after_human_response"
-            if satisfied
-            else "human_response_not_satisfied",
+            "human_response_recorded" if satisfied else "human_response_not_satisfied",
         )
         self._write_run_state(
             instance_config=instance_config,
@@ -676,6 +695,90 @@ class AgentRuntime:
             evidence_source="journal_event",
         )
         return True
+
+    def _human_gate_satisfied_by_message(
+        self,
+        gate: FlowGate,
+        message: Message,
+    ) -> bool:
+        human_response = message.payload.get("human_response")
+        if not isinstance(human_response, dict):
+            return False
+        if human_response.get("gate_id") != gate.gate_id:
+            return False
+        status = str(human_response.get("response_status") or "").casefold()
+        if status and status != "completed":
+            return False
+        accepted_values = gate.completion_criteria.get("accepted_values")
+        if not accepted_values:
+            return True
+        response_value = str(human_response.get("response_value") or "")
+        return response_value in {str(value) for value in accepted_values}
+
+    def _enqueue_human_response_continuation(
+        self,
+        *,
+        source_instance,
+        source_message: Message,
+        state_id: str,
+        request_record,
+    ) -> None:
+        flow_state = self.project.flow.states.get(state_id)
+        target_role = flow_state.owner_role if flow_state else source_instance.role_id
+        gate_id = str(source_message.payload.get("gate_id") or "")
+        work_item_id = str(source_message.payload.get("work_item_id") or "")
+        payload = {
+            "title": f"Continue {state_id} after human response",
+            "summary": (
+                "A required human response has been recorded. Continue this "
+                "lifecycle state and update the artifact with the final "
+                "decision, release action, evidence, and closure outcome."
+            ),
+            "work_item_id": work_item_id,
+            "work_item_type": source_message.payload.get("work_item_type") or "slice",
+            "lifecycle_state": state_id,
+            "previous_lifecycle_state": state_id,
+            "human_response": {
+                "gate_id": gate_id,
+                "response_request_id": source_message.payload.get(
+                    "response_request_id"
+                ),
+                "approval_request_id": (
+                    request_record.approval_request_id
+                    if request_record
+                    else source_message.payload.get("approval_request_id")
+                ),
+                "responder": source_message.payload.get("responder"),
+                "response_value": source_message.payload.get("response_value"),
+                "response_status": request_record.status if request_record else None,
+            },
+            "continuation_reason": "human_response_recorded",
+            "source_human_response_message_id": source_message.message_id,
+        }
+        continuation = Message.create(
+            role_id=target_role,
+            message_type=f"sdlc.{state_id}",
+            payload=payload,
+            source=source_instance.instance_id,
+            correlation_id=source_message.correlation_id,
+            trace_context=source_message.trace_context,
+        )
+        delivered = self.message_store.enqueue(continuation)
+        self.journal.append(
+            "human_response_continuation_enqueued",
+            project_id=source_instance.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            work_item_id=work_item_id,
+            work_item_type=payload["work_item_type"],
+            lifecycle_state=state_id,
+            gate_id=gate_id,
+            source_message_id=source_message.message_id,
+            message_id=delivered.message_id,
+            target_role=target_role,
+            message_type=continuation.type,
+            correlation_id=source_message.correlation_id,
+        )
 
     def _sponsor_clarification_gate(
         self,
@@ -814,6 +917,29 @@ class AgentRuntime:
                 )
                 try:
                     request = self.connector_outbox.enqueue(request)
+                    decision_context = request.payload.get("approval_decision_view")
+                    if isinstance(decision_context, dict):
+                        self.human_gate_store.record_decision_context(
+                            gate_request.response_request_id,
+                            decision_context=decision_context,
+                        )
+                        self.journal.append(
+                            "approval_decision_context_created",
+                            project_id=source_instance.project_id,
+                            role_id=source_instance.role_id,
+                            role_instance_id=source_instance.instance_id,
+                            work_item_id=source_message.payload.get("work_item_id"),
+                            work_item_type=source_message.payload.get("work_item_type"),
+                            lifecycle_state=flow_state.state_id,
+                            gate_id=gate.gate_id,
+                            response_request_id=gate_request.response_request_id,
+                            approval_request_id=gate_request.approval_request_id
+                            or gate_request.response_request_id,
+                            context_completeness=decision_context.get(
+                                "context_completeness",
+                            ),
+                            correlation_id=source_message.correlation_id,
+                        )
                     self.human_gate_store.mark_enqueue_succeeded(
                         gate_request.response_request_id,
                         connector_message_id=request.message_id,
@@ -930,15 +1056,24 @@ class AgentRuntime:
                 for status, candidate in flow_state.handoffs.items()
                 if candidate.target_role == route.target_role
                 and candidate.message_type == route.message_type
-                and (
-                    target_state in {None, "", candidate.target_state}
-                )
+                and target_state in {None, "", candidate.target_state}
             ),
             None,
         )
+        if handoff_transition is None and isinstance(target_state, str) and target_state:
+            handoff_transition = next(
+                (
+                    (status, candidate)
+                    for status, candidate in flow_state.handoffs.items()
+                    if candidate.target_role == route.target_role
+                    and target_state == candidate.target_state
+                ),
+                None,
+            )
         if handoff_transition is not None:
             configured_route_id, transition = handoff_transition
             target_state = transition.target_state
+            route = replace(route, message_type=transition.message_type)
             route_kind = "configured_handoff"
             route_status = "handoff_requested"
 
@@ -1716,10 +1851,12 @@ class AgentRuntime:
     def _work_item_status_url(work_item_id: str) -> str | None:
         base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
         if not base_url:
-            auth_url = os.environ.get("AGENTIC_MESH_AUTH_ADMIN_URL")
-            if auth_url:
-                base_url = auth_url.split("/auth/", 1)[0]
-        if not base_url:
+            return None
+        parsed = urlparse(base_url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            return None
+        hostname = (parsed.hostname or "").lower()
+        if hostname in {"localhost", "::1"} or hostname.startswith("127."):
             return None
         return f"{base_url.rstrip('/')}/work-items/{quote(work_item_id, safe='')}"
 
@@ -1827,11 +1964,45 @@ class AgentRuntime:
                 notification_result="dashboard_only",
             )
             return
-        target_override = self.project.roles[route.target_role]
-        channel = (
-            target_override.channels.get("handoff_inbox")
-            or target_override.channels.get("primary")
+        event = NotificationEvent.create(
+            event_kind=event_kind,
+            event_group="lifecycle",
+            visibility=visibility,
+            project_id=self.project.project_id,
+            work_item_id=route.work_item_id,
+            work_item_type=route.work_item_type,
+            lifecycle_state=route.target_lifecycle_state,
+            queue_item_id=route.queue_item_id,
+            source_message_id=source_message.message_id,
+            source_anchor_ref=route.source_anchor_ref,
+            source_anchor_summary=route.source_anchor_summary,
+            title=source_message.payload.get("title"),
+            summary=source_message.payload.get("summary"),
+            status_label=route.route_status,
+            status_detail=f"{route.source_role} routed work to {route.target_role}",
+            status_links=(self._status_link_builder().work_item(route.work_item_id),),
+            route_hint="source_anchor" if route.source_anchor_ref else "status_fallback",
+            correlation_id=source_message.correlation_id,
+            trace_context=source_message.trace_context,
+            dedupe_key=f"dedupe-{route.route_id}",
         )
+        resolver = NotificationRouteResolver(
+            policy=self.project.notification_policy,
+            source_route_store=FileSourceRouteStore(
+                self.message_store.root.parents[2],
+                self.project.project_id,
+            ),
+        )
+        resolution = resolver.resolve(event)
+        attempt = self.notification_attempt_store.create_or_dedupe(event, resolution)
+        if resolution.dispatch_route:
+            channel = resolution.dispatch_route
+        else:
+            target_override = self.project.roles[route.target_role]
+            channel = (
+                target_override.channels.get("handoff_inbox")
+                or target_override.channels.get("primary")
+            )
         if not channel:
             self.journal.append(
                 "route_status_notification_failed",
@@ -1839,6 +2010,7 @@ class AgentRuntime:
                 **route.journal_fields(),
                 notification_result="unroutable",
                 notification_error_class="missing_channel",
+                notification_attempt_id=attempt.attempt_id,
             )
             return
         try:
@@ -1874,6 +2046,7 @@ class AgentRuntime:
                     source_message=source_message,
                     route_status=route.to_dict(),
                     target_role_display_name=route.target_role,
+                    fallback=bool(resolution.fallback_reason),
                 )
             connector_message = self.connector_outbox.enqueue(connector_message)
         except Exception as exc:
@@ -1888,7 +2061,7 @@ class AgentRuntime:
         event_type = (
             "handoff_connector_message_queued"
             if route.route_kind == "configured_handoff"
-            else "route_status_notification_queued"
+            else "route_status_connector_message_queued"
         )
         self.journal.append(
             event_type,
@@ -1897,6 +2070,11 @@ class AgentRuntime:
             channel=channel,
             connector_message_id=connector_message.message_id,
             connector_message_type=connector_message.type,
+            notification_attempt_id=attempt.attempt_id,
+            route_resolution_id=resolution.route_resolution_id,
+            route_resolution_result=resolution.result,
+            fallback_used=bool(resolution.fallback_reason),
+            fallback_reason=resolution.fallback_reason,
             notification_result="queued",
         )
 

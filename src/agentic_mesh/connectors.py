@@ -723,7 +723,6 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
     ) -> dict[str, Any]:
         activity = self._build_activity(message)
         payload = message.payload
-        channel_config = self.connector_config.channels[message.channel]
         conversation_id = str(payload.get("teams_conversation_id") or "")
         reply_to_id = str(
             payload.get("teams_reply_to_activity_id")
@@ -733,12 +732,19 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
         activity["from"] = {"id": app_id, "name": display_name, "role": "bot"}
         activity["conversation"] = {"id": conversation_id}
         activity["replyToId"] = reply_to_id
-        activity["channelData"] = {
-            "tenant": {"id": self.connector_config.tenant_id},
-            "team": {"id": self.connector_config.team_id},
-            "channel": {"id": channel_config.channel_id},
-            "agenticMesh": {"senderRole": role_id},
-        }
+        if str(payload.get("source_channel") or message.channel) == "dm":
+            activity["channelData"] = {
+                "tenant": {"id": self.connector_config.tenant_id},
+                "agenticMesh": {"senderRole": role_id, "sourceScope": "dm"},
+            }
+        else:
+            channel_config = self.connector_config.channels[message.channel]
+            activity["channelData"] = {
+                "tenant": {"id": self.connector_config.tenant_id},
+                "team": {"id": self.connector_config.team_id},
+                "channel": {"id": channel_config.channel_id},
+                "agenticMesh": {"senderRole": role_id},
+            }
         return activity
 
     @staticmethod
@@ -2035,6 +2041,15 @@ class TeamsBotIngress:
             return None
 
         logical_channel = self._logical_channel_for_activity(activity)
+        direct_dm_role = self._direct_role_for_dm(activity)
+        if logical_channel is None and direct_dm_role is not None:
+            return self._record_targeted_directive(
+                activity,
+                raw_activity_path,
+                logical_channel="dm",
+                text=text,
+                roles=[direct_dm_role],
+            )
         if logical_channel is None and self._is_gateway_dm(activity):
             self._record_gateway_intake(
                 activity,
@@ -2394,10 +2409,41 @@ class TeamsBotIngress:
     def _is_gateway_dm(self, activity: dict[str, Any]) -> bool:
         if not self.gateway_services:
             return False
+        return self._is_direct_user_message(activity)
+
+    @staticmethod
+    def _is_direct_user_message(activity: dict[str, Any]) -> bool:
         conversation = activity.get("conversation") or {}
         conversation_type = str(conversation.get("conversationType") or "").casefold()
         source_scope = str(activity.get("source_scope") or "").casefold()
         return conversation_type == "personal" or source_scope == "dm"
+
+    def _direct_role_for_dm(self, activity: dict[str, Any]) -> str | None:
+        if self.connector_config is None or not self._is_direct_user_message(activity):
+            return None
+        recipient = activity.get("recipient") or {}
+        candidate_keys: set[str] = set()
+        for value in (recipient.get("id"), recipient.get("name")):
+            if not value:
+                continue
+            raw = str(value)
+            candidate_keys.add(_normalise_mention_text(raw))
+            if raw.startswith("28:"):
+                candidate_keys.add(_normalise_mention_text(raw[3:]))
+        if not candidate_keys:
+            return None
+        for role_id in sorted(self.connector_config.role_bots):
+            role_bot = self.connector_config.role_bots[role_id]
+            role_keys = _role_alias_keys(role_id, self.connector_config)
+            role_keys.add(_normalise_mention_text(role_bot.bot_id_ref))
+            if self.secrets is not None:
+                try:
+                    role_keys.add(_normalise_mention_text(self.secrets.get(role_bot.bot_id_ref)))
+                except Exception:
+                    pass
+            if candidate_keys & role_keys:
+                return role_id
+        return None
 
     def _is_gateway_channel_message(
         self,
@@ -2967,8 +3013,9 @@ class TeamsBotIngress:
                 correlation_id=correlation_id,
             )
             return
+        outbox_channel = logical_channel if logical_channel != "dm" else "all-agents"
         acknowledgement = ConnectorMessage.create(
-            channel=logical_channel,
+            channel=outbox_channel,
             message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED,
             payload={
                 "project_id": self.project_id,
@@ -2997,7 +3044,8 @@ class TeamsBotIngress:
             queued_event,
             project_id=self.project_id,
             connector_id=self.connector_id,
-            channel=logical_channel,
+            channel=outbox_channel,
+            source_channel=logical_channel,
             connector_message_id=acknowledgement.message_id,
             work_item_id=work_item_id,
             queue_item_id=queue_item_id,

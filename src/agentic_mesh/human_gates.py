@@ -743,7 +743,11 @@ def derive_human_gate_summary(
     latest_request = requests[-1] if requests else None
     gates = _configured_human_gates(mesh_config, current=current)
     current_lifecycle = str(current.get("lifecycle_state") or "")
-    next_gate = _next_gate(gates, current_lifecycle)
+    next_gate = _next_gate(
+        gates,
+        current_lifecycle,
+        state_order=list(mesh_config.project.flow.states.keys()),
+    )
     current_gate = _gate_for_state(gates, current_lifecycle)
 
     if latest_request is not None:
@@ -952,6 +956,8 @@ def _gate_for_state(
 def _next_gate(
     gates: list[tuple[str, FlowGate]],
     lifecycle_state: str,
+    *,
+    state_order: list[str] | None = None,
 ) -> FlowGate | None:
     if not gates:
         return None
@@ -959,10 +965,14 @@ def _next_gate(
     if lifecycle_state in state_ids:
         index = state_ids.index(lifecycle_state)
         return gates[index + 1][1] if index + 1 < len(gates) else None
-    flow_states = list(gates[0][0] for _ in [0])
-    all_states = list({state_id: None for state_id, _ in gates}.keys())
-    if lifecycle_state in all_states:
-        return _gate_for_state(gates, lifecycle_state)
+    if state_order and lifecycle_state in state_order:
+        current_index = state_order.index(lifecycle_state)
+        future = [
+            gate
+            for state_id, gate in gates
+            if state_id in state_order and state_order.index(state_id) > current_index
+        ]
+        return future[0] if future else None
     return gates[0][1]
 
 

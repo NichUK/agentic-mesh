@@ -493,6 +493,14 @@ def test_loads_document_accountabilities_and_gates() -> None:
     product_state = mesh_config.project.flow.states["product_definition"]
     assert product_state.gates[0].gate_id == "product_story_owner_review"
     assert product_state.gates[0].type == "document_owner_review"
+    assert product_state.gates[1].gate_id == "product_definition_sponsor_signoff"
+    assert product_state.gates[1].type == "human_response"
+    assert product_state.gates[1].response_type == "approve_not_approve"
+    assert product_state.gates[1].requested_from == "sponsor"
+    assert product_state.gates[1].channel == "approvals"
+    assert product_state.gates[1].completion_criteria["accepted_values"] == [
+        "approved"
+    ]
     assert product_state.artifact_path == (
         "work-items/{work_item_id}/20-product-definition.md"
     )
@@ -521,6 +529,8 @@ def test_loads_document_accountabilities_and_gates() -> None:
     assert human_gate.response_type == "approve_not_approve"
     assert human_gate.requested_from == "release-sponsor"
     assert human_gate.channel == "approvals"
+    assert "rollback plan" in human_gate.prompt
+    assert "no-staging disposition" in human_gate.prompt
     assert human_gate.timeout == "PT48H"
     assert human_gate.on_timeout == "escalate"
     assert human_gate.completion_criteria["accepted_values"] == ["approved"]

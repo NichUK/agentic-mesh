@@ -141,14 +141,14 @@ def test_recovery_observability_view_uses_allowlisted_fields(tmp_path: Path) -> 
         project_id=PROJECT_ID,
         problem_status=_problem(
             failure_class="rate_limited",
-            retry_after="2026-06-06T12:00:00+00:00",
+            retry_after="2099-06-06T12:00:00+00:00",
         ),
     )
     provider = CodexProviderConditionProfile().classify_safe_evidence(
         {
             "failure_class": "rate_limited",
             "confidence": "confirmed",
-            "retry_after": "2026-06-06T12:00:00+00:00",
+            "retry_after": "2099-06-06T12:00:00+00:00",
         }
     )
     alert_store = FileRecoveryAlertStore(tmp_path / "state", PROJECT_ID)

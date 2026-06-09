@@ -320,6 +320,7 @@ def _release_response_runtime(
 def _enqueue_release_response(
     message_store: FileMessageStore,
     *,
+    target_role: str = "release-manager",
     work_item_id: str = "slice-release",
     work_item_type: str = "slice",
     lifecycle_state: str = "release_review",
@@ -345,7 +346,7 @@ def _enqueue_release_response(
     }
     message_store.enqueue(
         Message.create(
-            role_id="release-manager",
+            role_id=target_role,
             message_type="human_response.received",
             payload=payload,
             source=source,
@@ -377,6 +378,11 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
     mesh_config = load_mesh_config(Path.cwd())
     journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
     message_store = FileMessageStore(tmp_path / "state", mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
     artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
     runtime = AgentRuntime(
         message_store,
@@ -384,6 +390,8 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
         journal,
         mesh_config.project,
         StubCodexWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
     )
 
     message_store.enqueue(
@@ -402,9 +410,34 @@ def test_project_configured_sdlc_flow_reaches_engineering(tmp_path: Path) -> Non
         )
     )
 
+    for role_id in ["business-analyst", "product-manager"]:
+        instance_id = f"agentic-mesh-dev.{role_id}.1"
+        assert runtime.run_once(instance_id, mesh_config.instances[instance_id])
+
+    store = FileHumanGateRequestStore(tmp_path / "state", mesh_config.project.project_id)
+    product_requests = store.read_by_work_item("slice-local-runtime")
+    assert len(product_requests) == 1
+    assert product_requests[0].gate_id == "product_definition_sponsor_signoff"
+    assert connector_outbox.pending_count("approvals") == 1
+
+    _enqueue_release_response(
+        message_store,
+        target_role="product-manager",
+        work_item_id="slice-local-runtime",
+        lifecycle_state="product_definition",
+        gate_id="product_definition_sponsor_signoff",
+        response_request_id=product_requests[0].response_request_id,
+    )
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+
     for role_id in [
-        "business-analyst",
-        "product-manager",
         "ux-designer",
         "enterprise-architect",
         "solution-architect",
@@ -807,10 +840,13 @@ def test_runtime_blocks_handoff_when_index_maintenance_fails(tmp_path: Path) -> 
     assert artifact.exists()
     assert message_store.pending_count("product-manager") == 0
     summary = message_store.work_item_summary("work-index-failure", ["business-analyst"])
-    assert summary["business-analyst"]["completion_statuses"] == ["failed"]
+    assert summary["business-analyst"]["completion_statuses"] == [
+        "needs_runtime_recovery",
+    ]
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "work_item_index_update_failed" in event_types
-    assert "agent_run_failed" in event_types
+    assert "problem_status_recorded" in event_types
+    assert "recovery_status_recorded" in event_types
     assert "handoff_emitted" not in event_types
 
 
@@ -1946,9 +1982,21 @@ def test_blocked_directive_reports_chat_status_without_document_artifact(
     )
     assert blocked.payload["artifact_paths"] == []
 
-    assert connector_outbox.pending_count("all-agents") == 1
-    publish_summary = connector_outbox.claim_next("all-agents", "test-connector")
-    assert publish_summary is not None
+    assert connector_outbox.pending_count("all-agents") == 2
+    source_notices = [
+        connector_outbox.claim_next("all-agents", "test-connector"),
+        connector_outbox.claim_next("all-agents", "test-connector"),
+    ]
+    notice_types = {notice.type for notice in source_notices if notice is not None}
+    assert notice_types == {
+        "problem_status.updated",
+        "sponsor_directive.publish_ready",
+    }
+    publish_summary = next(
+        notice
+        for notice in source_notices
+        if notice is not None and notice.type == "sponsor_directive.publish_ready"
+    )
     assert publish_summary.type == "sponsor_directive.publish_ready"
     assert publish_summary.payload["publication"]["status"] == "terminal_with_blockers"
     assert publish_summary.payload["terminal_status"] == "terminal_with_blockers"
@@ -1959,7 +2007,7 @@ def test_blocked_directive_reports_chat_status_without_document_artifact(
     assert not artifact.exists()
 
 
-def test_human_response_received_completes_release_review(tmp_path: Path) -> None:
+def test_human_response_received_continues_release_review(tmp_path: Path) -> None:
     (
         mesh_config,
         runtime,
@@ -1980,12 +2028,52 @@ def test_human_response_received_completes_release_review(tmp_path: Path) -> Non
     assert store.read(request.response_request_id).status == "completed"  # type: ignore[union-attr]
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "human_response_recorded" in event_types
+    assert "human_response_continuation_enqueued" in event_types
     completed = [
         event
         for event in journal.read_all()
         if event["event_type"] == "work_completed"
     ][0]
-    assert completed["status"] == "completed_after_human_response"
+    assert completed["status"] == "human_response_recorded"
+    continuation = message_store.claim_next(
+        "release-manager",
+        "agentic-mesh-dev.release-manager.1",
+    )
+    assert continuation is not None
+    assert continuation.type == "sdlc.release_review"
+    assert continuation.payload["continuation_reason"] == "human_response_recorded"
+    assert continuation.payload["human_response"]["response_value"] == "approved"
+    message_store.complete(continuation, "continuation_claim_inspected")
+
+
+def test_human_response_continuation_does_not_request_same_gate_again(
+    tmp_path: Path,
+) -> None:
+    (
+        mesh_config,
+        runtime,
+        message_store,
+        connector_outbox,
+        _journal,
+        _store,
+        _request,
+    ) = _release_response_runtime(tmp_path)
+    _enqueue_release_response(message_store)
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.release-manager.1",
+        mesh_config.instances["agentic-mesh-dev.release-manager.1"],
+    )
+    assert runtime.run_once(
+        "agentic-mesh-dev.release-manager.1",
+        mesh_config.instances["agentic-mesh-dev.release-manager.1"],
+    )
+
+    assert connector_outbox.pending_count("approvals") == 0
+    assert _work_completed_statuses(_journal) == [
+        "human_response_recorded",
+        "completed",
+    ]
 
 
 def test_human_response_received_records_not_approved_without_satisfying_gate(
@@ -2119,6 +2207,12 @@ def test_human_response_received_duplicate_terminal_is_audit_only(
         "agentic-mesh-dev.release-manager.1",
         mesh_config.instances["agentic-mesh-dev.release-manager.1"],
     )
+    continuation = message_store.claim_next(
+        "release-manager",
+        "agentic-mesh-dev.release-manager.1",
+    )
+    assert continuation is not None
+    message_store.complete(continuation, "continuation_test_skipped")
     _enqueue_release_response(message_store)
 
     assert runtime.run_once(
@@ -2130,7 +2224,8 @@ def test_human_response_received_duplicate_terminal_is_audit_only(
     assert stored is not None
     assert stored.status == "completed"
     assert _work_completed_statuses(journal) == [
-        "completed_after_human_response",
+        "human_response_recorded",
+        "continuation_test_skipped",
         "human_response_not_satisfied",
     ]
     duplicate_events = [

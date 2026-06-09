@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from agentic_mesh.approval_decisions import build_requested_approval_decision
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.models import FlowGate
 from agentic_mesh.models import FlowState
@@ -81,6 +82,9 @@ def build_human_response_request(
         payload["approval_context"] = approval_context
     if response_type is not None:
         payload["response_template"] = asdict(response_type)
+    payload["approval_decision_view"] = build_requested_approval_decision(
+        payload,
+    ).to_dict()
 
     return ConnectorMessage.create(
         channel=_human_response_channel(gate=gate, source_message=source_message),

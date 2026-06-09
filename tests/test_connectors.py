@@ -1052,6 +1052,78 @@ def test_teams_ingress_routes_named_role_mention_in_all_agents_channel(
     assert "teams_all_agents_directive_routed" not in event_types
 
 
+def test_teams_ingress_routes_personal_message_to_recipient_role(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    message_store = FileMessageStore(state_root, mesh_config.project.project_id, journal)
+    connector_outbox = FileConnectorOutbox(
+        state_root,
+        mesh_config.project.project_id,
+        journal,
+    )
+    work_queue = FileWorkQueueStore(state_root, mesh_config.project.project_id, journal)
+    teams_config = mesh_config.project.connectors["teams"]
+    ingress = TeamsBotIngress(
+        connector_id="teams-bot-listener",
+        project_id=mesh_config.project.project_id,
+        state_root=state_root,
+        message_store=message_store,
+        journal=journal,
+        connector_config=teams_config,
+        project_config=mesh_config.project,
+        secrets=_StaticSecrets(),  # type: ignore[arg-type]
+        connector_outbox=connector_outbox,
+        work_queue=work_queue,
+    )
+
+    result = ingress.receive_activity(
+        {
+            "type": "message",
+            "id": "activity-product-manager-dm",
+            "serviceUrl": "https://smba.trafficmanager.net/uk/",
+            "text": "Can you explain the product scope trade-offs in role?",
+            "from": {"id": "user-1", "name": "Nich"},
+            "recipient": {
+                "id": "28:value-for-teams-bot-product-manager-app-id",
+                "name": "AM-Product Manager",
+            },
+            "conversation": {
+                "id": "personal-conversation-1",
+                "conversationType": "personal",
+            },
+        }
+    )
+
+    assert result["status"] == "accepted"
+    assert result["routed"] is True
+    assert result["target_roles"] == ["product-manager"]
+    message = message_store.claim_next(
+        "product-manager",
+        "agentic-mesh-dev.product-manager.1",
+    )
+    assert message is not None
+    assert message.type == "sponsor_directive.requested"
+    assert message.payload["work_mode"] == "direct_targeted"
+    assert message.payload["source_channel"] == "dm"
+    assert message.payload["teams_conversation_id"] == "personal-conversation-1"
+    assert message.payload["target_role"] == "product-manager"
+    acknowledgement = connector_outbox.claim_next(
+        "all-agents",
+        "teams-bot-connector",
+    )
+    assert acknowledgement is not None
+    assert acknowledgement.payload["source_channel"] == "dm"
+    assert acknowledgement.payload["role_id"] == "product-manager"
+    assert acknowledgement.payload["teams_conversation_id"] == (
+        "personal-conversation-1"
+    )
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "teams_targeted_directive_routed" in event_types
+
+
 def test_teams_ingress_journals_unmapped_channel_message(
     tmp_path: Path,
 ) -> None:
@@ -2303,6 +2375,84 @@ def test_bot_connector_thread_reply_body_uses_role_bot_identity(
     assert captured["body"]["channelData"]["agenticMesh"]["senderRole"] == (
         "delivery-manager"
     )
+
+
+def test_bot_connector_thread_reply_body_supports_direct_message_scope(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    outbox = FileConnectorOutbox(state_root, mesh_config.project.project_id, journal)
+
+    class FakeSecrets:
+        def get(self, ref):
+            return {
+                "teams-bot-product-manager-app-id": "product-app-id",
+                "teams-bot-product-manager-secret": "product-secret",
+            }[ref]
+
+    connector = BotFrameworkTeamsConnectorAdapter(
+        connector_id="teams-bot-connector",
+        project_id=mesh_config.project.project_id,
+        connector_config=mesh_config.project.connectors["teams"],
+        outbox=outbox,
+        journal=journal,
+        secrets=FakeSecrets(),  # type: ignore[arg-type]
+    )
+    connector._bot_token = lambda app_id, app_secret: "bot-token"
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"id":"dm-reply-id"}'
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr("agentic_mesh.connectors.request.urlopen", fake_urlopen)
+
+    message = ConnectorMessage.create(
+        channel="all-agents",
+        message_type="sponsor_directive.acknowledged",
+        payload={
+            "title": "Product question",
+            "work_item_id": "work-product-dm",
+            "role_id": "product-manager",
+            "role_count": 1,
+            "target_roles": ["product-manager"],
+            "source_channel": "dm",
+            "teams_service_url": "https://smba.trafficmanager.net/uk/",
+            "teams_conversation_id": "personal-conversation-1",
+            "teams_reply_to_activity_id": "activity-product-manager-dm",
+        },
+        source="test",
+    )
+
+    connector._post_message(message, "product-manager")
+
+    assert captured["url"].endswith(
+        "/v3/conversations/personal-conversation-1/"
+        "activities/activity-product-manager-dm"
+    )
+    assert captured["body"]["from"] == {
+        "id": "product-app-id",
+        "name": "AM-Product Manager",
+        "role": "bot",
+    }
+    assert captured["body"]["channelData"] == {
+        "tenant": {"id": mesh_config.project.connectors["teams"].tenant_id},
+        "agenticMesh": {"senderRole": "product-manager", "sourceScope": "dm"},
+    }
 
 
 def test_bot_connector_renders_sponsor_directive_status() -> None:

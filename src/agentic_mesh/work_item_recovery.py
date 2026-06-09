@@ -201,6 +201,9 @@ class RecoveryStatus:
     retry_limit: int = 2
     retry_after: str | None = None
     next_retry_at: str | None = None
+    next_probe_at: str | None = None
+    last_probe_at: str | None = None
+    last_retry_attempt_at: str | None = None
     retry_policy_state: str | None = None
     partial_artifacts_present: bool = False
     partial_artifact_action: str = "none"
@@ -276,6 +279,9 @@ class RecoveryStatus:
             "retry_limit": self.retry_limit,
             "retry_after": self.retry_after,
             "next_retry_at": self.next_retry_at,
+            "next_probe_at": self.next_probe_at,
+            "last_probe_at": self.last_probe_at,
+            "last_retry_attempt_at": self.last_retry_attempt_at,
             "retry_policy_state": safe_text(self.retry_policy_state, 120),
             "partial_artifacts_present": self.partial_artifacts_present,
             "partial_artifact_action": self.partial_artifact_action,
@@ -321,6 +327,9 @@ class RecoveryStatus:
             retry_limit=int(data.get("retry_limit", 2)),
             retry_after=data.get("retry_after"),
             next_retry_at=data.get("next_retry_at"),
+            next_probe_at=data.get("next_probe_at"),
+            last_probe_at=data.get("last_probe_at"),
+            last_retry_attempt_at=data.get("last_retry_attempt_at"),
             retry_policy_state=data.get("retry_policy_state"),
             partial_artifacts_present=bool(
                 data.get("partial_artifacts_present", False)

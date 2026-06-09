@@ -77,6 +77,9 @@ auth_credentials:
   codex-agentic-mesh-dev-team:
     method: codex_oauth_cache
     mount_ref: codex-agentic-mesh-dev-team-home
+  codex-agentic-mesh-dev-team-q:
+    method: codex_oauth_cache
+    mount_ref: codex-agentic-mesh-dev-team-home-q
 capability_defaults:
   schema_version: role-capability-profile-v0
   capabilities:
@@ -326,7 +329,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Frame Agentic Mesh work in terms of enterprise users, operating constraints,
       and measurable outcomes.
@@ -360,7 +363,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Define product intent, slice boundaries, and acceptance criteria before downstream
       work.
@@ -395,7 +398,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Define UX implications for control-plane, Teams, and local developer workflows
       when a slice affects human interaction.
@@ -429,7 +432,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Review system/project repository boundaries, governance, integration, and enterprise
       operating model concerns.
@@ -464,7 +467,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Keep architecture guidance grounded in Agentic Mesh runtime boundaries.
     - Prefer local-first interfaces before cloud-specific backends.
@@ -497,7 +500,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Review credential handling, connector permissions, container identity, and secret-reference
       design.
@@ -532,7 +535,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Keep Docker Compose, state paths, telemetry, and local runtime automation aligned
       with the architecture docs.
@@ -569,7 +572,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Treat this as a multi-instance role; claim work atomically and avoid duplicate
       implementation.
@@ -604,7 +607,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Validate each slice independently so parallel work streams remain inspectable.
     - Record evidence against the originating work_item_id.
@@ -637,7 +640,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Validate documentation clarity before release review.
     - Keep README, architecture, operation, and memory docs aligned.
@@ -671,7 +674,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Track blockers and handoff aging without taking decision ownership from specialist
       roles.
@@ -704,7 +707,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Research future stock enterprise flow catalogs and cite sources.
     - Hand synthesized findings to Business Analysis, Product, or Enterprise Architecture.
@@ -737,7 +740,7 @@ roles:
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
-        credential: codex-agentic-mesh-dev-team
+        credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Close only work items with product, architecture, implementation, and QA evidence.
     - Keep release records linked to work_item_id.

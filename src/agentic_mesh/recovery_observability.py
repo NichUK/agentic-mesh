@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 from agentic_mesh.external_actions import safe_payload
@@ -188,7 +190,19 @@ def _retry_policy_state(recovery: RecoveryStatus) -> str:
         return "retry_running"
     if recovery.retry_count >= recovery.retry_limit:
         return "retry_limit_reached"
+    if recovery.retry_after and _is_future(recovery.retry_after):
+        return "waiting_retry_after"
     return RETRY_POLICY_BY_RECOVERY.get(recovery.recoverability_class, "operator_review_required")
+
+
+def _is_future(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed > datetime.now(timezone.utc)
 
 
 def _severity(recovery: RecoveryStatus) -> str:

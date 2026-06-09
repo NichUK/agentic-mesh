@@ -46,7 +46,7 @@ states:
         message_type: sdlc.product_definition
   product_definition:
     owner_role: product-manager
-    purpose: Define product intent, slice boundaries, and acceptance criteria.
+    purpose: Define product intent, slice boundaries, acceptance criteria, and sponsor-approved feature scope.
     artifact_path: work-items/{work_item_id}/20-product-definition.md
     consults:
       business_context:
@@ -66,6 +66,17 @@ states:
           - work-items/{work_item_id}/20-product-definition.md
         required_review_status: approved
         reviewer_role: product-manager
+      - gate_id: product_definition_sponsor_signoff
+        type: human_response
+        response_type: approve_not_approve
+        prompt: Confirm that the product definition captures the required features, scope boundaries, non-goals, acceptance criteria, and release expectations for this work item before the rest of the SDLC team proceeds.
+        requested_from: sponsor
+        channel: approvals
+        timeout: PT48H
+        on_timeout: escalate
+        completion_criteria:
+          accepted_values:
+            - approved
     handoffs:
       completed:
         target_state: experience_design
@@ -486,7 +497,7 @@ states:
         message_type: sdlc.release_review
   release_review:
     owner_role: release-manager
-    purpose: Confirm release readiness and record release outcome.
+    purpose: Confirm release readiness, sponsor-testable evidence where available, rollback plan, and release outcome.
     artifact_path: work-items/{work_item_id}/140-release-record.md
     consults:
       delivery_context:
@@ -513,7 +524,7 @@ states:
       - gate_id: release_decision_response
         type: human_response
         response_type: approve_not_approve
-        prompt: Record the final release decision for this work item.
+        prompt: Review the release record, sponsor-testable staging or no-staging disposition, rollback plan, residual risks, and evidence links; approve only when the release can proceed or an explicit exception is acceptable.
         requested_from: release-sponsor
         channel: approvals
         timeout: PT48H
