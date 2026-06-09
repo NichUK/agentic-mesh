@@ -13,65 +13,79 @@ from agentic_mesh.models import DocumentLibraryConfig
 from agentic_mesh.models import Message
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh import workers
-from agentic_mesh.workers import AGENT_RESULT_SCHEMA
 from agentic_mesh.workers import ConfiguredWorkerAdapter
-from agentic_mesh.workers import parse_agent_result
-from agentic_mesh.workers import result_from_payload
+from agentic_mesh.safe_outputs import append_safe_output_record
+from agentic_mesh.safe_outputs import load_safe_output_records
+from agentic_mesh.safe_outputs import result_from_safe_output_records
 from agentic_mesh.workers import summarize_worker_failure
 
 
-def test_parse_agent_result_accepts_structured_worker_json() -> None:
+def test_safe_outputs_accept_document_update_and_completion(tmp_path: Path) -> None:
     mesh_config = load_mesh_config(Path.cwd())
     flow_state = mesh_config.project.flow.states["business_analysis"]
+    message = Message.create(
+        role_id="business-analyst",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"work_item_id": "work-safe", "work_item_type": "slice"},
+        source="test",
+    )
+    output_file = tmp_path / "safe-outputs.jsonl"
+    append_safe_output_record(
+        output_file=output_file,
+        tool="document.propose_update",
+        payload={
+            "path": "documents/analysis/business-analyst.md",
+            "content": "# Business Analyst Worklist\n\nActual analysis.",
+        },
+    )
+    append_safe_output_record(
+        output_file=output_file,
+        tool="status.report_completion",
+        payload={"message": "Analysed the project."},
+    )
 
-    result = result_from_payload(
-        parse_agent_result(
-            """
-            {
-              "status": "completed",
-              "message": "Analysed the project.",
-              "document_updates": [
-                {
-                  "path": "documents/analysis/business-analyst.md",
-                  "content": "# Business Analyst Worklist\\n\\nActual analysis."
-                }
-              ],
-              "handoffs": []
-            }
-            """
-        ),
-        flow_state,
+    result = result_from_safe_output_records(
+        records=load_safe_output_records(output_file),
+        message=message,
+        flow_state=flow_state,
     )
 
     assert result.status == "completed"
     assert result.document_updates[0].path == "documents/analysis/business-analyst.md"
 
 
-def test_parse_agent_result_accepts_optional_document_index_metadata() -> None:
+def test_safe_outputs_accept_optional_document_index_metadata(tmp_path: Path) -> None:
     mesh_config = load_mesh_config(Path.cwd())
     flow_state = mesh_config.project.flow.states["business_analysis"]
+    message = Message.create(
+        role_id="business-analyst",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"work_item_id": "work-safe", "work_item_type": "slice"},
+        source="test",
+    )
+    output_file = tmp_path / "safe-outputs.jsonl"
+    append_safe_output_record(
+        output_file=output_file,
+        tool="document.propose_update",
+        payload={
+            "path": "work-items/work-safe/10-business-brief.md",
+            "content": "# Business Analyst Worklist",
+            "purpose": "Business framing.",
+            "review_status": "approved",
+            "index_summary": "Index metadata summary.",
+            "maintain_work_item_index": True,
+        },
+    )
+    append_safe_output_record(
+        output_file=output_file,
+        tool="status.report_completion",
+        payload={"message": "Analysed the project."},
+    )
 
-    result = result_from_payload(
-        parse_agent_result(
-            """
-            {
-              "status": "completed",
-              "message": "Analysed the project.",
-              "document_updates": [
-                {
-                  "path": "work-items/{work_item_id}/10-business-brief.md",
-                  "content": "# Business Analyst Worklist",
-                  "purpose": "Business framing.",
-                  "review_status": "approved",
-                  "index_summary": "Index metadata summary.",
-                  "maintain_work_item_index": true
-                }
-              ],
-              "handoffs": []
-            }
-            """
-        ),
-        flow_state,
+    result = result_from_safe_output_records(
+        records=load_safe_output_records(output_file),
+        message=message,
+        flow_state=flow_state,
     )
 
     update = result.document_updates[0]
@@ -81,75 +95,45 @@ def test_parse_agent_result_accepts_optional_document_index_metadata() -> None:
     assert update.maintain_work_item_index is True
 
 
-def test_parse_agent_result_accepts_first_class_routes() -> None:
+def test_safe_outputs_accept_first_class_routes(tmp_path: Path) -> None:
     mesh_config = load_mesh_config(Path.cwd())
     flow_state = mesh_config.project.flow.states["quality_review"]
+    message = Message.create(
+        role_id="qa-engineer",
+        message_type="sdlc.quality_review",
+        payload={"work_item_id": "work-correction", "work_item_type": "slice"},
+        source="test",
+    )
+    output_file = tmp_path / "safe-outputs.jsonl"
+    append_safe_output_record(
+        output_file=output_file,
+        tool="route.consult",
+        payload={
+            "target_role": "engineering",
+            "message_type": "sdlc.consult.implementation",
+            "title": "Correction",
+            "summary": "Fix DEF-QA-LIFE-001.",
+            "lifecycle_state": "implementation",
+            "review_status": "changes_requested",
+            "defect_id": "DEF-QA-LIFE-001",
+            "required_change": "Route through the configured consult.",
+            "evidence_required": "Attach implementation evidence.",
+        },
+    )
+    append_safe_output_record(
+        output_file=output_file,
+        tool="status.report_completion",
+        payload={"message": "QA correction requested."},
+    )
 
-    result = result_from_payload(
-        parse_agent_result(
-            """
-            {
-              "status": "completed",
-              "message": "QA correction requested.",
-              "document_updates": [],
-              "routes": [
-                {
-                  "target_role": "engineering",
-                  "message_type": "sdlc.consult.implementation",
-                  "payload": {
-                    "title": "Correction",
-                    "summary": "Fix DEF-QA-LIFE-001.",
-                    "work_item_id": "work-correction",
-                    "work_item_type": "slice",
-                    "previous_lifecycle_state": "quality_review",
-                    "lifecycle_state": "implementation",
-                    "source_message_id": null,
-                    "out_of_flow": null,
-                    "out_of_flow_reason": null,
-                    "review_status": "changes_requested",
-                    "defect_id": "DEF-QA-LIFE-001",
-                    "required_change": "Route through the configured consult.",
-                    "evidence_required": "Attach implementation evidence."
-                  }
-                }
-              ],
-              "handoffs": []
-            }
-            """
-        ),
-        flow_state,
+    result = result_from_safe_output_records(
+        records=load_safe_output_records(output_file),
+        message=message,
+        flow_state=flow_state,
     )
 
     assert result.routes[0].target_role == "engineering"
     assert result.routes[0].payload["defect_id"] == "DEF-QA-LIFE-001"
-
-
-def test_agent_result_schema_exposes_first_class_routes() -> None:
-    route_payload_schema = (
-        AGENT_RESULT_SCHEMA["properties"]["routes"]["items"]["properties"]["payload"]
-    )
-
-    assert route_payload_schema["additionalProperties"] is False
-    assert "defect_id" in route_payload_schema["properties"]
-    assert "required_change" in route_payload_schema["properties"]
-    assert "evidence_required" in route_payload_schema["properties"]
-
-
-def test_agent_result_schema_is_strict_for_openai_structured_output() -> None:
-    def assert_strict_object(schema: dict) -> None:
-        if schema.get("type") == "object":
-            properties = schema.get("properties", {})
-            required = set(schema.get("required", []))
-            assert required == set(properties), schema
-        if "properties" in schema:
-            for value in schema["properties"].values():
-                if isinstance(value, dict):
-                    assert_strict_object(value)
-        items = schema.get("items")
-        if isinstance(items, dict):
-            assert_strict_object(items)
-
-    assert_strict_object(AGENT_RESULT_SCHEMA)
 
 
 def test_configured_worker_blocks_when_codex_secret_is_missing(
@@ -287,22 +271,18 @@ def test_configured_worker_uses_current_codex_exec_flags(
         captured["command"] = command
         captured["env"] = kwargs["env"]
         captured["prompt"] = kwargs["input_text"]
-        output_path = Path(command[command.index("-o") + 1])
-        output_path.write_text(
-            """
-{
-  "status": "completed",
-  "message": "Smoke passed.",
-  "document_updates": [
-    {
-      "path": "documents/analysis/product-manager.md",
-      "content": "# Smoke passed"
-    }
-  ],
-  "handoffs": []
-}
-""".strip(),
-            encoding="utf-8",
+        append_safe_output_record(
+            output_file=Path(kwargs["env"]["AGENTIC_MESH_SAFE_OUTPUT_FILE"]),
+            tool="document.propose_update",
+            payload={
+                "path": "documents/analysis/product-manager.md",
+                "content": "# Smoke passed",
+            },
+        )
+        append_safe_output_record(
+            output_file=Path(kwargs["env"]["AGENTIC_MESH_SAFE_OUTPUT_FILE"]),
+            tool="status.report_completion",
+            payload={"message": "Smoke passed."},
         )
 
         class Completed:
@@ -310,6 +290,7 @@ def test_configured_worker_uses_current_codex_exec_flags(
             stdout = ""
             stderr = ""
             timed_out = False
+            progress_observed_at = "2026-06-05T00:00:00+00:00"
 
         return Completed()
 
@@ -319,6 +300,7 @@ def test_configured_worker_uses_current_codex_exec_flags(
         document_library=DocumentLibraryConfig(root=str(tmp_path / "docs")),
     )
     worker = ConfiguredWorkerAdapter(
+        mesh_config=mesh_config,
         project=project,
         auth_methods=mesh_config.auth_methods,
         workspace_root=tmp_path / "workspace",
@@ -350,28 +332,36 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert "danger-full-access" in command
     assert "-c" in command
     assert "model_reasoning_effort=high" in command
+    assert "--output-schema" not in command
+    assert "-o" not in command
     assert captured["env"]["CODEX_HOME"] == str(
         tmp_path / "state" / "worker_mounts" / mount_ref
     )
+    assert captured["env"]["AGENTIC_MESH_SAFE_OUTPUT_FILE"]
+    assert captured["env"]["AGENTIC_MESH_WORK_ITEM_ID"] == "work-smoke"
     prompt = str(captured["prompt"])
-    assert "Project goal:" in prompt
+    assert "<system>" in prompt
+    assert "<safe-outputs>" in prompt
+    assert "python -m agentic_mesh.cli safe-output <tool-name> ." in prompt
+    assert "Do not return legacy final JSON" in prompt
+    assert "<goal>" in prompt
     assert "Build Agentic Mesh into an open-core" in prompt
     assert "pluggable connectors" in prompt
     assert "current_focus" not in prompt
-    assert "Project workspace:" in prompt
+    assert "<workspace>" in prompt
     assert '"workspace_root": "examples/projects/agentic-mesh-dev"' in prompt
     assert '"default_repository": "agentic-mesh"' in prompt
     assert '"path": "../../.."' in prompt
-    assert "Document library and role memory:" in prompt
-    assert "Role charter:" in prompt
-    assert "role_profile" in prompt
+    assert "<document-library-and-memory>" in prompt
+    assert "<accountability>" in prompt
+    assert "Role profile:" in prompt
+    assert "product accountability owner" in prompt
     assert "decision_rights" in prompt
     assert "core_workflows" in prompt
-    assert "Role capability context:" in prompt
+    assert "<capabilities>" in prompt
     assert "availability has not been validated" in prompt
     assert "document-library.read" in prompt
-    assert "broader regression checks when feasible" in prompt
-    assert "clearly unrelated reasons" in prompt
+    assert "Use safe-output tools for every durable effect" in prompt
     prompt_files = list(
         (tmp_path / "docs" / "work-items" / "work-smoke" / "debug" / "prompts").glob(
             "**/*.prompt.txt"
@@ -390,40 +380,6 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert metadata["role_instance_id"] == instance.instance_id
     assert metadata["message_id"] == message.message_id
     assert metadata["prompt_capture"] == "exact_stdin_sent_to_worker_adapter"
-
-
-def test_agent_result_schema_is_strict_for_nested_handoff_payload() -> None:
-    handoff_payload_schema = (
-        AGENT_RESULT_SCHEMA["properties"]["handoffs"]["items"]["properties"]["payload"]
-    )
-
-    assert handoff_payload_schema["type"] == "object"
-    assert handoff_payload_schema["additionalProperties"] is False
-    assert "lifecycle_state" in handoff_payload_schema["properties"]
-    assert "out_of_flow_reason" in handoff_payload_schema["properties"]
-    assert set(handoff_payload_schema["required"]) == set(
-        handoff_payload_schema["properties"]
-    )
-
-
-def test_parse_agent_result_rejects_runtime_recovery_as_role_status() -> None:
-    mesh_config = load_mesh_config(Path.cwd())
-    flow_state = mesh_config.project.flow.states["implementation"]
-
-    try:
-        result_from_payload(
-            {
-                "status": "needs_runtime_recovery",
-                "message": "Runtime should own this.",
-                "document_updates": [],
-                "handoffs": [],
-            },
-            flow_state,
-        )
-    except ValueError as exc:
-        assert "unsupported status" in str(exc)
-    else:
-        raise AssertionError("needs_runtime_recovery must not parse as a role result")
 
 
 def test_codex_timeout_returns_worker_recovery_problem(

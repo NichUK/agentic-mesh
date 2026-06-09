@@ -22,6 +22,10 @@ dependencies = [
   "PyYAML>=6.0",
 ]
 
+[project.scripts]
+agentic-mesh = "agentic_mesh.cli:main"
+agentic-mesh-safeoutputs-mcp = "agentic_mesh.safe_outputs_mcp:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",

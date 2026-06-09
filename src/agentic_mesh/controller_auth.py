@@ -422,7 +422,10 @@ class ControllerAuthService:
             for path in event.get("artifact_paths") or []:
                 if path:
                     artifact_paths.append(str(path))
-        artifacts = sorted(set(artifact_paths))
+        artifacts = sorted(
+            set(artifact_paths)
+            | set(self._work_item_prompt_audit_artifacts(mesh_config, work_item_id))
+        )
         verification_by_path = {
             str(record.get("path")): record
             for record in (problem_status or {}).get("artifact_verification", [])
@@ -1012,6 +1015,45 @@ class ControllerAuthService:
         if not path.exists() or not path.is_file():
             return None
         return path
+
+    def _work_item_prompt_audit_artifacts(
+        self,
+        mesh_config: MeshConfig,
+        work_item_id: str,
+    ) -> list[str]:
+        safe_work_item_id = work_item_id.strip()
+        if not safe_work_item_id or "/" in safe_work_item_id or "\\" in safe_work_item_id:
+            return []
+        effective_workspace_root = self._effective_workspace_root(mesh_config)
+        document_root = self._document_library_root(
+            mesh_config,
+            effective_workspace_root,
+        )
+        prompt_root = (
+            document_root
+            / "work-items"
+            / safe_work_item_id
+            / "debug"
+            / "prompts"
+        )
+        artifacts: list[str] = []
+        for root in [
+            prompt_root,
+            document_root
+            / "work-items"
+            / safe_work_item_id
+            / "debug"
+            / "safe-outputs",
+        ]:
+            if not root.exists() or not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if path.is_file() and path.suffix in {".txt", ".json"}:
+                    try:
+                        artifacts.append(path.relative_to(document_root).as_posix())
+                    except ValueError:
+                        continue
+        return artifacts
 
     @staticmethod
     def artifact_renderer_url_template() -> str | None:
@@ -2797,6 +2839,12 @@ def _artifact_label_record(
             "label": str(verification.get("label") or "Unverified partial artifact"),
             "verification": str(verification.get("verification") or "unverified_partial"),
         }
+    if "/debug/prompts/" in path and path.endswith(".prompt.txt"):
+        return {"label": "Debug prompt audit", "verification": "debug"}
+    if "/debug/prompts/" in path and path.endswith(".metadata.json"):
+        return {"label": "Debug prompt metadata", "verification": "debug"}
+    if "/debug/safe-outputs/" in path and path.endswith(".safe-outputs.json"):
+        return {"label": "Safe-output audit", "verification": "debug"}
     if path.endswith("/lifecycle-flow.md"):
         return {"label": "Lifecycle flow", "verification": "verified"}
     return {"label": "Verified artifact", "verification": "verified"}

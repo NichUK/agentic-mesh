@@ -39,6 +39,12 @@ core_workflows:
     artifacts:
       - docs/business/briefs.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Business Analyst
+    url: https://ddat-capability-framework.service.gov.uk/role/business-analyst
+    applies_to: Business problem analysis, feasible options, user and business needs, and success measures.
   - name: BABOK
     url: https://www.iiba.org/standards-and-resources/babok/
     applies_to: Business analysis planning, elicitation, collaboration, and requirements lifecycle thinking.

@@ -38,6 +38,12 @@ core_workflows:
     artifacts:
       - docs/technical-writing/documentation-log.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Content Designer
+    url: https://ddat-capability-framework.service.gov.uk/role/content-designer
+    applies_to: Creating, evaluating, updating, and reviewing content through the end-to-end journey.
   - name: BMAD Method
     url: https://docs.bmad-method.org/reference/agents/
     applies_to: Technical-writer agent workflows for documenting, diagramming, validating, and explaining.

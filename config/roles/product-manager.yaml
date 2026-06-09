@@ -38,6 +38,12 @@ core_workflows:
     artifacts:
       - docs/product/stories.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Product Manager
+    url: https://ddat-capability-framework.service.gov.uk/role/product-manager
+    applies_to: Product quality, value, outcome measurement, lifecycle leadership, and prioritisation.
   - name: Scrum Guide
     url: https://scrumguides.org/scrum-guide.html
     applies_to: Product accountability, transparency, and value-focused backlog decisions.

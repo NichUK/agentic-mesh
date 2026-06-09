@@ -132,6 +132,22 @@ def test_controller_work_item_status_page_shows_claimed_slice(
     )
     artifact_path.parent.mkdir(parents=True)
     artifact_path.write_text("# Stories\n\nVisible artifact content.\n", encoding="utf-8")
+    prompt_path = (
+        tmp_path
+        / "docs"
+        / "work-items"
+        / "work-queue-v0"
+        / "debug"
+        / "prompts"
+        / "example-project.product-manager.1"
+        / "2026-06-09T000000Z0000-msg-abc.prompt.txt"
+    )
+    prompt_path.parent.mkdir(parents=True)
+    prompt_path.write_text("Exact prompt sent to Codex.\n", encoding="utf-8")
+    metadata_path = prompt_path.with_name(
+        "2026-06-09T000000Z0000-msg-abc.metadata.json"
+    )
+    metadata_path.write_text('{"prompt_capture":"exact_stdin_sent_to_worker_adapter"}\n', encoding="utf-8")
     journal = EventJournal(state_root, project_id)
     message_store = FileMessageStore(state_root, project_id, journal)
     message = Message.create(
@@ -183,13 +199,27 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert payload["current"]["role_id"] == "product-manager"
         assert payload["current"]["lifecycle_state"] == "product_definition"
         assert payload["artifacts"] == [
-            "work-items/work-queue-v0/20-product-definition.md"
+            "work-items/work-queue-v0/20-product-definition.md",
+            "work-items/work-queue-v0/debug/prompts/example-project.product-manager.1/2026-06-09T000000Z0000-msg-abc.metadata.json",
+            "work-items/work-queue-v0/debug/prompts/example-project.product-manager.1/2026-06-09T000000Z0000-msg-abc.prompt.txt",
         ]
         assert payload["artifact_records"] == [
             {
                 "path": "work-items/work-queue-v0/20-product-definition.md",
                 "label": "Verified artifact",
                 "verification": "verified",
+                "exists": True,
+            },
+            {
+                "path": "work-items/work-queue-v0/debug/prompts/example-project.product-manager.1/2026-06-09T000000Z0000-msg-abc.metadata.json",
+                "label": "Debug prompt metadata",
+                "verification": "debug",
+                "exists": True,
+            },
+            {
+                "path": "work-items/work-queue-v0/debug/prompts/example-project.product-manager.1/2026-06-09T000000Z0000-msg-abc.prompt.txt",
+                "label": "Debug prompt audit",
+                "verification": "debug",
                 "exists": True,
             }
         ]
@@ -203,6 +233,9 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         assert "Work Item work-queue-v0" in body
         assert "product_definition" in body
         assert "work-items/work-queue-v0/20-product-definition.md" in body
+        assert "Debug prompt audit" in body
+        assert "Debug prompt metadata" in body
+        assert "work-items/work-queue-v0/debug/prompts/example-project.product-manager.1/2026-06-09T000000Z0000-msg-abc.prompt.txt" in body
         assert (
             "/artifact-viewer/work-items%2Fwork-queue-v0%2F20-product-definition.md"
             in body
@@ -222,6 +255,16 @@ def test_controller_work_item_status_page_shows_claimed_slice(
 
         assert response.status == 200
         assert "Visible artifact content." in artifact_body
+
+        connection.request(
+            "GET",
+            "/artifacts/work-items%2Fwork-queue-v0%2Fdebug%2Fprompts%2Fexample-project.product-manager.1%2F2026-06-09T000000Z0000-msg-abc.prompt.txt",
+        )
+        response = connection.getresponse()
+        prompt_body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "Exact prompt sent to Codex." in prompt_body
 
         connection.request(
             "GET",

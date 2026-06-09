@@ -85,6 +85,9 @@ from agentic_mesh.problem_status import role_problem_status
 from agentic_mesh.problem_status import worker_problem_status
 from agentic_mesh.route_status import CurrentRouteStore
 from agentic_mesh.runtime import AgentRuntime
+from agentic_mesh.safe_outputs import append_safe_output_record
+from agentic_mesh.safe_outputs import safe_output_context_from_env
+from agentic_mesh.safe_outputs import safe_output_file_from_env
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.teams_ingress import ReloadableTeamsBotIngress
@@ -1926,6 +1929,42 @@ def cmd_record_human_response(args) -> int:
     return 0
 
 
+def cmd_safe_output(args) -> int:
+    if args.stdin_marker != ".":
+        print("safe-output requires `.` and a JSON object on stdin", file=sys.stderr)
+        return 2
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError as exc:
+        print(f"invalid safe-output JSON payload: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(payload, dict):
+        print("safe-output payload must be a JSON object", file=sys.stderr)
+        return 2
+    try:
+        record = append_safe_output_record(
+            output_file=safe_output_file_from_env(),
+            tool=args.tool,
+            payload=payload,
+            context=safe_output_context_from_env(),
+        )
+    except Exception as exc:
+        print(f"safe-output failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        json.dumps(
+            {
+                "schema_version": record.to_dict()["schema_version"],
+                "tool": record.tool,
+                "recorded_at": record.recorded_at,
+                "validation": record.validation,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def cmd_agent_loop(args) -> int:
     mesh_config = load_mesh_config(args.config_root, project_file=args.project_file)
     instance = mesh_config.instances[args.instance]
@@ -3300,6 +3339,14 @@ def parser() -> argparse.ArgumentParser:
         help="Bypass the live control plane and enqueue into the configured local state root.",
     )
     human_response.set_defaults(func=cmd_record_human_response)
+
+    safe_output = subcommands.add_parser("safe-output")
+    safe_output.add_argument("tool")
+    safe_output.add_argument(
+        "stdin_marker",
+        help="Use `.` to read a JSON object payload from stdin.",
+    )
+    safe_output.set_defaults(func=cmd_safe_output)
 
     agent_loop = subcommands.add_parser("agent-loop")
     agent_loop.add_argument("--instance", required=True)
