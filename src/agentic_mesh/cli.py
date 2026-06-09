@@ -74,6 +74,7 @@ from agentic_mesh.models import utc_now_iso
 from agentic_mesh.notifications import FileNotificationAttemptStore
 from agentic_mesh.notifications import FileSourceRouteStore
 from agentic_mesh.provider_conditions import CodexProviderConditionProfile
+from agentic_mesh.prompt_audit import write_startup_prompt_audit
 from agentic_mesh.recovery_alerts import FileRecoveryAlertStore
 from agentic_mesh.recovery_alerts import RecoveryAlertState
 from agentic_mesh.recovery_observability import build_recovery_observability_view
@@ -1927,6 +1928,40 @@ def cmd_record_human_response(args) -> int:
 
 def cmd_agent_loop(args) -> int:
     mesh_config = load_mesh_config(args.config_root, project_file=args.project_file)
+    instance = mesh_config.instances[args.instance]
+    workspace_root = project_workspace_root(args.workspace_root, mesh_config)
+    document_library_root = project_document_library_root(workspace_root, mesh_config)
+    try:
+        startup_audit = write_startup_prompt_audit(
+            document_library_root=document_library_root,
+            project=mesh_config.project,
+            instance=instance,
+            workspace_root=workspace_root,
+            reason="agent_loop_start",
+            argv=sys.argv,
+        )
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "error": "startup_prompt_audit_failed",
+                    "instance": args.instance,
+                    "reason": exc.__class__.__name__,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "instance": args.instance,
+                "startup_prompt_audit": startup_audit,
+            },
+            sort_keys=True,
+        )
+    )
     reload_requested = False
     if getattr(args, "reclaim_existing_claims_on_start", True):
         args.reclaim_claimed_before = utc_now_iso()

@@ -2,12 +2,14 @@ import os
 import sys
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from agentic_mesh.cli import build_runtime
 from agentic_mesh.cli import project_workspace_root
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
+from agentic_mesh.models import DocumentLibraryConfig
 from agentic_mesh.models import Message
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh import workers
@@ -312,8 +314,12 @@ def test_configured_worker_uses_current_codex_exec_flags(
         return Completed()
 
     monkeypatch.setattr(workers, "run_progress_aware_command", fake_run)
+    project = replace(
+        mesh_config.project,
+        document_library=DocumentLibraryConfig(root=str(tmp_path / "docs")),
+    )
     worker = ConfiguredWorkerAdapter(
-        project=mesh_config.project,
+        project=project,
         auth_methods=mesh_config.auth_methods,
         workspace_root=tmp_path / "workspace",
         state_root=tmp_path / "state",
@@ -321,7 +327,13 @@ def test_configured_worker_uses_current_codex_exec_flags(
     message = Message.create(
         role_id="product-manager",
         message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
-        payload={"title": "Smoke", "summary": "Check command flags."},
+        payload={
+            "title": "Smoke",
+            "summary": "Check command flags.",
+            "work_item_id": "work-smoke",
+            "work_item_type": "slice",
+            "lifecycle_state": "product_definition",
+        },
         source="test",
     )
 
@@ -360,6 +372,24 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert "document-library.read" in prompt
     assert "broader regression checks when feasible" in prompt
     assert "clearly unrelated reasons" in prompt
+    prompt_files = list(
+        (tmp_path / "docs" / "work-items" / "work-smoke" / "debug" / "prompts").glob(
+            "**/*.prompt.txt"
+        )
+    )
+    metadata_files = list(
+        (tmp_path / "docs" / "work-items" / "work-smoke" / "debug" / "prompts").glob(
+            "**/*.metadata.json"
+        )
+    )
+    assert len(prompt_files) == 1
+    assert len(metadata_files) == 1
+    assert prompt_files[0].read_text(encoding="utf-8").strip() == prompt.strip()
+    metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
+    assert metadata["audit_kind"] == "work_item_prompt"
+    assert metadata["role_instance_id"] == instance.instance_id
+    assert metadata["message_id"] == message.message_id
+    assert metadata["prompt_capture"] == "exact_stdin_sent_to_worker_adapter"
 
 
 def test_agent_result_schema_is_strict_for_nested_handoff_payload() -> None:
