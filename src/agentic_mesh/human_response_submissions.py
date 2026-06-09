@@ -151,6 +151,7 @@ class HumanResponseSubmissionService:
                 response_value=decision_value,
                 source=source,
                 connector_origin_authenticated=authenticated,
+                prevalidated=True,
                 correlation_id=correlation_id,
                 trace_context=trace_context,
             )

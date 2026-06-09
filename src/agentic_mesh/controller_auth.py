@@ -29,6 +29,8 @@ from agentic_mesh import status_dashboard
 from agentic_mesh.activation_evidence import ActivationReadError
 from agentic_mesh.activation_evidence import FileActivationEvidenceStore
 from agentic_mesh.human_gates import derive_human_gate_summary
+from agentic_mesh.human_gates import FileHumanGateRequestStore
+from agentic_mesh.human_response_submissions import HumanResponseSubmissionService
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.models import AuthCredential
@@ -702,6 +704,69 @@ class ControllerAuthService:
             "available_actions": [],
         }
 
+    def record_human_response(self, form: dict[str, str]) -> dict[str, Any]:
+        required = [
+            "work_item_id",
+            "lifecycle_state",
+            "gate_id",
+            "response_request_id",
+            "responder",
+            "value",
+        ]
+        missing = [field for field in required if not form.get(field)]
+        if missing:
+            return {
+                "accepted": False,
+                "final": False,
+                "duplicate": False,
+                "validation_reason": "missing_required_fields",
+                "missing_fields": missing,
+            }
+
+        mesh_config = self.load_config()
+        project_id = mesh_config.project.project_id
+        flow_state = mesh_config.project.flow.states.get(form["lifecycle_state"])
+        gate = None
+        if flow_state is not None:
+            gate = next(
+                (
+                    candidate
+                    for candidate in flow_state.gates
+                    if candidate.gate_id == form["gate_id"]
+                ),
+                None,
+            )
+        target_role = (
+            form.get("role")
+            or (flow_state.owner_role if flow_state is not None else None)
+            or "release-manager"
+        )
+        journal = EventJournal(self.state_root, project_id)
+        service = HumanResponseSubmissionService(
+            project_id=project_id,
+            store=FileHumanGateRequestStore(self.state_root, project_id),
+            message_store=FileMessageStore(self.state_root, project_id, journal),
+        )
+        result = service.submit(
+            target_role=target_role,
+            work_item_id=form["work_item_id"],
+            work_item_type=form.get("work_item_type") or "slice",
+            lifecycle_state=form["lifecycle_state"],
+            gate_id=form["gate_id"],
+            response_type=gate.response_type if gate is not None else None,
+            approval_request_id=form.get("approval_request_id") or None,
+            response_request_id=form["response_request_id"],
+            responder=form.get("responder") or "sponsor",
+            response_value=_normalize_human_response_value(
+                _parse_human_response_value(form["value"]),
+                gate.response_type if gate is not None else None,
+            ),
+            authenticated=True,
+            source=form.get("source") or "cli",
+            correlation_id=form.get("correlation_id") or new_id("corr"),
+        )
+        return result.to_dict()
+
     def execute_work_item_action(
         self,
         work_item_id: str,
@@ -1362,6 +1427,15 @@ class ControllerAuthHandler(BaseHTTPRequestHandler):
                 self._redirect(
                     "/auth/codex/session?" + urlencode({"id": session.session_id})
                 )
+                return
+            if path.path == "/human-responses":
+                result = self.server.service.record_human_response(form)
+                status = (
+                    HTTPStatus.OK
+                    if result.get("accepted") or result.get("duplicate")
+                    else HTTPStatus.BAD_REQUEST
+                )
+                self._send_json(status, result)
                 return
             if path.path.startswith("/work-items/") and path.path.endswith("/actions"):
                 work_item_id = unquote(
@@ -2661,6 +2735,27 @@ def _safe_int(value: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _parse_human_response_value(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
+def _normalize_human_response_value(value: Any, response_type: str | None) -> Any:
+    if response_type != "approve_not_approve" or not isinstance(value, str):
+        return value
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return {
+        "approve": "approved",
+        "approved": "approved",
+        "not_approve": "not_approved",
+        "not_approved": "not_approved",
+        "reject": "not_approved",
+        "rejected": "not_approved",
+    }.get(normalized, value)
 
 
 def _default_work_item_action_reason(action: str) -> str:
