@@ -287,6 +287,61 @@ def test_controller_work_item_status_page_shows_claimed_slice(
         thread.join(timeout=5)
 
 
+def test_controller_work_item_status_page_shows_debug_only_item(
+    tmp_path: Path,
+) -> None:
+    work_item_id = "work-debug-only"
+    prompt_path = (
+        tmp_path
+        / "docs"
+        / "work-items"
+        / work_item_id
+        / "debug"
+        / "prompts"
+        / "example-project.product-manager.1"
+        / "2026-06-09T000000Z0000-msg-debug.prompt.txt"
+    )
+    prompt_path.parent.mkdir(parents=True)
+    prompt_path.write_text("Exact prompt sent to Codex.\n", encoding="utf-8")
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file="examples/projects/example-project/agentic-mesh/project.yaml",
+        state_root=tmp_path / "state",
+        workspace_root=tmp_path,
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request("GET", f"/work-items/{work_item_id}.json")
+        response = connection.getresponse()
+        payload = json.loads(response.read().decode("utf-8"))
+
+        assert response.status == 200
+        assert payload["status"] == "observed"
+        assert payload["current"]["reason_summary"].startswith(
+            "No lifecycle or queue status was recorded"
+        )
+        assert payload["artifacts"] == [
+            f"work-items/{work_item_id}/debug/prompts/example-project.product-manager.1/2026-06-09T000000Z0000-msg-debug.prompt.txt",
+        ]
+
+        connection.request("GET", f"/work-items/{work_item_id}")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert work_item_id in body
+        assert "Debug prompt audit" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_controller_work_item_status_includes_safe_activation_section(
     tmp_path: Path,
 ) -> None:

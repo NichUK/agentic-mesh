@@ -344,6 +344,9 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert "<safe-outputs>" in prompt
     assert "python -m agentic_mesh.cli safe-output <tool-name> ." in prompt
     assert "Do not return legacy final JSON" in prompt
+    assert "Durable claim discipline" in prompt
+    assert "unless you emitted the corresponding safe-output call" in prompt
+    assert "Never say you created, restarted, promoted, updated" in prompt
     assert "<goal>" in prompt
     assert "Build Agentic Mesh into an open-core" in prompt
     assert "pluggable connectors" in prompt

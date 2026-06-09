@@ -72,7 +72,28 @@ infrastructure reconnaissance, or privilege escalation. Report limitations rathe
 than bypassing runtime boundaries.
 """.strip(),
             ),
-            _section("safe-outputs", safe_output_tools_prompt()),
+            _section(
+                "safe-outputs",
+                "\n\n".join(
+                    [
+                        safe_output_tools_prompt(),
+                        (
+                            "Durable claim discipline: never claim that a work item, "
+                            "queue item, document, artifact, handoff, consult, blocker, "
+                            "sponsor question, release candidate, risk, decision, or "
+                            "memory entry exists, was created, was restarted, was "
+                            "promoted, or was updated unless you emitted the "
+                            "corresponding safe-output call in this run."
+                        ),
+                        (
+                            "If the requested action requires a runtime mutation that "
+                            "is not exposed as a safe-output tool, report the gap with "
+                            "`route.raise_blocker` or `report_incomplete`; do not "
+                            "describe the mutation as complete."
+                        ),
+                    ]
+                ),
+            ),
             "</system>",
             "",
             "<role>",
@@ -179,6 +200,12 @@ Use safe-output tools for every durable effect. Do not return legacy final JSON
 with document_updates, handoffs, or routes. Do not rely on unreported filesystem
 edits. If no durable work is appropriate, call `noop` or `status.report_completion`
 with a concise reason.
+
+Never say you created, restarted, promoted, updated, linked, asked, blocked,
+handed off, consulted, registered, recorded, or completed a durable thing unless
+that exact durable effect is represented by a safe-output call from this run. If
+you cannot create the thing through the available safe-output tools, report that
+truthfully as incomplete or blocked.
 
 Keep all work aligned to the project goal. Ask sponsor questions when scope,
 acceptance criteria, permissions, channels, retention, priority, or release

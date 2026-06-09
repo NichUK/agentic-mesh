@@ -426,6 +426,19 @@ class ControllerAuthService:
             set(artifact_paths)
             | set(self._work_item_prompt_audit_artifacts(mesh_config, work_item_id))
         )
+        if current.get("status") == "not_found" and artifacts:
+            current = {
+                "status": "observed",
+                "role_id": None,
+                "role_instance_id": None,
+                "lifecycle_state": None,
+                "message_id": None,
+                "since": None,
+                "reason_summary": (
+                    "No lifecycle or queue status was recorded, but debug "
+                    "artifacts exist for this work item."
+                ),
+            }
         verification_by_path = {
             str(record.get("path")): record
             for record in (problem_status or {}).get("artifact_verification", [])
