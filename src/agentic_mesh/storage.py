@@ -408,7 +408,16 @@ class FileMessageStore:
         return None
 
     @staticmethod
-    def _dedupe_key(message: Message) -> tuple[str, str, str, str, str] | None:
+    def _dedupe_key(message: Message) -> tuple[str, ...] | None:
+        if message.type == "conversation.direct":
+            source_idempotency_key = message.payload.get("source_idempotency_key")
+            if source_idempotency_key:
+                return (
+                    message.role_id,
+                    message.type,
+                    str(source_idempotency_key),
+                    str(message.payload.get("target_role") or ""),
+                )
         work_item_id = message.payload.get("work_item_id")
         lifecycle_state = message.payload.get("lifecycle_state")
         if not work_item_id or not lifecycle_state:

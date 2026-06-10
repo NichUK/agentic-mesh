@@ -8,6 +8,7 @@ from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.human_gates import FileHumanGateRequestStore
 from agentic_mesh.journal import EventJournal
+from agentic_mesh.messaging import MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.models import AgentRunResult
 from agentic_mesh.models import DocumentUpdate
@@ -1810,6 +1811,106 @@ def test_direct_sponsor_directive_runs_without_lifecycle_handoff_or_gate(
     assert "directive_publish_ready_connector_message_queued" in event_types
     assert "handoff_emitted" not in event_types
     assert "human_response_requested" not in event_types
+
+
+class ConversationWorkerAdapter(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="In-role answer sent. I would propose tracked work if needed.",
+            document_updates=[
+                DocumentUpdate(
+                    path="documents/analysis/product-manager.md",
+                    content="This should not be published from conversation.",
+                )
+            ],
+            handoffs=[
+                Handoff(
+                    target_role="delivery-manager",
+                    message_type="sdlc.intake",
+                    payload={"summary": "This should not be routed informally."},
+                )
+            ],
+        )
+
+
+def test_direct_conversation_does_not_publish_artifacts_or_handoffs(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        ConversationWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+    message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED,
+            payload={
+                "title": "Explain product tradeoffs",
+                "summary": "Can you explain the product scope trade-offs in role?",
+                "text": "Can you explain the product scope trade-offs in role?",
+                "conversation_mode": "targeted",
+                "requested_roles": ["product-manager"],
+                "target_role": "product-manager",
+                "source_channel": "dm",
+                "teams_conversation_id": "personal-conversation-1",
+                "teams_reply_to_activity_id": "activity-product-manager-dm",
+                "teams_service_url": "https://smba.trafficmanager.net/uk/",
+            },
+            source="teams:teams-bot-listener:dm",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+
+    assert connector_outbox.pending_count("product") == 2
+    started = connector_outbox.claim_next("product", "test-connector")
+    completed = connector_outbox.claim_next("product", "test-connector")
+    assert started is not None
+    assert completed is not None
+    assert started.type == "conversation.started"
+    assert completed.type == "conversation.completed"
+    assert completed.payload["status"] == "completed"
+    assert completed.payload["status_message"] == (
+        "In-role answer sent. I would propose tracked work if needed."
+    )
+    assert "work_item_id" not in completed.payload
+    assert not (tmp_path / "workspace" / "documents").exists()
+    assert message_store.pending_count("delivery-manager") == 0
+
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "agent_conversation_run_started" in event_types
+    assert "conversation_status_connector_message_queued" in event_types
+    assert "conversation_document_updates_ignored" in event_types
+    assert "conversation_handoffs_ignored" in event_types
+    assert "directive_publish_ready_connector_message_queued" not in event_types
+    assert "handoff_emitted" not in event_types
 
 
 def test_queue_originated_publish_ready_targets_source_anchor(

@@ -14,9 +14,11 @@ from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.human_gates import FileHumanGateRequestStore
 from agentic_mesh.human_gates import HumanGateStoreError
+from agentic_mesh.messaging import MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
+from agentic_mesh.messaging import build_direct_conversation_status_message
 from agentic_mesh.messaging import build_human_response_request
 from agentic_mesh.messaging import build_problem_status_connector_message
 from agentic_mesh.messaging import build_route_status_connector_message
@@ -158,6 +160,8 @@ class AgentRuntime:
             return True
 
     def _run_claimed_message(self, instance_id: str, instance_config, message: Message) -> bool:
+        if message.type == MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED:
+            return self._run_direct_conversation(instance_id, instance_config, message)
         if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED:
             return self._run_direct_directive(instance_id, instance_config, message)
         state_id = message.payload.get("lifecycle_state", self.project.flow.entry_state)
@@ -1526,6 +1530,125 @@ class AgentRuntime:
             )
             return True
 
+    def _run_direct_conversation(self, instance_id: str, instance_config, message: Message) -> bool:
+        direct_state = FlowState(
+            state_id="direct_conversation",
+            owner_role=instance_config.role_id,
+            purpose=(
+                "Direct conversation addressed to this role. Answer in role. "
+                "Propose tracked work only when the conversation crosses the "
+                "conversation-to-work boundary."
+            ),
+            artifact_path="",
+            handoffs={},
+            consults={},
+            gates=[],
+        )
+        attrs = telemetry.span_attributes(
+            project_id=instance_config.project_id,
+            role_id=instance_config.role_id,
+            role_instance_id=instance_id,
+            lifecycle_state=direct_state.state_id,
+            message_id=message.message_id,
+            correlation_id=message.correlation_id,
+            worker_adapter=instance_config.override.worker.adapter,
+            worker_model=instance_config.override.worker.model,
+        )
+        started = time.perf_counter()
+        with telemetry.start_span(
+            "agent.run",
+            correlation_id=message.correlation_id,
+            trace_context=message.trace_context,
+            attributes=attrs,
+        ) as trace_context:
+            message = replace(message, trace_context=trace_context)
+            message = self._with_runtime_instructions(
+                message,
+                direct_state,
+                direct_work=True,
+            )
+            self.journal.append(
+                "agent_conversation_run_started",
+                project_id=instance_config.project_id,
+                role_id=instance_config.role_id,
+                role_instance_id=instance_id,
+                message_id=message.message_id,
+                correlation_id=message.correlation_id,
+                conversation_mode=message.payload.get("conversation_mode"),
+            )
+            self._queue_direct_conversation_status_connector_message(
+                source_instance=instance_config,
+                source_message=message,
+                status="started",
+                status_message="Message received. Preparing an in-role reply.",
+            )
+            with telemetry.start_span(
+                "worker.run",
+                correlation_id=message.correlation_id,
+                trace_context=message.trace_context,
+                attributes=attrs,
+            ):
+                worker_output = self.worker.run(instance_config, message, direct_state)
+            if isinstance(worker_output, WorkerRunOutcome):
+                if worker_output.problem_status is not None:
+                    status_message = worker_output.problem_status.reason_summary
+                    self._queue_direct_conversation_status_connector_message(
+                        source_instance=instance_config,
+                        source_message=message,
+                        status="needs_runtime_recovery",
+                        status_message=status_message,
+                    )
+                    self.message_store.complete(
+                        message,
+                        "needs_runtime_recovery",
+                        result_message=status_message,
+                    )
+                    return True
+                if worker_output.role_result is None:
+                    raise ValueError("worker outcome did not include a role result")
+                result = worker_output.role_result
+            else:
+                result = worker_output
+            if result.document_updates:
+                self.journal.append(
+                    "conversation_document_updates_ignored",
+                    project_id=instance_config.project_id,
+                    role_id=instance_config.role_id,
+                    role_instance_id=instance_id,
+                    message_id=message.message_id,
+                    update_count=len(result.document_updates),
+                    reason="direct_conversation_does_not_publish_artifacts",
+                    correlation_id=message.correlation_id,
+                )
+            if result.handoffs:
+                self.journal.append(
+                    "conversation_handoffs_ignored",
+                    project_id=instance_config.project_id,
+                    role_id=instance_config.role_id,
+                    role_instance_id=instance_id,
+                    message_id=message.message_id,
+                    handoff_count=len(result.handoffs),
+                    reason="direct_conversation_must_propose_tracked_work_via_safe_outputs",
+                    correlation_id=message.correlation_id,
+                )
+            telemetry.record_duration(
+                "agentic_mesh.agent.run.duration",
+                time.perf_counter() - started,
+                attrs,
+            )
+            self._queue_direct_conversation_status_connector_message(
+                source_instance=instance_config,
+                source_message=message,
+                status=result.status,
+                status_message=result.message,
+            )
+            self.message_store.complete(
+                message,
+                result.status,
+                result_message=result.message,
+            )
+            return True
+
     def _with_runtime_instructions(
         self,
         message: Message,
@@ -2134,6 +2257,63 @@ class AgentRuntime:
             status=status,
             correlation_id=source_message.correlation_id,
         )
+
+    def _queue_direct_conversation_status_connector_message(
+        self,
+        *,
+        source_instance,
+        source_message: Message,
+        status: str,
+        status_message: str,
+    ) -> None:
+        if self.connector_outbox is None:
+            return
+        channel = self._direct_conversation_reply_channel(
+            source_instance=source_instance,
+            source_message=source_message,
+        )
+        if not channel:
+            self.journal.append(
+                "conversation_status_connector_message_unroutable",
+                project_id=source_instance.project_id,
+                role_id=source_instance.role_id,
+                role_instance_id=source_instance.instance_id,
+                status=status,
+                correlation_id=source_message.correlation_id,
+                reason="conversation_has_no_reply_channel",
+            )
+            return
+        connector_message = build_direct_conversation_status_message(
+            channel=channel,
+            source_instance=source_instance,
+            source_message=source_message,
+            status=status,
+            status_message=status_message,
+        )
+        self.connector_outbox.enqueue(connector_message)
+        self.journal.append(
+            "conversation_status_connector_message_queued",
+            project_id=source_instance.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            channel=channel,
+            connector_message_id=connector_message.message_id,
+            connector_message_type=connector_message.type,
+            status=status,
+            correlation_id=source_message.correlation_id,
+        )
+
+    def _direct_conversation_reply_channel(
+        self,
+        *,
+        source_instance,
+        source_message: Message,
+    ) -> str | None:
+        source_channel = str(source_message.payload.get("source_channel") or "")
+        if source_channel and source_channel != "dm":
+            return source_channel
+        role_override = self.project.roles[source_instance.role_id]
+        return role_override.channels.get("primary")
 
     def _record_problem_status(
         self,
