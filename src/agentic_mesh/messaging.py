@@ -132,6 +132,7 @@ def build_human_response_received_message(
     approval_request_id: str | None = None,
     response_type: str | None = None,
     connector_origin_authenticated: bool = False,
+    prevalidated: bool = False,
     correlation_id: str | None = None,
     trace_context: dict[str, str] | None = None,
 ) -> Message:
@@ -151,6 +152,7 @@ def build_human_response_received_message(
             "responder": responder,
             "response_value": response_value,
             "connector_origin_authenticated": connector_origin_authenticated,
+            "prevalidated_human_response": prevalidated,
         },
         source=source,
         correlation_id=correlation_id,

@@ -90,6 +90,8 @@ INTAKE_PROMOTION_STATUSES = {
     STATUS_TRIAGING,
     STATUS_NEEDS_CLARIFICATION,
 }
+OPEN_QUEUE_STATUSES = QUEUE_STATUSES - {STATUS_CLOSED, STATUS_CANCELED}
+COMPLETED_QUEUE_STATUSES = {STATUS_CLOSED}
 
 
 class WorkQueueError(ValueError):
@@ -446,6 +448,15 @@ class FileWorkQueueStore:
         raw_refs: list[str] = []
         if raw_payload is not None and retain_raw_payload:
             raw_refs.append(self._write_raw_payload(queue_item_id, raw_payload))
+        item_metadata = dict(metadata or {})
+        item_metadata.setdefault(
+            "pre_start_search",
+            _build_pre_start_search(
+                title=title,
+                summary=summary,
+                candidates=self.list_items(),
+            ),
+        )
         item = QueueItem(
             queue_item_id=queue_item_id,
             title=title,
@@ -459,7 +470,7 @@ class FileWorkQueueStore:
             updated_at=now,
             last_status_at=now,
             raw_refs=raw_refs,
-            metadata=dict(metadata or {}),
+            metadata=item_metadata,
         )
         self._write_item(item)
         if index_path is not None:
@@ -751,6 +762,7 @@ class FileWorkQueueStore:
                     "readiness": (
                         asdict(item.readiness) if item.readiness is not None else None
                     ),
+                    "pre_start_search": item.metadata.get("pre_start_search"),
                 },
                 source=f"work-queue:{item.queue_item_id}",
                 correlation_id=item.correlation_id,
@@ -1064,6 +1076,118 @@ def _truncate(value: str, max_length: int) -> str:
     if len(value) <= max_length:
         return value
     return f"{value[: max_length - 3].rstrip()}..."
+
+
+def _build_pre_start_search(
+    *,
+    title: str,
+    summary: str,
+    candidates: list[QueueItem],
+) -> dict[str, Any]:
+    open_candidates = _related_work_candidates(
+        title=title,
+        summary=summary,
+        candidates=[
+            item for item in candidates if item.status in OPEN_QUEUE_STATUSES
+        ],
+        relation="open_candidate",
+    )
+    completed_candidates = _related_work_candidates(
+        title=title,
+        summary=summary,
+        candidates=[
+            item for item in candidates if item.status in COMPLETED_QUEUE_STATUSES
+        ],
+        relation="completed_candidate",
+    )
+    return {
+        "schema_version": "pre-start-work-search-v0",
+        "search_kind": "cheap_lexical_queue_search",
+        "status": "completed",
+        "open_candidates": open_candidates,
+        "completed_candidates": completed_candidates,
+        "next_action": (
+            "Review open candidates before starting new work. Augment existing "
+            "open work where appropriate, and build on completed related work."
+        ),
+    }
+
+
+def _related_work_candidates(
+    *,
+    title: str,
+    summary: str,
+    candidates: list[QueueItem],
+    relation: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    query_tokens = _work_search_tokens(f"{title} {summary}")
+    if not query_tokens:
+        return []
+    scored: list[tuple[float, QueueItem, list[str]]] = []
+    for item in candidates:
+        item_tokens = _work_search_tokens(f"{item.title} {item.summary}")
+        overlap = sorted(query_tokens.intersection(item_tokens))
+        if not overlap:
+            continue
+        score = len(overlap) / max(len(query_tokens), 1)
+        if score < 0.18 and len(overlap) < 2:
+            continue
+        scored.append((score, item, overlap[:8]))
+    scored.sort(key=lambda entry: (-entry[0], entry[1].updated_at, entry[1].queue_item_id))
+    return [
+        {
+            "relation": relation,
+            "queue_item_id": item.queue_item_id,
+            "title": _truncate(item.title, 120),
+            "status": item.status,
+            "owner_role": item.owner_role,
+            "recommended_work_item_type": item.recommended_work_item_type,
+            "promoted_work_item_id": (
+                item.promotion.work_item_id if item.promotion else None
+            ),
+            "score": round(score, 3),
+            "match_terms": overlap,
+            "updated_at": item.updated_at,
+        }
+        for score, item, overlap in scored[:limit]
+    ]
+
+
+def _work_search_tokens(value: str) -> set[str]:
+    stop_words = {
+        "about",
+        "after",
+        "again",
+        "also",
+        "and",
+        "before",
+        "for",
+        "from",
+        "have",
+        "into",
+        "make",
+        "need",
+        "needs",
+        "please",
+        "should",
+        "that",
+        "the",
+        "this",
+        "with",
+        "work",
+    }
+    tokens = {
+        token
+        for token in (
+            part.strip("-_")
+            for part in "".join(
+                char.casefold() if char.isalnum() else " " for char in value
+            ).split()
+        )
+        if len(token) >= 3 and token not in stop_words
+    }
+    return tokens
 
 
 def _intake_role_for(item: QueueItem) -> str:

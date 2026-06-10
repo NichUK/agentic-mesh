@@ -11,7 +11,8 @@ from agentic_mesh.gateway import GatewayError
 from agentic_mesh.gateway import GatewayService
 from agentic_mesh.gateway import GatewayStore
 from agentic_mesh.gateway import OUTCOME_CLARIFICATION_NEEDED
-from agentic_mesh.gateway import OUTCOME_DIRECT_DELIVERY_ROUTED
+from agentic_mesh.gateway import OUTCOME_CREATE_OR_UPDATE_QUEUE_ITEM
+from agentic_mesh.gateway import OUTCOME_ROLE_DIRECTED_HINT
 from agentic_mesh.gateway import OUTCOME_STATUS_ANSWER
 from agentic_mesh.gateway import assert_no_forbidden_fields
 from agentic_mesh.gateway import event_from_message
@@ -90,7 +91,7 @@ def test_gateway_event_safe_serialization_redacts_forbidden_values() -> None:
         assert_no_forbidden_fields({"tenant_id": "raw"})
 
 
-def test_gateway_service_routes_direct_delivery_to_queue_without_lifecycle_message(
+def test_gateway_service_keeps_teams_delivery_request_conversational(
     tmp_path: Path,
 ) -> None:
     journal = _journal(tmp_path)
@@ -120,12 +121,55 @@ def test_gateway_service_routes_direct_delivery_to_queue_without_lifecycle_messa
     result = service.handle_event(event)
     duplicate = service.handle_event(event)
 
-    assert result.outcome == OUTCOME_DIRECT_DELIVERY_ROUTED
+    assert result.outcome == OUTCOME_ROLE_DIRECTED_HINT
+    assert result.queue_item_id is None
+    assert result.owner_role == "engineering"
+    assert duplicate.gateway_result_id == result.gateway_result_id
+    assert work_queue.list_items() == []
+    assert not (tmp_path / "projects" / "agentic-mesh-dev" / "queues").exists()
+
+
+def test_gateway_service_creates_queue_from_work_item_native_source(
+    tmp_path: Path,
+) -> None:
+    journal = _journal(tmp_path)
+    work_queue = FileWorkQueueStore(tmp_path, "agentic-mesh-dev", journal)
+    service = GatewayService(
+        project_id="agentic-mesh-dev",
+        gateway_config=_gateway_config(),
+        store=GatewayStore(tmp_path, "agentic-mesh-dev"),
+        journal=journal,
+        work_queue=work_queue,
+        role_ids={"delivery-manager", "engineering"},
+    )
+    event = event_from_message(
+        project_id="agentic-mesh-dev",
+        gateway_id="agentic-mesh",
+        connector_type="github",
+        connector_id="github-issues",
+        source_kind="issue",
+        source_anchor=SourceAnchor(
+            connector_type="github",
+            connector_id="github-issues",
+            source_scope="NichUK/agentic-mesh",
+            source_message_id="42",
+            actor="Sponsor",
+            received_at="2026-06-06T00:00:00+00:00",
+            display_label="GitHub issue 42",
+        ),
+        actor_label="Sponsor",
+        actor_source_id="actor-1",
+        text="Please implement the gateway status command.",
+        idempotency_key="github:issue:42",
+        role_hints=["engineering"],
+    )
+
+    result = service.handle_event(event)
+
+    assert result.outcome == OUTCOME_CREATE_OR_UPDATE_QUEUE_ITEM
     assert result.queue_item_id is not None
     assert result.owner_role == "delivery-manager"
-    assert duplicate.gateway_result_id == result.gateway_result_id
     assert len(work_queue.list_items()) == 1
-    assert not (tmp_path / "projects" / "agentic-mesh-dev" / "queues").exists()
 
 
 def test_gateway_status_answer_uses_safe_reader_without_queue_creation(
@@ -191,7 +235,7 @@ def test_gateway_status_unknown_ref_clarifies_without_queue(tmp_path: Path) -> N
     assert work_queue.list_items() == []
 
 
-def test_teams_gateway_configured_channel_creates_queue_not_role_message(
+def test_teams_gateway_configured_channel_keeps_message_conversational(
     tmp_path: Path,
 ) -> None:
     mesh_config = load_mesh_config(Path.cwd())
@@ -232,8 +276,7 @@ def test_teams_gateway_configured_channel_creates_queue_not_role_message(
 
     assert result["status"] == "accepted"
     work_items = FileWorkQueueStore(tmp_path, "agentic-mesh-dev", journal).list_items()
-    assert len(work_items) == 1
-    assert work_items[0].metadata["gateway_id"] == "agentic-mesh"
+    assert work_items == []
     assert all(
         ingress.message_store.pending_count(role_id) == 0
         for role_id in mesh_config.project.roles

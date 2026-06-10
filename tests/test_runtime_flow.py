@@ -331,6 +331,7 @@ def _enqueue_release_response(
     response_value: str = "approved",
     source: str = "test",
     connector_origin_authenticated: bool = False,
+    prevalidated_human_response: bool = False,
 ) -> None:
     payload = {
         "title": "Human response received",
@@ -344,6 +345,7 @@ def _enqueue_release_response(
         "response_value": response_value,
         "responder": "release-sponsor",
         "connector_origin_authenticated": connector_origin_authenticated,
+        "prevalidated_human_response": prevalidated_human_response,
     }
     message_store.enqueue(
         Message.create(
@@ -1889,12 +1891,9 @@ def test_direct_conversation_does_not_publish_artifacts_or_handoffs(
         mesh_config.instances["agentic-mesh-dev.product-manager.1"],
     )
 
-    assert connector_outbox.pending_count("product") == 2
-    started = connector_outbox.claim_next("product", "test-connector")
+    assert connector_outbox.pending_count("product") == 1
     completed = connector_outbox.claim_next("product", "test-connector")
-    assert started is not None
     assert completed is not None
-    assert started.type == "conversation.started"
     assert completed.type == "conversation.completed"
     assert completed.payload["status"] == "completed"
     assert completed.payload["status_message"] == (
@@ -2329,6 +2328,66 @@ def test_human_response_received_duplicate_terminal_is_audit_only(
         "continuation_test_skipped",
         "human_response_not_satisfied",
     ]
+    duplicate_events = [
+        event
+        for event in journal.read_all()
+        if event["event_type"] == "human_response_duplicate"
+    ]
+    assert duplicate_events
+    assert duplicate_events[0]["validation_result"] == "duplicate_same_value"
+
+
+def test_prevalidated_human_response_duplicate_continues_release_review(
+    tmp_path: Path,
+) -> None:
+    (
+        mesh_config,
+        runtime,
+        message_store,
+        _connector_outbox,
+        journal,
+        store,
+        request,
+    ) = _release_response_runtime(tmp_path)
+    accepted, reason, stored = store.validate_response(
+        project_id=mesh_config.project.project_id,
+        work_item_id="slice-release",
+        work_item_type="slice",
+        lifecycle_state="release_review",
+        gate_id="release_decision_response",
+        response_type="approve_not_approve",
+        response_request_id=request.response_request_id,
+        responder="release-sponsor",
+        response_value="approved",
+        authenticated=True,
+        authoritative=True,
+    )
+    assert accepted is True
+    assert reason == "accepted"
+    assert stored is not None
+    assert stored.status == "completed"
+    _enqueue_release_response(
+        message_store,
+        connector_origin_authenticated=True,
+        prevalidated_human_response=True,
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.release-manager.1",
+        mesh_config.instances["agentic-mesh-dev.release-manager.1"],
+    )
+
+    assert _work_completed_statuses(journal) in [
+        ["human_response_recorded"],
+        ["completed_after_human_response"],
+    ]
+    continuation = message_store.claim_next(
+        "release-manager",
+        "agentic-mesh-dev.release-manager.1",
+    )
+    if continuation is not None:
+        assert continuation.type == "sdlc.release_review"
+        assert continuation.payload["continuation_reason"] == "human_response_recorded"
     duplicate_events = [
         event
         for event in journal.read_all()

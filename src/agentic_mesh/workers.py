@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import json
 import os
-import re
+import queue
 import selectors
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from agentic_mesh.capabilities import capability_prompt_context
-from agentic_mesh.document_library import document_library_context
 from agentic_mesh.models import (
     AgentRunResult,
     AuthMethod,
@@ -27,8 +26,14 @@ from agentic_mesh.models import (
     RoleInstanceConfig,
     utc_now_iso,
 )
+from agentic_mesh.prompt_builder import render_worker_prompt
+from agentic_mesh.prompt_audit import document_library_root_for
+from agentic_mesh.prompt_audit import write_work_item_prompt_audit
 from agentic_mesh.problem_status import ProblemStatus
 from agentic_mesh.problem_status import worker_problem_status
+from agentic_mesh.safe_outputs import load_safe_output_records
+from agentic_mesh.safe_outputs import result_from_safe_output_records
+from agentic_mesh.safe_outputs import write_safe_output_audit
 from agentic_mesh.worker_runs import FileWorkerRunStore
 from agentic_mesh.worker_runs import WorkerRun
 from agentic_mesh.worker_runs import WorkerRunObserver
@@ -36,133 +41,6 @@ from agentic_mesh.worker_runs import provider_recovery_class_for_failure
 from agentic_mesh.worker_runs import resolve_worker_run_timeout_policy
 from agentic_mesh.worker_runs import worker_run_condition_for_failure
 from agentic_mesh.worker_runs import worker_run_status_for_failure
-
-
-AGENT_RESULT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["status", "message", "document_updates", "handoffs", "routes"],
-    "properties": {
-        "status": {
-            "type": "string",
-            "enum": ["completed", "blocked", "needs_clarification", "failed"],
-        },
-        "message": {"type": "string", "minLength": 1},
-        "document_updates": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": [
-                    "path",
-                    "content",
-                    "purpose",
-                    "review_status",
-                    "index_summary",
-                    "maintain_work_item_index",
-                ],
-                "properties": {
-                    "path": {"type": "string"},
-                    "content": {"type": "string"},
-                    "purpose": {"type": ["string", "null"]},
-                    "review_status": {"type": ["string", "null"]},
-                    "index_summary": {"type": ["string", "null"]},
-                    "maintain_work_item_index": {"type": ["boolean", "null"]},
-                },
-            },
-        },
-        "handoffs": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["target_role", "message_type", "payload"],
-                "properties": {
-                    "target_role": {"type": "string"},
-                    "message_type": {"type": "string"},
-                    "payload": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": [
-                            "title",
-                            "summary",
-                            "work_item_id",
-                            "work_item_type",
-                            "previous_lifecycle_state",
-                            "lifecycle_state",
-                            "source_message_id",
-                            "out_of_flow",
-                            "out_of_flow_reason",
-                        ],
-                        "properties": {
-                            "title": {"type": ["string", "null"]},
-                            "summary": {"type": ["string", "null"]},
-                            "work_item_id": {"type": ["string", "null"]},
-                            "work_item_type": {"type": ["string", "null"]},
-                            "previous_lifecycle_state": {"type": ["string", "null"]},
-                            "lifecycle_state": {"type": ["string", "null"]},
-                            "source_message_id": {"type": ["string", "null"]},
-                            "out_of_flow": {"type": ["boolean", "null"]},
-                            "out_of_flow_reason": {"type": ["string", "null"]},
-                        },
-                    },
-                },
-            },
-        },
-        "routes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["target_role", "message_type", "payload"],
-                "properties": {
-                    "target_role": {"type": "string"},
-                    "message_type": {"type": "string"},
-                    "payload": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": [
-                            "title",
-                            "summary",
-                            "work_item_id",
-                            "work_item_type",
-                            "previous_lifecycle_state",
-                            "lifecycle_state",
-                            "source_message_id",
-                            "out_of_flow",
-                            "out_of_flow_reason",
-                            "review_status",
-                            "correction_status",
-                            "defect_id",
-                            "gate_id",
-                            "review_artifact_path",
-                            "required_change",
-                            "evidence_required",
-                        ],
-                        "properties": {
-                            "title": {"type": ["string", "null"]},
-                            "summary": {"type": ["string", "null"]},
-                            "work_item_id": {"type": ["string", "null"]},
-                            "work_item_type": {"type": ["string", "null"]},
-                            "previous_lifecycle_state": {"type": ["string", "null"]},
-                            "lifecycle_state": {"type": ["string", "null"]},
-                            "source_message_id": {"type": ["string", "null"]},
-                            "out_of_flow": {"type": ["boolean", "null"]},
-                            "out_of_flow_reason": {"type": ["string", "null"]},
-                            "review_status": {"type": ["string", "null"]},
-                            "correction_status": {"type": ["string", "null"]},
-                            "defect_id": {"type": ["string", "null"]},
-                            "gate_id": {"type": ["string", "null"]},
-                            "review_artifact_path": {"type": ["string", "null"]},
-                            "required_change": {"type": ["string", "null"]},
-                            "evidence_required": {"type": ["string", "null"]},
-                        },
-                    },
-                },
-            },
-        },
-    },
-}
 
 
 @dataclass(frozen=True)
@@ -360,6 +238,7 @@ class CodexCliWorkerAdapter(WorkerAdapter):
         self.workspace_root = workspace_root
         self.state_root = state_root
         self.secret_root = state_root / "secrets"
+        self.document_library_root = document_library_root_for(project, workspace_root)
 
     def run(
         self,
@@ -386,22 +265,13 @@ class CodexCliWorkerAdapter(WorkerAdapter):
 
         with tempfile.TemporaryDirectory(prefix="agentic-mesh-worker-") as temp_dir:
             temp_path = Path(temp_dir)
-            schema_path = temp_path / "agent-result.schema.json"
-            output_path = temp_path / "agent-result.json"
-            schema_path.write_text(
-                json.dumps(AGENT_RESULT_SCHEMA, indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
+            safe_output_path = temp_path / "safe-outputs.jsonl"
             command = [
                 codex_bin,
                 "exec",
                 "--skip-git-repo-check",
                 "--sandbox",
                 instance.override.worker.sandbox_mode,
-                "--output-schema",
-                str(schema_path),
-                "-o",
-                str(output_path),
                 "-C",
                 str(self.workspace_root),
             ]
@@ -415,8 +285,45 @@ class CodexCliWorkerAdapter(WorkerAdapter):
 
             env = os.environ.copy()
             env.update(auth_env_or_error)
+            env.update(
+                {
+                    "AGENTIC_MESH_SAFE_OUTPUT_FILE": str(safe_output_path),
+                    "AGENTIC_MESH_PROJECT_ID": instance.project_id,
+                    "AGENTIC_MESH_ROLE_ID": instance.role_id,
+                    "AGENTIC_MESH_ROLE_INSTANCE_ID": instance.instance_id,
+                    "AGENTIC_MESH_WORK_ITEM_ID": str(
+                        message.payload.get("work_item_id") or ""
+                    ),
+                    "AGENTIC_MESH_WORK_ITEM_TYPE": str(
+                        message.payload.get("work_item_type") or ""
+                    ),
+                    "AGENTIC_MESH_LIFECYCLE_STATE": flow_state.state_id,
+                    "AGENTIC_MESH_MESSAGE_ID": message.message_id,
+                    "AGENTIC_MESH_CORRELATION_ID": message.correlation_id,
+                }
+            )
             timeout_policy = resolve_worker_timeout_policy(instance)
             prompt = self._prompt(instance, message, flow_state)
+            try:
+                write_work_item_prompt_audit(
+                    document_library_root=self.document_library_root,
+                    instance=instance,
+                    message=message,
+                    flow_state=flow_state,
+                    prompt=prompt,
+                    command=command,
+                    workspace_root=self.workspace_root,
+                )
+            except Exception as exc:
+                return worker_failure_outcome(
+                    instance=instance,
+                    message=message,
+                    flow_state=flow_state,
+                    failure_class="publication_failed",
+                    recovery_action="operator_review",
+                    retryable=True,
+                    reason=f"Runtime could not persist full worker prompt audit evidence: {exc.__class__.__name__}.",
+                )
             session_probe_started_at = time.time()
             codex_home = env.get("CODEX_HOME")
             session_markers = [
@@ -435,7 +342,7 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                 env=env,
                 timeout_seconds=timeout_policy["max_timeout_seconds"],
                 progress_window_seconds=timeout_policy["progress_window_seconds"],
-                progress_paths=[output_path],
+                progress_paths=[safe_output_path],
                 worker_run_observer=worker_run_observer,
                 completion_probe=(
                     (
@@ -449,13 +356,42 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                     else None
                 ),
             )
+            result: AgentRunResult | None = None
+            validation_error: str | None = None
+            try:
+                records = load_safe_output_records(safe_output_path)
+                result = result_from_safe_output_records(
+                    records=records,
+                    message=message,
+                    flow_state=flow_state,
+                )
+                write_safe_output_audit(
+                    document_library_root=self.document_library_root,
+                    instance=instance,
+                    message=message,
+                    records=records,
+                    result=result,
+                )
+            except Exception as exc:
+                records = []
+                try:
+                    records = load_safe_output_records(safe_output_path)
+                except Exception:
+                    pass
+                validation_error = f"{exc.__class__.__name__}: {exc}"
+                try:
+                    write_safe_output_audit(
+                        document_library_root=self.document_library_root,
+                        instance=instance,
+                        message=message,
+                        records=records,
+                        validation_error=validation_error,
+                    )
+                except Exception:
+                    pass
             if completed.timed_out:
-                if output_path.exists():
-                    try:
-                        payload = parse_agent_result(output_path.read_text(encoding="utf-8"))
-                        return result_from_payload(payload, flow_state)
-                    except ValueError:
-                        pass
+                if result is not None:
+                    return result
                 partial_artifacts = self._partial_artifacts(
                     work_item_id=message.payload.get("work_item_id"),
                     started_at=completed.started_at,
@@ -478,7 +414,26 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                     artifact_paths=partial_artifacts,
                 )
 
-            if completed.returncode != 0:
+            if result is None:
+                return worker_failure_outcome(
+                    instance=instance,
+                    message=message,
+                    flow_state=flow_state,
+                    failure_class="invalid_result",
+                    recovery_action="operator_review",
+                    retryable=True,
+                    reason=(
+                        "Codex CLI finished without valid terminal safe-output "
+                        f"records: {validation_error or 'no safe-output records'}"
+                    ),
+                    progress_observed_at=completed.progress_observed_at,
+                )
+
+            if completed.returncode != 0 and result.status not in {
+                "blocked",
+                "needs_clarification",
+                "failed",
+            }:
                 return worker_failure_outcome(
                     instance=instance,
                     message=message,
@@ -488,26 +443,7 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                     retryable=True,
                     reason="Codex CLI exited before returning a valid role result.",
                 )
-
-            raw_result = (
-                output_path.read_text(encoding="utf-8")
-                if output_path.exists()
-                else completed.stdout
-            )
-            try:
-                payload = parse_agent_result(raw_result)
-                return result_from_payload(payload, flow_state)
-            except ValueError as exc:
-                failure_class = "schema_failed" if "unsupported status" in str(exc) else "invalid_result"
-                return worker_failure_outcome(
-                    instance=instance,
-                    message=message,
-                    flow_state=flow_state,
-                    failure_class=failure_class,
-                    recovery_action="operator_review",
-                    retryable=True,
-                    reason=f"Codex CLI returned an invalid role result: {exc}",
-                )
+            return result
 
     def _auth_environment(
         self,
@@ -629,172 +565,15 @@ class CodexCliWorkerAdapter(WorkerAdapter):
         message: Message,
         flow_state: FlowState,
     ) -> str:
-        runtime_instructions = message.payload.get("runtime_instructions") or {}
-        available_handoffs = runtime_instructions.get("available_handoffs", [])
-        available_consults = runtime_instructions.get("available_consults", [])
-        repositories = {
-            repository_id: {
-                "type": repository.type,
-                "path": repository.path,
-                "absolute_path": str(
-                    Path(repository.path)
-                    if Path(repository.path).is_absolute()
-                    else (self.workspace_root / repository.path).resolve()
-                ),
-                "default_branch": repository.default_branch,
-            }
-            for repository_id, repository in self.project.workspace.repositories.items()
-        }
-        if self.mesh_config is not None:
-            capability_context = capability_prompt_context(
-                mesh_config=self.mesh_config,
-                instance=instance,
-                state_root=self.state_root,
-            )
-        else:
-            capability_context = {
-                "schema_version": "capability-prompt-context-v0",
-                "availability_statement": "Capability availability has not been validated for this role instance.",
-                "configured_required": [
-                    {
-                        "capability_id": tool_id,
-                        "category": "compatibility_default_tool",
-                        "display_name": tool_id.replace(".", " ").title(),
-                        "availability": "not_validated",
-                    }
-                    for tool_id in instance.template.default_tools
-                ],
-                "available": [],
-                "missing_required": [],
-                "fallbacks": [],
-                "waivers": [],
-                "redaction_applied": True,
-            }
-        return f"""
-You are the `{instance.role_id}` role agent for Agentic Mesh project `{instance.project_id}`.
-
-Role purpose:
-{instance.template.purpose}
-
-Project goal:
-{json.dumps({
-            "description": self.project.goal.description,
-            "success_measures": self.project.goal.success_measures,
-            "constraints": self.project.goal.constraints,
-            "guidance": self.project.goal.guidance,
-        }, indent=2)}
-
-Project workspace:
-{json.dumps({
-            "current_working_directory": str(self.workspace_root),
-            "workspace_root": self.project.workspace.root,
-            "default_repository": self.project.workspace.default_repository,
-            "repositories": repositories,
-        }, indent=2)}
-
-Document library and role memory:
-{json.dumps(document_library_context(self.workspace_root, self.project), indent=2)}
-
-Standing role instructions:
-{json.dumps(instance.template.standing_instructions, indent=2)}
-
-Role charter:
-{json.dumps({
-            "role_profile": instance.template.role_profile,
-            "accountabilities": instance.template.accountabilities,
-            "decision_rights": instance.template.decision_rights,
-            "boundaries": instance.template.boundaries,
-            "collaboration_style": instance.template.collaboration_style,
-            "quality_bar": instance.template.quality_bar,
-            "memory_focus": instance.template.memory_focus,
-            "core_workflows": instance.template.core_workflows,
-            "standards_references": instance.template.standards_references,
-            "anti_patterns": instance.template.anti_patterns,
-        }, indent=2)}
-
-Role capability context:
-{json.dumps(capability_context, indent=2)}
-
-Project role instructions:
-{json.dumps(instance.override.instructions, indent=2)}
-
-Allowed write paths:
-{json.dumps(instance.override.write_paths, indent=2)}
-
-Work item:
-{json.dumps(message.payload, indent=2, sort_keys=True)}
-
-Current flow state:
-{json.dumps({
-            "state_id": flow_state.state_id,
-            "purpose": flow_state.purpose,
-            "artifact_path": flow_state.artifact_path,
-            "gates": [
-                {
-                    "gate_id": gate.gate_id,
-                    "type": gate.type,
-                    "required_documents": gate.required_documents,
-                    "affected_roles": gate.affected_roles,
-                    "review_outcomes": gate.review_outcomes,
-                    "max_resolution_loops": gate.max_resolution_loops,
-                }
-                for gate in flow_state.gates
-            ],
-            "available_handoffs": available_handoffs,
-            "available_consults": available_consults,
-        }, indent=2)}
-
-You must do the actual role work. Inspect the repository and project documents
-from your role's perspective before answering. Do not produce generic template
-output. If you cannot complete the work because credentials, tools, context, or
-permissions are missing, return status `blocked` with a precise reason.
-Keep every action aligned to the project goal. Ask necessary clarifying
-questions, propose explicit assumptions when appropriate, and work with other
-roles through the configured flow to advance the goal. If a task, handoff,
-artifact, or recommendation does not advance the goal or reduce a meaningful
-risk to it, say so and keep the work scoped.
-Run focused verification for the acceptance criteria and changed areas. Run
-broader regression checks when feasible, but if a broad regression fails for
-pre-existing, environmental, or clearly unrelated reasons, do not block the
-work item solely for that reason after focused acceptance evidence has passed.
-Document the unrelated failure as residual/release risk and continue through
-the configured handoff. Block only when focused acceptance evidence is missing,
-the failure is plausibly caused by this work, or the configured release criteria
-explicitly require the failing check to pass.
-Prefer configured lifecycle handoffs. If a genuinely warranted handoff needs to
-go outside the configured route, include `lifecycle_state` for a state owned by
-the target role and include `out_of_flow_reason` explaining why the exception is
-needed. For handoff payload fields that runtime can derive, use `null` when you
-do not need to set them yourself. Do not emit ambiguous handoffs.
-
-Return only the final JSON object required by the provided schema. Put all
-document changes in `document_updates`; do not rely on unreported filesystem
-edits. For direct broadcast work, use the requested artifact path and do not
-emit handoffs unless the prompt explicitly asks for one.
-
-All real lifecycle work must produce enterprise-grade documentation. For slice
-and subslice work, use the configured slice-scoped artifact path, normally under
-`work-items/{{work_item_id}}/`, unless you are deliberately updating a durable
-project standard, ADR, index, or evergreen reference. The document update should
-include the objective, scope, assumptions, decisions, evidence, risks, review
-log, and next handoff or closure criteria appropriate to your role and state.
-Do not write vague generic notes into durable area documents as a substitute for
-slice evidence.
-
-Always include top-level `routes`; use an empty array when there are no consult
-or correction routes. Use first-class `routes` for configured consult or correction routes. A QA
-`changes_requested` correction to Engineering must use the configured consult
-target role, target lifecycle state, and message type, and include the defect,
-required change, and evidence fields when available. Keep `handoffs` for
-forward lifecycle handoffs and legacy compatibility.
-
-Use the document library as the canonical project memory. Use role memory only
-as a concise, source-linked accelerator, and include provenance links when you
-update it. For plan or document review gates, write visible `## Review Log`
-entries with stable review ids, concrete required changes, dispositions, and
-linked sub-slices where needed. Resolve disagreement through written review
-loops first; request mediation only after the configured resolution loop limit.
-""".strip()
+        return render_worker_prompt(
+            project=self.project,
+            mesh_config=self.mesh_config,
+            instance=instance,
+            message=message,
+            flow_state=flow_state,
+            workspace_root=self.workspace_root,
+            state_root=self.state_root,
+        )
 
 
 class StubCodexWorkerAdapter(WorkerAdapter):
@@ -995,6 +774,18 @@ def run_progress_aware_command(
         process.stdin.write(input_text)
         process.stdin.close()
 
+    if os.name == "nt":
+        return _run_progress_aware_command_threaded(
+            process=process,
+            started_at=started_at,
+            progress_observed_at=progress_observed_at,
+            timeout_seconds=timeout_seconds,
+            progress_window_seconds=progress_window_seconds,
+            progress_paths=progress_paths,
+            worker_run_observer=worker_run_observer,
+            completion_probe=completion_probe,
+        )
+
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
     selector = selectors.DefaultSelector()
@@ -1033,7 +824,7 @@ def run_progress_aware_command(
             process.kill()
             process.wait(timeout=5)
             return MonitoredCompletedProcess(
-                returncode=process.returncode or -9,
+                returncode=-9,
                 stdout="".join(stdout_parts),
                 stderr="".join(stderr_parts),
                 started_at=started_at,
@@ -1088,6 +879,114 @@ def run_progress_aware_command(
     )
 
 
+def _run_progress_aware_command_threaded(
+    *,
+    process: subprocess.Popen[str],
+    started_at: float,
+    progress_observed_at: str,
+    timeout_seconds: int | None,
+    progress_window_seconds: int,
+    progress_paths: list[Path],
+    worker_run_observer: WorkerRunObserver | None,
+    completion_probe: Callable[[], str | None] | None,
+) -> MonitoredCompletedProcess:
+    output_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+
+    def reader(stream, stream_name: str) -> None:
+        if stream is None:
+            return
+        try:
+            for line in stream:
+                output_queue.put((stream_name, line))
+        except Exception:
+            return
+
+    for stream, name in [(process.stdout, "stdout"), (process.stderr, "stderr")]:
+        threading.Thread(target=reader, args=(stream, name), daemon=True).start()
+
+    last_progress = started_at
+    last_completion_probe = 0.0
+    while process.poll() is None:
+        now = time.time()
+        if completion_probe is not None and now - last_completion_probe >= 5:
+            last_completion_probe = now
+            probed_result = completion_probe()
+            if probed_result:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                return MonitoredCompletedProcess(
+                    returncode=0,
+                    stdout=probed_result,
+                    stderr="".join(stderr_parts),
+                    started_at=started_at,
+                    progress_observed_at=utc_now_iso(),
+                    completed_from_probe=True,
+                )
+        absolute_timeout = (
+            timeout_seconds is not None and now - started_at >= timeout_seconds
+        )
+        progress_timeout = now - last_progress >= progress_window_seconds
+        if absolute_timeout or progress_timeout:
+            process.kill()
+            process.wait(timeout=5)
+            return MonitoredCompletedProcess(
+                returncode=-9,
+                stdout="".join(stdout_parts),
+                stderr="".join(stderr_parts),
+                started_at=started_at,
+                progress_observed_at=progress_observed_at,
+                timed_out=True,
+            )
+        try:
+            stream_name, line = output_queue.get(timeout=0.2)
+        except queue.Empty:
+            stream_name = ""
+            line = ""
+        if line:
+            if stream_name == "stdout":
+                stdout_parts.append(line)
+            else:
+                stderr_parts.append(line)
+            last_progress = time.time()
+            progress_observed_at = utc_now_iso()
+            if worker_run_observer is not None:
+                worker_run_observer.observe_output(stream_name, line)
+        for path in progress_paths:
+            try:
+                if path.exists() and path.stat().st_mtime >= last_progress:
+                    last_progress = path.stat().st_mtime
+                    progress_observed_at = utc_now_iso()
+                    if worker_run_observer is not None:
+                        worker_run_observer.observe_progress("result_file")
+            except OSError:
+                continue
+
+    while True:
+        try:
+            stream_name, line = output_queue.get_nowait()
+        except queue.Empty:
+            break
+        if stream_name == "stdout":
+            stdout_parts.append(line)
+        else:
+            stderr_parts.append(line)
+        if worker_run_observer is not None:
+            worker_run_observer.observe_output(stream_name, line)
+    return MonitoredCompletedProcess(
+        returncode=process.returncode or 0,
+        stdout="".join(stdout_parts),
+        stderr="".join(stderr_parts),
+        started_at=started_at,
+        progress_observed_at=progress_observed_at,
+    )
+
+
 def _mark_worker_run_terminal(
     observer: WorkerRunObserver,
     output: AgentRunResult | WorkerRunOutcome,
@@ -1127,123 +1026,3 @@ def _work_item_status_url(work_item_id: Any) -> str | None:
     if "/" in work_item_id or "\\" in work_item_id or ".." in work_item_id:
         return None
     return f"/work-items/{work_item_id}"
-
-
-def parse_agent_result(raw_result: str) -> dict[str, Any]:
-    text = raw_result.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"result is not JSON: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("result must be a JSON object")
-    return payload
-
-
-def result_from_payload(payload: dict[str, Any], flow_state: FlowState) -> AgentRunResult:
-    status = payload.get("status")
-    if status not in {"completed", "blocked", "needs_clarification", "failed"}:
-        raise ValueError(f"unsupported status `{status}`")
-    message = payload.get("message")
-    if not isinstance(message, str) or not message.strip():
-        raise ValueError("message must be a non-empty string")
-
-    updates: list[DocumentUpdate] = []
-    for item in payload.get("document_updates", []):
-        if not isinstance(item, dict):
-            raise ValueError("document update must be an object")
-        path = item.get("path")
-        content = item.get("content")
-        if not isinstance(path, str) or not path.strip():
-            raise ValueError("document update path must be a non-empty string")
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("document update content must be a non-empty string")
-        purpose = item.get("purpose")
-        review_status = item.get("review_status")
-        index_summary = item.get("index_summary")
-        maintain_work_item_index = item.get("maintain_work_item_index")
-        for name, value in [
-            ("purpose", purpose),
-            ("review_status", review_status),
-            ("index_summary", index_summary),
-        ]:
-            if value is not None and not isinstance(value, str):
-                raise ValueError(f"document update {name} must be a string or null")
-        if maintain_work_item_index is not None and not isinstance(
-            maintain_work_item_index,
-            bool,
-        ):
-            raise ValueError(
-                "document update maintain_work_item_index must be a boolean or null"
-            )
-        updates.append(
-            DocumentUpdate(
-                path=path,
-                content=content,
-                purpose=purpose,
-                review_status=review_status,
-                index_summary=index_summary,
-                maintain_work_item_index=maintain_work_item_index,
-            )
-        )
-
-    if (
-        not updates
-        and status == "completed"
-        and not payload.get("handoffs")
-        and not payload.get("routes")
-    ):
-        raise ValueError("completed results must include a document update, route, or handoff")
-
-    routes: list[RouteRequest] = []
-    for item in payload.get("routes", []):
-        if not isinstance(item, dict):
-            raise ValueError("route must be an object")
-        target_role = item.get("target_role")
-        message_type = item.get("message_type")
-        route_payload = item.get("payload")
-        if not isinstance(target_role, str) or not target_role.strip():
-            raise ValueError("route target_role must be a non-empty string")
-        if not isinstance(message_type, str) or not message_type.strip():
-            raise ValueError("route message_type must be a non-empty string")
-        if not isinstance(route_payload, dict):
-            raise ValueError("route payload must be an object")
-        routes.append(
-            RouteRequest(
-                target_role=target_role,
-                message_type=message_type,
-                payload=route_payload,
-            )
-        )
-
-    handoffs: list[Handoff] = []
-    for item in payload.get("handoffs", []):
-        if not isinstance(item, dict):
-            raise ValueError("handoff must be an object")
-        target_role = item.get("target_role")
-        message_type = item.get("message_type")
-        handoff_payload = item.get("payload")
-        if not isinstance(target_role, str) or not target_role.strip():
-            raise ValueError("handoff target_role must be a non-empty string")
-        if not isinstance(message_type, str) or not message_type.strip():
-            raise ValueError("handoff message_type must be a non-empty string")
-        if not isinstance(handoff_payload, dict):
-            raise ValueError("handoff payload must be an object")
-        handoffs.append(
-            Handoff(
-                target_role=target_role,
-                message_type=message_type,
-                payload=handoff_payload,
-            )
-        )
-
-    return AgentRunResult(
-        status=status,
-        message=message,
-        document_updates=updates,
-        routes=routes,
-        handoffs=handoffs,
-    )

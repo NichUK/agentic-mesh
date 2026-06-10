@@ -38,6 +38,12 @@ core_workflows:
     artifacts:
       - docs/security/security-decisions.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Security Architect
+    url: https://ddat-capability-framework.service.gov.uk/role/security-architect
+    applies_to: Security architecture patterns, system/service security design, and security documentation.
   - name: OWASP SAMM
     url: https://owasp.org/www-project-samm/
     applies_to: Secure software maturity, governance, design, implementation, verification, and operations.

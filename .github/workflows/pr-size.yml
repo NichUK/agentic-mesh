@@ -1,0 +1,20 @@
+name: PR size
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  check-pr-size:
+    name: Check PR size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check pull request size
+        run: python scripts/check-pr-size.py --base "origin/${{ github.base_ref }}" --committed-only

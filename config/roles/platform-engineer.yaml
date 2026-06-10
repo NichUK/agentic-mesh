@@ -38,6 +38,12 @@ core_workflows:
     artifacts:
       - docs/platform/operations.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Infrastructure Engineer
+    url: https://ddat-capability-framework.service.gov.uk/role/infrastructure-engineer
+    applies_to: Infrastructure problem solving, operations, testing, and runtime reliability.
   - name: SFIA
     url: https://sfia-online.org/
     applies_to: Infrastructure, operations, service support, and responsibility focus.

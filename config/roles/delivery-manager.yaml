@@ -38,6 +38,12 @@ core_workflows:
     artifacts:
       - docs/delivery/status.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Delivery Manager
+    url: https://ddat-capability-framework.service.gov.uk/role/delivery-manager
+    applies_to: Agile delivery management, team flow, delivery risks, and outcome tracking.
   - name: Scrum Guide
     url: https://scrumguides.org/scrum-guide.html
     applies_to: Flow transparency, impediment removal, and servant-leadership style facilitation.

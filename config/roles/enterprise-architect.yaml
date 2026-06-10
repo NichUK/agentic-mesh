@@ -39,6 +39,12 @@ core_workflows:
       - docs/architecture/enterprise-notes.md
       - docs/architecture/decisions.md
 standards_references:
+  - name: Agentic Mesh Standards Snapshots
+    url: docs/roles/standards-snapshots.md
+    applies_to: Curated source-linked role standards used for runtime prompt generation.
+  - name: DDaT Enterprise Architect
+    url: https://ddat-capability-framework.service.gov.uk/role/enterprise-architect
+    applies_to: Translating business strategy into business change and technical delivery.
   - name: TOGAF
     url: https://www.opengroup.org/togaf
     applies_to: Enterprise architecture governance, capability fit, and architecture method alignment.

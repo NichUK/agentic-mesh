@@ -1176,14 +1176,17 @@ def render_direct_conversation_status_html(message: ConnectorMessage) -> str:
     title = html.escape(str(payload.get("title") or "Conversation"))
     role_id = html.escape(str(payload.get("role_id") or "agent"))
     status = html.escape(str(payload.get("status") or "received"))
-    status_message = html.escape(
-        _truncate(str(payload.get("status_message") or ""), 900)
-    )
+    status_message = str(payload.get("status_message") or "")
     if message.type == MESSAGE_TYPE_DIRECT_CONVERSATION_ACKNOWLEDGED:
         return (
             f"<p><strong>{role_id} received your message</strong></p>"
             f"<p>{title}</p>"
         )
+    if (
+        message.type == MESSAGE_TYPE_DIRECT_CONVERSATION_COMPLETED
+        and str(payload.get("status") or "") == "completed"
+    ):
+        return _markdown_to_teams_html(status_message)
     heading = (
         f"{role_id} is responding"
         if message.type == MESSAGE_TYPE_DIRECT_CONVERSATION_STARTED
@@ -1192,7 +1195,7 @@ def render_direct_conversation_status_html(message: ConnectorMessage) -> str:
     return (
         f"<p><strong>{heading}: {title}</strong></p>"
         f"<p><strong>Status:</strong> {status}</p>"
-        f"<p>{status_message}</p>"
+        f"{_markdown_to_teams_html(status_message)}"
     )
 
 
@@ -1459,6 +1462,91 @@ def _html_to_teams_xml_text(value: str) -> str:
         .replace("<strong>", "<b>")
         .replace("</strong>", "</b>")
     )
+
+
+def _markdown_to_teams_html(value: str) -> str:
+    lines = value.splitlines()
+    if not lines:
+        return ""
+    rendered: list[str] = []
+    in_code_block = False
+    code_lines: list[str] = []
+    for line in lines:
+        if line.strip().startswith("```"):
+            if in_code_block:
+                rendered.append(
+                    "<pre>"
+                    + html.escape("\n".join(code_lines), quote=False)
+                    + "</pre>"
+                )
+                code_lines = []
+                in_code_block = False
+            else:
+                in_code_block = True
+                code_lines = []
+            continue
+        if in_code_block:
+            code_lines.append(line)
+            continue
+        stripped = line.strip()
+        if not stripped:
+            rendered.append("<br/>")
+            continue
+        heading = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading:
+            rendered.append(f"<p><strong>{_markdown_inline_to_html(heading.group(2))}</strong></p>")
+            continue
+        bullet = re.match(r"^[-*]\s+(.+)$", stripped)
+        if bullet:
+            rendered.append(f"<p>&bull; {_markdown_inline_to_html(bullet.group(1))}</p>")
+            continue
+        numbered = re.match(r"^(\d+)[.)]\s+(.+)$", stripped)
+        if numbered:
+            rendered.append(
+                f"<p>{html.escape(numbered.group(1))}. "
+                f"{_markdown_inline_to_html(numbered.group(2))}</p>"
+            )
+            continue
+        rendered.append(f"<p>{_markdown_inline_to_html(line)}</p>")
+    if in_code_block:
+        rendered.append(
+            "<pre>" + html.escape("\n".join(code_lines), quote=False) + "</pre>"
+        )
+    return "".join(rendered)
+
+
+def _markdown_inline_to_html(value: str) -> str:
+    tokens: list[str] = []
+
+    def stash(markup: str) -> str:
+        tokens.append(markup)
+        return f"\u0000{len(tokens) - 1}\u0000"
+
+    def link_replacement(match: re.Match[str]) -> str:
+        label = html.escape(match.group(1), quote=False)
+        url = str(match.group(2)).strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return html.escape(match.group(0), quote=False)
+        safe_url = html.escape(url, quote=True)
+        return stash(f'<a href="{safe_url}">{label}</a>')
+
+    value = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", link_replacement, value)
+    value = re.sub(
+        r"`([^`]+)`",
+        lambda match: stash(
+            f"<code>{html.escape(match.group(1), quote=False)}</code>"
+        ),
+        value,
+    )
+    escaped = html.escape(value, quote=False)
+    escaped = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", escaped)
+    escaped = re.sub(r"__([^_]+)__", r"<b>\1</b>", escaped)
+    escaped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", escaped)
+    escaped = re.sub(r"(?<!_)_([^_]+)_(?!_)", r"<i>\1</i>", escaped)
+    for index, markup in enumerate(tokens):
+        escaped = escaped.replace(f"\u0000{index}\u0000", markup)
+    return escaped
 
 
 def _truncate(value: str, max_length: int) -> str:
@@ -2940,18 +3028,6 @@ class TeamsBotIngress:
             source_anchor_ref=source_anchor.source_anchor_ref(),
             teams_activity_id=activity.get("id"),
             correlation_id=messages[0].correlation_id if messages else None,
-        )
-        self._queue_conversation_acknowledgement(
-            logical_channel=logical_channel,
-            title=title,
-            text=text,
-            roles=roles,
-            activity=activity,
-            source_anchor=source_anchor.redacted_summary(),
-            correlation_id=messages[0].correlation_id if messages else None,
-            acknowledgement_role_id=acknowledgement_role_id,
-            queued_event=acknowledgement_event,
-            unroutable_event=unroutable_event,
         )
         return messages
 

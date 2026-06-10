@@ -13,6 +13,12 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Thread
 from typing import Any
+from urllib.error import HTTPError
+from urllib.error import URLError
+from urllib.parse import urlencode
+from urllib.parse import urlparse
+from urllib.request import Request
+from urllib.request import urlopen
 
 from agentic_mesh import telemetry
 from agentic_mesh.approval_requests import ApprovalStatusService
@@ -68,6 +74,7 @@ from agentic_mesh.models import utc_now_iso
 from agentic_mesh.notifications import FileNotificationAttemptStore
 from agentic_mesh.notifications import FileSourceRouteStore
 from agentic_mesh.provider_conditions import CodexProviderConditionProfile
+from agentic_mesh.prompt_audit import write_startup_prompt_audit
 from agentic_mesh.recovery_alerts import FileRecoveryAlertStore
 from agentic_mesh.recovery_alerts import RecoveryAlertState
 from agentic_mesh.recovery_observability import build_recovery_observability_view
@@ -78,6 +85,9 @@ from agentic_mesh.problem_status import role_problem_status
 from agentic_mesh.problem_status import worker_problem_status
 from agentic_mesh.route_status import CurrentRouteStore
 from agentic_mesh.runtime import AgentRuntime
+from agentic_mesh.safe_outputs import append_safe_output_record
+from agentic_mesh.safe_outputs import safe_output_context_from_env
+from agentic_mesh.safe_outputs import safe_output_file_from_env
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.teams_ingress import ReloadableTeamsBotIngress
@@ -96,6 +106,9 @@ from agentic_mesh.workers import ConfiguredWorkerAdapter
 from agentic_mesh.worker_runs import FileWorkerRunStore
 from agentic_mesh.worker_runs import WorkerRun
 from agentic_mesh.worker_runs import WorkerRunReadError
+
+
+DEFAULT_CONTROL_PLANE_URL = "http://10.0.0.65:8100"
 
 
 def build_runtime(
@@ -1784,7 +1797,92 @@ def _parse_response_value(value: str):
         return value
 
 
+def _normalize_response_value(value: Any, response_type: str | None) -> Any:
+    if response_type != "approve_not_approve" or not isinstance(value, str):
+        return value
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return {
+        "approve": "approved",
+        "approved": "approved",
+        "not_approve": "not_approved",
+        "not_approved": "not_approved",
+        "reject": "not_approved",
+        "rejected": "not_approved",
+    }.get(normalized, value)
+
+
+def _control_plane_url(args) -> str:
+    configured = (
+        getattr(args, "server_url", None)
+        or os.environ.get("AGENTIC_MESH_CONTROL_PLANE_URL")
+        or os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
+        or _base_url_from_auth_admin(os.environ.get("AGENTIC_MESH_AUTH_ADMIN_URL"))
+        or DEFAULT_CONTROL_PLANE_URL
+    )
+    return configured.rstrip("/")
+
+
+def _base_url_from_auth_admin(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _post_human_response_to_server(args) -> int:
+    payload = {
+        "work_item_id": args.work_item_id,
+        "work_item_type": args.work_item_type,
+        "lifecycle_state": args.lifecycle_state,
+        "gate_id": args.gate_id,
+        "response_request_id": args.response_request_id,
+        "responder": args.responder,
+        "value": args.value,
+        "source": args.source,
+    }
+    optional = {
+        "approval_request_id": args.approval_request_id,
+        "role": args.role,
+        "correlation_id": args.correlation_id,
+    }
+    payload.update({key: value for key, value in optional.items() if value})
+    data = urlencode(payload).encode("utf-8")
+    url = f"{_control_plane_url(args)}/human-responses"
+    request = Request(
+        url,
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urlopen(request, timeout=getattr(args, "server_timeout", 30)) as response:
+            body = response.read().decode("utf-8")
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        print(body or str(exc), file=sys.stderr)
+        return 1
+    except URLError as exc:
+        print(
+            json.dumps(
+                {
+                    "error": "control_plane_unavailable",
+                    "server_url": _control_plane_url(args),
+                    "detail": str(exc.reason),
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    print(body)
+    return 0
+
+
 def cmd_record_human_response(args) -> int:
+    if not args.local_state:
+        return _post_human_response_to_server(args)
+
     mesh_config, _, message_store, _, _, _ = build_runtime(
         args.config_root,
         args.project_file,
@@ -1811,7 +1909,10 @@ def cmd_record_human_response(args) -> int:
         approval_request_id=args.approval_request_id,
         response_request_id=args.response_request_id,
         responder=args.responder,
-        response_value=_parse_response_value(args.value),
+        response_value=_normalize_response_value(
+            _parse_response_value(args.value),
+            gate.response_type if gate is not None else None,
+        ),
         source=args.source,
         correlation_id=args.correlation_id,
     )
@@ -1828,8 +1929,78 @@ def cmd_record_human_response(args) -> int:
     return 0
 
 
+def cmd_safe_output(args) -> int:
+    if args.stdin_marker != ".":
+        print("safe-output requires `.` and a JSON object on stdin", file=sys.stderr)
+        return 2
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError as exc:
+        print(f"invalid safe-output JSON payload: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(payload, dict):
+        print("safe-output payload must be a JSON object", file=sys.stderr)
+        return 2
+    try:
+        record = append_safe_output_record(
+            output_file=safe_output_file_from_env(),
+            tool=args.tool,
+            payload=payload,
+            context=safe_output_context_from_env(),
+        )
+    except Exception as exc:
+        print(f"safe-output failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        json.dumps(
+            {
+                "schema_version": record.to_dict()["schema_version"],
+                "tool": record.tool,
+                "recorded_at": record.recorded_at,
+                "validation": record.validation,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def cmd_agent_loop(args) -> int:
     mesh_config = load_mesh_config(args.config_root, project_file=args.project_file)
+    instance = mesh_config.instances[args.instance]
+    workspace_root = project_workspace_root(args.workspace_root, mesh_config)
+    document_library_root = project_document_library_root(workspace_root, mesh_config)
+    try:
+        startup_audit = write_startup_prompt_audit(
+            document_library_root=document_library_root,
+            project=mesh_config.project,
+            instance=instance,
+            workspace_root=workspace_root,
+            reason="agent_loop_start",
+            argv=sys.argv,
+        )
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "error": "startup_prompt_audit_failed",
+                    "instance": args.instance,
+                    "reason": exc.__class__.__name__,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "instance": args.instance,
+                "startup_prompt_audit": startup_audit,
+            },
+            sort_keys=True,
+        )
+    )
     reload_requested = False
     if getattr(args, "reclaim_existing_claims_on_start", True):
         args.reclaim_claimed_before = utc_now_iso()
@@ -3151,9 +3322,31 @@ def parser() -> argparse.ArgumentParser:
     human_response.add_argument("--responder", required=True)
     human_response.add_argument("--value", required=True)
     human_response.add_argument("--role")
-    human_response.add_argument("--source", default="local-cli")
+    human_response.add_argument("--source", default="cli")
     human_response.add_argument("--correlation-id")
+    human_response.add_argument(
+        "--server-url",
+        help=(
+            "Control-plane base URL. Defaults to AGENTIC_MESH_CONTROL_PLANE_URL, "
+            "AGENTIC_MESH_STATUS_BASE_URL, AGENTIC_MESH_AUTH_ADMIN_URL base, or "
+            "the configured live linuxch endpoint."
+        ),
+    )
+    human_response.add_argument("--server-timeout", type=int, default=30)
+    human_response.add_argument(
+        "--local-state",
+        action="store_true",
+        help="Bypass the live control plane and enqueue into the configured local state root.",
+    )
     human_response.set_defaults(func=cmd_record_human_response)
+
+    safe_output = subcommands.add_parser("safe-output")
+    safe_output.add_argument("tool")
+    safe_output.add_argument(
+        "stdin_marker",
+        help="Use `.` to read a JSON object payload from stdin.",
+    )
+    safe_output.set_defaults(func=cmd_safe_output)
 
     agent_loop = subcommands.add_parser("agent-loop")
     agent_loop.add_argument("--instance", required=True)

@@ -173,6 +173,14 @@ Branch expectations:
 - Feature, fix, spike, and documentation branches should normally branch from
   `develop` and use the `codex/` prefix, for example
   `codex/project-build-boundary`.
+- Commit focused progress on the active feature branch often enough that work
+  can be reviewed, recovered, or promoted without reconstructing local state.
+- Push the active feature branch after meaningful commits so GitHub is the
+  shared source of truth for review and recovery.
+- At the end of every feature, fix, spike, or documentation slice, promote the
+  branch back to `develop` through a pull request, request GitHub Copilot review
+  with `@copilot review`, address review feedback where appropriate, and merge
+  only after the branch is ready for integration.
 - Commit directly to `main` only when the user explicitly asks for it or when
   fast-forwarding a verified `develop` baseline back to `main`.
 
@@ -189,6 +197,8 @@ Before committing:
 
 - Keep commits focused around one product or implementation slice.
 - Review `git diff --stat` and the staged diff.
+- Run `python scripts/check-pr-size.py --base origin/develop --committed-only` before pushing
+  a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
 - Run `python -m agentic_mesh.cli validate-config` for config or project
   boundary changes.
@@ -201,6 +211,18 @@ Commit hygiene:
 
 - Use clear imperative commit messages, for example
   `Move Compose outputs under project folder`.
+- Commit small, coherent units of work rather than holding broad local changes
+  until the end of a long session.
+- Push committed feature work before asking for review or handing the slice to
+  another agent.
+- Keep PRs reviewable: target one focused slice, prefer under 1,500 changed
+  lines, and do not merge a PR over 5,000 changed lines or 50 files without a
+  documented generated-artifact exception.
+- Use PRs into `develop` for normal promotion. Do not bypass PR review for
+  feature work unless the sponsor explicitly directs an emergency exception.
+- Ask GitHub Copilot to review every normal feature PR before merging.
+- If GitHub Copilot refuses review because the PR is too large, split the PR
+  rather than merging it.
 - Do not mix unrelated changes from the old `C:\Dev\dev-team-ai` prototype repo
   into this repository.
 - Do not squash unrelated user changes into your commit.
