@@ -42,10 +42,12 @@ document_library:
 role_memory:
   enabled: true
   backend: filesystem
-  root: memory/roles
+  root: agentic-mesh/roles
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
   provenance_required: true
   refresh_from_document_library: true
-  team_overlay_root: memory/team-overlays
+  team_overlay_root: agentic-mesh/team-overlays
 meshes:
   governance:
     name: Governance Mesh

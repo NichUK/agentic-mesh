@@ -176,12 +176,20 @@ def resolve_role_memory_root(workspace_root: Path, project: ProjectConfig) -> Pa
     return (workspace_root / root).resolve()
 
 
+def resolve_role_config_root(workspace_root: Path, project: ProjectConfig) -> Path:
+    root = Path(project.role_memory.config_root)
+    if root.is_absolute():
+        return root.resolve()
+    return (workspace_root / root).resolve()
+
+
 def document_library_context(
     workspace_root: Path,
     project: ProjectConfig,
 ) -> dict[str, object]:
     library_root = resolve_document_library_root(workspace_root, project.document_library)
     memory_root = resolve_role_memory_root(workspace_root, project)
+    role_config_root = resolve_role_config_root(workspace_root, project)
     return {
         "backend": project.document_library.backend,
         "root": project.document_library.root,
@@ -195,6 +203,9 @@ def document_library_context(
             "backend": project.role_memory.backend,
             "root": project.role_memory.root,
             "absolute_root": str(memory_root),
+            "config_root": project.role_memory.config_root,
+            "absolute_config_root": str(role_config_root),
+            "memory_filename": project.role_memory.memory_filename,
             "provenance_required": project.role_memory.provenance_required,
             "refresh_from_document_library": (
                 project.role_memory.refresh_from_document_library

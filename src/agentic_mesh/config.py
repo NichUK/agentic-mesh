@@ -958,6 +958,8 @@ def _role_memory_from_dict(data: dict[str, Any]) -> RoleMemoryConfig:
         enabled=bool(memory_data.get("enabled", True)),
         backend=backend,
         root=str(memory_data.get("root", "memory/roles")),
+        config_root=str(memory_data.get("config_root", "agentic-mesh/roles")),
+        memory_filename=str(memory_data.get("memory_filename", "MEMORY.md")),
         provenance_required=bool(memory_data.get("provenance_required", True)),
         refresh_from_document_library=bool(
             memory_data.get("refresh_from_document_library", True)

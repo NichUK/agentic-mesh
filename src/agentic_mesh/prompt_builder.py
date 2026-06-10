@@ -14,6 +14,7 @@ from agentic_mesh.models import ProjectConfig
 from agentic_mesh.models import RoleInstanceConfig
 from agentic_mesh.prompt_templates import load_prompt_template
 from agentic_mesh.prompt_templates import render_prompt_template
+from agentic_mesh.role_context import build_role_context
 from agentic_mesh.safe_outputs import safe_output_tools_prompt
 
 
@@ -110,6 +111,21 @@ Role profile:
             ),
             _section("capabilities", _yamlish(capability_context)),
             "</role>",
+            "",
+            "<context>",
+            _section(
+                "role-memory-and-recent-context",
+                _yamlish(
+                    build_role_context(
+                        project=project,
+                        instance=instance,
+                        message=message,
+                        workspace_root=workspace_root,
+                        state_root=state_root,
+                    )
+                ),
+            ),
+            "</context>",
             "",
             "<project>",
             _section(
