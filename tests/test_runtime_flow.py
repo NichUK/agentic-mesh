@@ -16,6 +16,7 @@ from agentic_mesh.models import FlowState
 from agentic_mesh.models import Handoff
 from agentic_mesh.models import Message
 from agentic_mesh.models import NotificationEventOverrideConfig
+from agentic_mesh.models import QueueProposal
 from agentic_mesh.models import RoleInstanceConfig
 from agentic_mesh.models import RouteRequest
 from agentic_mesh.notifications import FileSourceRouteStore
@@ -26,6 +27,7 @@ from agentic_mesh.runtime import AgentRuntime
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.workers import StubCodexWorkerAdapter
 from agentic_mesh.workers import WorkerAdapter
+from agentic_mesh.work_queue import FileWorkQueueStore
 
 
 class IncompleteHandoffWorker(WorkerAdapter):
@@ -1825,6 +1827,20 @@ class ConversationWorkerAdapter(WorkerAdapter):
         return AgentRunResult(
             status="completed",
             message="In-role answer sent. I would propose tracked work if needed.",
+            terminal_tool="status.reply",
+        )
+
+
+class InvalidConversationWorkerAdapter(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="This should not be treated as a successful conversation.",
             document_updates=[
                 DocumentUpdate(
                     path="documents/analysis/product-manager.md",
@@ -1838,6 +1854,29 @@ class ConversationWorkerAdapter(WorkerAdapter):
                     payload={"summary": "This should not be routed informally."},
                 )
             ],
+            terminal_tool="status.reply",
+        )
+
+
+class QueueProposalConversationWorkerAdapter(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="I've proposed this as a tracked slice.",
+            queue_proposals=[
+                QueueProposal(
+                    title="Build gateway DM bot",
+                    summary="Create the dedicated Agentic Mesh gateway bot.",
+                    owner_role="delivery-manager",
+                    recommended_work_item_type="slice",
+                )
+            ],
+            terminal_tool="status.reply",
         )
 
 
@@ -1902,14 +1941,155 @@ def test_direct_conversation_does_not_publish_artifacts_or_handoffs(
     assert "work_item_id" not in completed.payload
     assert not (tmp_path / "workspace" / "documents").exists()
     assert message_store.pending_count("delivery-manager") == 0
+    assert FileWorkQueueStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    ).list_items() == []
 
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "agent_conversation_run_started" in event_types
     assert "conversation_status_connector_message_queued" in event_types
-    assert "conversation_document_updates_ignored" in event_types
-    assert "conversation_handoffs_ignored" in event_types
+    assert "conversation_document_updates_ignored" not in event_types
+    assert "conversation_handoffs_ignored" not in event_types
     assert "directive_publish_ready_connector_message_queued" not in event_types
     assert "handoff_emitted" not in event_types
+
+
+def test_direct_conversation_records_problem_for_disallowed_outputs(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        InvalidConversationWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+    message = message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED,
+            payload={
+                "title": "Explain product tradeoffs",
+                "summary": "Can you explain the product scope trade-offs in role?",
+                "text": "Can you explain the product scope trade-offs in role?",
+                "conversation_mode": "targeted",
+                "requested_roles": ["product-manager"],
+                "target_role": "product-manager",
+                "source_channel": "dm",
+                "teams_conversation_id": "personal-conversation-1",
+                "teams_reply_to_activity_id": "activity-product-manager-dm",
+            },
+            source="teams:teams-bot-listener:dm",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+
+    assert connector_outbox.pending_count("product") == 0
+    assert not (tmp_path / "workspace" / "documents").exists()
+    problem = ProblemStatusStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+    ).read_current(message.message_id)
+    assert problem is not None
+    assert "not allowed for conversational work" in problem["reason"]
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "problem_status_recorded" in event_types
+    assert "conversation_status_connector_message_queued" not in event_types
+    assert "conversation_document_updates_ignored" not in event_types
+    assert "conversation_handoffs_ignored" not in event_types
+
+
+def test_direct_conversation_queue_proposal_creates_work_queue_item(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        QueueProposalConversationWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+    message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED,
+            payload={
+                "title": "Build the gateway bot",
+                "summary": "Please get the team to build the gateway bot.",
+                "text": "Please get the team to build the gateway bot.",
+                "conversation_mode": "targeted",
+                "requested_roles": ["product-manager"],
+                "target_role": "product-manager",
+                "source_channel": "all-agents",
+                "source_anchor": {
+                    "connector_type": "teams",
+                    "connector_id": "teams-bot-listener",
+                    "source_scope": "all-agents",
+                    "source_anchor_ref": "source:gateway",
+                    "display_label": "Gateway request",
+                    "received_at": "2026-06-10T10:00:00+00:00",
+                },
+            },
+            source="teams:teams-bot-listener:all-agents",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+
+    queue_items = FileWorkQueueStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    ).list_items()
+    assert len(queue_items) == 1
+    assert queue_items[0].title == "Build gateway DM bot"
+    assert queue_items[0].owner_role == "delivery-manager"
+    assert queue_items[0].metadata["created_by_safe_output"] is True
+    completed = connector_outbox.claim_next("all-agents", "test-connector")
+    assert completed is not None
+    assert completed.type == "conversation.completed"
+    assert completed.payload["status_message"] == "I've proposed this as a tracked slice."
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "safe_output_queue_proposal_captured" in event_types
 
 
 def test_queue_originated_publish_ready_targets_source_anchor(

@@ -30,6 +30,7 @@ from agentic_mesh.models import FlowGate
 from agentic_mesh.models import FlowState
 from agentic_mesh.models import Message
 from agentic_mesh.models import ProjectConfig
+from agentic_mesh.models import QueueProposal
 from agentic_mesh.models import RouteRequest
 from agentic_mesh.models import ResponseTypeTemplate
 from agentic_mesh.notifications import FileNotificationAttemptStore
@@ -69,6 +70,8 @@ from agentic_mesh.work_item_indexes import upsert_global_row
 from agentic_mesh.work_item_indexes import validate_work_item_id
 from agentic_mesh.work_item_recovery import FileRecoveryStatusStore
 from agentic_mesh.work_item_recovery import RecoveryClassifier
+from agentic_mesh.work_queue import FileWorkQueueStore
+from agentic_mesh.work_queue import SourceAnchor
 from agentic_mesh.workers import WorkerAdapter
 from agentic_mesh.workers import WorkerRunOutcome
 from agentic_mesh.workers import resolve_worker_timeout_policy
@@ -92,33 +95,39 @@ class AgentRuntime:
         self.worker = worker
         self.connector_outbox = connector_outbox
         self.response_types = response_types or {}
+        self.state_root = message_store.root.parents[2]
         self.problem_status_store = ProblemStatusStore(
-            message_store.root.parents[2],
+            self.state_root,
             project.project_id,
         )
         self.recovery_status_store = FileRecoveryStatusStore(
-            message_store.root.parents[2],
+            self.state_root,
             project.project_id,
         )
         self.recovery_classifier = RecoveryClassifier()
         self.current_route_store = CurrentRouteStore(
-            message_store.root.parents[2],
+            self.state_root,
             project.project_id,
         )
         self.agent_run_state_store = FileAgentRunStateStore(
-            message_store.root.parents[2],
+            self.state_root,
             project.project_id,
         )
         self.notification_policy = NotificationPolicyEvaluator(
             project.notification_policy
         )
         self.notification_attempt_store = FileNotificationAttemptStore(
-            message_store.root.parents[2],
+            self.state_root,
             project.project_id,
         )
         self.human_gate_store = FileHumanGateRequestStore(
-            message_store.root.parents[2],
+            self.state_root,
             project.project_id,
+        )
+        self.work_queue = FileWorkQueueStore(
+            self.state_root,
+            project.project_id,
+            self.journal,
         )
 
     def _status_link_builder(self) -> StatusLinkBuilder:
@@ -334,6 +343,43 @@ class AgentRuntime:
                 )
                 problem_status = runtime_publication_problem_status(
                     reason="Runtime could not publish or index the role result artifacts.",
+                    role_id=instance_config.role_id,
+                    role_instance_id=instance_id,
+                    message_payload=message.payload,
+                    source_message_id=message.message_id,
+                    correlation_id=message.correlation_id,
+                    lifecycle_state=state_id,
+                    status_url=self._work_item_status_url(work_item_id),
+                )
+                self._record_problem_status(
+                    problem_status,
+                    source_instance=instance_config,
+                    source_message=message,
+                )
+                self._write_run_state(
+                    instance_config=instance_config,
+                    message=message,
+                    run_state="failed",
+                    evidence_source="problem_status",
+                )
+                self.message_store.complete(message, "needs_runtime_recovery")
+                return True
+
+            try:
+                self._capture_queue_proposals(
+                    proposals=result.queue_proposals,
+                    source_instance=instance_config,
+                    source_message=message,
+                )
+            except Exception as exc:
+                work_item_id = str(
+                    message.payload.get("work_item_id") or message.message_id
+                )
+                problem_status = runtime_publication_problem_status(
+                    reason=(
+                        "Runtime could not capture safe-output queue proposal: "
+                        f"{type(exc).__name__}: {exc}"
+                    ),
                     role_id=instance_config.role_id,
                     role_instance_id=instance_id,
                     message_payload=message.payload,
@@ -1499,6 +1545,39 @@ class AgentRuntime:
                     lifecycle_state=direct_state.state_id,
                     trace_context=message.trace_context,
                 )
+            try:
+                self._capture_queue_proposals(
+                    proposals=result.queue_proposals,
+                    source_instance=instance_config,
+                    source_message=message,
+                )
+            except Exception as exc:
+                work_item_id = str(
+                    message.payload.get("work_item_id") or message.message_id
+                )
+                self._record_problem_status(
+                    runtime_publication_problem_status(
+                        reason=(
+                            "Runtime could not capture safe-output queue proposal: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                        role_id=instance_config.role_id,
+                        role_instance_id=instance_id,
+                        message_payload=message.payload,
+                        source_message_id=message.message_id,
+                        correlation_id=message.correlation_id,
+                        lifecycle_state=direct_state.state_id,
+                        status_url=self._work_item_status_url(work_item_id),
+                    ),
+                    source_instance=instance_config,
+                    source_message=message,
+                )
+                self.message_store.complete(message, "needs_runtime_recovery")
+                self._queue_directive_publish_ready_if_complete(
+                    source_instance=instance_config,
+                    source_message=message,
+                )
+                return True
             telemetry.record_duration(
                 "agentic_mesh.agent.run.duration",
                 time.perf_counter() - started,
@@ -1592,17 +1671,15 @@ class AgentRuntime:
                 worker_output = self.worker.run(instance_config, message, direct_state)
             if isinstance(worker_output, WorkerRunOutcome):
                 if worker_output.problem_status is not None:
-                    status_message = worker_output.problem_status.reason_summary
-                    self._queue_direct_conversation_status_connector_message(
+                    self._record_problem_status(
+                        worker_output.problem_status,
                         source_instance=instance_config,
                         source_message=message,
-                        status="needs_runtime_recovery",
-                        status_message=status_message,
                     )
                     self.message_store.complete(
                         message,
                         "needs_runtime_recovery",
-                        result_message=status_message,
+                        result_message=worker_output.problem_status.reason_summary,
                     )
                     return True
                 if worker_output.role_result is None:
@@ -1610,28 +1687,89 @@ class AgentRuntime:
                 result = worker_output.role_result
             else:
                 result = worker_output
-            if result.document_updates:
-                self.journal.append(
-                    "conversation_document_updates_ignored",
-                    project_id=instance_config.project_id,
-                    role_id=instance_config.role_id,
+            if result.status in {"blocked", "failed"}:
+                self._record_direct_conversation_problem(
+                    result=result,
+                    source_instance=instance_config,
+                    source_message=message,
                     role_instance_id=instance_id,
-                    message_id=message.message_id,
-                    update_count=len(result.document_updates),
-                    reason="direct_conversation_does_not_publish_artifacts",
-                    correlation_id=message.correlation_id,
+                    lifecycle_state=direct_state.state_id,
                 )
-            if result.handoffs:
-                self.journal.append(
-                    "conversation_handoffs_ignored",
-                    project_id=instance_config.project_id,
-                    role_id=instance_config.role_id,
+                self.message_store.complete(
+                    message,
+                    result.status,
+                    result_message=result.message,
+                )
+                return True
+            if (
+                result.document_updates
+                or result.routes
+                or result.handoffs
+                or (
+                    result.status == "completed"
+                    and result.terminal_tool not in {"status.reply", "noop"}
+                )
+            ):
+                reason_parts: list[str] = []
+                if result.document_updates:
+                    reason_parts.append("document updates")
+                if result.routes:
+                    reason_parts.append("routes")
+                if result.handoffs:
+                    reason_parts.append("handoffs")
+                if (
+                    result.status == "completed"
+                    and result.terminal_tool not in {"status.reply", "noop"}
+                ):
+                    reason_parts.append(
+                        f"terminal tool `{result.terminal_tool or 'unknown'}`"
+                    )
+                self._record_direct_conversation_problem(
+                    result=AgentRunResult(
+                        status="failed",
+                        message=(
+                            "Direct conversation used outputs that are not allowed "
+                            "for conversational work: "
+                            + ", ".join(reason_parts)
+                        ),
+                    ),
+                    source_instance=instance_config,
+                    source_message=message,
                     role_instance_id=instance_id,
-                    message_id=message.message_id,
-                    handoff_count=len(result.handoffs),
-                    reason="direct_conversation_must_propose_tracked_work_via_safe_outputs",
-                    correlation_id=message.correlation_id,
+                    lifecycle_state=direct_state.state_id,
                 )
+                self.message_store.complete(
+                    message,
+                    "needs_runtime_recovery",
+                    result_message="Direct conversation safe-output contract failed.",
+                )
+                return True
+            try:
+                self._capture_queue_proposals(
+                    proposals=result.queue_proposals,
+                    source_instance=instance_config,
+                    source_message=message,
+                )
+            except Exception as exc:
+                self._record_direct_conversation_problem(
+                    result=AgentRunResult(
+                        status="failed",
+                        message=(
+                            "Runtime could not capture safe-output queue proposal: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    ),
+                    source_instance=instance_config,
+                    source_message=message,
+                    role_instance_id=instance_id,
+                    lifecycle_state=direct_state.state_id,
+                )
+                self.message_store.complete(
+                    message,
+                    "needs_runtime_recovery",
+                    result_message="Runtime could not capture safe-output queue proposal.",
+                )
+                return True
             telemetry.record_duration(
                 "agentic_mesh.agent.run.duration",
                 time.perf_counter() - started,
@@ -2113,7 +2251,7 @@ class AgentRuntime:
         resolver = NotificationRouteResolver(
             policy=self.project.notification_policy,
             source_route_store=FileSourceRouteStore(
-                self.message_store.root.parents[2],
+                self.state_root,
                 self.project.project_id,
             ),
         )
@@ -2315,6 +2453,149 @@ class AgentRuntime:
             return source_channel
         role_override = self.project.roles[source_instance.role_id]
         return role_override.channels.get("primary")
+
+    def _capture_queue_proposals(
+        self,
+        *,
+        proposals: list[QueueProposal],
+        source_instance,
+        source_message: Message,
+    ) -> list[str]:
+        queue_item_ids: list[str] = []
+        for index, proposal in enumerate(proposals):
+            item = self.work_queue.capture(
+                title=proposal.title,
+                summary=proposal.summary,
+                owner_role=proposal.owner_role or source_instance.role_id,
+                source_anchor=self._source_anchor_for_safe_output_proposal(
+                    source_message=source_message,
+                    source_instance=source_instance,
+                ),
+                recommended_work_item_type=(
+                    proposal.recommended_work_item_type or "slice"
+                ),
+                correlation_id=source_message.correlation_id,
+                idempotency_key=(
+                    proposal.idempotency_key
+                    or f"{source_message.message_id}:{proposal.source_tool}:{index}"
+                ),
+                metadata={
+                    "created_by_safe_output": True,
+                    "source_safe_output_tool": proposal.source_tool,
+                    "source_role_id": source_instance.role_id,
+                    "source_role_instance_id": source_instance.instance_id,
+                    "source_message_id": source_message.message_id,
+                    "source_message_type": source_message.type,
+                    **proposal.metadata,
+                },
+                raw_payload=proposal.raw_payload,
+                retain_raw_payload=False,
+            )
+            queue_item_ids.append(item.queue_item_id)
+            self.journal.append(
+                "safe_output_queue_proposal_captured",
+                project_id=source_instance.project_id,
+                role_id=source_instance.role_id,
+                role_instance_id=source_instance.instance_id,
+                queue_item_id=item.queue_item_id,
+                owner_role=item.owner_role,
+                recommended_work_item_type=item.recommended_work_item_type,
+                source_safe_output_tool=proposal.source_tool,
+                source_message_id=source_message.message_id,
+                work_item_id=source_message.payload.get("work_item_id"),
+                work_item_type=source_message.payload.get("work_item_type"),
+                correlation_id=source_message.correlation_id,
+            )
+        return queue_item_ids
+
+    def _source_anchor_for_safe_output_proposal(
+        self,
+        *,
+        source_message: Message,
+        source_instance,
+    ) -> SourceAnchor:
+        source_anchor = source_message.payload.get("source_anchor")
+        source_data = source_anchor if isinstance(source_anchor, dict) else {}
+        source_parts = str(source_message.source or "").split(":")
+        connector_type = str(
+            source_data.get("connector_type")
+            or (source_parts[0] if source_parts and source_parts[0] else "runtime")
+        )
+        connector_id = str(
+            source_data.get("connector_id")
+            or (
+                source_parts[1]
+                if len(source_parts) > 1 and source_parts[1]
+                else "safe-output"
+            )
+        )
+        source_scope = str(
+            source_data.get("source_scope")
+            or source_message.payload.get("source_channel")
+            or source_instance.role_id
+        )
+        return SourceAnchor(
+            connector_type=connector_type,
+            connector_id=connector_id,
+            source_scope=source_scope,
+            source_message_id=(
+                str(source_data.get("source_message_id"))
+                if source_data.get("source_message_id")
+                else str(
+                    source_message.payload.get("teams_reply_to_activity_id")
+                    or source_message.message_id
+                )
+            ),
+            actor=(
+                str(source_data.get("actor"))
+                if source_data.get("actor")
+                else source_instance.role_id
+            ),
+            received_at=str(source_data.get("received_at") or source_message.created_at),
+            display_label=str(
+                source_data.get("display_label")
+                or source_message.payload.get("title")
+                or "Agent safe-output proposal"
+            ),
+            external_url=(
+                str(source_data.get("external_url"))
+                if source_data.get("external_url")
+                else None
+            ),
+        )
+
+    def _record_direct_conversation_problem(
+        self,
+        *,
+        result: AgentRunResult,
+        source_instance,
+        source_message: Message,
+        role_instance_id: str,
+        lifecycle_state: str,
+    ) -> None:
+        problem_status = role_problem_status(
+            status=result.status if result.status in {"blocked", "failed"} else "failed",
+            message=result.message,
+            project_id=self.project.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=role_instance_id,
+            work_item_id=str(
+                source_message.payload.get("work_item_id")
+                or source_message.message_id
+            ),
+            work_item_type=source_message.payload.get("work_item_type"),
+            lifecycle_state=lifecycle_state,
+            queue_item_id=source_message.payload.get("queue_item_id"),
+            source_message_id=source_message.message_id,
+            source_anchor=source_message.payload.get("source_anchor"),
+            correlation_id=source_message.correlation_id,
+            status_url=None,
+        )
+        self._record_problem_status(
+            problem_status,
+            source_instance=source_instance,
+            source_message=source_message,
+        )
 
     def _record_problem_status(
         self,
