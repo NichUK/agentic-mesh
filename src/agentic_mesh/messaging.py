@@ -16,6 +16,10 @@ from agentic_mesh.models import new_id
 MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED = "human_response.requested"
 MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED = "human_response.received"
 MESSAGE_TYPE_SDLC_HANDOFF = "sdlc.handoff"
+MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED = "conversation.direct"
+MESSAGE_TYPE_DIRECT_CONVERSATION_ACKNOWLEDGED = "conversation.acknowledged"
+MESSAGE_TYPE_DIRECT_CONVERSATION_STARTED = "conversation.started"
+MESSAGE_TYPE_DIRECT_CONVERSATION_COMPLETED = "conversation.completed"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED = "sponsor_directive.requested"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED = "sponsor_directive.acknowledged"
 MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED = "sponsor_directive.started"
@@ -225,6 +229,49 @@ def build_sponsor_directive_status_message(
             "source_message_id": source_message.message_id,
             "queue_item_id": source_message.payload.get("queue_item_id"),
             "source_anchor": source_message.payload.get("source_anchor"),
+        },
+        source=source_instance.instance_id,
+        correlation_id=source_message.correlation_id,
+        trace_context=source_message.trace_context,
+    )
+
+
+def build_direct_conversation_status_message(
+    *,
+    channel: str,
+    source_instance: RoleInstanceConfig,
+    source_message: Message,
+    status: str,
+    status_message: str,
+) -> ConnectorMessage:
+    message_type = (
+        MESSAGE_TYPE_DIRECT_CONVERSATION_STARTED
+        if status == "started"
+        else MESSAGE_TYPE_DIRECT_CONVERSATION_COMPLETED
+    )
+    return ConnectorMessage.create(
+        channel=channel,
+        message_type=message_type,
+        payload={
+            "project_id": source_instance.project_id,
+            "role_id": source_instance.role_id,
+            "role_instance_id": source_instance.instance_id,
+            "status": status,
+            "status_message": status_message,
+            "title": source_message.payload.get("title"),
+            "summary": source_message.payload.get("summary"),
+            "source_channel": source_message.payload.get("source_channel"),
+            "source_message_id": source_message.message_id,
+            "source_anchor": source_message.payload.get("source_anchor"),
+            "teams_activity_id": source_message.payload.get("teams_activity_id"),
+            "teams_reply_to_activity_id": source_message.payload.get(
+                "teams_reply_to_activity_id"
+            )
+            or source_message.payload.get("teams_activity_id"),
+            "teams_conversation_id": source_message.payload.get("teams_conversation_id"),
+            "teams_service_url": source_message.payload.get("teams_service_url"),
+            "teams_channel_id": source_message.payload.get("teams_channel_id"),
+            "teams_team_id": source_message.payload.get("teams_team_id"),
         },
         source=source_instance.instance_id,
         correlation_id=source_message.correlation_id,

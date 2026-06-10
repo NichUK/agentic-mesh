@@ -22,6 +22,10 @@ from agentic_mesh.journal import EventJournal
 from agentic_mesh.human_gates import FileHumanGateRequestStore
 from agentic_mesh.human_response_submissions import HumanResponseSubmissionService
 from agentic_mesh.human_response_submissions import HumanResponseSubmissionResult
+from agentic_mesh.messaging import MESSAGE_TYPE_DIRECT_CONVERSATION_ACKNOWLEDGED
+from agentic_mesh.messaging import MESSAGE_TYPE_DIRECT_CONVERSATION_COMPLETED
+from agentic_mesh.messaging import MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED
+from agentic_mesh.messaging import MESSAGE_TYPE_DIRECT_CONVERSATION_STARTED
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_RECEIVED
 from agentic_mesh.messaging import MESSAGE_TYPE_HUMAN_RESPONSE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_PROBLEM_STATUS_UPDATED
@@ -30,7 +34,6 @@ from agentic_mesh.messaging import MESSAGE_TYPE_SDLC_HANDOFF
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_PUBLISH_READY
-from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED
 from agentic_mesh.messaging import MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED
 from agentic_mesh.models import ConnectorMessage
 from agentic_mesh.models import Message
@@ -151,6 +154,12 @@ class LocalTeamsConnectorAdapter(ConnectorAdapter):
             rendered["adaptive_card"] = build_human_response_card(message)
         if message.type == MESSAGE_TYPE_SDLC_HANDOFF:
             rendered["teams_message"] = render_sdlc_handoff_html(message)
+        if message.type in {
+            MESSAGE_TYPE_DIRECT_CONVERSATION_ACKNOWLEDGED,
+            MESSAGE_TYPE_DIRECT_CONVERSATION_STARTED,
+            MESSAGE_TYPE_DIRECT_CONVERSATION_COMPLETED,
+        }:
+            rendered["teams_message"] = render_direct_conversation_status_html(message)
         if message.type in {
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED,
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
@@ -354,6 +363,12 @@ class GraphTeamsConnectorAdapter(ConnectorAdapter):
             return render_human_response_request_html(message)
         if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED:
             return render_sponsor_directive_acknowledgement_html(message)
+        if message.type in {
+            MESSAGE_TYPE_DIRECT_CONVERSATION_ACKNOWLEDGED,
+            MESSAGE_TYPE_DIRECT_CONVERSATION_STARTED,
+            MESSAGE_TYPE_DIRECT_CONVERSATION_COMPLETED,
+        }:
+            return render_direct_conversation_status_html(message)
         if message.type in {
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED,
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
@@ -791,6 +806,12 @@ class BotFrameworkTeamsConnectorAdapter(ConnectorAdapter):
         if message.type == MESSAGE_TYPE_SPONSOR_DIRECTIVE_ACKNOWLEDGED:
             return _html_to_teams_xml_text(render_sponsor_directive_acknowledgement_html(message))
         if message.type in {
+            MESSAGE_TYPE_DIRECT_CONVERSATION_ACKNOWLEDGED,
+            MESSAGE_TYPE_DIRECT_CONVERSATION_STARTED,
+            MESSAGE_TYPE_DIRECT_CONVERSATION_COMPLETED,
+        }:
+            return _html_to_teams_xml_text(render_direct_conversation_status_html(message))
+        if message.type in {
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_STARTED,
             MESSAGE_TYPE_SPONSOR_DIRECTIVE_COMPLETED,
         }:
@@ -1147,6 +1168,31 @@ def render_sponsor_directive_acknowledgement_html(message: ConnectorMessage) -> 
         f"<p>Publication branch: <code>{branch}</code></p>"
         f"<p>Roles: {role_text}</p>"
         f"{_work_item_status_link_html(raw_work_item_id, paragraph=True)}"
+    )
+
+
+def render_direct_conversation_status_html(message: ConnectorMessage) -> str:
+    payload = message.payload
+    title = html.escape(str(payload.get("title") or "Conversation"))
+    role_id = html.escape(str(payload.get("role_id") or "agent"))
+    status = html.escape(str(payload.get("status") or "received"))
+    status_message = html.escape(
+        _truncate(str(payload.get("status_message") or ""), 900)
+    )
+    if message.type == MESSAGE_TYPE_DIRECT_CONVERSATION_ACKNOWLEDGED:
+        return (
+            f"<p><strong>{role_id} received your message</strong></p>"
+            f"<p>{title}</p>"
+        )
+    heading = (
+        f"{role_id} is responding"
+        if message.type == MESSAGE_TYPE_DIRECT_CONVERSATION_STARTED
+        else f"{role_id} replied"
+    )
+    return (
+        f"<p><strong>{heading}: {title}</strong></p>"
+        f"<p><strong>Status:</strong> {status}</p>"
+        f"<p>{status_message}</p>"
     )
 
 
@@ -2082,7 +2128,7 @@ class TeamsBotIngress:
         logical_channel = self._logical_channel_for_activity(activity)
         direct_dm_role = self._direct_role_for_dm(activity)
         if logical_channel is None and direct_dm_role is not None:
-            return self._record_targeted_directive(
+            return self._record_targeted_conversation(
                 activity,
                 raw_activity_path,
                 logical_channel="dm",
@@ -2146,7 +2192,7 @@ class TeamsBotIngress:
             return None
         if logical_channel == "all-agents":
             if self._activity_mentions(activity, logical_channel):
-                return self._record_all_agents_directive(
+                return self._record_all_agents_conversation(
                     activity,
                     raw_activity_path,
                     logical_channel=logical_channel,
@@ -2154,15 +2200,7 @@ class TeamsBotIngress:
                 )
             targeted_roles = self._mentioned_role_ids(activity)
             if targeted_roles:
-                if self._targeted_request_should_enter_queue(targeted_roles, text):
-                    return self._record_sponsor_intake(
-                        activity,
-                        raw_activity_path,
-                        logical_channel=logical_channel,
-                        text=text,
-                        intake_reason="targeted_delivery_slice_request",
-                    )
-                return self._record_targeted_directive(
+                return self._record_targeted_conversation(
                     activity,
                     raw_activity_path,
                     logical_channel=logical_channel,
@@ -2775,7 +2813,7 @@ class TeamsBotIngress:
         )
         return message
 
-    def _record_all_agents_directive(
+    def _record_all_agents_conversation(
         self,
         activity: dict[str, Any],
         raw_activity_path: Path,
@@ -2785,20 +2823,20 @@ class TeamsBotIngress:
     ) -> list[Message]:
         assert self.project_config is not None
         roles = sorted(self.project_config.roles)
-        return self._record_directive(
+        return self._record_conversation(
             activity,
             raw_activity_path,
             logical_channel=logical_channel,
             text=text,
             roles=roles,
-            work_mode="direct_broadcast",
-            routed_event="teams_all_agents_directive_routed",
-            acknowledgement_event="teams_all_agents_acknowledgement_queued",
-            unroutable_event="teams_all_agents_acknowledgement_unroutable",
+            conversation_mode="broadcast",
+            routed_event="teams_all_agents_conversation_routed",
+            acknowledgement_event="teams_all_agents_conversation_acknowledgement_queued",
+            unroutable_event="teams_all_agents_conversation_acknowledgement_unroutable",
             acknowledgement_role_id="delivery-manager",
         )
 
-    def _record_targeted_directive(
+    def _record_targeted_conversation(
         self,
         activity: dict[str, Any],
         raw_activity_path: Path,
@@ -2808,20 +2846,20 @@ class TeamsBotIngress:
         roles: list[str],
     ) -> list[Message]:
         acknowledgement_role_id = roles[0] if len(roles) == 1 else "delivery-manager"
-        return self._record_directive(
+        return self._record_conversation(
             activity,
             raw_activity_path,
             logical_channel=logical_channel,
             text=text,
             roles=roles,
-            work_mode="direct_targeted",
-            routed_event="teams_targeted_directive_routed",
-            acknowledgement_event="teams_targeted_directive_acknowledgement_queued",
-            unroutable_event="teams_targeted_directive_acknowledgement_unroutable",
+            conversation_mode="targeted",
+            routed_event="teams_targeted_conversation_routed",
+            acknowledgement_event="teams_targeted_conversation_acknowledgement_queued",
+            unroutable_event="teams_targeted_conversation_acknowledgement_unroutable",
             acknowledgement_role_id=acknowledgement_role_id,
         )
 
-    def _record_directive(
+    def _record_conversation(
         self,
         activity: dict[str, Any],
         raw_activity_path: Path,
@@ -2829,7 +2867,7 @@ class TeamsBotIngress:
         logical_channel: str,
         text: str,
         roles: list[str],
-        work_mode: str,
+        conversation_mode: str,
         routed_event: str,
         acknowledgement_event: str,
         unroutable_event: str,
@@ -2837,66 +2875,33 @@ class TeamsBotIngress:
     ) -> list[Message]:
         assert self.project_config is not None
         assert self.connector_config is not None
-        work_item_id = new_id("work")
+        idempotency_key = self._source_idempotency_key(activity, logical_channel)
+        if self._conversation_already_recorded(idempotency_key):
+            self._journal_ignored_channel_message(
+                activity,
+                reason="duplicate_source_already_routed",
+            )
+            return []
         title = _title_from_text(text)
-        git_branch = _direct_work_branch_name(work_item_id, title)
-        publication = {
-            "mode": "git_branch",
-            "branch": git_branch,
-            "status": "open",
-            "commit_policy": "commit_and_push_after_all_roles_terminal",
-        }
         from_user = activity.get("from") or {}
         channel_data = activity.get("channelData") or {}
         team = channel_data.get("team") or {}
         channel = channel_data.get("channel") or {}
         conversation = activity.get("conversation") or {}
         source_anchor = self._source_anchor_for_activity(activity, logical_channel)
-        idempotency_key = self._source_idempotency_key(activity, logical_channel)
-        if self.work_queue is not None:
-            existing = self.work_queue.get_by_idempotency_key(idempotency_key)
-            if existing is not None:
-                self._journal_ignored_channel_message(
-                    activity,
-                    reason="duplicate_source_already_queued",
-                )
-                return []
-        queue_item = None
-        if self.work_queue is not None:
-            queue_item = self.work_queue.capture(
-                title=title,
-                summary=text,
-                owner_role=acknowledgement_role_id,
-                source_anchor=source_anchor,
-                recommended_work_item_type="spike",
-                idempotency_key=idempotency_key,
-                metadata={
-                    "work_item_id": work_item_id,
-                    "work_item_type": "directive",
-                    "work_mode": work_mode,
-                    "target_roles": roles,
-                },
-                raw_payload=activity,
-                retain_raw_payload=False,
-            )
         messages: list[Message] = []
         for role_id in roles:
             payload = {
                 "title": title,
                 "summary": text,
                 "text": text,
-                "work_item_id": work_item_id,
-                "work_item_type": "directive",
-                "work_mode": work_mode,
-                "git_branch": git_branch,
-                "publication": publication,
-                "queue_item_id": queue_item.queue_item_id if queue_item else None,
+                "conversation_mode": conversation_mode,
                 "source_anchor": source_anchor.redacted_summary(),
                 "target_role": role_id,
                 "requested_roles": roles,
-                "output_path": f"documents/analysis/{role_id}.md",
                 "source_connector": "teams",
                 "source_connector_id": self.connector_id,
+                "source_idempotency_key": idempotency_key,
                 "source_channel": logical_channel,
                 "teams_activity_id": activity.get("id"),
                 "teams_reply_to_activity_id": activity.get("id"),
@@ -2910,12 +2915,20 @@ class TeamsBotIngress:
             }
             message = Message.create(
                 role_id=role_id,
-                message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+                message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED,
                 payload=payload,
                 source=f"teams:{self.connector_id}:{logical_channel}",
-                correlation_id=queue_item.correlation_id if queue_item else None,
             )
             messages.append(self.message_store.enqueue(message))
+        if messages:
+            self._record_conversation_source(
+                idempotency_key=idempotency_key,
+                activity=activity,
+                logical_channel=logical_channel,
+                conversation_mode=conversation_mode,
+                roles=roles,
+                messages=messages,
+            )
         self.journal.append(
             routed_event,
             project_id=self.project_id,
@@ -2923,41 +2936,65 @@ class TeamsBotIngress:
             channel=logical_channel,
             target_roles=roles,
             role_count=len(roles),
-            work_item_id=work_item_id,
-            git_branch=git_branch,
-            publication=publication,
-            work_item_type="directive",
-            queue_item_id=queue_item.queue_item_id if queue_item else None,
+            conversation_mode=conversation_mode,
             source_anchor_ref=source_anchor.source_anchor_ref(),
             teams_activity_id=activity.get("id"),
-            correlation_id=queue_item.correlation_id if queue_item else None,
+            correlation_id=messages[0].correlation_id if messages else None,
         )
-        self._queue_directive_acknowledgement(
+        self._queue_conversation_acknowledgement(
             logical_channel=logical_channel,
             title=title,
             text=text,
-            work_item_id=work_item_id,
-            git_branch=git_branch,
-            publication=publication,
             roles=roles,
             activity=activity,
-            queue_item_id=queue_item.queue_item_id if queue_item else None,
             source_anchor=source_anchor.redacted_summary(),
-            correlation_id=queue_item.correlation_id if queue_item else None,
+            correlation_id=messages[0].correlation_id if messages else None,
             acknowledgement_role_id=acknowledgement_role_id,
             queued_event=acknowledgement_event,
             unroutable_event=unroutable_event,
         )
-        self._seed_thread_route(
-            activity,
-            logical_channel=logical_channel,
-            work_item_id=work_item_id,
-            work_item_type="directive",
-            lifecycle_state=None,
-            owner_role=acknowledgement_role_id,
-            source_anchor_ref=source_anchor.source_anchor_ref(),
-        )
         return messages
+
+    def _conversation_source_index_path(self, idempotency_key: str) -> Path:
+        safe_key = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+        return (
+            self.state_root
+            / "projects"
+            / self.project_id
+            / "connectors"
+            / "teams"
+            / "conversation-source-index"
+            / f"{safe_key}.json"
+        )
+
+    def _conversation_already_recorded(self, idempotency_key: str) -> bool:
+        return self._conversation_source_index_path(idempotency_key).exists()
+
+    def _record_conversation_source(
+        self,
+        *,
+        idempotency_key: str,
+        activity: dict[str, Any],
+        logical_channel: str,
+        conversation_mode: str,
+        roles: list[str],
+        messages: list[Message],
+    ) -> None:
+        path = self._conversation_source_index_path(idempotency_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "idempotency_key": idempotency_key,
+            "connector_id": self.connector_id,
+            "channel": logical_channel,
+            "conversation_mode": conversation_mode,
+            "roles": roles,
+            "message_ids": [message.message_id for message in messages],
+            "activity_id": activity.get("id"),
+            "created_at": utc_now_iso(),
+        }
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
 
     def _queue_sponsor_intake_acknowledgement(
         self,
@@ -3093,6 +3130,73 @@ class TeamsBotIngress:
             correlation_id=correlation_id,
         )
 
+    def _queue_conversation_acknowledgement(
+        self,
+        *,
+        logical_channel: str,
+        title: str,
+        text: str,
+        roles: list[str],
+        activity: dict[str, Any],
+        source_anchor: dict[str, Any],
+        correlation_id: str | None,
+        acknowledgement_role_id: str,
+        queued_event: str,
+        unroutable_event: str,
+    ) -> None:
+        if self.connector_outbox is None:
+            self.journal.append(
+                unroutable_event,
+                project_id=self.project_id,
+                connector_id=self.connector_id,
+                channel=logical_channel,
+                reason="connector_outbox_not_configured",
+                correlation_id=correlation_id,
+            )
+            return
+        role_channel = self.project_config.roles[acknowledgement_role_id].channels.get(
+            "primary",
+        )
+        outbox_channel = (
+            logical_channel
+            if logical_channel != "dm"
+            else (role_channel or "all-agents")
+        )
+        acknowledgement = ConnectorMessage.create(
+            channel=outbox_channel,
+            message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_ACKNOWLEDGED,
+            payload={
+                "project_id": self.project_id,
+                "role_id": acknowledgement_role_id,
+                "title": title,
+                "summary": text,
+                "source_anchor": source_anchor,
+                "source_channel": logical_channel,
+                "target_roles": roles,
+                "role_count": len(roles),
+                "status": "received",
+                "status_message": "Message received. The addressed role will reply in context.",
+                "teams_activity_id": activity.get("id"),
+                "teams_reply_to_activity_id": activity.get("id"),
+                "teams_conversation_id": (activity.get("conversation") or {}).get("id"),
+                "teams_service_url": activity.get("serviceUrl"),
+            },
+            source=f"teams:{self.connector_id}:{logical_channel}",
+            correlation_id=correlation_id,
+        )
+        self.connector_outbox.enqueue(acknowledgement)
+        self.journal.append(
+            queued_event,
+            project_id=self.project_id,
+            connector_id=self.connector_id,
+            channel=outbox_channel,
+            source_channel=logical_channel,
+            connector_message_id=acknowledgement.message_id,
+            role_count=len(roles),
+            acknowledgement_role_id=acknowledgement_role_id,
+            correlation_id=correlation_id,
+        )
+
     def _source_anchor_for_activity(
         self,
         activity: dict[str, Any],
@@ -3152,26 +3256,6 @@ class TeamsBotIngress:
                 ]
             ).encode("utf-8")
         ).hexdigest()[:24]
-
-    @staticmethod
-    def _targeted_request_should_enter_queue(roles: list[str], text: str) -> bool:
-        if roles != ["delivery-manager"]:
-            return False
-        value = text.casefold()
-        work_terms = {
-            "slice",
-            "feature",
-            "story",
-            "work item",
-            "work-item",
-            "implementation",
-            "build",
-            "run",
-        }
-        coordination_terms = {"create", "start", "run", "coordinate", "get the team"}
-        return any(term in value for term in work_terms) and any(
-            term in value for term in coordination_terms
-        )
 
     @staticmethod
     def _recommended_sponsor_work_item_type(
