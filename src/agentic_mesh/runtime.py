@@ -72,6 +72,7 @@ from agentic_mesh.work_item_indexes import validate_work_item_id
 from agentic_mesh.work_item_recovery import FileRecoveryStatusStore
 from agentic_mesh.work_item_recovery import RecoveryClassifier
 from agentic_mesh.work_queue import FileWorkQueueStore
+from agentic_mesh.work_queue import QueueItem
 from agentic_mesh.work_queue import SourceAnchor
 from agentic_mesh.workers import WorkerAdapter
 from agentic_mesh.workers import WorkerRunOutcome
@@ -2508,6 +2509,12 @@ class AgentRuntime:
                 retain_raw_payload=False,
             )
             queue_item_ids.append(item.queue_item_id)
+            self._promote_safe_output_queue_proposal(
+                item=item,
+                proposal=proposal,
+                source_instance=source_instance,
+                source_message=source_message,
+            )
             self.journal.append(
                 "safe_output_queue_proposal_captured",
                 project_id=source_instance.project_id,
@@ -2523,6 +2530,61 @@ class AgentRuntime:
                 correlation_id=source_message.correlation_id,
             )
         return queue_item_ids
+
+    def _promote_safe_output_queue_proposal(
+        self,
+        *,
+        item: QueueItem,
+        proposal: QueueProposal,
+        source_instance,
+        source_message: Message,
+    ) -> None:
+        target_role = self._queue_proposal_intake_role(item)
+        lifecycle_state = self._first_lifecycle_state_for_role(target_role)
+        promotion = self.work_queue.promote(
+            item.queue_item_id,
+            actor_role="safe-output-queue-promoter",
+            message_store=self.message_store,
+            target_role=target_role,
+            lifecycle_state=lifecycle_state,
+            work_item_type=proposal.recommended_work_item_type
+            or item.recommended_work_item_type,
+            message_type="sdlc.intake",
+            idempotency_key=(
+                proposal.idempotency_key
+                or (
+                    f"{item.queue_item_id}:{source_message.message_id}:"
+                    f"{proposal.source_tool}:promotion"
+                )
+            ),
+        )
+        self.journal.append(
+            "safe_output_queue_proposal_promoted",
+            project_id=source_instance.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            queue_item_id=item.queue_item_id,
+            promoted_work_item_id=promotion.work_item_id,
+            target_role=promotion.target_role,
+            lifecycle_state=promotion.lifecycle_state,
+            source_safe_output_tool=proposal.source_tool,
+            source_message_id=source_message.message_id,
+            correlation_id=source_message.correlation_id,
+        )
+
+    def _queue_proposal_intake_role(self, item: QueueItem) -> str:
+        work_type = item.recommended_work_item_type
+        if work_type == "spike":
+            return "business-analyst"
+        if work_type in {"slice", "feature"}:
+            return "product-manager"
+        return item.owner_role
+
+    def _first_lifecycle_state_for_role(self, role_id: str) -> str:
+        for state_name, state in self.project.flow.states.items():
+            if state.owner_role == role_id:
+                return state_name
+        return self.project.flow.entry_state
 
     def _apply_work_item_actions(
         self,
