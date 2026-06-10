@@ -15,6 +15,7 @@ from agentic_mesh.models import Message
 from agentic_mesh.models import RouteRequest
 from agentic_mesh.models import RoleInstanceConfig
 from agentic_mesh.models import utc_now_iso
+from agentic_mesh.prompt_templates import render_prompt_template
 
 
 SAFE_OUTPUT_SCHEMA_VERSION = "safe-output-v1"
@@ -309,38 +310,18 @@ def write_safe_output_audit(
 
 
 def safe_output_tools_prompt() -> str:
-    lines = [
-        "Safe-output tools are the only durable output contract. Call them with:",
-        "",
-        "python -m agentic_mesh.cli safe-output <tool-name> . < /tmp/payload.json",
-        "",
-        "The payload file MUST contain one JSON object.",
-        "You MUST call at least one safe-output tool during every agent run.",
-        "You MUST call at least one terminal safe-output tool before finishing.",
-        "The terminal safe-output call is the only valid way to finish a run.",
-        (
-            "Plain text, stdout, stderr, final answers, markdown files, or JSON "
-            "returned to the worker are NOT durable outcomes and do NOT complete "
-            "the run."
-        ),
-        (
-            "`status.report_progress` is non-terminal; use it for updates during "
-            "long work, then finish with a terminal tool."
-        ),
-        "Do NOT use placeholder, speculative, or fake safe-output calls.",
-        "Do NOT say work is complete unless the terminal tool truthfully represents the run state.",
-        "",
-        "Terminal tools:",
-    ]
-    lines.extend(f"- {tool}" for tool in sorted(TERMINAL_SAFE_OUTPUT_TOOLS))
-    lines.extend(
-        [
-            "",
-            "Available tools:",
-        ]
+    return render_prompt_template(
+        "safe-output-tools.md",
+        {
+            "safe_output_command": (
+                "python -m agentic_mesh.cli safe-output <tool-name> . < /tmp/payload.json"
+            ),
+            "terminal_tools": "\n".join(
+                f"- {tool}" for tool in sorted(TERMINAL_SAFE_OUTPUT_TOOLS)
+            ),
+            "available_tools": "\n".join(f"- {tool}" for tool in SAFE_OUTPUT_TOOLS),
+        },
     )
-    lines.extend(f"- {tool}" for tool in SAFE_OUTPUT_TOOLS)
-    return "\n".join(lines)
 
 
 def _document_updates_from_records(
