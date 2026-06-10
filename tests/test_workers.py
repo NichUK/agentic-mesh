@@ -370,6 +370,18 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert "availability has not been validated" in prompt
     assert "document-library.read" in prompt
     assert "Use safe-output tools for every durable effect" in prompt
+    assert "CONVERSATION-TO-WORK BOUNDARY" in prompt
+    assert "Treat direct conversations as advisory by default" in prompt
+    assert "Stay conversational when you can answer from role expertise" in prompt
+    assert "repository inspection" in prompt
+    assert "document-library research" in prompt
+    assert "cross-role coordination" in prompt
+    assert "enterprise-grade documentation" in prompt
+    assert "propose tracked work with" in prompt
+    assert "`queue.propose_item` or `subslice.propose`" in prompt
+    assert "Use a spike for investigation" in prompt
+    assert "Use a slice for implementation" in prompt
+    assert "Do not create a work item yourself" in prompt
     prompt_files = list(
         (tmp_path / "docs" / "work-items" / "work-smoke" / "debug" / "prompts").glob(
             "**/*.prompt.txt"
