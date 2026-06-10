@@ -168,8 +168,9 @@ This repo was initialized locally at `C:\Dev\agentic-mesh`.
 
 Branch expectations:
 
-- `main` is the stable branch.
-- `develop` is the daily integration branch.
+- `develop` is the daily development and integration branch.
+- `main` is the stable release branch. It should move only when a tested,
+  complete set of features is intentionally released.
 - Feature, fix, spike, and documentation branches should normally branch from
   `develop` and use the `codex/` prefix, for example
   `codex/project-build-boundary`.
@@ -181,8 +182,20 @@ Branch expectations:
   branch back to `develop` through a pull request, request GitHub Copilot review
   with `@copilot review`, address review feedback where appropriate, and merge
   only after the branch is ready for integration.
-- Commit directly to `main` only when the user explicitly asks for it or when
-  fast-forwarding a verified `develop` baseline back to `main`.
+- Do not commit directly to `main` during normal development.
+- Do not commit directly to `develop` for normal feature work. Use a feature
+  branch and merge it back through review unless the sponsor explicitly directs
+  an operational exception.
+
+Release flow:
+
+- Release from `develop` to `main` only after the included features are
+  complete, tested together, and ready to be treated as stable.
+- Prefer a release PR from `develop` into `main` with a short release summary,
+  test evidence, known risks, and rollback notes.
+- Tag releases on `main` when a versioned release is cut.
+- Do not cherry-pick feature work straight to `main` unless explicitly handling
+  a release-blocking hotfix.
 
 Before changing files:
 
@@ -226,5 +239,6 @@ Commit hygiene:
 - Do not mix unrelated changes from the old `C:\Dev\dev-team-ai` prototype repo
   into this repository.
 - Do not squash unrelated user changes into your commit.
-- Prefer fast-forward merges between `develop` and `main` when possible so the
-  local history stays easy to inspect.
+- Prefer merge strategies that preserve a readable history for reviewed PRs.
+- Use fast-forward only for local branch catch-up or release movement when it
+  does not bypass the PR/review policy.
