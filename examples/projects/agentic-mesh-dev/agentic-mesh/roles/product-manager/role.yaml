@@ -1,0 +1,6 @@
+schema_version: role-runtime-config-v0
+role_id: product-manager
+memory:
+  scope: shared_by_role_instances
+  file: MEMORY.md
+

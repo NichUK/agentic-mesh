@@ -280,6 +280,8 @@ class RoleMemoryConfig:
     enabled: bool = True
     backend: str = "filesystem"
     root: str = "memory/roles"
+    config_root: str = "agentic-mesh/roles"
+    memory_filename: str = "MEMORY.md"
     provenance_required: bool = True
     refresh_from_document_library: bool = True
     team_overlay_root: str = "memory/team-overlays"

@@ -876,6 +876,14 @@
           "type": "string",
           "default": "memory/roles"
         },
+        "config_root": {
+          "type": "string",
+          "default": "agentic-mesh/roles"
+        },
+        "memory_filename": {
+          "type": "string",
+          "default": "MEMORY.md"
+        },
         "provenance_required": {
           "type": "boolean",
           "default": true

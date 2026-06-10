@@ -357,6 +357,9 @@ def test_loads_project_roles_and_instances() -> None:
     )
     assert mesh_config.project.goal.guidance
     assert mesh_config.project.role_memory.enabled is True
+    assert mesh_config.project.role_memory.root == "agentic-mesh/roles"
+    assert mesh_config.project.role_memory.config_root == "agentic-mesh/roles"
+    assert mesh_config.project.role_memory.memory_filename == "MEMORY.md"
     assert mesh_config.project.role_memory.provenance_required is True
     assert sorted(mesh_config.project.meshes) == ["governance", "sdlc"]
     assert "enterprise-architect" in mesh_config.project.meshes["sdlc"].roles

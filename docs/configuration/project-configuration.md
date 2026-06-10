@@ -185,6 +185,8 @@ role_memory:
   enabled: true
   backend: filesystem
   root: memory/roles
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
   provenance_required: true
   refresh_from_document_library: true
   team_overlay_root: memory/team-overlays
@@ -193,6 +195,16 @@ role_memory:
 Documents, ADRs, work-item artifacts, and the event journal remain canonical.
 If role memory disagrees with the document library, the agent should refresh
 memory from the canonical sources.
+
+`root` points to per-role memory folders. `config_root` points to project-local
+role runtime configuration folders that can be mounted externally. The default
+role memory file is `MEMORY.md`, shared by all instances of the same role unless
+the project deliberately splits memory by team or instance.
+
+Fresh worker processes must receive role memory and recent conversation context
+in the prompt. Short sponsor follow-ups such as "yes", "rework it", or "do
+that" should be resolved against recent same-conversation messages and linked
+work-item thread context before the agent asks the sponsor for identifiers.
 
 ## Meshes
 

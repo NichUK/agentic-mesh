@@ -360,6 +360,10 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert '"workspace_root": "examples/projects/agentic-mesh-dev"' in prompt
     assert '"default_repository": "agentic-mesh"' in prompt
     assert '"path": "../../.."' in prompt
+    assert "<context>" in prompt
+    assert "<role-memory-and-recent-context>" in prompt
+    assert "agentic-mesh/roles/product-manager/MEMORY.md" in prompt
+    assert "recent_direct_conversation" in prompt
     assert "<document-library-and-memory>" in prompt
     assert "<accountability>" in prompt
     assert "Role profile:" in prompt

@@ -155,6 +155,8 @@ role_memory:
   enabled: true
   backend: filesystem
   root: memory/roles
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
   provenance_required: true
   refresh_from_document_library: true
 ```
@@ -165,6 +167,13 @@ the source document, work item, or event that produced it.
 
 The document library remains canonical. If memory and documents disagree, the
 agent must trust the document library and refresh memory.
+
+Each role should have a project-local folder under `config_root`, for example
+`agentic-mesh/roles/product-manager/`. That folder can hold `role.yaml`,
+`MEMORY.md`, and later role-specific tool or skill configuration. Runtime
+prompts include this folder context plus recent same-conversation and linked
+work-item thread context so short follow-up messages are interpreted against
+the active feature rather than as isolated instructions.
 
 ## Team Meshes
 
