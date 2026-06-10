@@ -149,6 +149,53 @@ def test_readiness_authority_and_promotion_are_idempotent(tmp_path: Path) -> Non
     assert message is not None
     assert message.payload["queue_item_id"] == item.queue_item_id
     assert message.payload["source_anchor"]["source_anchor_ref"].startswith("source:")
+    assert message.payload["pre_start_search"]["search_kind"] == "cheap_lexical_queue_search"
+
+
+def test_capture_records_related_work_pre_start_search(tmp_path: Path) -> None:
+    store, _journal = _store(tmp_path)
+    open_item = store.capture(
+        title="Gateway Status Dashboard",
+        summary="Build a dashboard for gateway status and slice status.",
+        owner_role="product-manager",
+        source_anchor=_anchor(),
+        recommended_work_item_type="slice",
+        idempotency_key="teams:activity/open-dashboard",
+    )
+    closed_item = store.capture(
+        title="Gateway Status Links",
+        summary="Fix gateway artifact links on the status dashboard.",
+        owner_role="product-manager",
+        source_anchor=_anchor(),
+        recommended_work_item_type="slice",
+        idempotency_key="teams:activity/closed-dashboard-links",
+    )
+    store.transition(
+        closed_item.queue_item_id,
+        "closed",
+        actor_role="product-manager",
+        reason="Synthetic related work completed.",
+    )
+
+    item = store.capture(
+        title="Gateway Status Dashboard Links",
+        summary="Improve the status dashboard links and gateway visibility.",
+        owner_role="product-manager",
+        source_anchor=_anchor(),
+        recommended_work_item_type="slice",
+        idempotency_key="teams:activity/new-dashboard-links",
+    )
+
+    pre_start = item.metadata["pre_start_search"]
+    assert pre_start["schema_version"] == "pre-start-work-search-v0"
+    assert pre_start["status"] == "completed"
+    assert [candidate["queue_item_id"] for candidate in pre_start["open_candidates"]] == [
+        open_item.queue_item_id
+    ]
+    assert [
+        candidate["queue_item_id"]
+        for candidate in pre_start["completed_candidates"]
+    ] == [closed_item.queue_item_id]
 
 
 def test_promoted_queue_item_closes_when_lifecycle_work_completed(
