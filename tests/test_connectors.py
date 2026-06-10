@@ -677,15 +677,7 @@ def test_teams_ingress_routes_all_agents_message_as_conversation(
     assert result["lifecycle_state"] is None
     assert result["work_item_id"] is None
     assert all(message_store.pending_count(role_id) == 1 for role_id in roles)
-    assert connector_outbox.pending_count("all-agents") == 1
-    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
-    assert acknowledgement is not None
-    assert acknowledgement.type == "conversation.acknowledged"
-    assert acknowledgement.payload["role_count"] == len(roles)
-    assert acknowledgement.payload["role_id"] == "delivery-manager"
-    assert "work_item_id" not in acknowledgement.payload
-    assert "git_branch" not in acknowledgement.payload
-    assert "publication" not in acknowledgement.payload
+    assert connector_outbox.pending_count("all-agents") == 0
 
     message = message_store.claim_next(
         "business-analyst",
@@ -842,14 +834,7 @@ def test_targeted_delivery_slice_request_reaches_role_as_conversation(
     assert "queue_item_id" not in message.payload
     assert work_queue.list_items() == []
 
-    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
-    assert acknowledgement is not None
-    assert acknowledgement.type == "conversation.acknowledged"
-    assert acknowledgement.payload["role_id"] == "delivery-manager"
-    assert acknowledgement.payload["teams_reply_to_activity_id"] == "activity/mermaid-slice"
-    rendered = BotFrameworkTeamsConnectorAdapter._render_text(acknowledgement)
-    assert "delivery-manager received your message" in rendered
-    assert "Created lifecycle work item" not in rendered
+    assert connector_outbox.pending_count("all-agents") == 0
 
 
 def test_cross_connector_duplicate_intake_is_ignored(
@@ -911,7 +896,7 @@ def test_cross_connector_duplicate_intake_is_ignored(
     assert work_queue.list_items() == []
     assert message_store.pending_count("delivery-manager") == 1
     assert message_store.pending_count("business-analyst") == 0
-    assert connector_outbox.pending_count("all-agents") == 1
+    assert connector_outbox.pending_count("all-agents") == 0
     ignored = [
         event
         for event in journal.read_all()
@@ -1090,11 +1075,7 @@ def test_teams_ingress_routes_named_role_mention_in_all_agents_channel(
         for role_id in mesh_config.project.roles
         if role_id != "product-manager"
     )
-    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
-    assert acknowledgement is not None
-    assert acknowledgement.payload["role_id"] == "product-manager"
-    assert acknowledgement.payload["role_count"] == 1
-    assert acknowledgement.payload["target_roles"] == ["product-manager"]
+    assert connector_outbox.claim_next("all-agents", "test-connector") is None
 
     message = message_store.claim_next(
         "product-manager",
@@ -1174,17 +1155,7 @@ def test_teams_ingress_routes_personal_message_to_recipient_role(
     assert message.payload["teams_conversation_id"] == "personal-conversation-1"
     assert message.payload["target_role"] == "product-manager"
     assert "work_item_id" not in message.payload
-    acknowledgement = connector_outbox.claim_next(
-        "product",
-        "teams-bot-connector",
-    )
-    assert acknowledgement is not None
-    assert acknowledgement.type == "conversation.acknowledged"
-    assert acknowledgement.payload["source_channel"] == "dm"
-    assert acknowledgement.payload["role_id"] == "product-manager"
-    assert acknowledgement.payload["teams_conversation_id"] == (
-        "personal-conversation-1"
-    )
+    assert connector_outbox.pending_count("product") == 0
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_targeted_conversation_routed" in event_types
     assert "teams_targeted_directive_routed" not in event_types
@@ -1277,7 +1248,7 @@ def test_graph_teams_channel_ingress_routes_all_agents_message(
 
     role_count = len(mesh_config.project.roles)
     assert result == {"routed": role_count, "skipped": 0, "seen": 1}
-    assert connector_outbox.pending_count("all-agents") == 1
+    assert connector_outbox.pending_count("all-agents") == 0
     assert message_store.pending_count("business-analyst") == 1
     message = message_store.claim_next(
         "business-analyst",
@@ -1349,10 +1320,7 @@ def test_graph_teams_channel_ingress_routes_named_role_mention(
         for role_id in mesh_config.project.roles
         if role_id != "product-manager"
     )
-    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
-    assert acknowledgement is not None
-    assert acknowledgement.type == "conversation.acknowledged"
-    assert acknowledgement.payload["role_id"] == "product-manager"
+    assert connector_outbox.pending_count("all-agents") == 0
     message = message_store.claim_next(
         "product-manager",
         "agentic-mesh-dev.product-manager.1",
@@ -1425,11 +1393,7 @@ def test_graph_teams_channel_ingress_routes_leading_role_address_without_metadat
         for role_id in mesh_config.project.roles
         if role_id not in {"delivery-manager"}
     )
-    acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
-    assert acknowledgement is not None
-    assert acknowledgement.type == "conversation.acknowledged"
-    assert acknowledgement.payload["role_id"] == "delivery-manager"
-    assert "intake_mode" not in acknowledgement.payload
+    assert connector_outbox.pending_count("all-agents") == 0
     message = message_store.claim_next(
         "delivery-manager",
         "agentic-mesh-dev.delivery-manager.1",
@@ -2337,6 +2301,35 @@ def test_bot_connector_renders_sponsor_directive_acknowledgement() -> None:
     assert "not a lifecycle handoff" in rendered
     assert "work-adoption" in rendered
     assert "codex/work-adoption-adopt-this-project" in rendered
+
+
+def test_bot_connector_renders_full_markdown_direct_conversation_reply() -> None:
+    long_tail = "tail-" + ("x" * 1200)
+    message = ConnectorMessage.create(
+        channel="product",
+        message_type="conversation.completed",
+        payload={
+            "title": "Give me a status update",
+            "role_id": "product-manager",
+            "status": "completed",
+            "status_message": (
+                "## Status update\n\n"
+                "- **Product direction:** stable and open-core aligned.\n"
+                "- Next: keep approvals visible.\n\n"
+                f"`trace`: {long_tail}"
+            ),
+        },
+        source="test",
+    )
+
+    rendered = BotFrameworkTeamsConnectorAdapter._render_text(message)
+
+    assert "product-manager replied" not in rendered
+    assert "Status: completed" not in rendered
+    assert "<b>Status update</b>" in rendered
+    assert "&bull; <b>Product direction:</b> stable and open-core aligned." in rendered
+    assert "<code>trace</code>" in rendered
+    assert long_tail in rendered
 
 
 def test_bot_connector_uses_thread_reply_url_when_source_reference_exists(

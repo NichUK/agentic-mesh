@@ -1891,12 +1891,9 @@ def test_direct_conversation_does_not_publish_artifacts_or_handoffs(
         mesh_config.instances["agentic-mesh-dev.product-manager.1"],
     )
 
-    assert connector_outbox.pending_count("product") == 2
-    started = connector_outbox.claim_next("product", "test-connector")
+    assert connector_outbox.pending_count("product") == 1
     completed = connector_outbox.claim_next("product", "test-connector")
-    assert started is not None
     assert completed is not None
-    assert started.type == "conversation.started"
     assert completed.type == "conversation.completed"
     assert completed.payload["status"] == "completed"
     assert completed.payload["status_message"] == (

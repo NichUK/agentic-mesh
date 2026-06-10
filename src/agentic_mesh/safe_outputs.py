@@ -38,6 +38,7 @@ SAFE_OUTPUT_TOOLS: tuple[str, ...] = (
     "decision.record",
     "memory.propose_update",
     "status.report_progress",
+    "status.reply",
     "status.report_completion",
     "noop",
     "report_incomplete",
@@ -46,6 +47,7 @@ SAFE_OUTPUT_TOOLS: tuple[str, ...] = (
 TERMINAL_SAFE_OUTPUT_TOOLS: frozenset[str] = frozenset(
     {
         "status.report_completion",
+        "status.reply",
         "noop",
         "report_incomplete",
         "route.raise_blocker",
@@ -167,6 +169,7 @@ def validate_safe_output_payload(tool: str, payload: dict[str, Any]) -> dict[str
         "decision.record": ("decision",),
         "memory.propose_update": ("summary", "provenance"),
         "status.report_progress": ("message",),
+        "status.reply": ("message",),
         "status.report_completion": ("message",),
         "noop": ("message",),
         "report_incomplete": ("reason",),
@@ -235,7 +238,9 @@ def result_from_safe_output_records(
             handoffs=handoffs,
         )
 
-    if terminal_record.tool == "noop":
+    if terminal_record.tool == "status.reply":
+        message_text = str(terminal_record.payload.get("message") or "")
+    elif terminal_record.tool == "noop":
         message_text = str(terminal_record.payload.get("message") or "No action needed.")
     else:
         message_text = str(

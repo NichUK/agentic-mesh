@@ -1583,12 +1583,6 @@ class AgentRuntime:
                 correlation_id=message.correlation_id,
                 conversation_mode=message.payload.get("conversation_mode"),
             )
-            self._queue_direct_conversation_status_connector_message(
-                source_instance=instance_config,
-                source_message=message,
-                status="started",
-                status_message="Message received. Preparing an in-role reply.",
-            )
             with telemetry.start_span(
                 "worker.run",
                 correlation_id=message.correlation_id,
