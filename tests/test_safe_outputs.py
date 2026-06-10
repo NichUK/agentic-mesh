@@ -134,6 +134,67 @@ def test_queue_propose_item_becomes_structured_queue_proposal() -> None:
     assert result.terminal_tool == "status.reply"
 
 
+def test_work_item_action_records_become_structured_runtime_actions() -> None:
+    records = [
+        SafeOutputRecord(
+            tool="work_item.close",
+            payload={
+                "work_item_id": "work-release",
+                "reason": "Sponsor approved closure as superseded.",
+                "disposition": "superseded",
+            },
+            recorded_at="2026-06-10T10:00:00+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+        SafeOutputRecord(
+            tool="work_item.reopen_flow",
+            payload={
+                "work_item_id": "work-recheck",
+                "target_role": "qa-engineer",
+                "lifecycle_state": "quality_review",
+                "reason": "QA must rerun checks after a runtime fix.",
+            },
+            recorded_at="2026-06-10T10:00:01+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+        SafeOutputRecord(
+            tool="status.reply",
+            payload={"message": "Closed one work item and reopened QA for another."},
+            recorded_at="2026-06-10T10:00:02+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+    ]
+
+    result = result_from_safe_output_records(
+        records=records,
+        message=Message.create(
+            role_id="release-manager",
+            message_type="conversation.direct",
+            payload={"title": "Release reconciliation"},
+            source="test",
+        ),
+        flow_state=FlowState(
+            state_id="direct_conversation",
+            owner_role="release-manager",
+            purpose="Resolve release state.",
+            artifact_path="",
+            handoffs={},
+        ),
+    )
+
+    assert result.status == "completed"
+    assert [action.action for action in result.work_item_actions] == [
+        "close",
+        "reopen_flow",
+    ]
+    assert result.work_item_actions[0].disposition == "superseded"
+    assert result.work_item_actions[1].target_role == "qa-engineer"
+    assert result.work_item_actions[1].message_type == "sdlc.quality_review"
+
+
 def test_safe_outputs_mcp_records_tool_call(tmp_path: Path) -> None:
     output_file = tmp_path / "safe-outputs.jsonl"
     request = {

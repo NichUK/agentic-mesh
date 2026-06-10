@@ -33,6 +33,7 @@ from agentic_mesh.models import ProjectConfig
 from agentic_mesh.models import QueueProposal
 from agentic_mesh.models import RouteRequest
 from agentic_mesh.models import ResponseTypeTemplate
+from agentic_mesh.models import WorkItemAction
 from agentic_mesh.notifications import FileNotificationAttemptStore
 from agentic_mesh.notifications import FileSourceRouteStore
 from agentic_mesh.notifications import NotificationEvent
@@ -371,13 +372,18 @@ class AgentRuntime:
                     source_instance=instance_config,
                     source_message=message,
                 )
+                self._apply_work_item_actions(
+                    actions=result.work_item_actions,
+                    source_instance=instance_config,
+                    source_message=message,
+                )
             except Exception as exc:
                 work_item_id = str(
                     message.payload.get("work_item_id") or message.message_id
                 )
                 problem_status = runtime_publication_problem_status(
                     reason=(
-                        "Runtime could not capture safe-output queue proposal: "
+                        "Runtime could not apply safe-output side effects: "
                         f"{type(exc).__name__}: {exc}"
                     ),
                     role_id=instance_config.role_id,
@@ -1551,6 +1557,11 @@ class AgentRuntime:
                     source_instance=instance_config,
                     source_message=message,
                 )
+                self._apply_work_item_actions(
+                    actions=result.work_item_actions,
+                    source_instance=instance_config,
+                    source_message=message,
+                )
             except Exception as exc:
                 work_item_id = str(
                     message.payload.get("work_item_id") or message.message_id
@@ -1558,7 +1569,7 @@ class AgentRuntime:
                 self._record_problem_status(
                     runtime_publication_problem_status(
                         reason=(
-                            "Runtime could not capture safe-output queue proposal: "
+                            "Runtime could not apply safe-output side effects: "
                             f"{type(exc).__name__}: {exc}"
                         ),
                         role_id=instance_config.role_id,
@@ -1750,12 +1761,17 @@ class AgentRuntime:
                     source_instance=instance_config,
                     source_message=message,
                 )
+                self._apply_work_item_actions(
+                    actions=result.work_item_actions,
+                    source_instance=instance_config,
+                    source_message=message,
+                )
             except Exception as exc:
                 self._record_direct_conversation_problem(
                     result=AgentRunResult(
                         status="failed",
                         message=(
-                            "Runtime could not capture safe-output queue proposal: "
+                            "Runtime could not apply safe-output side effects: "
                             f"{type(exc).__name__}: {exc}"
                         ),
                     ),
@@ -1767,7 +1783,7 @@ class AgentRuntime:
                 self.message_store.complete(
                     message,
                     "needs_runtime_recovery",
-                    result_message="Runtime could not capture safe-output queue proposal.",
+                    result_message="Runtime could not apply safe-output side effects.",
                 )
                 return True
             telemetry.record_duration(
@@ -2507,6 +2523,238 @@ class AgentRuntime:
                 correlation_id=source_message.correlation_id,
             )
         return queue_item_ids
+
+    def _apply_work_item_actions(
+        self,
+        *,
+        actions: list[WorkItemAction],
+        source_instance,
+        source_message: Message,
+    ) -> list[dict[str, str | None]]:
+        receipts: list[dict[str, str | None]] = []
+        for action in actions:
+            receipt = self._apply_work_item_action(
+                action=action,
+                source_instance=source_instance,
+                source_message=source_message,
+            )
+            receipts.append(receipt)
+        return receipts
+
+    def _apply_work_item_action(
+        self,
+        *,
+        action: WorkItemAction,
+        source_instance,
+        source_message: Message,
+    ) -> dict[str, str | None]:
+        if source_instance.role_id != "release-manager":
+            raise ValueError(
+                "work-item action safe-outputs are restricted to release-manager"
+            )
+        validate_work_item_id(action.work_item_id)
+        if action.action == "close":
+            return self._close_work_item_from_safe_output(
+                action=action,
+                source_instance=source_instance,
+                source_message=source_message,
+            )
+        if action.action == "override_blocker":
+            return self._override_work_item_blocker_from_safe_output(
+                action=action,
+                source_instance=source_instance,
+                source_message=source_message,
+            )
+        if action.action == "reopen_flow":
+            return self._reopen_work_item_flow_from_safe_output(
+                action=action,
+                source_instance=source_instance,
+                source_message=source_message,
+            )
+        raise ValueError(f"unsupported work item action `{action.action}`")
+
+    def _close_work_item_from_safe_output(
+        self,
+        *,
+        action: WorkItemAction,
+        source_instance,
+        source_message: Message,
+    ) -> dict[str, str | None]:
+        disposition = action.disposition or "complete"
+        recovery_state = (
+            "superseded"
+            if disposition == "superseded"
+            else "recovery_succeeded"
+        )
+        current_recovery = self.recovery_status_store.get_current(action.work_item_id)
+        if current_recovery is not None:
+            self.recovery_status_store.apply_transition(
+                current_recovery,
+                expected_revision=current_recovery.revision,
+                recovery_state=recovery_state,
+                recoverability_class=(
+                    "not_recoverable"
+                    if disposition == "superseded"
+                    else current_recovery.recoverability_class
+                ),
+                next_action=f"Work item closed by Release Manager: {disposition}.",
+                action_owner="none",
+                journal_ref="safe_output_work_item_closed",
+            )
+        problem_status_cleared = self.problem_status_store.clear_current(
+            action.work_item_id
+        )
+        self.journal.append(
+            "safe_output_work_item_closed",
+            project_id=self.project.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            source_message_id=source_message.message_id,
+            work_item_id=action.work_item_id,
+            work_item_type=action.work_item_type,
+            lifecycle_state=action.lifecycle_state,
+            status="closed",
+            disposition=disposition,
+            reason=action.reason,
+            problem_status_cleared=problem_status_cleared,
+            correlation_id=source_message.correlation_id,
+        )
+        self.journal.append(
+            "work_completed",
+            project_id=self.project.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            source_message_id=source_message.message_id,
+            work_item_id=action.work_item_id,
+            work_item_type=action.work_item_type,
+            lifecycle_state=action.lifecycle_state,
+            status="closed",
+            disposition=disposition,
+            reason=action.reason,
+            result_message=action.summary or action.reason,
+            result_summary=action.summary or action.reason,
+            source="safe-output",
+            correlation_id=source_message.correlation_id,
+        )
+        return {
+            "action": action.action,
+            "work_item_id": action.work_item_id,
+            "status": "closed",
+            "disposition": disposition,
+        }
+
+    def _override_work_item_blocker_from_safe_output(
+        self,
+        *,
+        action: WorkItemAction,
+        source_instance,
+        source_message: Message,
+    ) -> dict[str, str | None]:
+        problem_status_cleared = self.problem_status_store.clear_current(
+            action.work_item_id
+        )
+        current_recovery = self.recovery_status_store.get_current(action.work_item_id)
+        if current_recovery is not None:
+            self.recovery_status_store.apply_transition(
+                current_recovery,
+                expected_revision=current_recovery.revision,
+                recovery_state="recovery_succeeded",
+                next_action="Blocker overridden by explicit Release Manager command.",
+                action_owner="none",
+                journal_ref="safe_output_work_item_blocker_overridden",
+            )
+        self.journal.append(
+            "safe_output_work_item_blocker_overridden",
+            project_id=self.project.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            source_message_id=source_message.message_id,
+            work_item_id=action.work_item_id,
+            work_item_type=action.work_item_type,
+            lifecycle_state=action.lifecycle_state,
+            reason=action.reason,
+            problem_status_cleared=problem_status_cleared,
+            correlation_id=source_message.correlation_id,
+        )
+        return {
+            "action": action.action,
+            "work_item_id": action.work_item_id,
+            "status": "blocker_overridden",
+            "disposition": action.disposition,
+        }
+
+    def _reopen_work_item_flow_from_safe_output(
+        self,
+        *,
+        action: WorkItemAction,
+        source_instance,
+        source_message: Message,
+    ) -> dict[str, str | None]:
+        if not action.target_role or not action.lifecycle_state:
+            raise ValueError("reopen_flow requires target_role and lifecycle_state")
+        message_type = action.message_type or f"sdlc.{action.lifecycle_state}"
+        title = (
+            action.summary
+            or source_message.payload.get("title")
+            or f"Reopened {action.work_item_id}"
+        )
+        payload = {
+            "title": title,
+            "summary": action.summary or action.reason,
+            "work_item_id": action.work_item_id,
+            "work_item_type": action.work_item_type or "slice",
+            "lifecycle_state": action.lifecycle_state,
+            "reopen_reason": action.reason,
+            "reopened_by_role": source_instance.role_id,
+            "reopened_by_role_instance": source_instance.instance_id,
+            "source_message_id": source_message.message_id,
+        }
+        queued = self.message_store.enqueue(
+            Message.create(
+                role_id=action.target_role,
+                message_type=message_type,
+                payload=payload,
+                source="safe-output:work_item.reopen_flow",
+                correlation_id=source_message.correlation_id,
+                trace_context=source_message.trace_context,
+            )
+        )
+        problem_status_cleared = self.problem_status_store.clear_current(
+            action.work_item_id
+        )
+        current_recovery = self.recovery_status_store.get_current(action.work_item_id)
+        if current_recovery is not None:
+            self.recovery_status_store.apply_transition(
+                current_recovery,
+                expected_revision=current_recovery.revision,
+                recovery_state="recovery_queued",
+                next_action=f"Reopened flow queued for {action.target_role}.",
+                action_owner=action.target_role,
+                journal_ref="safe_output_work_item_flow_reopened",
+            )
+        self.journal.append(
+            "safe_output_work_item_flow_reopened",
+            project_id=self.project.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            source_message_id=source_message.message_id,
+            message_id=queued.message_id,
+            target_role=action.target_role,
+            message_type=message_type,
+            work_item_id=action.work_item_id,
+            work_item_type=action.work_item_type,
+            lifecycle_state=action.lifecycle_state,
+            reason=action.reason,
+            problem_status_cleared=problem_status_cleared,
+            correlation_id=source_message.correlation_id,
+        )
+        return {
+            "action": action.action,
+            "work_item_id": action.work_item_id,
+            "status": "reopened",
+            "target_role": action.target_role,
+            "lifecycle_state": action.lifecycle_state,
+        }
 
     def _source_anchor_for_safe_output_proposal(
         self,

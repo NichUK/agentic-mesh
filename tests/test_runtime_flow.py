@@ -19,9 +19,11 @@ from agentic_mesh.models import NotificationEventOverrideConfig
 from agentic_mesh.models import QueueProposal
 from agentic_mesh.models import RoleInstanceConfig
 from agentic_mesh.models import RouteRequest
+from agentic_mesh.models import WorkItemAction
 from agentic_mesh.notifications import FileSourceRouteStore
 from agentic_mesh.notifications import SourceRouteRecord
 from agentic_mesh.problem_status import ProblemStatusStore
+from agentic_mesh.problem_status import role_problem_status
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.runtime import AgentRuntime
 from agentic_mesh.storage import FileMessageStore
@@ -291,7 +293,11 @@ def _release_response_runtime(
         mesh_config.project.project_id,
         journal,
     )
-    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    artifacts = ArtifactStore(
+        tmp_path / "workspace",
+        mesh_config.project.project_id,
+        journal,
+    )
     runtime = AgentRuntime(
         message_store,
         artifacts,
@@ -1880,6 +1886,44 @@ class QueueProposalConversationWorkerAdapter(WorkerAdapter):
         )
 
 
+class ReleaseWorkItemActionConversationWorkerAdapter(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="Release reconciliation actions recorded.",
+            work_item_actions=[
+                WorkItemAction(
+                    action="close",
+                    work_item_id="work-close",
+                    reason="Sponsor approved closure as sufficiently resolved.",
+                    disposition="sponsor_exception",
+                    source_tool="work_item.close",
+                ),
+                WorkItemAction(
+                    action="override_blocker",
+                    work_item_id="work-blocked",
+                    reason="Sponsor explicitly overrode the stale blocker.",
+                    source_tool="work_item.override_blocker",
+                ),
+                WorkItemAction(
+                    action="reopen_flow",
+                    work_item_id="work-reopen",
+                    reason="QA must perform a fresh check after runtime recovery.",
+                    target_role="qa-engineer",
+                    lifecycle_state="quality_review",
+                    work_item_type="slice",
+                    source_tool="work_item.reopen_flow",
+                ),
+            ],
+            terminal_tool="status.reply",
+        )
+
+
 def test_direct_conversation_does_not_publish_artifacts_or_handoffs(
     tmp_path: Path,
 ) -> None:
@@ -2090,6 +2134,97 @@ def test_direct_conversation_queue_proposal_creates_work_queue_item(
     assert completed.payload["status_message"] == "I've proposed this as a tracked slice."
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "safe_output_queue_proposal_captured" in event_types
+
+
+def test_release_manager_direct_conversation_can_apply_work_item_actions(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    problem_store = ProblemStatusStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+    )
+    problem_store.write_current(
+        role_problem_status(
+            status="blocked",
+            message="Historical blocker to override.",
+            project_id=mesh_config.project.project_id,
+            role_id="qa-engineer",
+            role_instance_id="agentic-mesh-dev.qa-engineer.1",
+            work_item_id="work-blocked",
+            work_item_type="slice",
+            lifecycle_state="quality_review",
+            queue_item_id=None,
+            source_message_id="msg-old-blocker",
+            source_anchor=None,
+            correlation_id="corr-old-blocker",
+            status_url=None,
+        )
+    )
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        ReleaseWorkItemActionConversationWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+    message_store.enqueue(
+        Message.create(
+            role_id="release-manager",
+            message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED,
+            payload={
+                "title": "Release reconciliation",
+                "summary": "Close and reopen specific work items.",
+                "text": (
+                    "Close work-close, override work-blocked, and reopen "
+                    "work-reopen for QA."
+                ),
+                "conversation_mode": "targeted",
+                "requested_roles": ["release-manager"],
+                "target_role": "release-manager",
+                "source_channel": "all-agents",
+            },
+            source="teams:teams-bot-listener:all-agents",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.release-manager.1",
+        mesh_config.instances["agentic-mesh-dev.release-manager.1"],
+    )
+
+    assert problem_store.read_current("work-blocked") is None
+    assert message_store.pending_count("qa-engineer") == 1
+    reopened = message_store.claim_next("qa-engineer", "test-qa")
+    assert reopened is not None
+    assert reopened.type == "sdlc.quality_review"
+    assert reopened.payload["work_item_id"] == "work-reopen"
+    assert reopened.payload["lifecycle_state"] == "quality_review"
+    completed = connector_outbox.claim_next("all-agents", "test-connector")
+    assert completed is not None
+    assert completed.type == "conversation.completed"
+    assert (
+        completed.payload["status_message"]
+        == "Release reconciliation actions recorded."
+    )
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "safe_output_work_item_closed" in event_types
+    assert "safe_output_work_item_blocker_overridden" in event_types
+    assert "safe_output_work_item_flow_reopened" in event_types
 
 
 def test_queue_originated_publish_ready_targets_source_anchor(
