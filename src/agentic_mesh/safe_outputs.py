@@ -15,6 +15,7 @@ from agentic_mesh.models import Message
 from agentic_mesh.models import QueueProposal
 from agentic_mesh.models import RouteRequest
 from agentic_mesh.models import RoleInstanceConfig
+from agentic_mesh.models import WorkItemAction
 from agentic_mesh.models import utc_now_iso
 from agentic_mesh.prompt_templates import render_prompt_template
 
@@ -23,6 +24,9 @@ SAFE_OUTPUT_SCHEMA_VERSION = "safe-output-v1"
 
 SAFE_OUTPUT_TOOLS: tuple[str, ...] = (
     "work_item.update_summary",
+    "work_item.close",
+    "work_item.override_blocker",
+    "work_item.reopen_flow",
     "document.propose_update",
     "document.add_review_comment",
     "document.link_artifact",
@@ -155,6 +159,14 @@ def validate_safe_output_payload(tool: str, payload: dict[str, Any]) -> dict[str
 
     required_by_tool: dict[str, tuple[str, ...]] = {
         "document.propose_update": ("path", "content"),
+        "work_item.close": ("work_item_id", "reason"),
+        "work_item.override_blocker": ("work_item_id", "reason"),
+        "work_item.reopen_flow": (
+            "work_item_id",
+            "target_role",
+            "lifecycle_state",
+            "reason",
+        ),
         "document.add_review_comment": ("path", "comment"),
         "document.link_artifact": ("path",),
         "sponsor.ask_question": ("question",),
@@ -209,6 +221,7 @@ def result_from_safe_output_records(
     routes = _routes_from_records(records)
     handoffs = _handoffs_from_records(records, message, flow_state)
     queue_proposals = _queue_proposals_from_records(records, message)
+    work_item_actions = _work_item_actions_from_records(records, message)
 
     if terminal_record.tool == "route.raise_blocker":
         return AgentRunResult(
@@ -218,6 +231,7 @@ def result_from_safe_output_records(
             routes=[],
             handoffs=[],
             queue_proposals=[],
+            work_item_actions=[],
             terminal_tool=terminal_record.tool,
         )
     if terminal_record.tool == "report_incomplete":
@@ -228,6 +242,7 @@ def result_from_safe_output_records(
             routes=[],
             handoffs=[],
             queue_proposals=[],
+            work_item_actions=[],
             terminal_tool=terminal_record.tool,
         )
     if terminal_record.tool in {"sponsor.ask_question", "sponsor.propose_decision"}:
@@ -243,6 +258,7 @@ def result_from_safe_output_records(
             routes=routes,
             handoffs=handoffs,
             queue_proposals=queue_proposals,
+            work_item_actions=work_item_actions,
             terminal_tool=terminal_record.tool,
         )
 
@@ -263,6 +279,7 @@ def result_from_safe_output_records(
         routes=routes,
         handoffs=handoffs,
         queue_proposals=queue_proposals,
+        work_item_actions=work_item_actions,
         terminal_tool=terminal_record.tool,
     )
 
@@ -329,6 +346,17 @@ def write_safe_output_audit(
                         "source_tool": proposal.source_tool,
                     }
                     for proposal in result.queue_proposals
+                ],
+                "work_item_actions": [
+                    {
+                        "action": action.action,
+                        "work_item_id": action.work_item_id,
+                        "disposition": action.disposition,
+                        "target_role": action.target_role,
+                        "lifecycle_state": action.lifecycle_state,
+                        "source_tool": action.source_tool,
+                    }
+                    for action in result.work_item_actions
                 ],
                 "terminal_tool": result.terminal_tool,
             }
@@ -451,6 +479,49 @@ def _queue_proposals_from_records(
             )
         )
     return proposals
+
+
+def _work_item_actions_from_records(
+    records: list[SafeOutputRecord],
+    message: Message,
+) -> list[WorkItemAction]:
+    actions: list[WorkItemAction] = []
+    for record in records:
+        if record.tool not in {
+            "work_item.close",
+            "work_item.override_blocker",
+            "work_item.reopen_flow",
+        }:
+            continue
+        payload = record.payload
+        work_item_id = str(payload["work_item_id"])
+        actions.append(
+            WorkItemAction(
+                action=record.tool.removeprefix("work_item."),
+                work_item_id=work_item_id,
+                reason=str(payload["reason"]),
+                disposition=_optional_string(payload.get("disposition")),
+                target_role=_optional_string(payload.get("target_role")),
+                lifecycle_state=_optional_string(payload.get("lifecycle_state")),
+                message_type=(
+                    _optional_string(payload.get("message_type"))
+                    or (
+                        f"sdlc.{payload['lifecycle_state']}"
+                        if record.tool == "work_item.reopen_flow"
+                        else None
+                    )
+                ),
+                work_item_type=(
+                    _optional_string(payload.get("work_item_type"))
+                    or _optional_string(message.payload.get("work_item_type"))
+                ),
+                summary=_optional_string(payload.get("summary")),
+                idempotency_key=_optional_string(payload.get("idempotency_key")),
+                raw_payload=dict(payload),
+                source_tool=record.tool,
+            )
+        )
+    return actions
 
 
 def _route_payload(

@@ -641,6 +641,22 @@ class QueueProposal:
 
 
 @dataclass(frozen=True)
+class WorkItemAction:
+    action: str
+    work_item_id: str
+    reason: str
+    disposition: str | None = None
+    target_role: str | None = None
+    lifecycle_state: str | None = None
+    message_type: str | None = None
+    work_item_type: str | None = None
+    summary: str | None = None
+    idempotency_key: str | None = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+    source_tool: str = "work_item.close"
+
+
+@dataclass(frozen=True)
 class AgentRunResult:
     status: str
     message: str
@@ -648,4 +664,5 @@ class AgentRunResult:
     routes: list[RouteRequest] = field(default_factory=list)
     handoffs: list[Handoff] = field(default_factory=list)
     queue_proposals: list[QueueProposal] = field(default_factory=list)
+    work_item_actions: list[WorkItemAction] = field(default_factory=list)
     terminal_tool: str | None = None
