@@ -89,6 +89,33 @@ ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,180}$")
 WORK_RE = re.compile(r"\bwork-[A-Za-z0-9][A-Za-z0-9._-]*\b")
 QUEUE_RE = re.compile(r"\bqueue-[A-Za-z0-9][A-Za-z0-9._-]*\b")
 
+WORK_ITEM_NATIVE_CONNECTORS = {
+    "azure-devops",
+    "azure_devops",
+    "ado",
+    "github",
+    "github-issues",
+    "github_issues",
+    "jira",
+    "linear",
+}
+WORK_ITEM_NATIVE_SOURCE_KINDS = {
+    "backlog-item",
+    "backlog_item",
+    "bug",
+    "feature",
+    "issue",
+    "pull-request",
+    "pull_request",
+    "story",
+    "task",
+    "ticket",
+    "work-item",
+    "work_item",
+}
+MESSAGING_CONNECTORS = {"discord", "slack", "teams"}
+MESSAGING_SOURCE_KINDS = {"channel", "chat", "dm", "message", "thread"}
+
 
 class GatewayError(ValueError):
     pass
@@ -263,6 +290,8 @@ class GatewayPolicy:
     def decide(self, event: GatewayEvent) -> GatewayPolicyDecision:
         text = event.text_summary.casefold()
         explicit_refs = list(event.explicit_refs)
+        work_item_native = _is_work_item_native_source(event)
+        messaging_source = _is_messaging_source(event)
         if _is_status_question(text) and explicit_refs:
             return GatewayPolicyDecision(
                 outcome=OUTCOME_STATUS_ANSWER,
@@ -287,16 +316,41 @@ class GatewayPolicy:
                 reason_class="context_update_with_ref",
                 target_ref=explicit_refs[0],
             )
+        if messaging_source:
+            if event.role_hints:
+                return GatewayPolicyDecision(
+                    outcome=OUTCOME_ROLE_DIRECTED_HINT,
+                    reason_class="messaging_role_hint_requires_agent_decision",
+                    owner_role=_owner_from_role_hints(event.role_hints, self.role_ids),
+                )
+            if _is_direct_delivery_request(text) or _is_meaningful_work(text):
+                return GatewayPolicyDecision(
+                    outcome=OUTCOME_CLARIFICATION_NEEDED,
+                    reason_class="messaging_work_requires_agent_proposal",
+                    owner_role=self.gateway_config.default_owner_role,
+                )
         if _is_direct_delivery_request(text):
             return GatewayPolicyDecision(
-                outcome=OUTCOME_DIRECT_DELIVERY_ROUTED,
-                reason_class="no_delivery_work_boundary",
+                outcome=(
+                    OUTCOME_CREATE_OR_UPDATE_QUEUE_ITEM
+                    if work_item_native
+                    else OUTCOME_DIRECT_DELIVERY_ROUTED
+                ),
+                reason_class=(
+                    "work_item_native_delivery_request"
+                    if work_item_native
+                    else "no_delivery_work_boundary"
+                ),
                 owner_role=self.gateway_config.default_owner_role,
             )
         if _is_meaningful_work(text):
             return GatewayPolicyDecision(
                 outcome=OUTCOME_CREATE_OR_UPDATE_QUEUE_ITEM,
-                reason_class="meaningful_work_request",
+                reason_class=(
+                    "work_item_native_meaningful_work_request"
+                    if work_item_native
+                    else "meaningful_work_request"
+                ),
                 owner_role=_owner_from_role_hints(event.role_hints, self.role_ids)
                 or self.gateway_config.default_owner_role,
             )
@@ -879,6 +933,23 @@ def _owner_from_role_hints(role_hints: tuple[str, ...], role_ids: set[str]) -> s
         if hint in role_ids:
             return hint
     return None
+
+
+def _is_work_item_native_source(event: GatewayEvent) -> bool:
+    connector = event.connector_type.casefold().replace(" ", "-")
+    connector_id = event.connector_id.casefold().replace(" ", "-")
+    source_kind = event.source_kind.casefold().replace(" ", "-")
+    return (
+        connector in WORK_ITEM_NATIVE_CONNECTORS
+        or connector_id in WORK_ITEM_NATIVE_CONNECTORS
+        or source_kind in WORK_ITEM_NATIVE_SOURCE_KINDS
+    )
+
+
+def _is_messaging_source(event: GatewayEvent) -> bool:
+    connector = event.connector_type.casefold().replace(" ", "-")
+    source_kind = event.source_kind.casefold().replace(" ", "-")
+    return connector in MESSAGING_CONNECTORS or source_kind in MESSAGING_SOURCE_KINDS
 
 
 def _ensure_under(path: Path, root: Path) -> None:
