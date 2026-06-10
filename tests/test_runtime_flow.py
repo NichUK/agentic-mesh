@@ -2127,13 +2127,22 @@ def test_direct_conversation_queue_proposal_creates_work_queue_item(
     assert len(queue_items) == 1
     assert queue_items[0].title == "Build gateway DM bot"
     assert queue_items[0].owner_role == "delivery-manager"
+    assert queue_items[0].status == "promoted"
+    assert queue_items[0].promotion is not None
+    assert queue_items[0].promotion.target_role == "product-manager"
+    assert queue_items[0].promotion.lifecycle_state == "product_definition"
     assert queue_items[0].metadata["created_by_safe_output"] is True
+    lifecycle_message = message_store.claim_next("product-manager", "test-worker")
+    assert lifecycle_message is not None
+    assert lifecycle_message.payload["queue_item_id"] == queue_items[0].queue_item_id
+    assert lifecycle_message.payload["queue_promotion_kind"] == "intake"
     completed = connector_outbox.claim_next("all-agents", "test-connector")
     assert completed is not None
     assert completed.type == "conversation.completed"
     assert completed.payload["status_message"] == "I've proposed this as a tracked slice."
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "safe_output_queue_proposal_captured" in event_types
+    assert "safe_output_queue_proposal_promoted" in event_types
 
 
 def test_release_manager_direct_conversation_can_apply_work_item_actions(
