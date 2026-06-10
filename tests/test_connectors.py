@@ -629,7 +629,7 @@ def test_teams_ingress_returns_non_final_card_without_durable_request(
     assert message_store.pending_count("release-manager") == 0
 
 
-def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
+def test_teams_ingress_routes_all_agents_message_as_conversation(
     tmp_path: Path,
 ) -> None:
     mesh_config = load_mesh_config(Path.cwd())
@@ -675,34 +675,33 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     roles = sorted(mesh_config.project.roles)
     assert result["target_roles"] == roles
     assert result["lifecycle_state"] is None
-    assert result["work_item_id"].startswith("work-")
+    assert result["work_item_id"] is None
     assert all(message_store.pending_count(role_id) == 1 for role_id in roles)
     assert connector_outbox.pending_count("all-agents") == 1
     acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
     assert acknowledgement is not None
-    assert acknowledgement.type == "sponsor_directive.acknowledged"
+    assert acknowledgement.type == "conversation.acknowledged"
     assert acknowledgement.payload["role_count"] == len(roles)
     assert acknowledgement.payload["role_id"] == "delivery-manager"
-    assert acknowledgement.payload["git_branch"].startswith("codex/")
-    assert (
-        acknowledgement.payload["publication"]["commit_policy"]
-        == "commit_and_push_after_all_roles_terminal"
-    )
+    assert "work_item_id" not in acknowledgement.payload
+    assert "git_branch" not in acknowledgement.payload
+    assert "publication" not in acknowledgement.payload
 
     message = message_store.claim_next(
         "business-analyst",
         "agentic-mesh-dev.business-analyst.1",
     )
     assert message is not None
-    assert message.type == "sponsor_directive.requested"
+    assert message.type == "conversation.direct"
     assert message.source == "teams:teams-bot-listener:all-agents"
-    assert message.payload["work_item_type"] == "directive"
-    assert message.payload["work_mode"] == "direct_broadcast"
+    assert "work_item_id" not in message.payload
+    assert "work_item_type" not in message.payload
+    assert message.payload["conversation_mode"] == "broadcast"
     assert message.payload["source_channel"] == "all-agents"
     assert message.payload["target_role"] == "business-analyst"
-    assert message.payload["git_branch"] == acknowledgement.payload["git_branch"]
-    assert message.payload["publication"]["mode"] == "git_branch"
-    assert message.payload["output_path"] == "documents/analysis/business-analyst.md"
+    assert "git_branch" not in message.payload
+    assert "publication" not in message.payload
+    assert "output_path" not in message.payload
     assert message.payload["teams_from_name"] == "Nich"
     assert "Start an adoption process" in message.payload["summary"]
     assert "<at>" not in message.payload["summary"]
@@ -710,10 +709,11 @@ def test_teams_ingress_routes_all_agents_message_to_direct_role_work(
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_bot_activity_received" in event_types
     assert "message_accepted" in event_types
-    assert "teams_all_agents_directive_routed" in event_types
+    assert "teams_all_agents_conversation_routed" in event_types
+    assert "teams_all_agents_directive_routed" not in event_types
 
 
-def test_teams_ingress_captures_work_queue_before_direct_role_work(
+def test_teams_ingress_does_not_capture_queue_for_all_agents_conversation(
     tmp_path: Path,
 ) -> None:
     mesh_config = load_mesh_config(Path.cwd())
@@ -757,20 +757,22 @@ def test_teams_ingress_captures_work_queue_before_direct_role_work(
 
     events = journal.read_all()
     event_types = [event["event_type"] for event in events]
-    assert event_types.index("queue_item_created") < event_types.index("message_accepted")
+    assert "queue_item_created" not in event_types
     message = message_store.claim_next(
         "business-analyst",
         "agentic-mesh-dev.business-analyst.1",
     )
     assert message is not None
-    assert message.payload["queue_item_id"].startswith("queue-")
+    assert message.type == "conversation.direct"
+    assert "queue_item_id" not in message.payload
+    assert "work_item_id" not in message.payload
     assert message.payload["source_anchor"]["source_anchor_ref"].startswith("source:")
     rendered = json.dumps(message.payload["source_anchor"])
     assert "raw-user-id" not in rendered
     assert "raw-conversation-id" not in rendered
 
 
-def test_targeted_delivery_slice_request_enters_lifecycle_queue(
+def test_targeted_delivery_slice_request_reaches_role_as_conversation(
     tmp_path: Path,
 ) -> None:
     mesh_config = load_mesh_config(Path.cwd())
@@ -825,30 +827,29 @@ def test_targeted_delivery_slice_request_enters_lifecycle_queue(
     )
 
     assert result["routed"] is True
-    assert result["target_roles"] == ["business-analyst"]
-    assert message_store.pending_count("delivery-manager") == 0
-    assert message_store.pending_count("business-analyst") == 1
+    assert result["target_roles"] == ["delivery-manager"]
+    assert result["work_item_id"] is None
+    assert message_store.pending_count("delivery-manager") == 1
+    assert message_store.pending_count("business-analyst") == 0
     message = message_store.claim_next(
-        "business-analyst",
-        "agentic-mesh-dev.business-analyst.1",
+        "delivery-manager",
+        "agentic-mesh-dev.delivery-manager.1",
     )
     assert message is not None
-    assert message.type == "sponsor_intake.requested"
-    assert message.payload["work_item_type"] == "slice"
-    assert message.payload["queue_item_id"].startswith("queue-")
-    queue_item = work_queue.get(message.payload["queue_item_id"])
-    assert queue_item is not None
-    assert queue_item.metadata["intake"] == "targeted_delivery_slice_request"
+    assert message.type == "conversation.direct"
+    assert message.payload["conversation_mode"] == "targeted"
+    assert "work_item_id" not in message.payload
+    assert "queue_item_id" not in message.payload
+    assert work_queue.list_items() == []
 
     acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
     assert acknowledgement is not None
-    assert acknowledgement.type == "sponsor_directive.acknowledged"
-    assert acknowledgement.payload["intake_mode"] == "queued_sponsor_intake"
+    assert acknowledgement.type == "conversation.acknowledged"
+    assert acknowledgement.payload["role_id"] == "delivery-manager"
     assert acknowledgement.payload["teams_reply_to_activity_id"] == "activity/mermaid-slice"
     rendered = BotFrameworkTeamsConnectorAdapter._render_text(acknowledgement)
-    assert "Agentic Mesh queued" in rendered
-    assert "Created lifecycle work item" in rendered
-    assert "direct role-only instruction" in rendered
+    assert "delivery-manager received your message" in rendered
+    assert "Created lifecycle work item" not in rendered
 
 
 def test_cross_connector_duplicate_intake_is_ignored(
@@ -907,15 +908,16 @@ def test_cross_connector_duplicate_intake_is_ignored(
 
     assert first["routed"] is True
     assert second == {"status": "accepted", "activity_id": "activity_duplicate"}
-    assert len(work_queue.list_items()) == 1
-    assert message_store.pending_count("business-analyst") == 1
+    assert work_queue.list_items() == []
+    assert message_store.pending_count("delivery-manager") == 1
+    assert message_store.pending_count("business-analyst") == 0
     assert connector_outbox.pending_count("all-agents") == 1
     ignored = [
         event
         for event in journal.read_all()
         if event["event_type"] == "teams_channel_message_ignored"
     ]
-    assert ignored[-1]["reason"] == "duplicate_source_already_queued"
+    assert ignored[-1]["reason"] == "duplicate_source_already_routed"
 
 
 def test_teams_ingress_informational_message_remains_unqueued(
@@ -1099,14 +1101,17 @@ def test_teams_ingress_routes_named_role_mention_in_all_agents_channel(
         "agentic-mesh-dev.product-manager.1",
     )
     assert message is not None
-    assert message.type == "sponsor_directive.requested"
-    assert message.payload["work_mode"] == "direct_targeted"
+    assert message.type == "conversation.direct"
+    assert message.payload["conversation_mode"] == "targeted"
     assert message.payload["requested_roles"] == ["product-manager"]
     assert message.payload["target_role"] == "product-manager"
-    assert message.payload["output_path"] == "documents/analysis/product-manager.md"
+    assert "work_item_id" not in message.payload
+    assert "work_item_type" not in message.payload
+    assert "output_path" not in message.payload
 
     event_types = [event["event_type"] for event in journal.read_all()]
-    assert "teams_targeted_directive_routed" in event_types
+    assert "teams_targeted_conversation_routed" in event_types
+    assert "teams_targeted_directive_routed" not in event_types
     assert "teams_all_agents_directive_routed" not in event_types
 
 
@@ -1163,23 +1168,26 @@ def test_teams_ingress_routes_personal_message_to_recipient_role(
         "agentic-mesh-dev.product-manager.1",
     )
     assert message is not None
-    assert message.type == "sponsor_directive.requested"
-    assert message.payload["work_mode"] == "direct_targeted"
+    assert message.type == "conversation.direct"
+    assert message.payload["conversation_mode"] == "targeted"
     assert message.payload["source_channel"] == "dm"
     assert message.payload["teams_conversation_id"] == "personal-conversation-1"
     assert message.payload["target_role"] == "product-manager"
+    assert "work_item_id" not in message.payload
     acknowledgement = connector_outbox.claim_next(
-        "all-agents",
+        "product",
         "teams-bot-connector",
     )
     assert acknowledgement is not None
+    assert acknowledgement.type == "conversation.acknowledged"
     assert acknowledgement.payload["source_channel"] == "dm"
     assert acknowledgement.payload["role_id"] == "product-manager"
     assert acknowledgement.payload["teams_conversation_id"] == (
         "personal-conversation-1"
     )
     event_types = [event["event_type"] for event in journal.read_all()]
-    assert "teams_targeted_directive_routed" in event_types
+    assert "teams_targeted_conversation_routed" in event_types
+    assert "teams_targeted_directive_routed" not in event_types
 
 
 def test_teams_ingress_journals_unmapped_channel_message(
@@ -1276,16 +1284,19 @@ def test_graph_teams_channel_ingress_routes_all_agents_message(
         "agentic-mesh-dev.business-analyst.1",
     )
     assert message is not None
-    assert message.type == "sponsor_directive.requested"
+    assert message.type == "conversation.direct"
     assert message.source == "teams:teams-graph-ingress:all-agents"
-    assert message.payload["work_item_type"] == "directive"
+    assert message.payload["conversation_mode"] == "broadcast"
     assert message.payload["source_channel"] == "all-agents"
     assert message.payload["teams_activity_id"] == "1780489884072"
     assert message.payload["teams_from_name"] == "Nich"
+    assert "work_item_id" not in message.payload
+    assert "work_item_type" not in message.payload
 
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_graph_channel_message_received" in event_types
-    assert "teams_all_agents_directive_routed" in event_types
+    assert "teams_all_agents_conversation_routed" in event_types
+    assert "teams_all_agents_directive_routed" not in event_types
 
 
 def test_graph_teams_channel_ingress_routes_named_role_mention(
@@ -1340,20 +1351,25 @@ def test_graph_teams_channel_ingress_routes_named_role_mention(
     )
     acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
     assert acknowledgement is not None
+    assert acknowledgement.type == "conversation.acknowledged"
     assert acknowledgement.payload["role_id"] == "product-manager"
     message = message_store.claim_next(
         "product-manager",
         "agentic-mesh-dev.product-manager.1",
     )
     assert message is not None
+    assert message.type == "conversation.direct"
     assert message.source == "teams:teams-graph-ingress:all-agents"
-    assert message.payload["work_mode"] == "direct_targeted"
+    assert message.payload["conversation_mode"] == "targeted"
     assert message.payload["teams_activity_id"] == "role-mention-1"
     assert message.payload["teams_from_name"] == "Nich"
+    assert "work_item_id" not in message.payload
+    assert "output_path" not in message.payload
 
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "teams_graph_channel_message_received" in event_types
-    assert "teams_targeted_directive_routed" in event_types
+    assert "teams_targeted_conversation_routed" in event_types
+    assert "teams_targeted_directive_routed" not in event_types
     assert "teams_all_agents_directive_routed" not in event_types
 
 
@@ -1402,28 +1418,32 @@ def test_graph_teams_channel_ingress_routes_leading_role_address_without_metadat
     result = ingress.process_once("all-agents", max_messages=5)
 
     assert result == {"routed": 1, "skipped": 0, "seen": 1}
-    assert message_store.pending_count("delivery-manager") == 0
-    assert message_store.pending_count("business-analyst") == 1
+    assert message_store.pending_count("delivery-manager") == 1
+    assert message_store.pending_count("business-analyst") == 0
     assert all(
         message_store.pending_count(role_id) == 0
         for role_id in mesh_config.project.roles
-        if role_id not in {"business-analyst", "delivery-manager"}
+        if role_id not in {"delivery-manager"}
     )
     acknowledgement = connector_outbox.claim_next("all-agents", "test-connector")
     assert acknowledgement is not None
-    assert acknowledgement.payload["role_id"] == "business-analyst"
-    assert acknowledgement.payload["intake_mode"] == "queued_sponsor_intake"
+    assert acknowledgement.type == "conversation.acknowledged"
+    assert acknowledgement.payload["role_id"] == "delivery-manager"
+    assert "intake_mode" not in acknowledgement.payload
     message = message_store.claim_next(
-        "business-analyst",
-        "agentic-mesh-dev.business-analyst.1",
+        "delivery-manager",
+        "agentic-mesh-dev.delivery-manager.1",
     )
     assert message is not None
-    assert message.type == "sponsor_intake.requested"
-    assert message.payload["work_item_type"] == "slice"
-    assert message.payload["lifecycle_state"] == "business_analysis"
+    assert message.type == "conversation.direct"
+    assert message.payload["conversation_mode"] == "targeted"
+    assert message.payload["target_role"] == "delivery-manager"
+    assert "work_item_id" not in message.payload
+    assert "lifecycle_state" not in message.payload
 
     event_types = [event["event_type"] for event in journal.read_all()]
-    assert "teams_channel_message_routed" in event_types
+    assert "teams_targeted_conversation_routed" in event_types
+    assert "teams_channel_message_routed" not in event_types
     assert "teams_targeted_directive_routed" not in event_types
     assert "teams_all_agents_directive_routed" not in event_types
 
