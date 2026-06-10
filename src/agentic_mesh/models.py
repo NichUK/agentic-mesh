@@ -629,9 +629,23 @@ class RouteRequest:
 
 
 @dataclass(frozen=True)
+class QueueProposal:
+    title: str
+    summary: str
+    owner_role: str | None = None
+    recommended_work_item_type: str | None = None
+    idempotency_key: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+    source_tool: str = "queue.propose_item"
+
+
+@dataclass(frozen=True)
 class AgentRunResult:
     status: str
     message: str
     document_updates: list[DocumentUpdate] = field(default_factory=list)
     routes: list[RouteRequest] = field(default_factory=list)
     handoffs: list[Handoff] = field(default_factory=list)
+    queue_proposals: list[QueueProposal] = field(default_factory=list)
+    terminal_tool: str | None = None

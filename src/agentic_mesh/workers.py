@@ -221,7 +221,7 @@ class ConfiguredWorkerAdapter(WorkerAdapter):
 
 
 class CodexCliWorkerAdapter(WorkerAdapter):
-    """Runs a real Codex CLI agent and converts its JSON result to runtime output."""
+    """Runs Codex CLI and interprets its safe-output tool calls."""
 
     def __init__(
         self,

@@ -12,6 +12,7 @@ from agentic_mesh.models import DocumentUpdate
 from agentic_mesh.models import FlowState
 from agentic_mesh.models import Handoff
 from agentic_mesh.models import Message
+from agentic_mesh.models import QueueProposal
 from agentic_mesh.models import RouteRequest
 from agentic_mesh.models import RoleInstanceConfig
 from agentic_mesh.models import utc_now_iso
@@ -207,6 +208,7 @@ def result_from_safe_output_records(
     updates = _document_updates_from_records(records)
     routes = _routes_from_records(records)
     handoffs = _handoffs_from_records(records, message, flow_state)
+    queue_proposals = _queue_proposals_from_records(records, message)
 
     if terminal_record.tool == "route.raise_blocker":
         return AgentRunResult(
@@ -215,6 +217,8 @@ def result_from_safe_output_records(
             document_updates=[],
             routes=[],
             handoffs=[],
+            queue_proposals=[],
+            terminal_tool=terminal_record.tool,
         )
     if terminal_record.tool == "report_incomplete":
         return AgentRunResult(
@@ -223,6 +227,8 @@ def result_from_safe_output_records(
             document_updates=[],
             routes=[],
             handoffs=[],
+            queue_proposals=[],
+            terminal_tool=terminal_record.tool,
         )
     if terminal_record.tool in {"sponsor.ask_question", "sponsor.propose_decision"}:
         message_text = str(
@@ -236,6 +242,8 @@ def result_from_safe_output_records(
             document_updates=updates,
             routes=routes,
             handoffs=handoffs,
+            queue_proposals=queue_proposals,
+            terminal_tool=terminal_record.tool,
         )
 
     if terminal_record.tool == "status.reply":
@@ -254,6 +262,8 @@ def result_from_safe_output_records(
         document_updates=updates,
         routes=routes,
         handoffs=handoffs,
+        queue_proposals=queue_proposals,
+        terminal_tool=terminal_record.tool,
     )
 
 
@@ -269,7 +279,13 @@ def write_safe_output_audit(
     work_item_id = str(message.payload.get("work_item_id") or "").strip()
     root = document_library_root / "debug" / "safe-outputs"
     if work_item_id:
-        root = document_library_root / "work-items" / _safe_path_part(work_item_id) / "debug" / "safe-outputs"
+        root = (
+            document_library_root
+            / "work-items"
+            / _safe_path_part(work_item_id)
+            / "debug"
+            / "safe-outputs"
+        )
     root = root / _safe_path_part(instance.instance_id)
     root.mkdir(parents=True, exist_ok=True)
     stem = f"{_timestamp_path_part()}-{_safe_path_part(message.message_id)}"
@@ -305,6 +321,16 @@ def write_safe_output_audit(
                     }
                     for handoff in result.handoffs
                 ],
+                "queue_proposals": [
+                    {
+                        "title": proposal.title,
+                        "owner_role": proposal.owner_role,
+                        "recommended_work_item_type": proposal.recommended_work_item_type,
+                        "source_tool": proposal.source_tool,
+                    }
+                    for proposal in result.queue_proposals
+                ],
+                "terminal_tool": result.terminal_tool,
             }
             if result is not None
             else None
@@ -389,6 +415,42 @@ def _handoffs_from_records(
             )
         )
     return handoffs
+
+
+def _queue_proposals_from_records(
+    records: list[SafeOutputRecord],
+    message: Message,
+) -> list[QueueProposal]:
+    proposals: list[QueueProposal] = []
+    for record in records:
+        if record.tool not in {"queue.propose_item", "subslice.propose"}:
+            continue
+        payload = record.payload
+        metadata = dict(payload.get("metadata") or {})
+        metadata.setdefault("source_message_id", message.message_id)
+        metadata.setdefault("source_safe_output_tool", record.tool)
+        if record.tool == "subslice.propose":
+            metadata.setdefault(
+                "parent_work_item_id",
+                message.payload.get("work_item_id"),
+            )
+        proposals.append(
+            QueueProposal(
+                title=str(payload["title"]),
+                summary=str(payload["summary"]),
+                owner_role=_optional_string(payload.get("owner_role")),
+                recommended_work_item_type=(
+                    _optional_string(payload.get("recommended_work_item_type"))
+                    or _optional_string(payload.get("work_item_type"))
+                    or ("subslice" if record.tool == "subslice.propose" else None)
+                ),
+                idempotency_key=_optional_string(payload.get("idempotency_key")),
+                metadata=metadata,
+                raw_payload=dict(payload),
+                source_tool=record.tool,
+            )
+        )
+    return proposals
 
 
 def _route_payload(

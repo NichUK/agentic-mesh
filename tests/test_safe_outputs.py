@@ -82,6 +82,56 @@ def test_status_reply_is_terminal_human_facing_markdown() -> None:
     assert result.document_updates == []
     assert result.routes == []
     assert result.handoffs == []
+    assert result.queue_proposals == []
+    assert result.terminal_tool == "status.reply"
+
+
+def test_queue_propose_item_becomes_structured_queue_proposal() -> None:
+    records = [
+        SafeOutputRecord(
+            tool="queue.propose_item",
+            payload={
+                "title": "Build gateway bot",
+                "summary": "Create the dedicated Agentic Mesh gateway bot.",
+                "owner_role": "delivery-manager",
+                "recommended_work_item_type": "slice",
+            },
+            recorded_at="2026-06-10T10:00:00+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+        SafeOutputRecord(
+            tool="status.reply",
+            payload={"message": "I've proposed this as a tracked slice."},
+            recorded_at="2026-06-10T10:00:01+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+    ]
+
+    result = result_from_safe_output_records(
+        records=records,
+        message=Message.create(
+            role_id="product-manager",
+            message_type="conversation.direct",
+            payload={"title": "Gateway bot"},
+            source="test",
+        ),
+        flow_state=FlowState(
+            state_id="direct_conversation",
+            owner_role="product-manager",
+            purpose="Reply in role.",
+            artifact_path="",
+            handoffs={},
+        ),
+    )
+
+    assert result.status == "completed"
+    assert result.message == "I've proposed this as a tracked slice."
+    assert len(result.queue_proposals) == 1
+    assert result.queue_proposals[0].title == "Build gateway bot"
+    assert result.queue_proposals[0].owner_role == "delivery-manager"
+    assert result.terminal_tool == "status.reply"
 
 
 def test_safe_outputs_mcp_records_tool_call(tmp_path: Path) -> None:
