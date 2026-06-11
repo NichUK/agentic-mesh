@@ -14,6 +14,7 @@ from agentic_mesh.connectors import TeamsBotIngress
 from agentic_mesh.connectors import build_human_response_card
 from agentic_mesh.connectors import load_graph_token
 from agentic_mesh.connectors import render_human_response_request_html
+from agentic_mesh.connectors import render_problem_status_html
 from agentic_mesh.connectors import render_route_status_html
 from agentic_mesh.connectors import _work_item_status_url
 from agentic_mesh.approval_decisions import build_requested_approval_decision
@@ -2635,6 +2636,37 @@ def test_problem_status_dm_message_preserves_thread_routing(
         "tenant": {"id": mesh_config.project.connectors["teams"].tenant_id},
         "agenticMesh": {"senderRole": "product-manager", "sourceScope": "dm"},
     }
+
+
+def test_problem_status_render_labels_direct_message_reference() -> None:
+    message = ConnectorMessage.create(
+        channel="dm",
+        message_type="problem_status.updated",
+        payload={
+            "title": "Status update",
+            "problem_status": {
+                "work_item_id": "msg-direct-1",
+                "status": "needs_runtime_recovery",
+                "problem_kind": "worker_failed",
+                "failure_class": "invalid_result",
+                "affected_role": "product-manager",
+                "lifecycle_state": "direct_conversation",
+                "reason": "Codex CLI finished without valid terminal safe-output records.",
+                "next_action": (
+                    "Retry the agent run with the safe-output contract enforced; "
+                    "if it repeats, inspect prompt/tool wiring."
+                ),
+                "action_owner": "runtime/operator",
+                "retryable": True,
+            },
+        },
+        source="test",
+    )
+
+    rendered = render_problem_status_html(message)
+
+    assert "<strong>Source message:</strong> <code>msg-direct-1</code>" in rendered
+    assert "<strong>Work item:</strong> <code>msg-direct-1</code>" not in rendered
 
 
 def test_bot_connector_renders_sponsor_directive_status() -> None:

@@ -420,7 +420,7 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                     message=message,
                     flow_state=flow_state,
                     failure_class="invalid_result",
-                    recovery_action="operator_review",
+                    recovery_action="retry_safe_output_contract",
                     retryable=True,
                     reason=(
                         "Codex CLI finished without valid terminal safe-output "

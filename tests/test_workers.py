@@ -457,6 +457,60 @@ def test_codex_timeout_returns_worker_recovery_problem(
     assert "secret_ref" not in outcome.problem_status.to_dict()
 
 
+def test_codex_invalid_result_uses_safe_output_recovery_action(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(workers.shutil, "which", lambda command: "codex")
+    mesh_config = load_mesh_config(Path.cwd())
+    instance = mesh_config.instances["agentic-mesh-dev.product-manager.1"]
+    mount_ref = instance.override.worker.auth.mount_ref
+    assert mount_ref is not None
+    (tmp_path / "state" / "worker_mounts" / mount_ref).mkdir(parents=True)
+    (tmp_path / "workspace").mkdir()
+
+    def fake_run(command, **kwargs):
+        class Completed:
+            returncode = 0
+            stdout = "finished without tool calls"
+            stderr = ""
+            timed_out = False
+            started_at = 0.0
+            progress_observed_at = "2026-06-05T00:00:00+00:00"
+
+        return Completed()
+
+    monkeypatch.setattr(workers, "run_progress_aware_command", fake_run)
+    worker = ConfiguredWorkerAdapter(
+        project=mesh_config.project,
+        auth_methods=mesh_config.auth_methods,
+        workspace_root=tmp_path / "workspace",
+        state_root=tmp_path / "state",
+    )
+    message = Message.create(
+        role_id="product-manager",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"title": "Missing output", "summary": "No safe-output call."},
+        source="test",
+    )
+
+    outcome = worker.run(
+        instance,
+        message,
+        mesh_config.project.flow.states["product_definition"],
+    )
+
+    assert outcome.problem_status is not None
+    assert outcome.problem_status.status == "needs_runtime_recovery"
+    assert outcome.problem_status.problem_kind == "worker_failed"
+    assert outcome.problem_status.failure_class == "invalid_result"
+    assert outcome.problem_status.recovery_action == "retry_safe_output_contract"
+    assert outcome.problem_status.next_action == (
+        "Retry the agent run with the safe-output contract enforced; "
+        "if it repeats, inspect prompt/tool wiring."
+    )
+
+
 def test_progress_aware_command_allows_progress_past_soft_timeout(tmp_path: Path) -> None:
     completed = workers.run_progress_aware_command(
         [
