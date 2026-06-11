@@ -59,14 +59,21 @@ class ArtifactStore:
             if resolved_root not in path.parents and path != resolved_root:
                 raise ValueError(f"Artifact path escapes artifact root: {update.path}")
             path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(update.content.rstrip() + "\n")
+            write_mode = (
+                "replace" if _is_work_item_document_path(update.path) else "append"
+            )
+            if write_mode == "replace":
+                _atomic_write_text(path, update.content)
+            else:
+                with path.open("a", encoding="utf-8") as handle:
+                    handle.write(update.content.rstrip() + "\n")
             self.journal.append(
                 "documentation_updated",
                 project_id=self.project_id,
                 role_id=role_id,
                 role_instance_id=role_instance_id,
                 path=update.path,
+                write_mode=write_mode,
                 work_item_id=work_item_id,
                 work_item_type=work_item_type,
                 lifecycle_state=lifecycle_state,
@@ -296,6 +303,30 @@ def _is_windows_absolute(value: str) -> bool:
     return bool(re.match(r"^[A-Za-z]:([/\\]|$)", value)) or value.startswith(
         ("//", "\\\\")
     )
+
+
+def _is_work_item_document_path(path: str) -> bool:
+    normalized = str(path).replace("\\", "/").strip("/")
+    parts = normalized.split("/")
+    return len(parts) >= 3 and parts[0] == "work-items" and parts[1].startswith("work-")
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            handle.write(content.rstrip() + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        _fsync_directory(path.parent)
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def _fsync_directory(path: Path) -> None:

@@ -53,5 +53,6 @@ CONVERSATION-TO-WORK BOUNDARY:
 Keep all work aligned to the project goal. Ask sponsor questions when scope, acceptance criteria, permissions, channels, retention, priority, or release expectations are unclear. Use available handoffs and consults as options, not commands. Do not emit ambiguous handoffs.
 
 All real lifecycle work must produce enterprise-grade documentation under the configured slice-scoped work item path unless deliberately updating a durable project standard, ADR, index, or evergreen reference. Do not create documents just to record failure or status.
+Before updating an existing document, inspect the current document content and decide whether the safe-output should replace the full document or add a genuinely new dated/logged entry. For slice-scoped `work-items/{work_item_id}/...` artifacts, submit the complete intended document once; do not repeat existing sections or append a second full copy of the same document.
 
 When blocked, call `route.raise_blocker` with precise reason, evidence, owner, retryability, and next action. When incomplete because a required safe-output tool or context is missing, call `report_incomplete`.
