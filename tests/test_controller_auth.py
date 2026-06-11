@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from dataclasses import replace
 from http.client import HTTPConnection
@@ -1286,6 +1287,174 @@ flow:
         assert "status-button" in body
         assert "disabled" in body
         assert "Sign in with OpenAI" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_controller_auth_oauth_status_requires_live_codex_check(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: oauth-example
+name: OAuth Example
+workspace:
+  root: .
+  default_repository: oauth-example
+  repositories:
+    oauth-example:
+      type: git
+      path: .
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        credential: codex-product-oauth
+    instructions: []
+    write_paths: []
+    channels: {}
+flow:
+  flow_id: oauth-example-flow
+  entry_state: product_definition
+  work_item_types:
+    - slice
+  states:
+    product_definition:
+      owner_role: product-manager
+      purpose: Define work.
+      artifact_path: docs/product/stories.md
+      handoffs: {}
+""".strip(),
+        encoding="utf-8",
+    )
+    mount_path = tmp_path / "state" / "worker_mounts" / "codex-product-home"
+    mount_path.mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[1:3] == ["login", "status"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="Logged in using ChatGPT",
+                stderr="",
+            )
+        if command[1] == "exec":
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr=(
+                    "401 Unauthorized: Your authentication token has been "
+                    "invalidated. Your access token could not be refreshed."
+                ),
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(controller_auth.shutil, "which", lambda command: "codex")
+    monkeypatch.setattr(controller_auth.subprocess, "run", fake_run)
+
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file=str(project_file),
+        state_root=tmp_path / "state",
+        workspace_root=tmp_path,
+    )
+
+    [credential] = service.credential_statuses()
+
+    assert credential["status"] == "auth_failed"
+    assert "Re-authenticate the configured Codex credential" in credential["detail"]
+    assert any(call[1] == "exec" for call in calls)
+
+
+def test_controller_auth_oauth_page_enables_button_when_token_invalid(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: oauth-example
+name: OAuth Example
+workspace:
+  root: .
+  default_repository: oauth-example
+  repositories:
+    oauth-example:
+      type: git
+      path: .
+auth_credentials:
+  codex-product-oauth:
+    method: codex_oauth_cache
+    mount_ref: codex-product-home
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      auth:
+        credential: codex-product-oauth
+    instructions: []
+    write_paths: []
+    channels: {}
+flow:
+  flow_id: oauth-example-flow
+  entry_state: product_definition
+  work_item_types:
+    - slice
+  states:
+    product_definition:
+      owner_role: product-manager
+      purpose: Define work.
+      artifact_path: docs/product/stories.md
+      handoffs: {}
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        ControllerAuthService,
+        "_codex_oauth_status",
+        lambda *args, **kwargs: (
+            "auth_failed",
+            "Codex OAuth token is invalid or expired.",
+        ),
+    )
+    service = ControllerAuthService(
+        config_root=Path.cwd(),
+        project_file=str(project_file),
+        state_root=tmp_path / "state",
+    )
+    server = ControllerAuthServer(("127.0.0.1", 0), ControllerAuthHandler, service)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        connection = HTTPConnection(host, port, timeout=5)
+
+        connection.request("GET", "/auth/credentials")
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+
+        assert response.status == 200
+        assert "auth_failed" in body
+        assert "Sign in with OpenAI" in body
+        assert "Signed in" not in body
     finally:
         server.shutdown()
         server.server_close()

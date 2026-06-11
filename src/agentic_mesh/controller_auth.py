@@ -44,6 +44,7 @@ from agentic_mesh.work_item_recovery import DuplicateActiveWorkGuard
 from agentic_mesh.work_item_recovery import FileRecoveryStatusStore
 from agentic_mesh.work_item_recovery import RecoveryActionRequest
 from agentic_mesh.work_item_recovery import RecoveryActionService
+from agentic_mesh.workers import codex_auth_failure_reason
 from agentic_mesh.worker_runs import FileWorkerRunStore
 from agentic_mesh.worker_runs import WorkerRun
 from agentic_mesh.worker_runs import WorkerRunReadError
@@ -209,8 +210,62 @@ class ControllerAuthService:
             if part and part.strip()
         )
         if completed.returncode == 0:
-            return "configured", output or "OpenAI sign-in is configured."
+            return self._codex_oauth_live_status(
+                codex_bin,
+                credential,
+                mount_path,
+                login_detail=output,
+            )
+        auth_reason = codex_auth_failure_reason(output)
+        if auth_reason:
+            return "auth_failed", auth_reason
         return "missing", output or "OpenAI sign-in has not been completed."
+
+    def _codex_oauth_live_status(
+        self,
+        codex_bin: str,
+        credential: AuthCredential,
+        mount_path: Path,
+        *,
+        login_detail: str,
+    ) -> tuple[str, str]:
+        env = os.environ.copy()
+        env.update(credential.env)
+        env["CODEX_HOME"] = str(mount_path)
+        cwd = self.workspace_root if self.workspace_root.exists() else self.config_root
+        try:
+            completed = subprocess.run(
+                [
+                    codex_bin,
+                    "exec",
+                    "--skip-git-repo-check",
+                    "--sandbox",
+                    "danger-full-access",
+                    "-c",
+                    "model_reasoning_effort=none",
+                    "Reply with exactly OK.",
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=cwd,
+                timeout=30,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "unknown", "Codex live authentication check timed out."
+        output = "\n".join(
+            part.strip()
+            for part in [completed.stdout, completed.stderr]
+            if part and part.strip()
+        )
+        if completed.returncode == 0:
+            return "configured", "Live Codex check passed."
+        auth_reason = codex_auth_failure_reason(output)
+        if auth_reason:
+            return "auth_failed", auth_reason
+        detail = output or login_detail or "Codex live authentication check failed."
+        return "unknown", detail
 
     def store_secret(
         self,
