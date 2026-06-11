@@ -2468,7 +2468,7 @@ class AgentRuntime:
         source_message: Message,
     ) -> str | None:
         source_channel = str(source_message.payload.get("source_channel") or "")
-        if source_channel and source_channel != "dm":
+        if source_channel:
             return source_channel
         role_override = self.project.roles[source_instance.role_id]
         return role_override.channels.get("primary")

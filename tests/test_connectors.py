@@ -23,6 +23,7 @@ from agentic_mesh.models import FlowGate
 from agentic_mesh.models import FlowState
 from agentic_mesh.journal import EventJournal
 from agentic_mesh.messaging import build_human_response_request
+from agentic_mesh.messaging import build_problem_status_connector_message
 from agentic_mesh.models import Message
 from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
@@ -2523,6 +2524,103 @@ def test_bot_connector_thread_reply_body_supports_direct_message_scope(
     )
 
     connector._post_message(message, "product-manager")
+
+    assert captured["url"].endswith(
+        "/v3/conversations/personal-conversation-1/"
+        "activities/activity-product-manager-dm"
+    )
+    assert captured["body"]["from"] == {
+        "id": "product-app-id",
+        "name": "AM-Product Manager",
+        "role": "bot",
+    }
+    assert captured["body"]["channelData"] == {
+        "tenant": {"id": mesh_config.project.connectors["teams"].tenant_id},
+        "agenticMesh": {"senderRole": "product-manager", "sourceScope": "dm"},
+    }
+
+
+def test_problem_status_dm_message_preserves_thread_routing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    state_root = tmp_path / "state"
+    journal = EventJournal(state_root, mesh_config.project.project_id)
+    outbox = FileConnectorOutbox(state_root, mesh_config.project.project_id, journal)
+    source_instance = mesh_config.instances["agentic-mesh-dev.product-manager.1"]
+
+    class FakeSecrets:
+        def get(self, ref):
+            return {
+                "teams-bot-product-manager-app-id": "product-app-id",
+                "teams-bot-product-manager-secret": "product-secret",
+            }[ref]
+
+    connector = BotFrameworkTeamsConnectorAdapter(
+        connector_id="teams-bot-connector",
+        project_id=mesh_config.project.project_id,
+        connector_config=mesh_config.project.connectors["teams"],
+        outbox=outbox,
+        journal=journal,
+        secrets=FakeSecrets(),  # type: ignore[arg-type]
+    )
+    connector._bot_token = lambda app_id, app_secret: "bot-token"
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"id":"dm-problem-reply-id"}'
+
+    def fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr("agentic_mesh.connectors.request.urlopen", fake_urlopen)
+
+    source_message = Message.create(
+        role_id="product-manager",
+        message_type="conversation.direct_requested",
+        payload={
+            "title": "Status update",
+            "summary": "Give me a status update.",
+            "source_channel": "dm",
+            "teams_service_url": "https://smba.trafficmanager.net/uk/",
+            "teams_conversation_id": "personal-conversation-1",
+            "teams_activity_id": "activity-product-manager-dm",
+        },
+        source="teams:teams-bot-listener:dm",
+    )
+    problem_message = build_problem_status_connector_message(
+        channel="dm",
+        source_instance=source_instance,
+        source_message=source_message,
+        problem_status={
+            "status": "blocked",
+            "status_label": "Agent output missing",
+            "reason": "agent did not call any safe-output tool",
+        },
+    )
+
+    assert problem_message.payload["source_channel"] == "dm"
+    assert problem_message.payload["teams_service_url"] == (
+        "https://smba.trafficmanager.net/uk/"
+    )
+    assert problem_message.payload["teams_conversation_id"] == (
+        "personal-conversation-1"
+    )
+    assert problem_message.payload["teams_reply_to_activity_id"] == (
+        "activity-product-manager-dm"
+    )
+
+    connector._post_message(problem_message, "product-manager")
 
     assert captured["url"].endswith(
         "/v3/conversations/personal-conversation-1/"

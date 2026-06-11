@@ -29,6 +29,28 @@ MESSAGE_TYPE_PROBLEM_STATUS_UPDATED = "problem_status.updated"
 MESSAGE_TYPE_ROUTE_STATUS_UPDATED = "route_status.updated"
 
 
+_SOURCE_ROUTING_FIELDS = (
+    "source_channel",
+    "teams_activity_id",
+    "teams_reply_to_activity_id",
+    "teams_conversation_id",
+    "teams_service_url",
+    "teams_channel_id",
+    "teams_team_id",
+)
+
+
+def _source_routing_payload(source_message: Message) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for field in _SOURCE_ROUTING_FIELDS:
+        value = source_message.payload.get(field)
+        if field == "teams_reply_to_activity_id":
+            value = value or source_message.payload.get("teams_activity_id")
+        if value is not None:
+            payload[field] = value
+    return payload
+
+
 def build_human_response_request(
     *,
     gate: FlowGate,
@@ -227,10 +249,10 @@ def build_sponsor_directive_status_message(
             "work_mode": source_message.payload.get("work_mode"),
             "git_branch": source_message.payload.get("git_branch"),
             "publication": source_message.payload.get("publication"),
-            "source_channel": source_message.payload.get("source_channel"),
             "source_message_id": source_message.message_id,
             "queue_item_id": source_message.payload.get("queue_item_id"),
             "source_anchor": source_message.payload.get("source_anchor"),
+            **_source_routing_payload(source_message),
         },
         source=source_instance.instance_id,
         correlation_id=source_message.correlation_id,
@@ -262,18 +284,9 @@ def build_direct_conversation_status_message(
             "status_message": status_message,
             "title": source_message.payload.get("title"),
             "summary": source_message.payload.get("summary"),
-            "source_channel": source_message.payload.get("source_channel"),
             "source_message_id": source_message.message_id,
             "source_anchor": source_message.payload.get("source_anchor"),
-            "teams_activity_id": source_message.payload.get("teams_activity_id"),
-            "teams_reply_to_activity_id": source_message.payload.get(
-                "teams_reply_to_activity_id"
-            )
-            or source_message.payload.get("teams_activity_id"),
-            "teams_conversation_id": source_message.payload.get("teams_conversation_id"),
-            "teams_service_url": source_message.payload.get("teams_service_url"),
-            "teams_channel_id": source_message.payload.get("teams_channel_id"),
-            "teams_team_id": source_message.payload.get("teams_team_id"),
+            **_source_routing_payload(source_message),
         },
         source=source_instance.instance_id,
         correlation_id=source_message.correlation_id,
@@ -306,6 +319,7 @@ def build_problem_status_connector_message(
             "summary": source_message.payload.get("summary"),
             "problem_status": problem_status,
             "fallback": fallback,
+            **_source_routing_payload(source_message),
         },
         source=source_instance.instance_id,
         correlation_id=source_message.correlation_id,

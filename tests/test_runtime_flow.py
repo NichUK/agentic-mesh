@@ -2032,8 +2032,9 @@ def test_direct_conversation_does_not_publish_artifacts_or_handoffs(
         mesh_config.instances["agentic-mesh-dev.product-manager.1"],
     )
 
-    assert connector_outbox.pending_count("product") == 1
-    completed = connector_outbox.claim_next("product", "test-connector")
+    assert connector_outbox.pending_count("product") == 0
+    assert connector_outbox.pending_count("dm") == 1
+    completed = connector_outbox.claim_next("dm", "test-connector")
     assert completed is not None
     assert completed.type == "conversation.completed"
     assert completed.payload["status"] == "completed"
@@ -2041,6 +2042,11 @@ def test_direct_conversation_does_not_publish_artifacts_or_handoffs(
         "In-role answer sent. I would propose tracked work if needed."
     )
     assert "work_item_id" not in completed.payload
+    assert completed.payload["source_channel"] == "dm"
+    assert completed.payload["teams_conversation_id"] == "personal-conversation-1"
+    assert completed.payload["teams_reply_to_activity_id"] == (
+        "activity-product-manager-dm"
+    )
     assert not (tmp_path / "workspace" / "documents").exists()
     assert message_store.pending_count("delivery-manager") == 0
     assert FileWorkQueueStore(
@@ -2097,6 +2103,7 @@ def test_direct_conversation_records_problem_for_disallowed_outputs(
                 "source_channel": "dm",
                 "teams_conversation_id": "personal-conversation-1",
                 "teams_reply_to_activity_id": "activity-product-manager-dm",
+                "teams_service_url": "https://smba.trafficmanager.net/uk/",
             },
             source="teams:teams-bot-listener:dm",
         )
@@ -2107,7 +2114,6 @@ def test_direct_conversation_records_problem_for_disallowed_outputs(
         mesh_config.instances["agentic-mesh-dev.product-manager.1"],
     )
 
-    assert connector_outbox.pending_count("product") == 0
     assert not (tmp_path / "workspace" / "documents").exists()
     problem = ProblemStatusStore(
         tmp_path / "state",
@@ -2376,7 +2382,7 @@ def test_direct_conversation_can_handoff_existing_work_item_when_role_owns_state
     assert handoff.payload["previous_lifecycle_state"] == "product_definition"
     assert handoff.payload["lifecycle_state"] == "experience_design"
     assert handoff.payload["route_kind"] == "configured_handoff"
-    completed = connector_outbox.claim_next("product", "test-connector")
+    completed = connector_outbox.claim_next("dm", "test-connector")
     assert completed is not None
     assert completed.type == "conversation.completed"
     assert completed.payload["status_message"] == "I handed the existing slice to UX."
