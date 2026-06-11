@@ -27,6 +27,7 @@ SAFE_OUTPUT_TOOLS: tuple[str, ...] = (
     "work_item.close",
     "work_item.override_blocker",
     "work_item.reopen_flow",
+    "work_item.handoff",
     "document.propose_update",
     "document.add_review_comment",
     "document.link_artifact",
@@ -59,6 +60,7 @@ TERMINAL_SAFE_OUTPUT_TOOLS: frozenset[str] = frozenset(
         "sponsor.ask_question",
         "sponsor.propose_decision",
         "handoff.propose",
+        "work_item.handoff",
     }
 )
 
@@ -167,6 +169,13 @@ def validate_safe_output_payload(tool: str, payload: dict[str, Any]) -> dict[str
             "lifecycle_state",
             "reason",
         ),
+        "work_item.handoff": (
+            "work_item_id",
+            "source_lifecycle_state",
+            "target_role",
+            "lifecycle_state",
+            "reason",
+        ),
         "document.add_review_comment": ("path", "comment"),
         "document.link_artifact": ("path",),
         "sponsor.ask_question": ("question",),
@@ -266,6 +275,13 @@ def result_from_safe_output_records(
         message_text = str(terminal_record.payload.get("message") or "")
     elif terminal_record.tool == "noop":
         message_text = str(terminal_record.payload.get("message") or "No action needed.")
+    elif terminal_record.tool == "work_item.handoff":
+        message_text = str(
+            terminal_record.payload.get("message")
+            or terminal_record.payload.get("summary")
+            or terminal_record.payload.get("reason")
+            or "Work item handed off."
+        )
     else:
         message_text = str(
             terminal_record.payload.get("message")
@@ -355,6 +371,7 @@ def write_safe_output_audit(
                         "target_role": action.target_role,
                         "lifecycle_state": action.lifecycle_state,
                         "source_tool": action.source_tool,
+                        "source_lifecycle_state": action.source_lifecycle_state,
                     }
                     for action in result.work_item_actions
                 ],
@@ -491,6 +508,7 @@ def _work_item_actions_from_records(
             "work_item.close",
             "work_item.override_blocker",
             "work_item.reopen_flow",
+            "work_item.handoff",
         }:
             continue
         payload = record.payload
@@ -502,12 +520,16 @@ def _work_item_actions_from_records(
                 reason=str(payload["reason"]),
                 disposition=_optional_string(payload.get("disposition")),
                 target_role=_optional_string(payload.get("target_role")),
+                source_lifecycle_state=_optional_string(
+                    payload.get("source_lifecycle_state")
+                ),
                 lifecycle_state=_optional_string(payload.get("lifecycle_state")),
                 message_type=(
                     _optional_string(payload.get("message_type"))
                     or (
                         f"sdlc.{payload['lifecycle_state']}"
-                        if record.tool == "work_item.reopen_flow"
+                        if record.tool
+                        in {"work_item.reopen_flow", "work_item.handoff"}
                         else None
                     )
                 ),

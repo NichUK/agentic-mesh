@@ -30,6 +30,7 @@ from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.workers import StubCodexWorkerAdapter
 from agentic_mesh.workers import WorkerAdapter
 from agentic_mesh.work_queue import FileWorkQueueStore
+from agentic_mesh.work_queue import SourceAnchor
 
 
 class IncompleteHandoffWorker(WorkerAdapter):
@@ -1924,6 +1925,63 @@ class ReleaseWorkItemActionConversationWorkerAdapter(WorkerAdapter):
         )
 
 
+class ProductManagerHandoffConversationWorkerAdapter(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="I handed the existing slice to UX.",
+            work_item_actions=[
+                WorkItemAction(
+                    action="handoff",
+                    work_item_id="work-product-handoff",
+                    reason="Product definition is accepted and ready for UX.",
+                    target_role="ux-designer",
+                    source_lifecycle_state="product_definition",
+                    lifecycle_state="experience_design",
+                    work_item_type="slice",
+                    summary="Continue dashboard presentation refinement.",
+                    source_tool="work_item.handoff",
+                )
+            ],
+            terminal_tool="status.reply",
+        )
+
+
+class ProductManagerOutOfFlowHandoffConversationWorkerAdapter(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="I handed the existing slice to architecture for a focused check.",
+            work_item_actions=[
+                WorkItemAction(
+                    action="handoff",
+                    work_item_id="work-product-out-of-flow",
+                    reason=(
+                        "The sponsor raised architecture scope concerns that should "
+                        "be resolved before UX continues."
+                    ),
+                    target_role="enterprise-architect",
+                    source_lifecycle_state="product_definition",
+                    lifecycle_state="enterprise_alignment",
+                    work_item_type="slice",
+                    summary="Check architecture impact before UX continuation.",
+                    source_tool="work_item.handoff",
+                )
+            ],
+            terminal_tool="status.reply",
+        )
+
+
 def test_direct_conversation_does_not_publish_artifacts_or_handoffs(
     tmp_path: Path,
 ) -> None:
@@ -2234,6 +2292,185 @@ def test_release_manager_direct_conversation_can_apply_work_item_actions(
     assert "safe_output_work_item_closed" in event_types
     assert "safe_output_work_item_blocker_overridden" in event_types
     assert "safe_output_work_item_flow_reopened" in event_types
+
+
+def test_direct_conversation_can_handoff_existing_work_item_when_role_owns_state(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        ProductManagerHandoffConversationWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+    message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED,
+            payload={
+                "title": "Continue existing slice",
+                "summary": "The product definition is ready. Hand it to UX.",
+                "text": "Continue work-product-handoff to UX.",
+                "conversation_mode": "targeted",
+                "requested_roles": ["product-manager"],
+                "target_role": "product-manager",
+                "source_channel": "dm",
+                "work_item_id": "work-product-handoff",
+                "work_item_type": "slice",
+            },
+            source="teams:teams-bot-listener:dm",
+        )
+    )
+    item = runtime.work_queue.capture(
+        title="Continue existing slice",
+        summary="The product definition is ready. Hand it to UX.",
+        owner_role="product-manager",
+        recommended_work_item_type="slice",
+        source_anchor=SourceAnchor(
+            connector_type="teams",
+            connector_id="teams-bot-listener",
+            source_scope="dm",
+            source_message_id="activity-product-handoff",
+            actor="sponsor",
+            received_at="2026-06-10T10:00:00+00:00",
+            display_label="Product handoff test",
+        ),
+    )
+    runtime.work_queue.promote(
+        item.queue_item_id,
+        actor_role="product-manager",
+        message_store=message_store,
+        target_role="product-manager",
+        lifecycle_state="product_definition",
+        work_item_id="work-product-handoff",
+        work_item_type="slice",
+        message_type="sdlc.product_definition",
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+
+    assert message_store.pending_count("ux-designer") == 1
+    handoff = message_store.claim_next("ux-designer", "test-ux")
+    assert handoff is not None
+    assert handoff.type == "sdlc.experience_design"
+    assert handoff.payload["work_item_id"] == "work-product-handoff"
+    assert handoff.payload["previous_lifecycle_state"] == "product_definition"
+    assert handoff.payload["lifecycle_state"] == "experience_design"
+    assert handoff.payload["route_kind"] == "configured_handoff"
+    completed = connector_outbox.claim_next("product", "test-connector")
+    assert completed is not None
+    assert completed.type == "conversation.completed"
+    assert completed.payload["status_message"] == "I handed the existing slice to UX."
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "safe_output_work_item_handed_off" in event_types
+    assert "handoff_emitted" in event_types
+
+
+def test_direct_conversation_can_handoff_existing_work_item_out_of_flow_with_reason(
+    tmp_path: Path,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        ProductManagerOutOfFlowHandoffConversationWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+    message_store.enqueue(
+        Message.create(
+            role_id="product-manager",
+            message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED,
+            payload={
+                "title": "Architecture check needed",
+                "summary": "Sponsor raised architecture scope concerns.",
+                "text": "Send this to architecture before UX.",
+                "conversation_mode": "targeted",
+                "requested_roles": ["product-manager"],
+                "target_role": "product-manager",
+                "source_channel": "dm",
+                "work_item_id": "work-product-out-of-flow",
+                "work_item_type": "slice",
+            },
+            source="teams:teams-bot-listener:dm",
+        )
+    )
+    item = runtime.work_queue.capture(
+        title="Architecture check needed",
+        summary="Sponsor raised architecture scope concerns.",
+        owner_role="product-manager",
+        recommended_work_item_type="slice",
+        source_anchor=SourceAnchor(
+            connector_type="teams",
+            connector_id="teams-bot-listener",
+            source_scope="dm",
+            source_message_id="activity-product-out-of-flow",
+            actor="sponsor",
+            received_at="2026-06-10T10:00:00+00:00",
+            display_label="Out-of-flow handoff test",
+        ),
+    )
+    runtime.work_queue.promote(
+        item.queue_item_id,
+        actor_role="product-manager",
+        message_store=message_store,
+        target_role="product-manager",
+        lifecycle_state="product_definition",
+        work_item_id="work-product-out-of-flow",
+        work_item_type="slice",
+        message_type="sdlc.product_definition",
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.product-manager.1",
+        mesh_config.instances["agentic-mesh-dev.product-manager.1"],
+    )
+
+    assert message_store.pending_count("enterprise-architect") == 1
+    handoff = message_store.claim_next("enterprise-architect", "test-ea")
+    assert handoff is not None
+    assert handoff.type == "sdlc.enterprise_alignment"
+    assert handoff.payload["work_item_id"] == "work-product-out-of-flow"
+    assert handoff.payload["previous_lifecycle_state"] == "product_definition"
+    assert handoff.payload["lifecycle_state"] == "enterprise_alignment"
+    assert handoff.payload["route_kind"] == "reasoned_out_of_flow"
+    assert handoff.payload["out_of_flow"] is True
+    assert "architecture scope concerns" in handoff.payload["out_of_flow_reason"]
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "safe_output_work_item_handed_off" in event_types
 
 
 def test_queue_originated_publish_ready_targets_source_anchor(

@@ -649,6 +649,7 @@ class WorkItemAction:
     reason: str
     disposition: str | None = None
     target_role: str | None = None
+    source_lifecycle_state: str | None = None
     lifecycle_state: str | None = None
     message_type: str | None = None
     work_item_type: str | None = None
