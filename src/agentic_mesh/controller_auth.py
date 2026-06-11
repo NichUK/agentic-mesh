@@ -1843,18 +1843,7 @@ if (statusEl.textContent === "running") {{
   <br><strong>Read only:</strong> true
 </p>
 <h2>Status Counts</h2>
-<table>
-  <thead><tr><th>Group</th><th>Count</th></tr></thead>
-  <tbody>
-    <tr><td>Attention needed</td><td>{counts["attention_needed"]}</td></tr>
-    <tr><td>Active</td><td>{counts["active"]}</td></tr>
-    <tr><td>Promoted</td><td>{counts["promoted"]}</td></tr>
-    <tr><td>Terminal</td><td>{counts["terminal"]}</td></tr>
-    <tr><td>Unknown</td><td>{counts["unknown"]}</td></tr>
-    <tr><td>Total work items</td><td>{counts["total_work_items"]}</td></tr>
-    <tr><td>Total queue items</td><td>{counts["total_queue_items"]}</td></tr>
-  </tbody>
-</table>
+{self._status_counts_strip(counts)}
 <h2>Attention Needed</h2>
 {self._mixed_rows(attention["work_items"], attention["queue_items"], empty="No attention-needed work found.")}
 <h2>Active Work</h2>
@@ -1922,6 +1911,29 @@ if (statusEl.textContent === "running") {{
   <a href="{html.escape(links["current_agents_json"])}">Current agents JSON</a>
 </p>
 """
+
+    @staticmethod
+    def _status_counts_strip(counts: dict[str, Any]) -> str:
+        items = [
+            ("Attention", counts["attention_needed"]),
+            ("Active", counts["active"]),
+            ("Promoted", counts["promoted"]),
+            ("Terminal", counts["terminal"]),
+            ("Unknown", counts["unknown"]),
+            ("Work items", counts["total_work_items"]),
+            ("Queue", counts["total_queue_items"]),
+        ]
+        return (
+            '<div class="counts-strip">'
+            + "".join(
+                '<div class="count-tile">'
+                f'<span class="count-label">{html.escape(label)}</span>'
+                f'<strong>{html.escape(str(value))}</strong>'
+                "</div>"
+                for label, value in items
+            )
+            + "</div>"
+        )
 
     def _current_agents_page(self, payload: dict[str, Any]) -> str:
         links = payload["links"]
@@ -2061,42 +2073,62 @@ if (statusEl.textContent === "running") {{
             return f"<p>{html.escape(empty)}</p>"
         rows = []
         for row in work_items:
+            item = self._linked_title_cell(
+                title=str(row.get("title") or row["work_item_id"]),
+                href=str(row["status_url"]),
+                fallback_id=str(row["work_item_id"]),
+                kind="Work item",
+            )
+            status = self._status_and_state_cell(
+                row,
+                state=str(row.get("lifecycle_state") or "Unknown"),
+            )
+            owner = self._responsibility_cell(
+                owner=str(row.get("owner_role") or "Unknown owner"),
+                extra_label="Updated",
+                extra_value=str(row.get("updated_at") or row.get("started_at") or "Unknown time"),
+            )
+            need = self._next_step_cell(row)
             rows.append(
                 "<tr>"
-                "<td>Work item</td>"
-                f"<td><a href=\"{html.escape(str(row['status_url']))}\">{html.escape(str(row['work_item_id']))}</a></td>"
-                f"<td>{self._status_label(row)}</td>"
-                f"<td>{html.escape(str(row.get('title') or row['work_item_id']))}</td>"
-                f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
-                f"<td>{html.escape(str(row.get('lifecycle_state') or 'Unknown'))}</td>"
-                f"<td>{html.escape(str(row.get('attention_reason') or row.get('next_action') or 'Reason unavailable'))}</td>"
-                f"<td>{html.escape(str(row.get('updated_at') or row.get('started_at') or 'Unknown'))}</td>"
+                f"<td>{item}</td>"
+                f"<td>{status}</td>"
+                f"<td>{owner}</td>"
+                f"<td>{need}</td>"
                 "</tr>"
             )
         for row in queue_items:
             target = row.get("work_item_status_url") or "/work-queue"
+            item = self._linked_title_cell(
+                title=str(row.get("title") or row["queue_item_id"]),
+                href=str(target),
+                fallback_id=str(row["queue_item_id"]),
+                kind="Queue item",
+            )
+            status = self._status_and_state_cell(
+                row,
+                state=str(row.get("recommended_work_item_type") or "Unknown type"),
+            )
+            owner = self._responsibility_cell(
+                owner=str(row.get("owner_role") or "Unknown owner"),
+                extra_label="Updated",
+                extra_value=str(row.get("updated_at") or row.get("created_at") or "Unknown time"),
+            )
+            need = self._next_step_cell(row)
             rows.append(
                 "<tr>"
-                "<td>Queue item</td>"
-                f"<td><a href=\"{html.escape(str(target))}\">{html.escape(str(row['queue_item_id']))}</a></td>"
-                f"<td>{self._status_label(row)}</td>"
-                f"<td>{html.escape(str(row.get('title') or row['queue_item_id']))}</td>"
-                f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
-                f"<td>{html.escape(str(row.get('recommended_work_item_type') or 'Unknown type'))}</td>"
-                f"<td>{html.escape(str(row.get('attention_reason') or row.get('next_action') or 'Reason unavailable'))}</td>"
-                f"<td>{html.escape(str(row.get('updated_at') or row.get('created_at') or 'Unknown time'))}</td>"
+                f"<td>{item}</td>"
+                f"<td>{status}</td>"
+                f"<td>{owner}</td>"
+                f"<td>{need}</td>"
                 "</tr>"
             )
         return self._dashboard_table(
             [
-                "Kind",
                 "Item",
                 "Status",
-                "Title",
-                "Owner",
-                "State / Type",
-                "Reason / Next Action",
-                "Updated",
+                "Owner / Updated",
+                "Need / Next Step",
             ],
             rows,
         )
@@ -2106,43 +2138,111 @@ if (statusEl.textContent === "running") {{
             return f"<p>{html.escape(empty)}</p>"
         rendered = []
         for row in rows:
-            artifacts = (
-                ", ".join(
-                    f"<a href=\"{html.escape(link['viewer_url'])}\" target=\"_blank\" rel=\"noopener noreferrer\">"
-                    f"{html.escape(str(link['label']))}</a>"
-                    for link in row.get("artifact_links") or []
-                )
-                or "No artifacts recorded."
+            item = self._linked_title_cell(
+                title=str(row.get("title") or row["work_item_id"]),
+                href=str(row["status_url"]),
+                fallback_id=str(row["work_item_id"]),
+                kind=str(row.get("work_item_type") or "Work item"),
             )
+            status = self._status_and_state_cell(
+                row,
+                state=str(row.get("lifecycle_state") or "Unknown"),
+            )
+            owner = self._responsibility_cell(
+                owner=str(row.get("owner_role") or "Unknown owner"),
+                extra_label="Instance",
+                extra_value=str(row.get("role_instance_id") or "Unknown"),
+            )
+            need = self._next_step_cell(row)
+            evidence = self._artifact_summary_cell(row)
             rendered.append(
                 "<tr>"
-                f"<td>{self._status_label(row)}</td>"
-                f"<td><a href=\"{html.escape(str(row['status_url']))}\" aria-label=\"Open work item {html.escape(str(row['work_item_id']))}\">{html.escape(str(row['work_item_id']))}</a></td>"
-                f"<td>{html.escape(str(row.get('title') or row['work_item_id']))}</td>"
-                f"<td>{html.escape(str(row.get('lifecycle_state') or 'Unknown'))}</td>"
-                f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
-                f"<td>{html.escape(str(row.get('role_instance_id') or 'Unknown'))}</td>"
-                f"<td>{html.escape(str(row.get('queue_item_id') or 'None'))}</td>"
-                f"<td>{html.escape(str(row.get('next_action') or 'Unknown'))}</td>"
-                f"<td>{html.escape(str(row.get('attention_reason') or ''))}</td>"
-                f"<td>{row.get('artifact_count', 0)} total, {row.get('missing_artifact_count', 0)} missing<br>{artifacts}</td>"
-                f"<td><a href=\"{html.escape(str(row['json_url']))}\">JSON</a></td>"
+                f"<td>{item}</td>"
+                f"<td>{status}</td>"
+                f"<td>{owner}</td>"
+                f"<td>{need}</td>"
+                f"<td>{evidence}</td>"
                 "</tr>"
             )
         return self._dashboard_table(
             [
-                "Status",
                 "Title",
-                "Lifecycle",
-                "Owner",
-                "Role instance",
-                "Queue item",
-                "Next action",
-                "Attention",
-                "Artifacts",
-                "Links",
+                "Status / Lifecycle",
+                "Owner / Instance",
+                "Need / Next Step",
+                "Evidence",
             ],
             rendered,
+        )
+
+    @staticmethod
+    def _linked_title_cell(
+        *,
+        title: str,
+        href: str,
+        fallback_id: str,
+        kind: str,
+    ) -> str:
+        return (
+            '<div class="detail-stack">'
+            f'<a class="item-title" href="{html.escape(href)}">{html.escape(title)}</a>'
+            f'<div class="detail-line muted">{html.escape(kind)} &middot; <code>{html.escape(fallback_id)}</code></div>'
+            "</div>"
+        )
+
+    def _status_and_state_cell(self, row: dict[str, Any], *, state: str) -> str:
+        return (
+            '<div class="detail-stack">'
+            f"{self._status_label(row)}"
+            f'<div class="detail-line"><span class="muted">State:</span> {html.escape(state)}</div>'
+            "</div>"
+        )
+
+    @staticmethod
+    def _responsibility_cell(
+        *,
+        owner: str,
+        extra_label: str,
+        extra_value: str,
+    ) -> str:
+        return (
+            '<div class="detail-stack">'
+            f'<div class="detail-line"><span class="muted">Owner:</span> {html.escape(owner)}</div>'
+            f'<div class="detail-line"><span class="muted">{html.escape(extra_label)}:</span> {html.escape(extra_value)}</div>'
+            "</div>"
+        )
+
+    @staticmethod
+    def _next_step_cell(row: dict[str, Any]) -> str:
+        reason = str(row.get("attention_reason") or "None")
+        next_action = str(row.get("next_action") or "Unknown")
+        updated = str(row.get("updated_at") or row.get("started_at") or row.get("created_at") or "Unknown time")
+        return (
+            '<div class="detail-stack">'
+            f'<div class="detail-line"><span class="muted">Reason:</span> {html.escape(reason)}</div>'
+            f'<div class="detail-line"><span class="muted">Next:</span> {html.escape(next_action)}</div>'
+            f'<div class="detail-line muted">Updated: {html.escape(updated)}</div>'
+            "</div>"
+        )
+
+    @staticmethod
+    def _artifact_summary_cell(row: dict[str, Any]) -> str:
+        links = row.get("artifact_links") or []
+        visible_links = links[:4]
+        link_html = " ".join(
+            f'<a href="{html.escape(str(link["viewer_url"]))}" target="_blank" rel="noopener noreferrer">'
+            f'{html.escape(str(link["label"]))}</a>'
+            for link in visible_links
+        )
+        remaining = len(links) - len(visible_links)
+        more = f'<span class="muted">+{remaining} more</span>' if remaining > 0 else ""
+        return (
+            '<div class="detail-stack evidence-links">'
+            f'<div class="detail-line">{html.escape(str(row.get("artifact_count", 0)))} total, '
+            f'{html.escape(str(row.get("missing_artifact_count", 0)))} missing</div>'
+            f'<div class="detail-line">{link_html or "No artifacts recorded."} {more}</div>'
+            f'<div class="detail-line"><a href="{html.escape(str(row["json_url"]))}" target="_blank" rel="noopener noreferrer">JSON</a></div>'
+            "</div>"
         )
 
     def _queue_rows(self, rows: list[dict[str, Any]], *, empty: str) -> str:
@@ -2205,10 +2305,12 @@ if (statusEl.textContent === "running") {{
         classes = "status-label"
         if row.get("status_group") == "attention_needed":
             classes += " warning"
+        group = str(row.get("status_group") or "unknown").replace("_", " ")
         return (
             f"<span class=\"{classes}\">"
             f"{html.escape(str(row.get('display_label') or row.get('status') or 'Unknown'))}"
-            f"</span><br><code>{html.escape(str(row.get('status_group') or 'unknown'))}</code>"
+            f"</span>"
+            f"<div class=\"detail-line muted\">{html.escape(group)}</div>"
         )
 
     @staticmethod
@@ -2216,7 +2318,7 @@ if (statusEl.textContent === "running") {{
         header_html = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
         return f"""
 <div class="table-scroll">
-<table>
+<table class="dashboard-table">
   <thead><tr>{header_html}</tr></thead>
   <tbody>{''.join(rows)}</tbody>
 </table>
@@ -2769,6 +2871,17 @@ function isSafeUrl(value) {{
     th, td {{ border: 1px solid #d4d4d4; padding: 0.5rem; vertical-align: top; }}
     td {{ overflow-wrap: anywhere; }}
     th {{ background: #f4f4f4; text-align: left; }}
+    .dashboard-table th, .dashboard-table td {{ padding: 0.4rem 0.55rem; }}
+    .dashboard-table td {{ font-size: 0.94rem; }}
+    .counts-strip {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0 1rem; }}
+    .count-tile {{ background: #f8fafc; border: 1px solid #d4d4d4; min-width: 7.5rem; padding: 0.45rem 0.65rem; }}
+    .count-label {{ color: #475569; display: block; font-size: 0.82rem; }}
+    .count-tile strong {{ display: block; font-size: 1.25rem; line-height: 1.1; }}
+    .detail-stack {{ display: grid; gap: 0.16rem; line-height: 1.25; }}
+    .detail-line {{ margin: 0; }}
+    .muted {{ color: #64748b; font-size: 0.84rem; }}
+    .item-title {{ font-weight: 650; }}
+    .evidence-links a {{ display: inline-block; margin: 0 0.45rem 0.15rem 0; }}
     tr.selected {{ outline: 3px solid #6aa1ff; }}
     input[type=password] {{ min-width: 18rem; }}
     pre {{ background: #111; color: #eee; padding: 1rem; white-space: pre-wrap; }}

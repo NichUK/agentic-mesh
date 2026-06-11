@@ -850,23 +850,84 @@ def test_status_dashboard_mixed_rows_use_truthful_compact_columns() -> None:
     )
 
     for heading in [
-        "Kind",
         "Item",
         "Status",
-        "Title",
-        "Owner",
-        "State / Type",
-        "Reason / Next Action",
-        "Updated",
+        "Owner / Updated",
+        "Need / Next Step",
     ]:
         assert f"<th>{heading}</th>" in html_body
     assert "<th>Timestamp</th>" not in html_body
     assert "<th>State</th>" not in html_body
+    assert "<th>Kind</th>" not in html_body
+    assert "<th>Title</th>" not in html_body
+    assert '<a class="item-title" href="/work-items/work-status">Fix status table</a>' in html_body
+    assert "Work item &middot; <code>work-status</code>" in html_body
+    assert "State:</span> implementation" in html_body
+    assert "Owner:</span> engineering" in html_body
+    assert "Updated: 2026-06-11T12:00:00+00:00" in html_body
     assert "Unknown type" in html_body
     assert "Unknown time" in html_body
-    assert html_body.index("work-status") < html_body.index("<span")
     assert "Correct compact table headings" in html_body
     assert "Product triage" in html_body
+
+
+def test_work_item_rows_use_title_link_and_stacked_evidence() -> None:
+    handler = object.__new__(ControllerAuthHandler)
+
+    html_body = handler._work_item_rows(
+        [
+            {
+                "work_item_id": "work-readable",
+                "work_item_type": "slice",
+                "status": "attention_needed",
+                "status_group": "attention_needed",
+                "display_label": "Sponsor decision required",
+                "status_url": "/work-items/work-readable",
+                "json_url": "/work-items/work-readable.json",
+                "title": "Readable work item dashboard",
+                "owner_role": "release-manager",
+                "role_instance_id": "agentic-mesh-dev.release-manager.1",
+                "lifecycle_state": "release_review",
+                "next_action": "Review release evidence.",
+                "attention_reason": "Sponsor approval required.",
+                "updated_at": "2026-06-11T12:00:00+00:00",
+                "artifact_count": 6,
+                "missing_artifact_count": 0,
+                "artifact_links": [
+                    {
+                        "viewer_url": f"/artifact-viewer/artifact-{index}.md",
+                        "label": f"Artifact {index}",
+                    }
+                    for index in range(6)
+                ],
+            }
+        ],
+        empty="No work items.",
+    )
+
+    for heading in [
+        "Title",
+        "Status / Lifecycle",
+        "Owner / Instance",
+        "Need / Next Step",
+        "Evidence",
+    ]:
+        assert f"<th>{heading}</th>" in html_body
+    for removed_heading in ["Work item", "Queue item", "Role instance", "Links"]:
+        assert f"<th>{removed_heading}</th>" not in html_body
+    assert (
+        '<a class="item-title" href="/work-items/work-readable">'
+        "Readable work item dashboard</a>"
+    ) in html_body
+    assert "slice &middot; <code>work-readable</code>" in html_body
+    assert "State:</span> release_review" in html_body
+    assert "Owner:</span> release-manager" in html_body
+    assert "Instance:</span> agentic-mesh-dev.release-manager.1" in html_body
+    assert "Reason:</span> Sponsor approval required." in html_body
+    assert "Next:</span> Review release evidence." in html_body
+    assert "6 total, 0 missing" in html_body
+    assert "+2 more" in html_body
+    assert 'target="_blank" rel="noopener noreferrer"' in html_body
 
 
 def test_controller_status_dashboard_isolates_corrupt_queue_item(
