@@ -72,7 +72,9 @@ def render_worker_prompt(
                 "safe-outputs",
                 "\n\n".join(
                     [
-                        safe_output_tools_prompt(),
+                        safe_output_tools_prompt(
+                            lifecycle_state=flow_state.state_id,
+                        ),
                         load_prompt_template("worker-safe-output-rails.md"),
                     ]
                 ),

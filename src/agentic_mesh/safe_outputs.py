@@ -420,17 +420,31 @@ def write_safe_output_audit(
     return {"path": str(path.relative_to(document_library_root)).replace("\\", "/")}
 
 
-def safe_output_tools_prompt() -> str:
+def safe_output_tools_prompt(*, lifecycle_state: str | None = None) -> str:
+    available_tools = list(SAFE_OUTPUT_TOOLS)
+    terminal_tools = sorted(TERMINAL_SAFE_OUTPUT_TOOLS)
+    context_note = ""
+    if lifecycle_state == "direct_conversation":
+        unavailable = {"handoff.propose", "status.report_completion"}
+        available_tools = [tool for tool in available_tools if tool not in unavailable]
+        terminal_tools = [tool for tool in terminal_tools if tool not in unavailable]
+        context_note = (
+            "Direct conversation context: do not use `handoff.propose` or "
+            "`status.report_completion`. Use `status.reply` for the complete "
+            "human-facing Markdown response, `sponsor.ask_question` when the "
+            "sponsor must answer before you can continue, `noop` only when no "
+            "reply is needed, or `work_item.handoff` when an existing linked "
+            "work item should move to another role."
+        )
     return render_prompt_template(
         "safe-output-tools.md",
         {
             "safe_output_command": (
                 "python -m agentic_mesh.cli safe-output <tool-name> . < /tmp/payload.json"
             ),
-            "terminal_tools": "\n".join(
-                f"- {tool}" for tool in sorted(TERMINAL_SAFE_OUTPUT_TOOLS)
-            ),
-            "available_tools": "\n".join(f"- {tool}" for tool in SAFE_OUTPUT_TOOLS),
+            "terminal_tools": "\n".join(f"- {tool}" for tool in terminal_tools),
+            "available_tools": "\n".join(f"- {tool}" for tool in available_tools),
+            "context_note": context_note,
         },
     )
 
