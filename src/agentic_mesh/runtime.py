@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import time
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from agentic_mesh import telemetry
+from agentic_mesh.activation_evidence import ActivationEvidence
+from agentic_mesh.activation_evidence import FileActivationEvidenceStore
+from agentic_mesh.activation_evidence import SmokeEvidence
 from agentic_mesh.agent_run_state import AgentRunState
 from agentic_mesh.agent_run_state import FileAgentRunStateStore
 from agentic_mesh.artifacts import ArtifactStore
@@ -135,6 +141,10 @@ class AgentRuntime:
             self.state_root,
             project.project_id,
             self.journal,
+        )
+        self.activation_evidence_store = FileActivationEvidenceStore(
+            self.state_root,
+            project.project_id,
         )
 
     def _status_link_builder(self) -> StatusLinkBuilder:
@@ -2773,6 +2783,12 @@ class AgentRuntime:
                 source_instance=source_instance,
                 source_message=source_message,
             )
+        if action.action == "deploy":
+            return self._deploy_work_item_from_safe_output(
+                action=action,
+                source_instance=source_instance,
+                source_message=source_message,
+            )
         if action.action == "reopen_flow":
             return self._reopen_work_item_flow_from_safe_output(
                 action=action,
@@ -2780,6 +2796,177 @@ class AgentRuntime:
                 source_message=source_message,
             )
         raise ValueError(f"unsupported work item action `{action.action}`")
+
+    def _deploy_work_item_from_safe_output(
+        self,
+        *,
+        action: WorkItemAction,
+        source_instance,
+        source_message: Message,
+    ) -> dict[str, str | None]:
+        target_id = str(action.raw_payload.get("target_id") or "").strip()
+        if not target_id:
+            raise ValueError("release.deploy requires target_id")
+        target = self.project.release_deployment_targets.get(target_id)
+        if target is None:
+            raise ValueError(f"release deployment target `{target_id}` is not configured")
+        cwd = (
+            Path(target.working_directory)
+            if target.working_directory
+            else Path.cwd()
+        )
+        if not cwd.is_absolute():
+            cwd = (Path.cwd() / cwd).resolve()
+        smoke = None
+        activation_status = "complete"
+        smoke_status = "not_required"
+        failure_class = None
+        next_action = None
+        retryable = False
+        try:
+            completed = subprocess.run(
+                target.command,
+                cwd=cwd,
+                text=True,
+                capture_output=True,
+                timeout=target.timeout_seconds,
+                check=False,
+            )
+            if completed.returncode != 0:
+                activation_status = "failed"
+                smoke_status = "blocked"
+                failure_class = "activation_blocked"
+                next_action = (
+                    f"Release deployment target `{target_id}` failed; inspect deployment logs and retry."
+                )
+                retryable = True
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            activation_status = "failed"
+            smoke_status = "blocked"
+            failure_class = "activation_target_unavailable"
+            next_action = (
+                f"Release deployment target `{target_id}` could not run: {type(exc).__name__}."
+            )
+            retryable = True
+        if activation_status == "complete" and target.smoke is not None:
+            try:
+                with urlopen(target.smoke.url, timeout=20) as response:
+                    status_code = int(response.status)
+                    body = response.read(200_000).decode("utf-8", errors="replace")
+                content_ok = (
+                    not target.smoke.content_expectation
+                    or target.smoke.content_expectation in body
+                )
+                status_ok = status_code == target.smoke.expected_status_code
+                smoke_result = "passed" if status_ok and content_ok else "failed"
+                smoke_status = smoke_result
+                if smoke_result == "failed":
+                    activation_status = "failed"
+                    failure_class = "activation_smoke_failed"
+                    next_action = (
+                        f"Smoke check for `{target_id}` failed on route {target.smoke.route_label}."
+                    )
+                    retryable = True
+                smoke = SmokeEvidence(
+                    smoke_id=f"smoke-{target_id}",
+                    target_label=target_id,
+                    route_label=target.smoke.route_label,
+                    observed_at=time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+                    result=smoke_result,
+                    status_code=status_code,
+                    expected_status_code=target.smoke.expected_status_code,
+                    schema_expectation=target.smoke.schema_expectation,
+                    content_expectation=target.smoke.content_expectation,
+                    actual_summary=(
+                        "Smoke route returned expected status/content."
+                        if smoke_result == "passed"
+                        else "Smoke route did not match expected status/content."
+                    ),
+                    failure_class=failure_class,
+                )
+            except (OSError, URLError, TimeoutError) as exc:
+                activation_status = "failed"
+                smoke_status = "failed"
+                failure_class = "activation_smoke_failed"
+                next_action = (
+                    f"Smoke check for `{target_id}` could not run: {type(exc).__name__}."
+                )
+                retryable = True
+                smoke = SmokeEvidence(
+                    smoke_id=f"smoke-{target_id}",
+                    target_label=target_id,
+                    route_label=target.smoke.route_label,
+                    observed_at=time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+                    result="failed",
+                    expected_status_code=target.smoke.expected_status_code,
+                    schema_expectation=target.smoke.schema_expectation,
+                    content_expectation=target.smoke.content_expectation,
+                    actual_summary="Smoke route request failed.",
+                    failure_class="activation_smoke_failed",
+                )
+        elif activation_status == "complete":
+            smoke_status = "not_required"
+        evidence = ActivationEvidence(
+            project_id=self.project.project_id,
+            work_item_id=action.work_item_id,
+            work_item_type=action.work_item_type
+            or source_message.payload.get("work_item_type")
+            or "slice",
+            queue_item_id=source_message.payload.get("queue_item_id"),
+            source_message_id=source_message.message_id,
+            source_anchor_ref=(
+                source_message.payload.get("source_anchor", {}) or {}
+            ).get("source_anchor_ref")
+            if isinstance(source_message.payload.get("source_anchor"), dict)
+            else None,
+            correlation_id=source_message.correlation_id,
+            lifecycle_state=action.lifecycle_state
+            or source_message.payload.get("lifecycle_state")
+            or "release_review",
+            impact_categories=tuple(target.impact_categories or ["runtime_code"]),
+            activation_paths=tuple(target.activation_paths or ["operator_action_required"]),
+            source_status="source_ready",
+            activation_status=activation_status,
+            smoke_status=smoke_status,
+            updated_at=time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+            live_smoke_required=target.smoke is not None,
+            target_labels=(target_id,),
+            failure_class=failure_class,
+            action_owner=None if activation_status == "complete" else "release-manager",
+            next_action=next_action,
+            retryable=retryable,
+            rollback_summary=target.rollback_summary,
+            evidence_refs=tuple(action.raw_payload.get("evidence_refs") or []),
+            status_url=self._work_item_status_url(action.work_item_id),
+            smoke_evidence=(smoke,) if smoke is not None else (),
+        )
+        event_type = (
+            "activation_action_recorded"
+            if activation_status == "complete"
+            else "activation_blocked"
+        )
+        self.activation_evidence_store.write_current(
+            evidence,
+            event_type=event_type,
+        )
+        journal_fields = evidence.journal_fields(
+            event_type=event_type,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+        )
+        journal_fields.pop("event_type", None)
+        self.journal.append(
+            event_type,
+            **journal_fields,
+        )
+        if activation_status != "complete":
+            raise ValueError(next_action or "Release deployment failed")
+        return {
+            "action": action.action,
+            "work_item_id": action.work_item_id,
+            "status": "deployed",
+            "target_id": target_id,
+        }
 
     def _handoff_work_item_from_safe_output(
         self,

@@ -820,6 +820,55 @@ def test_status_dashboard_reuses_journal_events_for_work_item_rows(
     assert journal_open_count == 2
 
 
+def test_status_dashboard_mixed_rows_use_truthful_compact_columns() -> None:
+    handler = object.__new__(ControllerAuthHandler)
+
+    html_body = handler._mixed_rows(
+        [
+            {
+                "work_item_id": "work-status",
+                "status": "blocked",
+                "status_url": "/work-items/work-status",
+                "title": "Fix status table",
+                "owner_role": "engineering",
+                "lifecycle_state": "implementation",
+                "next_action": "Correct compact table headings",
+                "updated_at": "2026-06-11T12:00:00+00:00",
+            }
+        ],
+        [
+            {
+                "queue_item_id": "queue-status",
+                "status": "active",
+                "title": "Follow-up status table",
+                "owner_role": "product-manager",
+                "next_action": "Product triage",
+                "created_at": None,
+            }
+        ],
+        empty="No mixed rows.",
+    )
+
+    for heading in [
+        "Kind",
+        "Item",
+        "Status",
+        "Title",
+        "Owner",
+        "State / Type",
+        "Reason / Next Action",
+        "Updated",
+    ]:
+        assert f"<th>{heading}</th>" in html_body
+    assert "<th>Timestamp</th>" not in html_body
+    assert "<th>State</th>" not in html_body
+    assert "Unknown type" in html_body
+    assert "Unknown time" in html_body
+    assert html_body.index("work-status") < html_body.index("<span")
+    assert "Correct compact table headings" in html_body
+    assert "Product triage" in html_body
+
+
 def test_controller_status_dashboard_isolates_corrupt_queue_item(
     tmp_path: Path,
 ) -> None:

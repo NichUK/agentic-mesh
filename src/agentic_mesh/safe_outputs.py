@@ -39,6 +39,7 @@ SAFE_OUTPUT_TOOLS: tuple[str, ...] = (
     "queue.propose_item",
     "subslice.propose",
     "test_evidence.record",
+    "release.deploy",
     "release.propose_candidate",
     "risk.register",
     "decision.record",
@@ -221,6 +222,7 @@ def validate_safe_output_payload(tool: str, payload: dict[str, Any]) -> dict[str
         "queue.propose_item": ("title", "summary"),
         "subslice.propose": ("title", "summary"),
         "test_evidence.record": ("summary",),
+        "release.deploy": ("work_item_id", "target_id", "reason"),
         "release.propose_candidate": ("summary",),
         "risk.register": ("risk",),
         "decision.record": ("decision",),
@@ -558,10 +560,27 @@ def _work_item_actions_from_records(
             "work_item.override_blocker",
             "work_item.reopen_flow",
             "work_item.handoff",
+            "release.deploy",
         }:
             continue
         payload = record.payload
         work_item_id = str(payload["work_item_id"])
+        if record.tool == "release.deploy":
+            actions.append(
+                WorkItemAction(
+                    action="deploy",
+                    work_item_id=work_item_id,
+                    reason=str(payload["reason"]),
+                    disposition=_optional_string(payload.get("disposition")),
+                    work_item_type=_optional_string(payload.get("work_item_type")),
+                    lifecycle_state=_optional_string(payload.get("lifecycle_state")),
+                    summary=_optional_string(payload.get("summary")),
+                    idempotency_key=_optional_string(payload.get("idempotency_key")),
+                    raw_payload=dict(payload),
+                    source_tool=record.tool,
+                )
+            )
+            continue
         actions.append(
             WorkItemAction(
                 action=record.tool.removeprefix("work_item."),

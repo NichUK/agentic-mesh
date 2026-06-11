@@ -39,6 +39,8 @@ from agentic_mesh.models import (
     ProjectConfig,
     ProjectConnectorConfig,
     ProjectGoalConfig,
+    ReleaseDeploymentTargetConfig,
+    ReleaseSmokeConfig,
     ProjectMeshConfig,
     ProjectRepositoryConfig,
     ProjectRoleOverride,
@@ -988,6 +990,105 @@ def _project_goal_from_dict(data: dict[str, Any]) -> ProjectGoalConfig:
     )
 
 
+def _release_deployment_targets_from_dict(
+    data: dict[str, Any],
+) -> dict[str, ReleaseDeploymentTargetConfig]:
+    targets_data = data.get("release_deployment_targets", {}) or {}
+    if not isinstance(targets_data, dict):
+        raise ConfigError("Project release_deployment_targets must be a mapping")
+    targets: dict[str, ReleaseDeploymentTargetConfig] = {}
+    for target_id, target_data in targets_data.items():
+        if not isinstance(target_data, dict):
+            raise ConfigError(f"Release deployment target {target_id} must be a mapping")
+        target_key = _logical_ref(
+            target_id,
+            f"release_deployment_targets.{target_id}",
+        )
+        target_type = str(target_data.get("type", "command"))
+        if target_type != "command":
+            raise ConfigError(
+                f"Release deployment target {target_id}.type must be command"
+            )
+        command = target_data.get("command")
+        if not isinstance(command, list) or not all(
+            isinstance(part, str) and part.strip() for part in command
+        ):
+            raise ConfigError(
+                f"Release deployment target {target_id}.command must be a non-empty string list"
+            )
+        try:
+            timeout_seconds = int(target_data.get("timeout_seconds", 600))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(
+                f"Release deployment target {target_id}.timeout_seconds must be an integer"
+            ) from exc
+        if timeout_seconds < 30 or timeout_seconds > 1800:
+            raise ConfigError(
+                f"Release deployment target {target_id}.timeout_seconds must be between 30 and 1800"
+            )
+        smoke = None
+        smoke_data = target_data.get("smoke")
+        if smoke_data is not None:
+            if not isinstance(smoke_data, dict):
+                raise ConfigError(
+                    f"Release deployment target {target_id}.smoke must be a mapping"
+                )
+            try:
+                expected_status_code = int(smoke_data.get("expected_status_code", 200))
+            except (TypeError, ValueError) as exc:
+                raise ConfigError(
+                    f"Release deployment target {target_id}.smoke.expected_status_code must be an integer"
+                ) from exc
+            if expected_status_code < 100 or expected_status_code > 599:
+                raise ConfigError(
+                    f"Release deployment target {target_id}.smoke.expected_status_code must be an HTTP status"
+                )
+            smoke = ReleaseSmokeConfig(
+                route_label=str(smoke_data.get("route_label") or ""),
+                url=str(smoke_data.get("url") or ""),
+                expected_status_code=expected_status_code,
+                schema_expectation=(
+                    str(smoke_data["schema_expectation"])
+                    if smoke_data.get("schema_expectation") is not None
+                    else None
+                ),
+                content_expectation=(
+                    str(smoke_data["content_expectation"])
+                    if smoke_data.get("content_expectation") is not None
+                    else None
+                ),
+            )
+            if not smoke.route_label or not smoke.url:
+                raise ConfigError(
+                    f"Release deployment target {target_id}.smoke requires route_label and url"
+                )
+        targets[target_key] = ReleaseDeploymentTargetConfig(
+            target_id=target_key,
+            type=target_type,
+            description=str(target_data.get("description", "")),
+            command=[str(part) for part in command],
+            working_directory=(
+                str(target_data["working_directory"])
+                if target_data.get("working_directory") is not None
+                else None
+            ),
+            timeout_seconds=timeout_seconds,
+            impact_categories=[
+                str(value) for value in target_data.get("impact_categories", []) or []
+            ],
+            activation_paths=[
+                str(value) for value in target_data.get("activation_paths", []) or []
+            ],
+            smoke=smoke,
+            rollback_summary=(
+                str(target_data["rollback_summary"])
+                if target_data.get("rollback_summary") is not None
+                else None
+            ),
+        )
+    return targets
+
+
 def _project_meshes_from_dict(
     data: dict[str, Any],
     roles: dict[str, ProjectRoleOverride],
@@ -1872,6 +1973,7 @@ def load_mesh_config(
     goal = _project_goal_from_dict(project_data)
     document_library = _document_library_from_dict(project_data)
     role_memory = _role_memory_from_dict(project_data)
+    release_deployment_targets = _release_deployment_targets_from_dict(project_data)
     meshes = _project_meshes_from_dict(project_data, roles)
     connectors = _project_connectors_from_dict(project_data, roles)
     _validate_role_channels(roles, connectors)
@@ -1913,6 +2015,7 @@ def load_mesh_config(
         flow=flow,
         document_library=document_library,
         role_memory=role_memory,
+        release_deployment_targets=release_deployment_targets,
         meshes=meshes,
         capability_defaults=capability_defaults,
     )

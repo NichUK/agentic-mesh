@@ -258,6 +258,57 @@ def test_work_item_action_records_become_structured_runtime_actions() -> None:
     assert result.work_item_actions[1].message_type == "sdlc.quality_review"
 
 
+def test_release_deploy_record_becomes_structured_runtime_action() -> None:
+    records = [
+        SafeOutputRecord(
+            tool="release.deploy",
+            payload={
+                "work_item_id": "work-release",
+                "target_id": "dogfood_compose",
+                "reason": "Sponsor approved activation.",
+                "evidence_refs": ["work-items/work-release/140-release-record.md"],
+            },
+            recorded_at="2026-06-11T10:00:00+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+        SafeOutputRecord(
+            tool="status.report_completion",
+            payload={"message": "Deployment requested."},
+            recorded_at="2026-06-11T10:00:01+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+    ]
+
+    result = result_from_safe_output_records(
+        records=records,
+        message=Message.create(
+            role_id="release-manager",
+            message_type="sdlc.release_review",
+            payload={"title": "Release", "work_item_type": "slice"},
+            source="test",
+        ),
+        flow_state=FlowState(
+            state_id="release_review",
+            owner_role="release-manager",
+            purpose="Release.",
+            artifact_path="",
+            handoffs={},
+        ),
+    )
+
+    assert result.status == "completed"
+    assert len(result.work_item_actions) == 1
+    action = result.work_item_actions[0]
+    assert action.action == "deploy"
+    assert action.source_tool == "release.deploy"
+    assert action.raw_payload["target_id"] == "dogfood_compose"
+    assert action.raw_payload["evidence_refs"] == [
+        "work-items/work-release/140-release-record.md"
+    ]
+
+
 def test_work_item_handoff_record_becomes_structured_runtime_action() -> None:
     records = [
         SafeOutputRecord(

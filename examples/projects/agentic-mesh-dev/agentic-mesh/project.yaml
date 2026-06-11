@@ -48,6 +48,28 @@ role_memory:
   provenance_required: true
   refresh_from_document_library: true
   team_overlay_root: agentic-mesh/team-overlays
+release_deployment_targets:
+  dogfood_compose:
+    type: command
+    description: Build and activate the linuxch dogfood Docker Compose runtime from the checked-out project repository.
+    command:
+    - sh
+    - scripts/release-linuxch-compose.sh
+    working_directory: /mesh/workspaces/agentic-mesh
+    timeout_seconds: 900
+    impact_categories:
+    - runtime_code
+    - container_image
+    - service_restart_or_recreate
+    activation_paths:
+    - rebuild_image
+    - recreate_container
+    smoke:
+      route_label: /status
+      url: http://control-plane:8080/status
+      expected_status_code: 200
+      content_expectation: Agentic Mesh Status
+    rollback_summary: Rebuild and activate the previous reviewed image or revert the scoped commit and rerun the dogfood Compose activation target.
 meshes:
   governance:
     name: Governance Mesh

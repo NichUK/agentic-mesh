@@ -2064,8 +2064,8 @@ if (statusEl.textContent === "running") {{
             rows.append(
                 "<tr>"
                 "<td>Work item</td>"
-                f"<td>{self._status_label(row)}</td>"
                 f"<td><a href=\"{html.escape(str(row['status_url']))}\">{html.escape(str(row['work_item_id']))}</a></td>"
+                f"<td>{self._status_label(row)}</td>"
                 f"<td>{html.escape(str(row.get('title') or row['work_item_id']))}</td>"
                 f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
                 f"<td>{html.escape(str(row.get('lifecycle_state') or 'Unknown'))}</td>"
@@ -2078,17 +2078,26 @@ if (statusEl.textContent === "running") {{
             rows.append(
                 "<tr>"
                 "<td>Queue item</td>"
-                f"<td>{self._status_label(row)}</td>"
                 f"<td><a href=\"{html.escape(str(target))}\">{html.escape(str(row['queue_item_id']))}</a></td>"
+                f"<td>{self._status_label(row)}</td>"
                 f"<td>{html.escape(str(row.get('title') or row['queue_item_id']))}</td>"
                 f"<td>{html.escape(str(row.get('owner_role') or 'Unknown owner'))}</td>"
-                f"<td>{html.escape(str(row.get('recommended_work_item_type') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('recommended_work_item_type') or 'Unknown type'))}</td>"
                 f"<td>{html.escape(str(row.get('attention_reason') or row.get('next_action') or 'Reason unavailable'))}</td>"
-                f"<td>{html.escape(str(row.get('updated_at') or row.get('created_at') or 'Unknown'))}</td>"
+                f"<td>{html.escape(str(row.get('updated_at') or row.get('created_at') or 'Unknown time'))}</td>"
                 "</tr>"
             )
         return self._dashboard_table(
-            ["Type", "Status", "Title", "Owner", "State", "Reason or next action", "Timestamp"],
+            [
+                "Kind",
+                "Item",
+                "Status",
+                "Title",
+                "Owner",
+                "State / Type",
+                "Reason / Next Action",
+                "Updated",
+            ],
             rows,
         )
 
