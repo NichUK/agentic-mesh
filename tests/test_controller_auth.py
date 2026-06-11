@@ -1564,6 +1564,9 @@ flow:
         assert "id=\"copy-code\"" in body
         assert "<svg" in body
         assert "2A4N-771S5" in body
+        assert "fallbackCopyText" in body
+        assert "document.execCommand(\"copy\")" in body
+        assert "Select and copy manually" in body
 
         connection.request("GET", f"/auth/codex/session.json?id={session_id}")
         response = connection.getresponse()

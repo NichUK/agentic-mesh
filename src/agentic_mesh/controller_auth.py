@@ -1763,21 +1763,47 @@ async function pollSession() {{
   }}
 }}
 
+function fallbackCopyText(text) {{
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-1000px";
+  textarea.style.left = "-1000px";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let copied = false;
+  try {{
+    copied = document.execCommand("copy");
+  }} finally {{
+    document.body.removeChild(textarea);
+  }}
+  return copied;
+}}
+
 copyButton.addEventListener("click", async () => {{
   const code = codeEl.textContent.trim();
   if (!code) {{
     return;
   }}
   try {{
+    if (!navigator.clipboard || !window.isSecureContext) {{
+      throw new Error("Clipboard API unavailable");
+    }}
     await navigator.clipboard.writeText(code);
     copyStatus.textContent = "Copied";
   }} catch (_error) {{
-    const range = document.createRange();
-    range.selectNodeContents(codeEl);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    copyStatus.textContent = "Selected";
+    if (fallbackCopyText(code)) {{
+      copyStatus.textContent = "Copied";
+    }} else {{
+      const range = document.createRange();
+      range.selectNodeContents(codeEl);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      copyStatus.textContent = "Select and copy manually";
+    }}
   }}
 }});
 
