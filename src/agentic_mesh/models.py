@@ -334,6 +334,29 @@ class ProjectGoalConfig:
 
 
 @dataclass(frozen=True)
+class ReleaseSmokeConfig:
+    route_label: str
+    url: str
+    expected_status_code: int = 200
+    schema_expectation: str | None = None
+    content_expectation: str | None = None
+
+
+@dataclass(frozen=True)
+class ReleaseDeploymentTargetConfig:
+    target_id: str
+    type: str
+    description: str = ""
+    command: list[str] = field(default_factory=list)
+    working_directory: str | None = None
+    timeout_seconds: int = 600
+    impact_categories: list[str] = field(default_factory=list)
+    activation_paths: list[str] = field(default_factory=list)
+    smoke: ReleaseSmokeConfig | None = None
+    rollback_summary: str | None = None
+
+
+@dataclass(frozen=True)
 class ConnectorChannelConfig:
     channel_id: str
     name: str
@@ -479,6 +502,9 @@ class ProjectConfig:
     goal: ProjectGoalConfig = field(default_factory=ProjectGoalConfig)
     document_library: DocumentLibraryConfig = field(default_factory=DocumentLibraryConfig)
     role_memory: RoleMemoryConfig = field(default_factory=RoleMemoryConfig)
+    release_deployment_targets: dict[str, ReleaseDeploymentTargetConfig] = field(
+        default_factory=dict
+    )
     meshes: dict[str, ProjectMeshConfig] = field(default_factory=dict)
     auth_credentials: dict[str, AuthCredential] = field(default_factory=dict)
     connectors: dict[str, ProjectConnectorConfig] = field(default_factory=dict)

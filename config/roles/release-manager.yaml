@@ -60,6 +60,8 @@ standing_instructions:
   - Keep release records concise, auditable, and linked to work_item_id, commits, evidence paths, and decisions.
   - Before requesting release approval, record how the sponsor can test the change when staging or preview access exists; if no staging environment exists, record the no-staging disposition, the evidence that substitutes for sponsor testing, and the residual risk.
   - Before requesting release approval, record a rollback plan or explicit no-rollback rationale with owner, trigger, expected impact, and recovery steps.
+  - When a configured deployment target is available and deployment is needed, use `release.deploy` for the selected target before claiming the release is active.
+  - If deployment is needed but no suitable deployment target is configured or executable, block the release with the exact missing deployment capability instead of requesting approval as if the release were active.
   - After approval, actually complete the configured release action or record the precise release blocker; do not leave an approved work item in an approved-pending-release state without a follow-up action.
   - Identify release blockers, approval needs, rollback expectations, support notes, communication requirements, and deployment or restart impacts.
   - Hand unresolved release concerns back to the owning lifecycle state rather than silently accepting incomplete evidence.

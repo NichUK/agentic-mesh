@@ -1927,6 +1927,36 @@ class ReleaseWorkItemActionConversationWorkerAdapter(WorkerAdapter):
         )
 
 
+class ReleaseDeployConversationWorkerAdapter(WorkerAdapter):
+    def run(
+        self,
+        instance: RoleInstanceConfig,
+        message: Message,
+        flow_state: FlowState,
+    ) -> AgentRunResult:
+        return AgentRunResult(
+            status="completed",
+            message="Deployment activation recorded.",
+            work_item_actions=[
+                WorkItemAction(
+                    action="deploy",
+                    work_item_id="work-deploy",
+                    reason="Sponsor approved dogfood activation.",
+                    work_item_type="slice",
+                    lifecycle_state="release_review",
+                    raw_payload={
+                        "target_id": "dogfood_compose",
+                        "evidence_refs": [
+                            "work-items/work-deploy/140-release-record.md"
+                        ],
+                    },
+                    source_tool="release.deploy",
+                )
+            ],
+            terminal_tool="status.reply",
+        )
+
+
 class ProductManagerHandoffConversationWorkerAdapter(WorkerAdapter):
     def run(
         self,
@@ -2312,6 +2342,97 @@ def test_release_manager_direct_conversation_can_apply_work_item_actions(
     assert "safe_output_work_item_closed" in event_types
     assert "safe_output_work_item_blocker_overridden" in event_types
     assert "safe_output_work_item_flow_reopened" in event_types
+
+
+def test_release_manager_can_deploy_configured_target_and_record_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+    journal = EventJournal(tmp_path / "state", mesh_config.project.project_id)
+    message_store = FileMessageStore(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    connector_outbox = FileConnectorOutbox(
+        tmp_path / "state",
+        mesh_config.project.project_id,
+        journal,
+    )
+    artifacts = ArtifactStore(tmp_path / "workspace", mesh_config.project.project_id, journal)
+    runtime = AgentRuntime(
+        message_store,
+        artifacts,
+        journal,
+        mesh_config.project,
+        ReleaseDeployConversationWorkerAdapter(),
+        connector_outbox=connector_outbox,
+        response_types=mesh_config.response_types,
+    )
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = "activated"
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        assert command == ["sh", "scripts/release-linuxch-compose.sh"]
+        return FakeCompleted()
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return b"<title>Agentic Mesh Status</title>"
+
+    monkeypatch.setattr("agentic_mesh.runtime.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agentic_mesh.runtime.urlopen",
+        lambda url, timeout=20: FakeResponse(),
+    )
+    message_store.enqueue(
+        Message.create(
+            role_id="release-manager",
+            message_type=MESSAGE_TYPE_DIRECT_CONVERSATION_REQUESTED,
+            payload={
+                "title": "Deploy work-deploy",
+                "summary": "Deploy the dogfood target.",
+                "text": "Deploy work-deploy to dogfood.",
+                "conversation_mode": "targeted",
+                "requested_roles": ["release-manager"],
+                "target_role": "release-manager",
+                "source_channel": "all-agents",
+                "work_item_id": "work-deploy",
+                "work_item_type": "slice",
+                "lifecycle_state": "release_review",
+            },
+            source="teams:teams-bot-listener:all-agents",
+        )
+    )
+
+    assert runtime.run_once(
+        "agentic-mesh-dev.release-manager.1",
+        mesh_config.instances["agentic-mesh-dev.release-manager.1"],
+    )
+
+    evidence = runtime.activation_evidence_store.read_current("work-deploy")
+    assert evidence is not None
+    assert evidence.activation_status == "complete"
+    assert evidence.smoke_status == "passed"
+    assert evidence.target_labels == ("dogfood_compose",)
+    assert evidence.evidence_refs == ("work-items/work-deploy/140-release-record.md",)
+    completed = connector_outbox.claim_next("all-agents", "test-connector")
+    assert completed is not None
+    assert completed.payload["status_message"] == "Deployment activation recorded."
+    event_types = [event["event_type"] for event in journal.read_all()]
+    assert "activation_action_recorded" in event_types
 
 
 def test_direct_conversation_can_handoff_existing_work_item_when_role_owns_state(
