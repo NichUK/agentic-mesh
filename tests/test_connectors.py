@@ -3,6 +3,8 @@ from pathlib import Path
 from urllib.error import HTTPError
 
 from agentic_mesh import telemetry
+from agentic_mesh.cli import _bot_connector_channels
+from agentic_mesh.cli import _connector_channels
 from agentic_mesh.config import load_mesh_config
 from agentic_mesh.connectors import BotFrameworkTeamsConnectorAdapter
 from agentic_mesh.connectors import LocalTeamsConnectorAdapter
@@ -38,6 +40,17 @@ class _HttpErrorBody:
 class _StaticSecrets:
     def get(self, secret_ref: str) -> str:
         return f"value-for-{secret_ref}"
+
+
+def test_bot_connector_all_channels_includes_dm_when_gateway_dm_enabled() -> None:
+    mesh_config = load_mesh_config(Path.cwd())
+
+    graph_channels = _connector_channels(mesh_config, "teams", "all")
+    bot_channels = _bot_connector_channels(mesh_config, "teams", "all")
+
+    assert "dm" not in graph_channels
+    assert "dm" in bot_channels
+    assert set(graph_channels).issubset(set(bot_channels))
 
 
 def _seed_release_approval_context(
