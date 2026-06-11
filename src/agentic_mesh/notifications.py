@@ -11,12 +11,12 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
-from urllib.parse import urlparse
 
 from agentic_mesh.models import NotificationPolicyConfig
 from agentic_mesh.models import NotificationSurfaceConfig
 from agentic_mesh.models import new_id
 from agentic_mesh.models import utc_now_iso
+from agentic_mesh.url_roots import approved_status_base_url
 
 
 MESSAGE_TYPE_NOTIFICATION_EVENT = "notification.event"
@@ -172,22 +172,9 @@ class DocumentLink:
         }
 
 
-def _approved_status_base_url(value: str | None) -> str:
-    if not value:
-        return ""
-    parsed = urlparse(str(value).strip())
-    if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
-        return ""
-    if parsed.path and parsed.path not in {"", "/"}:
-        return ""
-    return str(value).strip().rstrip("/")
-
-
 class StatusLinkBuilder:
     def __init__(self, base_url: str | None = None) -> None:
-        self.base_url = _approved_status_base_url(
-            base_url or os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
-        )
+        self.base_url = approved_status_base_url(base_url)
 
     def work_item(self, work_item_id: str | None, *, label: str = "Work item") -> StatusLink:
         if not work_item_id:
@@ -206,9 +193,7 @@ class StatusLinkBuilder:
 
 class DocumentLinkBuilder:
     def __init__(self, base_url: str | None = None) -> None:
-        self.base_url = _approved_status_base_url(
-            base_url or os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
-        )
+        self.base_url = approved_status_base_url(base_url)
 
     def artifact(self, artifact_path: str | None, *, label: str = "Document") -> DocumentLink:
         if not artifact_path:

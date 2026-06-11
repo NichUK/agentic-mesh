@@ -100,8 +100,8 @@ The overlay adds:
 - `control-plane`, exposing the controller auth UI on host port `8100`
 - restart policies for the runtime services
 - `AGENTIC_MESH_PUBLIC_BOT_ENDPOINT=https://vpn.nixnet.com/api/messages`
-- `AGENTIC_MESH_STATUS_BASE_URL`, when set, rewrites Teams status/artifact
-  links to an externally reachable control-plane URL
+- `AGENTIC_MESH_URL_ROOT=http://linuxch:8100`, the single sponsor-facing
+  control-plane URL root used to derive status, artifact, and auth links
 
 ## Runtime Image And Mounted Configuration
 
@@ -171,18 +171,16 @@ sync can remove them. Prefer updating both checkouts with Git, or use a
 non-destructive bootstrap sync that explicitly preserves generated document
 library paths such as `work-items/`.
 
-Teams messages use `AGENTIC_MESH_STATUS_BASE_URL` for sponsor-facing work item
-links. On `linuxch`, set this in the same `.env` file when the control-plane
-port is routed externally:
+Teams messages use `AGENTIC_MESH_URL_ROOT` for sponsor-facing work item,
+artifact, and auth links. On `linuxch`, the default sponsor-facing URL root is:
 
 ```text
-AGENTIC_MESH_STATUS_BASE_URL=https://vpn.nixnet.com
+AGENTIC_MESH_URL_ROOT=http://linuxch:8100
 ```
 
-The external route must forward `/work-items/...`, `/artifact-viewer/...`, and
-`/artifacts/...` to the control-plane service on `linuxch:8100`. If that route
-is not in place, leave the value unset or use an internal URL such as
-`http://10.0.0.65:8100`.
+The route must serve `/work-items/...`, `/artifact-viewer/...`, `/artifacts/...`,
+and `/auth/credentials` from the control-plane service on `linuxch:8100`.
+Override this value only when another sponsor-facing route is preferred.
 
 The project file then declares the workspace/repository shape:
 

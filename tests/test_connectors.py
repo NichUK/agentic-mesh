@@ -2800,14 +2800,19 @@ def test_teams_ingress_human_response_joins_trace_context(tmp_path: Path) -> Non
 
 def test_connector_status_link_does_not_fall_back_to_auth_admin_url(monkeypatch) -> None:
     monkeypatch.delenv("AGENTIC_MESH_STATUS_BASE_URL", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_URL_ROOT", raising=False)
     monkeypatch.setenv("AGENTIC_MESH_AUTH_ADMIN_URL", "http://127.0.0.1:8100/auth/status")
     assert _work_item_status_url("work-activation") == ""
 
     monkeypatch.setenv("AGENTIC_MESH_STATUS_BASE_URL", "http://127.0.0.1:8100")
     assert _work_item_status_url("work-activation") == ""
 
-    monkeypatch.setenv("AGENTIC_MESH_STATUS_BASE_URL", "http://controller.local")
-    assert _work_item_status_url("work-activation") == ""
+    monkeypatch.delenv("AGENTIC_MESH_STATUS_BASE_URL", raising=False)
+    monkeypatch.setenv("AGENTIC_MESH_URL_ROOT", "http://linuxch:8100")
+    assert (
+        _work_item_status_url("work-activation")
+        == "http://linuxch:8100/work-items/work-activation"
+    )
 
     monkeypatch.setenv("AGENTIC_MESH_STATUS_BASE_URL", "https://status.example.com")
     assert (

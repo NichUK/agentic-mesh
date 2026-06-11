@@ -34,6 +34,7 @@ from agentic_mesh.problem_status import worker_problem_status
 from agentic_mesh.safe_outputs import load_safe_output_records
 from agentic_mesh.safe_outputs import result_from_safe_output_records
 from agentic_mesh.safe_outputs import write_safe_output_audit
+from agentic_mesh.url_roots import configured_auth_admin_url
 from agentic_mesh.worker_runs import FileWorkerRunStore
 from agentic_mesh.worker_runs import WorkerRun
 from agentic_mesh.worker_runs import WorkerRunObserver
@@ -557,10 +558,7 @@ class CodexCliWorkerAdapter(WorkerAdapter):
     ) -> str:
         if method_id != "codex_oauth_cache":
             return fallback
-        setup_url = os.environ.get(
-            "AGENTIC_MESH_AUTH_ADMIN_URL",
-            "http://127.0.0.1:8100/auth/credentials",
-        )
+        setup_url = configured_auth_admin_url()
         return (
             "Codex OAuth login is required before this agent can work. "
             f"Open the auth admin status surface at {setup_url} and sign in with OpenAI."
