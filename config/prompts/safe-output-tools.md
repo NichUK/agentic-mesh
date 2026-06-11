@@ -18,3 +18,25 @@ Terminal tools:
 
 Available tools:
 {{available_tools}}
+
+Examples:
+
+To answer a direct conversation in role, write the exact Markdown reply to a
+payload file and call the terminal reply tool:
+
+```sh
+cat >/tmp/payload.json <<'JSON'
+{"message":"Your Markdown reply to the sponsor goes here."}
+JSON
+python -m agentic_mesh.cli safe-output status.reply . < /tmp/payload.json
+```
+
+To ask the sponsor for missing product or delivery context, ask the actual
+question instead of reporting a generic runtime blocker:
+
+```sh
+cat >/tmp/payload.json <<'JSON'
+{"question":"What specific decision, scope, or acceptance detail do you need from the sponsor?","reason":"Explain why this answer is needed before continuing."}
+JSON
+python -m agentic_mesh.cli safe-output sponsor.ask_question . < /tmp/payload.json
+```

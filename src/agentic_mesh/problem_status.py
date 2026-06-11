@@ -39,6 +39,7 @@ FAILURE_CLASSES = {
 }
 RECOVERY_ACTIONS = {
     "retry_same_state",
+    "retry_safe_output_contract",
     "repair_configuration",
     "repair_auth",
     "reconcile_partial_artifacts",
@@ -495,6 +496,10 @@ def malformed_route_problem_status(
 def recovery_action_label(action: str) -> str:
     return {
         "retry_same_state": "Retry the same lifecycle state after runtime recovery.",
+        "retry_safe_output_contract": (
+            "Retry the agent run with the safe-output contract enforced; "
+            "if it repeats, inspect prompt/tool wiring."
+        ),
         "repair_configuration": "Repair worker configuration before retrying.",
         "repair_auth": "Repair worker authentication before retrying.",
         "reconcile_partial_artifacts": "Reconcile unverified partial artifacts before handoff.",

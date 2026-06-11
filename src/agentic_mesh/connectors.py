@@ -1292,6 +1292,11 @@ def render_problem_status_html(message: ConnectorMessage) -> str:
     title = html.escape(str(payload.get("title") or "Work item problem"))
     raw_work_item_id = str(problem.get("work_item_id") or payload.get("work_item_id") or "unknown")
     work_item_id = html.escape(raw_work_item_id)
+    is_source_message_ref = (
+        not problem.get("work_item_type")
+        and raw_work_item_id.startswith("msg-")
+    )
+    item_ref_label = "Source message" if is_source_message_ref else "Work item"
     status_label = html.escape(str(problem.get("status_label") or problem.get("status") or "Problem"))
     problem_label = html.escape(str(problem.get("problem_label") or problem.get("problem_kind") or "unknown"))
     affected_role = html.escape(str(problem.get("affected_role") or "unknown"))
@@ -1308,11 +1313,13 @@ def render_problem_status_html(message: ConnectorMessage) -> str:
     status_url = problem.get("status_url")
     if isinstance(status_url, str) and status_url.startswith(("http://", "https://")):
         status_link = f'<p><a href="{html.escape(status_url)}">Open work item status</a></p>'
+    elif is_source_message_ref:
+        status_link = ""
     else:
         status_link = _work_item_status_link_html(raw_work_item_id, paragraph=True)
     status_link = (
         status_link
-        or f"<p>Work item: <code>{work_item_id}</code></p>"
+        or f"<p>{item_ref_label}: <code>{work_item_id}</code></p>"
     )
     artifact_paths = [
         str(path)
@@ -1331,7 +1338,7 @@ def render_problem_status_html(message: ConnectorMessage) -> str:
     return (
         f"<p><strong>{status_label}: {title}</strong></p>"
         f"<p><strong>Problem:</strong> {problem_label}<br/>"
-        f"<strong>Work item:</strong> <code>{work_item_id}</code><br/>"
+        f"<strong>{item_ref_label}:</strong> <code>{work_item_id}</code><br/>"
         f"<strong>Affected role:</strong> {affected_role}<br/>"
         f"<strong>Lifecycle state:</strong> <code>{lifecycle_state}</code><br/>"
         f"<strong>What happened:</strong> {reason}<br/>"
