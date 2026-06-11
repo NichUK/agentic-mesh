@@ -2185,6 +2185,21 @@ def _connector_channels(mesh_config, connector_id: str, channel: str) -> list[st
     return [channel]
 
 
+def _bot_connector_channels(mesh_config, connector_id: str, channel: str) -> list[str]:
+    channels = _connector_channels(mesh_config, connector_id, channel)
+    if channel == "all":
+        dm_enabled = any(
+            gateway.enabled
+            and gateway.teams is not None
+            and gateway.teams.connector == connector_id
+            and gateway.teams.dm_enabled
+            for gateway in mesh_config.project.gateways.values()
+        )
+        if dm_enabled and "dm" not in channels:
+            channels.append("dm")
+    return sorted(channels)
+
+
 def cmd_teams_graph_connector_once(args) -> int:
     mesh_config, journal, _, connector_outbox, _, _ = build_runtime(
         args.config_root,
@@ -2298,7 +2313,7 @@ def cmd_teams_bot_connector_once(args) -> int:
         service_url=args.service_url,
     )
     results = {}
-    for channel in _connector_channels(mesh_config, args.connector, args.channel):
+    for channel in _bot_connector_channels(mesh_config, args.connector, args.channel):
         results[channel] = connector.process_once(channel)
     print(json.dumps({"connector_id": args.connector_id, "results": results}))
     return 0
