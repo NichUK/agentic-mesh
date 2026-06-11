@@ -1863,7 +1863,7 @@ class InvalidConversationWorkerAdapter(WorkerAdapter):
                     payload={"summary": "This should not be routed informally."},
                 )
             ],
-            terminal_tool="status.reply",
+            terminal_tool="status.report_completion",
         )
 
 
@@ -1937,6 +1937,15 @@ class ProductManagerHandoffConversationWorkerAdapter(WorkerAdapter):
         return AgentRunResult(
             status="completed",
             message="I handed the existing slice to UX.",
+            document_updates=[
+                DocumentUpdate(
+                    path="work-items/work-product-handoff/20-product-definition.md",
+                    content=(
+                        "# Product Definition\n\n"
+                        "The sponsor correction has been incorporated before UX."
+                    ),
+                )
+            ],
             work_item_actions=[
                 WorkItemAction(
                     action="handoff",
@@ -2123,6 +2132,9 @@ def test_direct_conversation_records_problem_for_disallowed_outputs(
     ).read_current(message.message_id)
     assert problem is not None
     assert "not allowed for conversational work" in problem["reason"]
+    assert "terminal tool `status.report_completion`" in problem["reason"]
+    assert problem["failure_class"] == "invalid_result"
+    assert problem["recovery_action"] == "retry_safe_output_contract"
     event_types = [event["event_type"] for event in journal.read_all()]
     assert "problem_status_recorded" in event_types
     assert "conversation_status_connector_message_queued" not in event_types
@@ -2376,6 +2388,17 @@ def test_direct_conversation_can_handoff_existing_work_item_when_role_owns_state
         mesh_config.instances["agentic-mesh-dev.product-manager.1"],
     )
 
+    artifact = (
+        tmp_path
+        / "workspace"
+        / "work-items"
+        / "work-product-handoff"
+        / "20-product-definition.md"
+    )
+    assert artifact.exists()
+    assert "sponsor correction has been incorporated" in artifact.read_text(
+        encoding="utf-8"
+    )
     assert message_store.pending_count("ux-designer") == 1
     handoff = message_store.claim_next("ux-designer", "test-ux")
     assert handoff is not None
