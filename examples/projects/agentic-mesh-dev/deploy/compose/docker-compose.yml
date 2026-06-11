@@ -1,5 +1,6 @@
 x-agentic-mesh-env: &agentic-mesh-env
   AGENTIC_MESH_CONFIG_ROOT: /mesh/system
+  AGENTIC_MESH_PROMPT_CONFIG_ROOT: /mesh/system/config/prompts
   AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project.yaml
   AGENTIC_MESH_STATE_ROOT: /mesh/project/state
   AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh

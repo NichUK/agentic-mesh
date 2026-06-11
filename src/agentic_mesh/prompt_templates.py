@@ -38,6 +38,9 @@ def _candidate_roots(base_dir: Path | None = None) -> list[Path]:
     env_root = os.environ.get("AGENTIC_MESH_PROMPT_CONFIG_ROOT")
     if env_root:
         roots.append(Path(env_root))
+    config_root = os.environ.get("AGENTIC_MESH_CONFIG_ROOT")
+    if config_root:
+        roots.append(Path(config_root) / DEFAULT_PROMPT_CONFIG_DIR)
     cwd = Path.cwd()
     roots.extend(
         [
