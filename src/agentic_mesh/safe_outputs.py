@@ -124,17 +124,52 @@ def append_safe_output_record(
     context: dict[str, Any] | None = None,
 ) -> SafeOutputRecord:
     validation = validate_safe_output_payload(tool, payload)
+    context = context or {}
+    validate_safe_output_context(tool, payload, context)
     record = SafeOutputRecord(
         tool=tool,
         payload=payload,
         recorded_at=utc_now_iso(),
-        context=context or {},
+        context=context,
         validation=validation,
     )
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with output_file.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record.to_dict(), sort_keys=True) + "\n")
     return record
+
+
+def validate_safe_output_context(
+    tool: str,
+    payload: dict[str, Any],
+    context: dict[str, Any],
+) -> None:
+    lifecycle_state = str(context.get("AGENTIC_MESH_LIFECYCLE_STATE") or "")
+    if lifecycle_state != "direct_conversation":
+        return
+    if tool == "status.report_completion":
+        raise ValueError(
+            "direct conversation must finish with status.reply, sponsor.ask_question, "
+            "noop, or work_item.handoff; do not use status.report_completion"
+        )
+    if tool == "handoff.propose":
+        raise ValueError(
+            "direct conversation about an existing tracked item must use "
+            "work_item.handoff, not handoff.propose"
+        )
+    if tool == "document.propose_update":
+        work_item_id = str(context.get("AGENTIC_MESH_WORK_ITEM_ID") or "").strip()
+        if not work_item_id:
+            raise ValueError(
+                "direct conversation document updates require a linked work item"
+            )
+        normalized = str(payload.get("path") or "").replace("\\", "/")
+        expected_prefix = f"work-items/{work_item_id}/"
+        if not normalized.startswith(expected_prefix):
+            raise ValueError(
+                "direct conversation document updates must be slice-scoped under "
+                f"{expected_prefix}"
+            )
 
 
 def load_safe_output_records(output_file: Path) -> list[SafeOutputRecord]:

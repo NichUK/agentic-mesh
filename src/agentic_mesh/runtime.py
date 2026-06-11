@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -78,6 +79,9 @@ from agentic_mesh.work_queue import SourceAnchor
 from agentic_mesh.workers import WorkerAdapter
 from agentic_mesh.workers import WorkerRunOutcome
 from agentic_mesh.workers import resolve_worker_timeout_policy
+
+
+WORK_ITEM_REF_RE = re.compile(r"\bwork-[A-Za-z0-9][A-Za-z0-9._-]*\b")
 
 
 class AgentRuntime:
@@ -1630,6 +1634,10 @@ class AgentRuntime:
             return True
 
     def _run_direct_conversation(self, instance_id: str, instance_config, message: Message) -> bool:
+        message = self._with_direct_conversation_work_reference(
+            message,
+            role_id=instance_config.role_id,
+        )
         direct_state = FlowState(
             state_id="direct_conversation",
             owner_role=instance_config.role_id,
@@ -1947,6 +1955,65 @@ class AgentRuntime:
             ),
         }
         return replace(message, payload=payload)
+
+    def _with_direct_conversation_work_reference(
+        self,
+        message: Message,
+        *,
+        role_id: str,
+    ) -> Message:
+        if message.payload.get("work_item_id"):
+            return message
+        work_item_id = self._single_existing_work_item_reference(message)
+        if not work_item_id:
+            return message
+        payload = dict(message.payload)
+        payload["work_item_id"] = work_item_id
+        payload.setdefault("work_item_reference_source", "direct_conversation_text")
+        queue_item = self._promoted_queue_item_for_work_item(work_item_id)
+        if queue_item and queue_item.promotion:
+            payload.setdefault("queue_item_id", queue_item.queue_item_id)
+            payload.setdefault("work_item_type", queue_item.promotion.work_item_type)
+            payload.setdefault("lifecycle_state", queue_item.promotion.lifecycle_state)
+            payload.setdefault(
+                "current_owner_role",
+                self.project.flow.states[
+                    queue_item.promotion.lifecycle_state
+                ].owner_role
+                if queue_item.promotion.lifecycle_state in self.project.flow.states
+                else queue_item.promotion.target_role,
+            )
+        self.journal.append(
+            "direct_conversation_work_item_reference_resolved",
+            project_id=self.project.project_id,
+            role_id=role_id,
+            message_id=message.message_id,
+            work_item_id=work_item_id,
+            queue_item_id=payload.get("queue_item_id"),
+            correlation_id=message.correlation_id,
+        )
+        return replace(message, payload=payload)
+
+    def _single_existing_work_item_reference(self, message: Message) -> str | None:
+        text = "\n".join(
+            str(message.payload.get(key) or "")
+            for key in ("work_item_id", "text", "summary", "title")
+        )
+        references = sorted(set(WORK_ITEM_REF_RE.findall(text)))
+        existing = [ref for ref in references if self._work_item_reference_exists(ref)]
+        if len(existing) != 1:
+            return None
+        return existing[0]
+
+    def _work_item_reference_exists(self, work_item_id: str) -> bool:
+        try:
+            validate_work_item_id(work_item_id)
+        except ValueError:
+            return False
+        if self._promoted_queue_item_for_work_item(work_item_id) is not None:
+            return True
+        document_root = self.artifact_store.document_library_root
+        return (document_root / "work-items" / work_item_id).exists()
 
     def _direct_conversation_document_updates_allowed(
         self,
