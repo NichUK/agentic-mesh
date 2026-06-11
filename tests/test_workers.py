@@ -387,6 +387,7 @@ def test_configured_worker_uses_current_codex_exec_flags(
     assert "Use a slice for implementation" in prompt
     assert "Never finish direct conversation with `status.report_completion`" in prompt
     assert "Do not update generic role documents from direct conversation" in prompt
+    assert "Do not use `handoff.propose` from direct conversation" in prompt
     assert "Do not create a work item yourself" in prompt
     prompt_files = list(
         (tmp_path / "docs" / "work-items" / "work-smoke" / "debug" / "prompts").glob(

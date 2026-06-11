@@ -3,7 +3,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from agentic_mesh.safe_outputs import SafeOutputRecord
+from agentic_mesh.safe_outputs import append_safe_output_record
 from agentic_mesh.safe_outputs import load_safe_output_records
 from agentic_mesh.safe_outputs import result_from_safe_output_records
 from agentic_mesh.safe_outputs import safe_output_tools_prompt
@@ -50,6 +53,49 @@ def test_safe_output_cli_records_valid_payload(tmp_path: Path) -> None:
     records = load_safe_output_records(output_file)
     assert records[0].tool == "noop"
     assert records[0].payload == payload
+
+
+def test_direct_conversation_rejects_flow_handoff_tool(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="work_item.handoff, not handoff.propose"):
+        append_safe_output_record(
+            output_file=tmp_path / "safe-outputs.jsonl",
+            tool="handoff.propose",
+            payload={
+                "target_role": "ux-designer",
+                "message_type": "sdlc.experience_design",
+            },
+            context={"AGENTIC_MESH_LIFECYCLE_STATE": "direct_conversation"},
+        )
+
+
+def test_direct_conversation_rejects_report_completion_terminal_tool(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="do not use status.report_completion"):
+        append_safe_output_record(
+            output_file=tmp_path / "safe-outputs.jsonl",
+            tool="status.report_completion",
+            payload={"message": "Done."},
+            context={"AGENTIC_MESH_LIFECYCLE_STATE": "direct_conversation"},
+        )
+
+
+def test_direct_conversation_document_update_must_be_slice_scoped(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="work-items/work-product/"):
+        append_safe_output_record(
+            output_file=tmp_path / "safe-outputs.jsonl",
+            tool="document.propose_update",
+            payload={
+                "path": "documents/analysis/product-manager.md",
+                "content": "Wrong place.",
+            },
+            context={
+                "AGENTIC_MESH_LIFECYCLE_STATE": "direct_conversation",
+                "AGENTIC_MESH_WORK_ITEM_ID": "work-product",
+            },
+        )
 
 
 def test_status_reply_is_terminal_human_facing_markdown() -> None:

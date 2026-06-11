@@ -2351,8 +2351,6 @@ def test_direct_conversation_can_handoff_existing_work_item_when_role_owns_state
                 "requested_roles": ["product-manager"],
                 "target_role": "product-manager",
                 "source_channel": "dm",
-                "work_item_id": "work-product-handoff",
-                "work_item_type": "slice",
             },
             source="teams:teams-bot-listener:dm",
         )
@@ -2412,6 +2410,7 @@ def test_direct_conversation_can_handoff_existing_work_item_when_role_owns_state
     assert completed.type == "conversation.completed"
     assert completed.payload["status_message"] == "I handed the existing slice to UX."
     event_types = [event["event_type"] for event in journal.read_all()]
+    assert "direct_conversation_work_item_reference_resolved" in event_types
     assert "safe_output_work_item_handed_off" in event_types
     assert "handoff_emitted" in event_types
 
