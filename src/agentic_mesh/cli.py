@@ -92,6 +92,7 @@ from agentic_mesh.storage import FileConnectorOutbox
 from agentic_mesh.storage import FileMessageStore
 from agentic_mesh.teams_ingress import ReloadableTeamsBotIngress
 from agentic_mesh.teams_ingress import serve_teams_bot_ingress
+from agentic_mesh.url_roots import configured_url_root
 from agentic_mesh.work_item_indexes import backfill_work_item_indexes
 from agentic_mesh.work_item_indexes import validation_errors
 from agentic_mesh.work_item_recovery import DuplicateActiveWorkGuard
@@ -1815,6 +1816,7 @@ def _control_plane_url(args) -> str:
     configured = (
         getattr(args, "server_url", None)
         or os.environ.get("AGENTIC_MESH_CONTROL_PLANE_URL")
+        or configured_url_root()
         or os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
         or _base_url_from_auth_admin(os.environ.get("AGENTIC_MESH_AUTH_ADMIN_URL"))
         or DEFAULT_CONTROL_PLANE_URL
@@ -3343,7 +3345,8 @@ def parser() -> argparse.ArgumentParser:
         "--server-url",
         help=(
             "Control-plane base URL. Defaults to AGENTIC_MESH_CONTROL_PLANE_URL, "
-            "AGENTIC_MESH_STATUS_BASE_URL, AGENTIC_MESH_AUTH_ADMIN_URL base, or "
+            "AGENTIC_MESH_URL_ROOT, AGENTIC_MESH_STATUS_BASE_URL, "
+            "AGENTIC_MESH_AUTH_ADMIN_URL base, or "
             "the configured live linuxch endpoint."
         ),
     )

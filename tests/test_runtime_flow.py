@@ -1587,7 +1587,7 @@ def test_human_response_gate_enqueue_failure_marks_durable_request_failed(
     assert completed["status"] == "human_response_request_failed"
 
 
-def test_runtime_approval_context_rejects_auth_admin_and_loopback_status_urls() -> None:
+def test_runtime_approval_context_uses_configured_url_root_not_auth_admin() -> None:
     with patch.dict(
         "os.environ",
         {"AGENTIC_MESH_AUTH_ADMIN_URL": "http://127.0.0.1:8100/auth/status"},
@@ -1597,10 +1597,12 @@ def test_runtime_approval_context_rejects_auth_admin_and_loopback_status_urls() 
 
     with patch.dict(
         "os.environ",
-        {"AGENTIC_MESH_STATUS_BASE_URL": "http://controller.local"},
+        {"AGENTIC_MESH_URL_ROOT": "http://linuxch:8100"},
         clear=True,
     ):
-        assert AgentRuntime._work_item_status_url("slice-release") is None
+        assert AgentRuntime._work_item_status_url("slice-release") == (
+            "http://linuxch:8100/work-items/slice-release"
+        )
 
     with patch.dict(
         "os.environ",
@@ -1619,7 +1621,7 @@ def test_runtime_approval_context_rejects_auth_admin_and_loopback_status_urls() 
         )
 
 
-def test_human_response_gate_omits_status_links_without_approved_https_base(
+def test_human_response_gate_omits_status_links_without_url_root(
     tmp_path: Path,
 ) -> None:
     mesh_config = load_mesh_config(Path.cwd())

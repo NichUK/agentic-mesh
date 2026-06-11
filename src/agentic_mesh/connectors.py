@@ -53,6 +53,7 @@ from agentic_mesh.threaded_context import BindingResult
 from agentic_mesh.threaded_context import FileThreadedContextStore
 from agentic_mesh.threaded_context import MESSAGE_TYPE_THREADED_CONTEXT_ATTENTION_REQUESTED
 from agentic_mesh.threaded_context import ThreadRouteRecord
+from agentic_mesh.url_roots import approved_status_base_url
 from agentic_mesh.threaded_context import has_explicit_linked_new_work_intent
 from agentic_mesh.work_queue import FileWorkQueueStore
 from agentic_mesh.work_queue import SourceAnchor
@@ -1416,42 +1417,17 @@ def _work_item_status_link_html(
 def _work_item_status_url(work_item_id: str) -> str:
     if not work_item_id or work_item_id == "unknown":
         return ""
-    base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
+    base_url = approved_status_base_url()
     if not base_url:
-        return ""
-    parsed = urlparse(base_url)
-    if (
-        parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.query
-        or parsed.fragment
-        or _is_loopback_status_host(parsed.hostname)
-    ):
         return ""
     return f"{base_url.rstrip('/')}/work-items/{quote(work_item_id, safe='')}"
 
 
 def _artifact_viewer_url(path: str) -> str:
-    base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
+    base_url = approved_status_base_url()
     if not base_url:
         return ""
-    parsed = urlparse(base_url)
-    if (
-        parsed.scheme != "https"
-        or not parsed.netloc
-        or parsed.query
-        or parsed.fragment
-        or _is_loopback_status_host(parsed.hostname)
-    ):
-        return ""
     return f"{base_url.rstrip('/')}/artifact-viewer/{quote(path, safe='')}"
-
-
-def _is_loopback_status_host(hostname: str | None) -> bool:
-    if hostname is None:
-        return True
-    normalized = hostname.strip().lower()
-    return normalized in {"localhost", "::1"} or normalized.startswith("127.")
 
 
 def _artifact_link_html(path: str) -> str:

@@ -5,7 +5,6 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
-from urllib.parse import urlparse
 
 from agentic_mesh import telemetry
 from agentic_mesh.agent_run_state import AgentRunState
@@ -52,6 +51,7 @@ from agentic_mesh.route_status import CurrentRoute
 from agentic_mesh.route_status import CurrentRouteStore
 from agentic_mesh.route_status import current_route_from_payload
 from agentic_mesh.route_status import route_id_for
+from agentic_mesh.url_roots import approved_status_base_url
 from agentic_mesh.work_item_indexes import GLOBAL_INDEX_PATH
 from agentic_mesh.work_item_indexes import LOCAL_INDEX_NAME
 from agentic_mesh.work_item_indexes import NOT_FOUND
@@ -2130,14 +2130,8 @@ class AgentRuntime:
 
     @staticmethod
     def _work_item_status_url(work_item_id: str) -> str | None:
-        base_url = os.environ.get("AGENTIC_MESH_STATUS_BASE_URL")
+        base_url = approved_status_base_url()
         if not base_url:
-            return None
-        parsed = urlparse(base_url)
-        if parsed.scheme != "https" or not parsed.netloc:
-            return None
-        hostname = (parsed.hostname or "").lower()
-        if hostname in {"localhost", "::1"} or hostname.startswith("127."):
             return None
         return f"{base_url.rstrip('/')}/work-items/{quote(work_item_id, safe='')}"
 
