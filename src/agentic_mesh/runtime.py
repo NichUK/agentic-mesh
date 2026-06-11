@@ -1719,7 +1719,8 @@ class AgentRuntime:
                 or result.handoffs
                 or (
                     result.status == "completed"
-                    and result.terminal_tool not in {"status.reply", "noop"}
+                    and result.terminal_tool
+                    not in {"status.reply", "noop", "work_item.handoff"}
                 )
             ):
                 reason_parts: list[str] = []
@@ -1731,7 +1732,8 @@ class AgentRuntime:
                     reason_parts.append("handoffs")
                 if (
                     result.status == "completed"
-                    and result.terminal_tool not in {"status.reply", "noop"}
+                    and result.terminal_tool
+                    not in {"status.reply", "noop", "work_item.handoff"}
                 ):
                     reason_parts.append(
                         f"terminal tool `{result.terminal_tool or 'unknown'}`"
@@ -2610,11 +2612,17 @@ class AgentRuntime:
         source_instance,
         source_message: Message,
     ) -> dict[str, str | None]:
+        validate_work_item_id(action.work_item_id)
+        if action.action == "handoff":
+            return self._handoff_work_item_from_safe_output(
+                action=action,
+                source_instance=source_instance,
+                source_message=source_message,
+            )
         if source_instance.role_id != "release-manager":
             raise ValueError(
-                "work-item action safe-outputs are restricted to release-manager"
+                "release work-item action safe-outputs are restricted to release-manager"
             )
-        validate_work_item_id(action.work_item_id)
         if action.action == "close":
             return self._close_work_item_from_safe_output(
                 action=action,
@@ -2634,6 +2642,135 @@ class AgentRuntime:
                 source_message=source_message,
             )
         raise ValueError(f"unsupported work item action `{action.action}`")
+
+    def _handoff_work_item_from_safe_output(
+        self,
+        *,
+        action: WorkItemAction,
+        source_instance,
+        source_message: Message,
+    ) -> dict[str, str | None]:
+        if not action.source_lifecycle_state:
+            raise ValueError("handoff requires source_lifecycle_state")
+        if not action.target_role or not action.lifecycle_state:
+            raise ValueError("handoff requires target_role and lifecycle_state")
+        queue_item = self._promoted_queue_item_for_work_item(action.work_item_id)
+        if queue_item is None or queue_item.promotion is None:
+            raise ValueError(
+                "handoff requires an existing promoted work item; propose queue "
+                "work instead of handing off an unknown item"
+            )
+        current_route = self.current_route_store.read_current(action.work_item_id)
+        current_lifecycle_state = (
+            str(current_route.get("target_lifecycle_state"))
+            if current_route and current_route.get("target_lifecycle_state")
+            else queue_item.promotion.lifecycle_state
+        )
+        if current_lifecycle_state != action.source_lifecycle_state:
+            raise ValueError(
+                "handoff source_lifecycle_state does not match the current work "
+                f"item lifecycle state `{current_lifecycle_state}`"
+            )
+        if action.source_lifecycle_state not in self.project.flow.states:
+            raise ValueError(
+                f"handoff source_lifecycle_state `{action.source_lifecycle_state}` "
+                "is not configured"
+            )
+        source_flow_state = self.project.flow.states[action.source_lifecycle_state]
+        if source_flow_state.owner_role != source_instance.role_id:
+            raise ValueError(
+                "handoff source_lifecycle_state is owned by "
+                f"`{source_flow_state.owner_role}`, not `{source_instance.role_id}`"
+            )
+        payload = {
+            "title": action.summary
+            or source_message.payload.get("title")
+            or f"Continue {action.work_item_id}",
+            "summary": action.summary or action.reason,
+            "work_item_id": action.work_item_id,
+            "work_item_type": action.work_item_type
+            or source_message.payload.get("work_item_type")
+            or "slice",
+            "lifecycle_state": action.lifecycle_state,
+            "handoff_reason": action.reason,
+            "out_of_flow_reason": action.reason,
+            "source_safe_output_tool": action.source_tool,
+            "source_message_id": source_message.message_id,
+            "queue_item_id": queue_item.queue_item_id,
+            "source_anchor": queue_item.source_anchor.redacted_summary(),
+        }
+        handoff_source = replace(
+            source_message,
+            role_id=source_instance.role_id,
+            type=source_message.type,
+            payload={
+                **source_message.payload,
+                "title": payload["title"],
+                "summary": payload["summary"],
+                "work_item_id": action.work_item_id,
+                "work_item_type": payload["work_item_type"],
+                "queue_item_id": payload.get("queue_item_id"),
+                "source_anchor": payload.get("source_anchor"),
+            },
+        )
+        route = self._normalise_route(
+            route=RouteRequest(
+                target_role=action.target_role,
+                message_type=action.message_type or f"sdlc.{action.lifecycle_state}",
+                payload=payload,
+                origin="handoff",
+            ),
+            source_message=handoff_source,
+            source_instance=source_instance,
+            flow_state=source_flow_state,
+        )
+        if isinstance(route, ProblemStatus):
+            raise ValueError(route.reason_summary)
+        self._deliver_route(
+            route=route,
+            source_instance=source_instance,
+            source_message=handoff_source,
+            source_lifecycle_state=source_flow_state.state_id,
+            trace_attributes={
+                "project_id": source_instance.project_id,
+                "role_id": source_instance.role_id,
+                "role_instance_id": source_instance.instance_id,
+                "message_id": source_message.message_id,
+                "correlation_id": source_message.correlation_id,
+                "worker_adapter": source_instance.override.worker.adapter,
+                "worker_model": source_instance.override.worker.model,
+            },
+        )
+        self.journal.append(
+            "safe_output_work_item_handed_off",
+            project_id=self.project.project_id,
+            role_id=source_instance.role_id,
+            role_instance_id=source_instance.instance_id,
+            source_message_id=source_message.message_id,
+            target_role=action.target_role,
+            message_type=route.message_type,
+            work_item_id=action.work_item_id,
+            work_item_type=action.work_item_type,
+            source_lifecycle_state=source_flow_state.state_id,
+            lifecycle_state=action.lifecycle_state,
+            route_id=route.route_id,
+            route_kind=route.route_kind,
+            reason=action.reason,
+            correlation_id=source_message.correlation_id,
+        )
+        return {
+            "action": action.action,
+            "work_item_id": action.work_item_id,
+            "status": "handed_off",
+            "target_role": action.target_role,
+            "lifecycle_state": action.lifecycle_state,
+        }
+
+    def _promoted_queue_item_for_work_item(self, work_item_id: str):
+        for item in self.work_queue.list_items():
+            if item.promotion and item.promotion.work_item_id == work_item_id:
+                return item
+        return None
 
     def _close_work_item_from_safe_output(
         self,

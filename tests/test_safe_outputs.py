@@ -195,6 +195,99 @@ def test_work_item_action_records_become_structured_runtime_actions() -> None:
     assert result.work_item_actions[1].message_type == "sdlc.quality_review"
 
 
+def test_work_item_handoff_record_becomes_structured_runtime_action() -> None:
+    records = [
+        SafeOutputRecord(
+            tool="work_item.handoff",
+            payload={
+                "work_item_id": "work-product",
+                "source_lifecycle_state": "product_definition",
+                "target_role": "ux-designer",
+                "lifecycle_state": "experience_design",
+                "reason": "Product definition is ready for experience design.",
+                "summary": "Continue dashboard presentation refinement.",
+            },
+            recorded_at="2026-06-10T10:00:00+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+        SafeOutputRecord(
+            tool="status.reply",
+            payload={"message": "I handed this to UX for experience design."},
+            recorded_at="2026-06-10T10:00:01+00:00",
+            context={},
+            validation={"status": "valid"},
+        ),
+    ]
+
+    result = result_from_safe_output_records(
+        records=records,
+        message=Message.create(
+            role_id="product-manager",
+            message_type="conversation.direct",
+            payload={"title": "Continue existing slice", "work_item_type": "slice"},
+            source="test",
+        ),
+        flow_state=FlowState(
+            state_id="direct_conversation",
+            owner_role="product-manager",
+            purpose="Reply in role.",
+            artifact_path="",
+            handoffs={},
+        ),
+    )
+
+    assert result.status == "completed"
+    assert result.message == "I handed this to UX for experience design."
+    assert len(result.work_item_actions) == 1
+    action = result.work_item_actions[0]
+    assert action.action == "handoff"
+    assert action.work_item_id == "work-product"
+    assert action.source_lifecycle_state == "product_definition"
+    assert action.target_role == "ux-designer"
+    assert action.lifecycle_state == "experience_design"
+    assert action.message_type == "sdlc.experience_design"
+    assert action.summary == "Continue dashboard presentation refinement."
+
+
+def test_work_item_handoff_can_be_terminal() -> None:
+    record = SafeOutputRecord(
+        tool="work_item.handoff",
+        payload={
+            "work_item_id": "work-product",
+            "source_lifecycle_state": "product_definition",
+            "target_role": "ux-designer",
+            "lifecycle_state": "experience_design",
+            "reason": "Product definition is ready for experience design.",
+            "summary": "Continue dashboard presentation refinement.",
+        },
+        recorded_at="2026-06-10T10:00:00+00:00",
+        context={},
+        validation={"status": "valid"},
+    )
+
+    result = result_from_safe_output_records(
+        records=[record],
+        message=Message.create(
+            role_id="product-manager",
+            message_type="conversation.direct",
+            payload={"title": "Continue existing slice", "work_item_type": "slice"},
+            source="test",
+        ),
+        flow_state=FlowState(
+            state_id="direct_conversation",
+            owner_role="product-manager",
+            purpose="Reply in role.",
+            artifact_path="",
+            handoffs={},
+        ),
+    )
+
+    assert result.status == "completed"
+    assert result.message == "Continue dashboard presentation refinement."
+    assert result.terminal_tool == "work_item.handoff"
+
+
 def test_safe_outputs_mcp_records_tool_call(tmp_path: Path) -> None:
     output_file = tmp_path / "safe-outputs.jsonl"
     request = {
