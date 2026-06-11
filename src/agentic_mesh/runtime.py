@@ -47,6 +47,7 @@ from agentic_mesh.problem_status import ProblemStatus
 from agentic_mesh.problem_status import ProblemStatusStore
 from agentic_mesh.problem_status import role_problem_status
 from agentic_mesh.problem_status import runtime_publication_problem_status
+from agentic_mesh.problem_status import worker_problem_status
 from agentic_mesh.route_status import CurrentRoute
 from agentic_mesh.route_status import CurrentRouteStore
 from agentic_mesh.route_status import current_route_from_payload
@@ -1713,8 +1714,17 @@ class AgentRuntime:
                     result_message=result.message,
                 )
                 return True
-            if (
+            disallowed_document_updates = (
                 result.document_updates
+                and not self._direct_conversation_document_updates_allowed(
+                    result=result,
+                    source_message=message,
+                    flow_state=direct_state,
+                    role_id=instance_config.role_id,
+                )
+            )
+            if (
+                disallowed_document_updates
                 or result.routes
                 or result.handoffs
                 or (
@@ -1724,8 +1734,8 @@ class AgentRuntime:
                 )
             ):
                 reason_parts: list[str] = []
-                if result.document_updates:
-                    reason_parts.append("document updates")
+                if disallowed_document_updates:
+                    reason_parts.append("document updates outside the linked work item")
                 if result.routes:
                     reason_parts.append("routes")
                 if result.handoffs:
@@ -1738,19 +1748,34 @@ class AgentRuntime:
                     reason_parts.append(
                         f"terminal tool `{result.terminal_tool or 'unknown'}`"
                     )
-                self._record_direct_conversation_problem(
-                    result=AgentRunResult(
-                        status="failed",
-                        message=(
-                            "Direct conversation used outputs that are not allowed "
-                            "for conversational work: "
-                            + ", ".join(reason_parts)
+                reason = (
+                    "Direct conversation used outputs that are not allowed "
+                    "for conversational work: "
+                    + ", ".join(reason_parts)
+                )
+                self._record_problem_status(
+                    worker_problem_status(
+                        failure_class="invalid_result",
+                        reason=reason,
+                        recovery_action="retry_safe_output_contract",
+                        retryable=True,
+                        role_id=instance_config.role_id,
+                        role_instance_id=instance_id,
+                        message_payload=message.payload,
+                        source_message_id=message.message_id,
+                        correlation_id=message.correlation_id,
+                        lifecycle_state=direct_state.state_id,
+                        worker_adapter=instance_config.override.worker.adapter,
+                        worker_model=instance_config.override.worker.model,
+                        status_url=self._work_item_status_url(
+                            str(
+                                message.payload.get("work_item_id")
+                                or message.message_id
+                            )
                         ),
                     ),
                     source_instance=instance_config,
                     source_message=message,
-                    role_instance_id=instance_id,
-                    lifecycle_state=direct_state.state_id,
                 )
                 self.message_store.complete(
                     message,
@@ -1759,6 +1784,34 @@ class AgentRuntime:
                 )
                 return True
             try:
+                document_updates = (
+                    result.document_updates if result.status == "completed" else []
+                )
+                for update in document_updates:
+                    update = self._resolve_document_update_path(
+                        update,
+                        source_message=message,
+                        flow_state=direct_state,
+                        role_id=instance_config.role_id,
+                    )
+                    self.artifact_store.write_update(
+                        update=update,
+                        role_id=instance_config.role_id,
+                        role_instance_id=instance_id,
+                        correlation_id=message.correlation_id,
+                        work_item_id=message.payload.get("work_item_id"),
+                        work_item_type=message.payload.get("work_item_type"),
+                        lifecycle_state=direct_state.state_id,
+                        trace_context=message.trace_context,
+                    )
+                    self._maintain_work_item_indexes(
+                        update=update,
+                        source_message=message,
+                        flow_state=direct_state,
+                        role_id=instance_config.role_id,
+                        correlation_id=message.correlation_id,
+                        trace_context=message.trace_context,
+                    )
                 self._capture_queue_proposals(
                     proposals=result.queue_proposals,
                     source_instance=instance_config,
@@ -1894,6 +1947,30 @@ class AgentRuntime:
             ),
         }
         return replace(message, payload=payload)
+
+    def _direct_conversation_document_updates_allowed(
+        self,
+        *,
+        result: AgentRunResult,
+        source_message: Message,
+        flow_state: FlowState,
+        role_id: str,
+    ) -> bool:
+        work_item_id = str(source_message.payload.get("work_item_id") or "").strip()
+        if not work_item_id:
+            return False
+        expected_prefix = f"work-items/{work_item_id}/"
+        for update in result.document_updates:
+            resolved = self._resolve_document_update_path(
+                update,
+                source_message=source_message,
+                flow_state=flow_state,
+                role_id=role_id,
+            )
+            normalized = resolved.path.replace("\\", "/")
+            if not normalized.startswith(expected_prefix):
+                return False
+        return True
 
     @staticmethod
     def _resolve_document_update_path(
