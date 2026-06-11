@@ -414,6 +414,36 @@ class CodexCliWorkerAdapter(WorkerAdapter):
                     artifact_paths=partial_artifacts,
                 )
 
+            process_output = "\n".join(
+                part for part in (completed.stdout, completed.stderr) if part
+            )
+            if result is None and completed.returncode != 0:
+                auth_reason = codex_auth_failure_reason(process_output)
+                if auth_reason is not None:
+                    return worker_failure_outcome(
+                        instance=instance,
+                        message=message,
+                        flow_state=flow_state,
+                        failure_class="auth_failed",
+                        recovery_action="repair_auth",
+                        retryable=False,
+                        reason=auth_reason,
+                        progress_observed_at=completed.progress_observed_at,
+                    )
+                return worker_failure_outcome(
+                    instance=instance,
+                    message=message,
+                    flow_state=flow_state,
+                    failure_class="process_failed",
+                    recovery_action="operator_review",
+                    retryable=True,
+                    reason=(
+                        "Codex CLI exited before returning valid terminal "
+                        "safe-output records."
+                    ),
+                    progress_observed_at=completed.progress_observed_at,
+                )
+
             if result is None:
                 return worker_failure_outcome(
                     instance=instance,
@@ -673,6 +703,27 @@ def summarize_worker_failure(detail: str, max_length: int = 2000) -> str:
     if len(text) <= max_length:
         return text
     return f"...\n{text[-max_length:].lstrip()}"
+
+
+def codex_auth_failure_reason(detail: str) -> str | None:
+    text = " ".join(str(detail).split())
+    lowered = text.lower()
+    auth_markers = (
+        "token_invalidated",
+        "access token could not be refreshed",
+        "authentication token has been invalidated",
+        "your session has ended",
+        "please log in again",
+        "401 unauthorized",
+    )
+    if not any(marker in lowered for marker in auth_markers):
+        return None
+    summary = summarize_worker_failure(text, max_length=500)
+    return (
+        "Codex OAuth authentication failed before the agent could call any "
+        "safe-output tool. Re-authenticate the configured Codex credential, "
+        f"then retry the message. Provider detail: {summary}"
+    )
 
 
 def resolve_worker_timeout_policy(instance: RoleInstanceConfig) -> dict[str, int | None]:

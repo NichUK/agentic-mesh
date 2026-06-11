@@ -511,6 +511,63 @@ def test_codex_invalid_result_uses_safe_output_recovery_action(
     )
 
 
+def test_codex_auth_failure_is_not_reported_as_invalid_result(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(workers.shutil, "which", lambda command: "codex")
+    mesh_config = load_mesh_config(Path.cwd())
+    instance = mesh_config.instances["agentic-mesh-dev.product-manager.1"]
+    mount_ref = instance.override.worker.auth.mount_ref
+    assert mount_ref is not None
+    (tmp_path / "state" / "worker_mounts" / mount_ref).mkdir(parents=True)
+    (tmp_path / "workspace").mkdir()
+
+    def fake_run(command, **kwargs):
+        class Completed:
+            returncode = 1
+            stdout = "OpenAI Codex v0.135.0"
+            stderr = (
+                "401 Unauthorized: Your authentication token has been "
+                "invalidated. ERROR: Your access token could not be refreshed. "
+                "Please log out and sign in again."
+            )
+            timed_out = False
+            started_at = 0.0
+            progress_observed_at = "2026-06-05T00:00:00+00:00"
+
+        return Completed()
+
+    monkeypatch.setattr(workers, "run_progress_aware_command", fake_run)
+    worker = ConfiguredWorkerAdapter(
+        project=mesh_config.project,
+        auth_methods=mesh_config.auth_methods,
+        workspace_root=tmp_path / "workspace",
+        state_root=tmp_path / "state",
+    )
+    message = Message.create(
+        role_id="product-manager",
+        message_type=MESSAGE_TYPE_SPONSOR_DIRECTIVE_REQUESTED,
+        payload={"title": "Auth failed", "summary": "Token invalidated."},
+        source="test",
+    )
+
+    outcome = worker.run(
+        instance,
+        message,
+        mesh_config.project.flow.states["product_definition"],
+    )
+
+    assert outcome.problem_status is not None
+    assert outcome.problem_status.status == "needs_runtime_recovery"
+    assert outcome.problem_status.failure_class == "auth_failed"
+    assert outcome.problem_status.recovery_action == "repair_auth"
+    assert outcome.problem_status.retryable is False
+    assert "Re-authenticate the configured Codex credential" in (
+        outcome.problem_status.reason
+    )
+
+
 def test_progress_aware_command_allows_progress_past_soft_timeout(tmp_path: Path) -> None:
     completed = workers.run_progress_aware_command(
         [
