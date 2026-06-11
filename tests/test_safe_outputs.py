@@ -26,6 +26,23 @@ def test_safe_output_tools_prompt_preserves_mandatory_finish_contract() -> None:
     assert "status.reply" in prompt
 
 
+def test_direct_conversation_safe_output_prompt_hides_forbidden_tools() -> None:
+    prompt = safe_output_tools_prompt(lifecycle_state="direct_conversation")
+
+    terminal_section = prompt.split("Terminal tools:", 1)[1].split(
+        "Available tools:", 1
+    )[0]
+    available_section = prompt.split("Available tools:", 1)[1].split("Examples:", 1)[0]
+    assert "Direct conversation context:" in prompt
+    assert "status.reply" in terminal_section
+    assert "sponsor.ask_question" in terminal_section
+    assert "work_item.handoff" in terminal_section
+    assert "status.report_completion" not in terminal_section
+    assert "handoff.propose" not in terminal_section
+    assert "status.report_completion" not in available_section
+    assert "handoff.propose" not in available_section
+
+
 def test_safe_output_cli_records_valid_payload(tmp_path: Path) -> None:
     output_file = tmp_path / "safe-outputs.jsonl"
     payload = {"message": "No durable work needed."}
