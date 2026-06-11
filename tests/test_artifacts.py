@@ -8,6 +8,7 @@ import pytest
 
 from agentic_mesh.artifacts import ArtifactStore
 from agentic_mesh.journal import EventJournal
+from agentic_mesh.models import DocumentUpdate
 
 
 def _store(tmp_path: Path) -> tuple[ArtifactStore, EventJournal, Path]:
@@ -20,6 +21,61 @@ def _store(tmp_path: Path) -> tuple[ArtifactStore, EventJournal, Path]:
         document_library_root=document_root,
     )
     return store, journal, document_root
+
+
+def test_work_item_document_update_replaces_existing_content(tmp_path: Path) -> None:
+    store, journal, document_root = _store(tmp_path)
+    update_path = "work-items/work-1/30-experience-design.md"
+
+    first = store.write_update(
+        DocumentUpdate(path=update_path, content="# Design\n\nfirst pass"),
+        role_id="ux-designer",
+        role_instance_id="agentic-mesh-dev.ux-designer.1",
+        correlation_id="corr-1",
+        work_item_id="work-1",
+        work_item_type="slice",
+        lifecycle_state="experience_design",
+    )
+    second = store.write_update(
+        DocumentUpdate(path=update_path, content="# Design\n\nsecond pass"),
+        role_id="ux-designer",
+        role_instance_id="agentic-mesh-dev.ux-designer.1",
+        correlation_id="corr-2",
+        work_item_id="work-1",
+        work_item_type="slice",
+        lifecycle_state="experience_design",
+    )
+
+    assert first == second == document_root / update_path
+    content = second.read_text(encoding="utf-8")
+    assert content.count("# Design") == 1
+    assert "second pass" in content
+    assert "first pass" not in content
+    events = journal.read_all()
+    assert [event["write_mode"] for event in events] == ["replace", "replace"]
+
+
+def test_non_work_item_document_update_keeps_append_log_behavior(tmp_path: Path) -> None:
+    store, journal, document_root = _store(tmp_path)
+    update_path = "docs/technical-writing/documentation-log.md"
+
+    store.write_update(
+        DocumentUpdate(path=update_path, content="first entry"),
+        role_id="technical-writer",
+        role_instance_id="agentic-mesh-dev.technical-writer.1",
+        correlation_id="corr-1",
+    )
+    target = store.write_update(
+        DocumentUpdate(path=update_path, content="second entry"),
+        role_id="technical-writer",
+        role_instance_id="agentic-mesh-dev.technical-writer.1",
+        correlation_id="corr-2",
+    )
+
+    assert target == document_root / update_path
+    assert target.read_text(encoding="utf-8") == "first entry\nsecond entry\n"
+    events = journal.read_all()
+    assert [event["write_mode"] for event in events] == ["append", "append"]
 
 
 @pytest.mark.parametrize(
