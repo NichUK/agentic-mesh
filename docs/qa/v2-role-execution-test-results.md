@@ -2534,3 +2534,71 @@ compileall passed
   validation, root containment, CLI/MCP configured-service parity, repeat
   revision behavior, and artifact traceability. | accepted after rework
   2026-06-12
+
+## PB-005 Story 27 - Role Memory Safe-Output Publication
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/project_config.py`
+- `tests/test_v2_memory_safe_outputs.py`
+- Existing role-memory/project config tests
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_memory_safe_outputs.py tests\test_v2_project_config.py tests\test_v2_safe_outputs.py tests\test_v2_document_safe_outputs.py tests\test_v2_role_assignment_execution.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_status_dashboard.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+50 passed focused engineering rework suite
+Status/dashboard and CLI focused QA recheck passed
+238 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation de-duplicated runtime memory facts with
+  SELECT-then-INSERT. QA found two role instances could race and insert the
+  same fact. Engineering added a unique DB constraint/index, migration duplicate
+  cleanup, and `ON CONFLICT DO NOTHING`.
+- Initial file de-duplication used substring matching over the whole memory
+  file. QA found older longer notes could suppress valid generated memory
+  entries. Engineering changed the check to match exact generated entry lines.
+
+### Acceptance Assessment
+
+- `memory.propose_update` appends source-linked facts to the configured
+  per-role `MEMORY.md`.
+- Runtime `role_memory` records are DB-de-duplicated by project, role, summary,
+  and provenance.
+- Duplicate memory facts do not create duplicate audit events.
+- Status snapshots expose role-memory counts and rows.
+- Project config containment for role memory continues to be enforced by the
+  existing project-config loader.
+
+### Residual Risks
+
+- Memory retention, summarization, and refresh from canonical documents remain
+  later stories.
+
+### Review Log
+
+- QA-RL-041 | qa-engineer | acceptance | PB-005 Story 27 | Verified
+  role-memory safe-output publication, DB-enforced de-duplication, exact-line
+  file de-duplication, CLI project-file wiring, status snapshot visibility, and
+  existing containment behavior. | accepted after rework 2026-06-12

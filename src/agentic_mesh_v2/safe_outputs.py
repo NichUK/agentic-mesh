@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -194,6 +195,8 @@ class SafeOutputService:
         process_effects: bool = True,
         document_library_root: Path | None = None,
         document_framework: DocumentFramework | None = None,
+        project_id: str | None = None,
+        role_memory_path_resolver: Callable[[str], Path | None] | None = None,
     ) -> None:
         self.db = db
         self.policy = policy or ToolPolicy()
@@ -201,6 +204,8 @@ class SafeOutputService:
         self.process_effects = process_effects
         self.document_library_root = Path(document_library_root).resolve(strict=False) if document_library_root else None
         self.document_framework = document_framework or TOGAF_SDLC_V1
+        self.project_id = _optional_text(project_id)
+        self.role_memory_path_resolver = role_memory_path_resolver
 
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:
         self.policy.authorize(role_id=call.role_id, tool_name=call.tool_name)
@@ -228,6 +233,8 @@ class SafeOutputService:
     def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
         if call.tool_name == "document.propose_update":
             self._publish_document_update(call_id=call_id, run_id=run_id, call=call)
+        if call.tool_name == "memory.propose_update":
+            self._publish_role_memory_update(call_id=call_id, call=call)
         if call.tool_name == "release.record_no_deployment":
             self._record_no_deployment(call)
         if call.tool_name == "release.deploy":
@@ -276,6 +283,36 @@ class SafeOutputService:
             status=_optional_text(call.payload.get("status")) or "proposed",
             created_by_role=call.role_id,
         )
+
+    def _publish_role_memory_update(self, *, call_id: str, call: SafeOutputCall) -> None:
+        if self.role_memory_path_resolver is None:
+            return
+        memory_path = self.role_memory_path_resolver(call.role_id)
+        if memory_path is None:
+            return
+        summary = _single_line_text(_required_text(call.payload, "summary"))
+        provenance_ref = _single_line_text(_required_text(call.payload, "provenance_ref"))
+        memory_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = memory_path.read_text(encoding="utf-8") if memory_path.exists() else ""
+        marker = _memory_marker(summary=summary, provenance_ref=provenance_ref)
+        if not _memory_marker_exists(existing, marker):
+            memory_path.write_text(
+                _memory_content_with_entry(
+                    existing_content=existing,
+                    call_id=call_id,
+                    summary=summary,
+                    provenance_ref=provenance_ref,
+                ),
+                encoding="utf-8",
+            )
+        if self.project_id is not None:
+            self.db.add_role_memory(
+                memory_id=f"memory-{call_id}",
+                role_id=call.role_id,
+                project_id=self.project_id,
+                summary=summary,
+                provenance_ref=provenance_ref,
+            )
 
     def _record_no_deployment(self, call: SafeOutputCall) -> None:
         self.release_service.record_no_deployment(
@@ -516,6 +553,46 @@ def _contained_document_path(root: Path, relative_path: str) -> Path:
     except ValueError as exc:
         raise SafeOutputError("document path must resolve inside the document library root") from exc
     return resolved
+
+
+def _memory_content_with_entry(
+    *,
+    existing_content: str,
+    call_id: str,
+    summary: str,
+    provenance_ref: str,
+) -> str:
+    content = existing_content.strip()
+    if not content:
+        content = "# Role Memory"
+    if "## Safe-Output Memory Updates" not in content:
+        content = f"{content}\n\n## Safe-Output Memory Updates"
+    entry = f"- {call_id} | {_memory_marker(summary=summary, provenance_ref=provenance_ref)}"
+    return f"{content.rstrip()}\n{entry}\n"
+
+
+def _memory_marker(*, summary: str, provenance_ref: str) -> str:
+    return f"{provenance_ref} | {summary}"
+
+
+def _memory_marker_exists(existing_content: str, marker: str) -> bool:
+    marker_parts = marker.split(" | ", maxsplit=1)
+    if len(marker_parts) != 2:
+        return False
+    for line in existing_content.splitlines():
+        text = line.strip()
+        if not text.startswith("- "):
+            continue
+        parts = text[2:].split(" | ", maxsplit=2)
+        if len(parts) != 3:
+            continue
+        if f"{parts[1]} | {parts[2]}" == marker:
+            return True
+    return False
+
+
+def _single_line_text(value: str) -> str:
+    return " ".join(value.split())
 
 
 def _optional_text(value: object) -> str | None:

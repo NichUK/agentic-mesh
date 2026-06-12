@@ -17,8 +17,10 @@ from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
 from agentic_mesh_v2.project_config import list_project_role_service_configs
 from agentic_mesh_v2.project_config import load_document_library_config
+from agentic_mesh_v2.project_config import load_project_id
 from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
 from agentic_mesh_v2.project_config import load_role_hibernation_config
+from agentic_mesh_v2.project_config import load_role_memory_config
 from agentic_mesh_v2.project_config import load_role_memory_context
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
@@ -554,15 +556,36 @@ def _safe_output_service(db: V2Database, project_file: Path | None) -> SafeOutpu
     if project_file is None:
         return SafeOutputService(db)
     document_library = load_document_library_config(project_file)
+    project_id = load_project_id(project_file)
+    memory_resolver = _role_memory_path_resolver(project_file)
     if document_library is None:
-        return SafeOutputService(db)
-    return SafeOutputService(db, document_library_root=document_library.root)
+        return SafeOutputService(
+            db,
+            project_id=project_id,
+            role_memory_path_resolver=memory_resolver,
+        )
+    return SafeOutputService(
+        db,
+        document_library_root=document_library.root,
+        project_id=project_id,
+        role_memory_path_resolver=memory_resolver,
+    )
 
 
 def _safe_output_service_or_none(db: V2Database, project_file: Path | None) -> SafeOutputService | None:
     if project_file is None:
         return None
     return _safe_output_service(db, project_file)
+
+
+def _role_memory_path_resolver(project_file: Path):
+    def resolve(role_id: str) -> Path | None:
+        config = load_role_memory_config(project_file, role_id=role_id)
+        if not config.enabled:
+            return None
+        return config.memory_path
+
+    return resolve
 
 
 def _run_role_service_tick(db: V2Database, args: argparse.Namespace) -> dict[str, object]:

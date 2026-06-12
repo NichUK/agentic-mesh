@@ -38,6 +38,14 @@ def load_role_worker_config(project_file: Path, *, role_id: str) -> dict[str, An
     return _worker_config(project_file, role_id=role_id, role=role)
 
 
+def load_project_id(project_file: Path) -> str:
+    raw = _load_project_mapping(project_file)
+    project_id = raw.get("project_id")
+    if not isinstance(project_id, str) or not project_id.strip():
+        raise ValueError("project config requires project_id")
+    return project_id.strip()
+
+
 def load_role_hibernation_config(project_file: Path, *, role_id: str) -> dict[str, Any]:
     raw = _load_project_mapping(project_file)
     role = _role_mapping(raw, role_id=role_id)

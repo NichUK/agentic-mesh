@@ -226,7 +226,8 @@ class V2Database:
                   project_id TEXT NOT NULL,
                   summary TEXT NOT NULL,
                   provenance_ref TEXT NOT NULL,
-                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(project_id, role_id, summary, provenance_ref)
                 );
 
                 CREATE TABLE IF NOT EXISTS connectors (
@@ -546,6 +547,22 @@ class V2Database:
             self._ensure_column("role_instance_status", "hibernated_at", "TEXT")
             self._ensure_column("role_instance_status", "wake_reason", "TEXT")
             self._ensure_column("role_container_lifecycle_actions", "action_fingerprint", "TEXT NOT NULL DEFAULT ''")
+            self.connection.execute(
+                """
+                DELETE FROM role_memory
+                WHERE rowid NOT IN (
+                  SELECT MIN(rowid)
+                  FROM role_memory
+                  GROUP BY project_id, role_id, summary, provenance_ref
+                )
+                """
+            )
+            self.connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_role_memory_unique_fact
+                ON role_memory(project_id, role_id, summary, provenance_ref)
+                """
+            )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
@@ -2426,6 +2443,33 @@ class V2Database:
                 {"path": path, "document_type": document_type, "status": status},
             )
 
+    def add_role_memory(
+        self,
+        *,
+        memory_id: str,
+        role_id: str,
+        project_id: str,
+        summary: str,
+        provenance_ref: str,
+    ) -> None:
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                INSERT INTO role_memory(memory_id, role_id, project_id, summary, provenance_ref)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, role_id, summary, provenance_ref) DO NOTHING
+                """,
+                (memory_id, role_id, project_id, summary, provenance_ref),
+            )
+            if cursor.rowcount == 0:
+                return
+            self.append_event(
+                "role_memory.recorded",
+                "role",
+                role_id,
+                {"project_id": project_id, "summary": summary, "provenance_ref": provenance_ref},
+            )
+
     def upsert_release(
         self,
         *,
@@ -2824,6 +2868,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_role_memory(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM role_memory
+            ORDER BY created_at DESC, memory_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_releases(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -3118,6 +3172,7 @@ class V2Database:
         safe_output_calls = self.list_safe_output_calls()
         redacted_safe_output_calls = _redact_private_safe_output_calls(safe_output_calls)
         agent_prompts = self.list_agent_prompts()
+        role_memory = self.list_role_memory()
         states: dict[str, int] = {}
         for item in work_items:
             state = str(item["state"])
@@ -3216,6 +3271,7 @@ class V2Database:
                 "human_response_submissions": len(human_response_submissions),
                 "context_summaries": len(context_summaries),
                 "retention_expiry_records": len(retention_expiry_records),
+                "role_memory": len(role_memory),
             },
             "work_item_states": states,
             "queue_statuses": queue_statuses,
@@ -3227,6 +3283,7 @@ class V2Database:
             "work_items": work_items,
             "agent_runs": self.list_agent_runs(),
             "agent_prompts": agent_prompts,
+            "role_memory": role_memory,
             "safe_output_calls": redacted_safe_output_calls,
             "artifacts": self.list_artifacts(),
             "releases": releases,

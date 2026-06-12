@@ -2540,6 +2540,80 @@ compileall passed
 - Document revision history is delegated to the backing document library. The
   runtime artifact row points at the current published artifact path.
 
+## PB-005 Story 27 - Role Memory Safe-Output Publication
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Make `memory.propose_update` a real safe-output tool effect that records
+concise, source-linked role memory facts without making memory the system of
+record.
+
+### Changes
+
+- Added project id loading for safe-output effect configuration.
+- Wired project-configured safe-output services with a role-memory path
+  resolver based on `role_memory` and per-role `role.yaml` config.
+- Added `memory.propose_update` processing to append concise source-linked
+  entries to the configured per-role `MEMORY.md`.
+- Added runtime DB recording for de-duplicated `role_memory` facts.
+- Added role-memory counts and rows to the v2 status snapshot.
+- Added a migration-safe unique index for `(project_id, role_id, summary,
+  provenance_ref)` and duplicate cleanup before index creation.
+- Made duplicate role-memory facts no-op at the DB boundary and suppressed
+  duplicate audit events.
+- Matched memory-file duplicates by exact generated memory entry lines, not
+  arbitrary substring scanning.
+
+### QA Rework
+
+QA found DB de-duplication was SELECT-then-INSERT and could race across role
+instances. Engineering added a DB-enforced unique fact index and `ON CONFLICT
+DO NOTHING` insertion.
+
+QA found file de-duplication used broad substring matching, so older longer
+notes could suppress a valid new generated memory entry. Engineering changed
+the check to parse generated memory entry lines exactly.
+
+### Tests Added
+
+- `memory.propose_update` appends source-linked facts to configured role memory
+  files and records runtime `role_memory`.
+- Duplicate memory facts produce one file entry, one DB row, and one audit
+  event.
+- Existing longer notes containing the same text do not suppress a valid exact
+  generated entry.
+- CLI `record-safe-output --project-file` updates configured role memory.
+- Status snapshots expose role-memory counts and rows.
+
+### Tests Run
+
+```text
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_memory_safe_outputs.py tests\test_v2_project_config.py tests\test_v2_safe_outputs.py tests\test_v2_document_safe_outputs.py tests\test_v2_role_assignment_execution.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+50 passed focused suite after rework
+238 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- Role memory remains a concise accelerator. Canonical memory remains the
+  document library, work-item dossiers, ADRs, and event journal.
+- Memory compaction, pruning, and document-derived refresh remain future
+  stories.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -2692,3 +2766,9 @@ compileall passed
 - RL-046 | engineering | QA rework | PB-005 Story 26 | Made repeat document
   revisions artifact-upserted and propagated project-file context through the
   worker-facing safe-output CLI transport. | QA accepted 2026-06-12
+- RL-047 | engineering | implementation | PB-005 Story 27 | Published
+  `memory.propose_update` safe outputs into configured per-role `MEMORY.md`
+  files and runtime role-memory records. | QA requested rework 2026-06-12
+- RL-048 | engineering | QA rework | PB-005 Story 27 | Added DB-enforced
+  role-memory fact uniqueness, duplicate cleanup, exact generated-line
+  de-duplication, and status snapshot visibility. | QA accepted 2026-06-12
