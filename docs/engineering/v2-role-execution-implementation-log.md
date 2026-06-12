@@ -337,6 +337,62 @@ Results:
 - This is assignment recovery only. Container hibernation/hydration remains
   PB-005.
 
+## PB-004 Story 6 - Role-Service Maintenance Tick
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add a bounded role-service maintenance tick that recovers stale claimed
+assignments for the service's own role before claiming and processing available
+work. This moves PB-004 from manual recovery operations toward an inspectable
+service loop without claiming container supervision or hibernation.
+
+### Implementation Notes
+
+- Extended `recover_stale_role_assignments()` with optional `role_id` scoping.
+- Role-scoped recovery rechecks the stale lease condition during the update
+  before recording the recovery event.
+- Added `RoleService.recover_stale_assignments()` for role-owned recovery with
+  role-instance status updates.
+- Added `RoleService.run_service_tick()` to:
+  - recover stale assignments for the current role
+  - drain a bounded batch of queued assignments
+  - record a final idle status with recovered and processed counts
+- The maintenance tick does not recover other roles' stale assignments.
+
+### Tests Added
+
+- stale assignment recovery can be scoped to one role
+- a role-service maintenance tick recovers a stale assignment for its role and
+  then processes it
+- a role-service maintenance tick leaves other roles' stale claims untouched
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+22 passed
+94 passed
+```
+
+### Known Limitations
+
+- This is a callable service-loop tick, not a background scheduler process.
+- Lease refresh still happens through explicit service calls; there is no
+  concurrent refresh while a long-running worker subprocess is blocked.
+- Container hibernation/hydration and process supervision remain PB-005.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -354,4 +410,8 @@ Results:
   visibility. | QA accepted 2026-06-12
 - RL-005 | engineering | implementation | PB-004 Story 5 | Added role
   assignment claim leases, explicit lease refresh, stale-claim recovery, and
-  dashboard lease/recovery visibility. | awaiting QA review 2026-06-12
+  dashboard lease/recovery visibility. | QA accepted 2026-06-12
+- RL-006 | engineering | implementation | PB-004 Story 6 | Added a
+  role-scoped service maintenance tick that recovers stale assignments before
+  draining queued work and records recovered/processed status. | awaiting QA
+  review 2026-06-12

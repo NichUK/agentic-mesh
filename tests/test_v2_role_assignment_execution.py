@@ -674,6 +674,111 @@ def test_recovery_ignores_unexpired_claims_and_dashboard_shows_lease(tmp_path: P
     assert "Fresh lease assignment" in html
 
 
+def test_recovery_can_be_scoped_to_one_role(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    for role_id in ("product-manager", "engineering"):
+        db.create_role_assignment(
+            assignment_id=f"assignment-stale-{role_id}",
+            role_id=role_id,
+            source_ref=f"msg-stale-{role_id}",
+            title=f"Stale {role_id} assignment",
+            summary="Recover only the requested role.",
+            assignment_type="work_item_handoff",
+            visibility_scope="project",
+            payload={},
+        )
+        assert db.claim_role_assignment(
+            role_id=role_id,
+            role_instance_id=f"agentic-mesh-dev.{role_id}.1",
+            lease_seconds=60,
+        )
+    with db.connection:
+        db.connection.execute(
+            """
+            UPDATE role_assignments
+            SET claim_expires_at = '2000-01-01 00:00:00'
+            """
+        )
+
+    recovered = db.recover_stale_role_assignments(
+        role_id="product-manager",
+        reason="Product Manager recovery scan.",
+    )
+
+    assert [row["assignment_id"] for row in recovered] == ["assignment-stale-product-manager"]
+    product = db.get_role_assignment("assignment-stale-product-manager")
+    engineering = db.get_role_assignment("assignment-stale-engineering")
+    assert product is not None
+    assert engineering is not None
+    assert product["status"] == "queued"
+    assert engineering["status"] == "claimed"
+
+
+def test_role_service_tick_recovers_stale_role_assignment_then_processes_it(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    for role_id in ("product-manager", "engineering"):
+        db.create_role_assignment(
+            assignment_id=f"assignment-tick-{role_id}",
+            role_id=role_id,
+            source_ref=f"msg-tick-{role_id}",
+            title=f"Tick {role_id} assignment",
+            summary="Exercise role service maintenance tick.",
+            assignment_type="work_item_handoff",
+            visibility_scope="project",
+            payload={},
+        )
+        assert db.claim_role_assignment(
+            role_id=role_id,
+            role_instance_id=f"agentic-mesh-dev.{role_id}.old",
+            lease_seconds=60,
+        )
+    with db.connection:
+        db.connection.execute(
+            """
+            UPDATE role_assignments
+            SET claim_expires_at = '2000-01-01 00:00:00'
+            """
+        )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="status.complete",
+                    payload={"message": "Recovered assignment processed."},
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    tick = service.run_service_tick(max_recoveries=10, max_assignments=10)
+
+    product = db.get_role_assignment("assignment-tick-product-manager")
+    engineering = db.get_role_assignment("assignment-tick-engineering")
+    instance = db.status_snapshot()["role_instance_statuses"][0]
+    assert product is not None
+    assert engineering is not None
+    assert tick.status == "idle"
+    assert tick.recovered_count == 1
+    assert tick.processed_count == 1
+    assert len(tick.receipts) == 1
+    assert product["status"] == "completed"
+    assert product["role_instance_id"] == "agentic-mesh-dev.product-manager.1"
+    assert product["recovery_count"] == 1
+    assert product["failure_reason"] is None
+    assert engineering["status"] == "claimed"
+    assert engineering["role_instance_id"] == "agentic-mesh-dev.engineering.old"
+    assert instance["status"] == "idle"
+    assert instance["processed_count"] == 1
+    assert "recovered 1 stale assignments and processed 1 assignments" in instance["detail"]
+
+
 def test_status_dashboard_shows_role_assignment_terminal_state(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()

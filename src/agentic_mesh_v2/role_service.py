@@ -47,6 +47,14 @@ class RoleDrainReceipt:
     receipts: tuple[RoleRunReceipt, ...]
 
 
+@dataclass(frozen=True)
+class RoleServiceTickReceipt:
+    status: str
+    recovered_count: int
+    processed_count: int
+    receipts: tuple[RoleRunReceipt, ...]
+
+
 class RoleService:
     def __init__(
         self,
@@ -186,6 +194,28 @@ class RoleService:
             lease_seconds=self.assignment_lease_seconds,
         )
 
+    def recover_stale_assignments(self, *, limit: int = 50, reason: str | None = None) -> list[dict[str, Any]]:
+        reason = reason or f"Recovered by {self.role_instance_id} role service maintenance tick."
+        self.db.update_role_instance_status(
+            role_id=self.role_id,
+            role_instance_id=self.role_instance_id,
+            status="recovering",
+            detail="Recovering stale claimed assignments for role.",
+        )
+        recovered = self.db.recover_stale_role_assignments(
+            role_id=self.role_id,
+            limit=limit,
+            reason=reason,
+        )
+        self.db.update_role_instance_status(
+            role_id=self.role_id,
+            role_instance_id=self.role_instance_id,
+            status="idle",
+            processed_count=0,
+            detail=f"Recovered {len(recovered)} stale assignments.",
+        )
+        return recovered
+
     def drain_available_assignments(self, *, max_assignments: int = 10) -> RoleDrainReceipt:
         if max_assignments < 1:
             raise ValueError("max_assignments must be at least 1")
@@ -206,6 +236,30 @@ class RoleService:
             status="idle",
             processed_count=len(receipts),
             receipts=tuple(receipts),
+        )
+
+    def run_service_tick(self, *, max_recoveries: int = 50, max_assignments: int = 10) -> RoleServiceTickReceipt:
+        if max_recoveries < 1:
+            raise ValueError("max_recoveries must be at least 1")
+        if max_assignments < 1:
+            raise ValueError("max_assignments must be at least 1")
+        recovered = self.recover_stale_assignments(limit=max_recoveries)
+        drain = self.drain_available_assignments(max_assignments=max_assignments)
+        self.db.update_role_instance_status(
+            role_id=self.role_id,
+            role_instance_id=self.role_instance_id,
+            status="idle",
+            processed_count=drain.processed_count,
+            detail=(
+                f"Role service tick recovered {len(recovered)} stale assignments "
+                f"and processed {drain.processed_count} assignments."
+            ),
+        )
+        return RoleServiceTickReceipt(
+            status="idle",
+            recovered_count=len(recovered),
+            processed_count=drain.processed_count,
+            receipts=drain.receipts,
         )
 
 

@@ -1577,29 +1577,45 @@ class V2Database:
                 )
             return refreshed
 
-    def recover_stale_role_assignments(self, *, reason: str, limit: int = 50) -> list[dict[str, Any]]:
+    def recover_stale_role_assignments(
+        self,
+        *,
+        reason: str,
+        limit: int = 50,
+        role_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError("limit must be at least 1")
         if not reason.strip():
             raise ValueError("recovery reason is required")
         recovered: list[dict[str, Any]] = []
         with self.connection:
+            role_filter = "AND role_id = ?" if role_id is not None else ""
+            query_params: list[Any] = []
+            if role_id is not None:
+                query_params.append(role_id)
+            query_params.append(limit)
             rows = self.connection.execute(
-                """
+                f"""
                 SELECT assignment_id
                 FROM role_assignments
                 WHERE status = 'claimed'
                   AND claim_expires_at IS NOT NULL
                   AND claim_expires_at <= CURRENT_TIMESTAMP
+                  {role_filter}
                 ORDER BY claim_expires_at, assignment_id
                 LIMIT ?
                 """,
-                (limit,),
+                tuple(query_params),
             ).fetchall()
             for row in rows:
                 assignment_id = str(row["assignment_id"])
+                update_params: list[Any] = [reason, assignment_id]
+                update_role_filter = "AND role_id = ?" if role_id is not None else ""
+                if role_id is not None:
+                    update_params.append(role_id)
                 result = self.connection.execute(
-                    """
+                    f"""
                     UPDATE role_assignments
                     SET status = 'queued',
                         role_instance_id = NULL,
@@ -1612,8 +1628,9 @@ class V2Database:
                       AND status = 'claimed'
                       AND claim_expires_at IS NOT NULL
                       AND claim_expires_at <= CURRENT_TIMESTAMP
+                      {update_role_filter}
                     """,
-                    (reason, assignment_id),
+                    tuple(update_params),
                 )
                 if result.rowcount != 1:
                     continue
@@ -1621,7 +1638,7 @@ class V2Database:
                     "role_assignment.recovered",
                     "role_assignment",
                     assignment_id,
-                    {"reason": reason},
+                    {"reason": reason, "role_id": role_id},
                 )
                 recovered_row = self.get_role_assignment(assignment_id)
                 if recovered_row is not None:

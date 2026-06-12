@@ -303,3 +303,62 @@ These are not blockers for PB-004 Story 5 because they remain later v2 runtime s
 ### Review Log
 
 - QA-RL-005 | qa-engineer | acceptance | PB-004 Story 5 | Verified assignment lease creation/refresh, terminal lease clearing, stale-claim recovery, recovered-work reclaim cleanup, event/audit evidence, dashboard visibility, and explicit non-claim of scheduler or hibernation support. | accepted 2026-06-12
+
+## PB-004 Story 6 - Role-Service Maintenance Tick
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `tests/test_v2_role_assignment_execution.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+22 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+94 passed
+```
+
+### Acceptance Assessment
+
+- Stale assignment recovery can be scoped to one role through `recover_stale_role_assignments(role_id=...)`.
+- Role-scoped recovery rechecks stale lease and role ownership during the update before recording a recovery event.
+- `RoleService.recover_stale_assignments()` recovers only the current role's stale claims and records role-instance recovery/idle status.
+- `RoleService.run_service_tick()` recovers stale claims for its role before draining queued work.
+- Product Manager service coverage proves it does not recover Engineering stale claimed work.
+- The implementation is a callable maintenance tick, not a background scheduler, container supervisor, or hibernation/hydration claim.
+- The implementation log is factual and keeps later scheduler/process supervision scope out of this story.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 6 because they remain later v2 runtime scope:
+
+- No background scheduler invokes the maintenance tick automatically yet.
+- No concurrent lease refresh while a long-running worker subprocess is blocked.
+- No container hibernation/hydration behavior yet.
+
+### Review Log
+
+- QA-RL-006 | qa-engineer | acceptance | PB-004 Story 6 | Verified role-scoped stale recovery, service tick recovery-before-drain ordering, cross-role isolation, role-instance status reporting, and explicit non-claim of scheduler or hibernation support. | accepted 2026-06-12
