@@ -2965,6 +2965,82 @@ compileall passed
 - Human response submissions still need a later runtime story to resume or
   advance lifecycle state without connector-specific handling.
 
+## PB-005 Story 33 - Human Response Follow-Up Assignments
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+When a human answers a response card, queue the requesting role to continue
+work with the accepted response context. This closes the gap where approval or
+clarification was recorded, but no role was woken to act on it.
+
+### Changes
+
+- Accepted human response submissions now create a queued
+  `human_response_followup` assignment for the role that requested the response.
+- Follow-up assignments include request id, request type, question, response
+  contract, normalized response, submission comment, responder, required
+  authority, gate/thread refs, work item id, and allowed tools.
+- Duplicate accepted webhook callbacks return the existing deterministic
+  submission id before inserting another submission or follow-up assignment.
+- Private DM follow-up assignments use private visibility.
+- Status snapshots redact private human-response follow-up title, summary,
+  question, submission comment, and private submission comments.
+
+### QA Rework
+
+QA found three issues:
+
+- Private DM request titles could leak through project-visible follow-up
+  assignments.
+- Retrying the same accepted card callback could attempt to insert the same
+  deterministic submission id again.
+- Follow-up assignments omitted the human's question, response contract, and
+  submission comment.
+
+Engineering added early duplicate-submission detection, enriched follow-up
+payload context, private follow-up visibility, and targeted status redaction.
+
+### Tests Added
+
+- Accepted release approval queues one Release Manager follow-up assignment with
+  release tools and submission context.
+- Duplicate accepted callbacks return the same submission id without duplicate
+  submissions or follow-ups.
+- Stale different submissions remain stale and do not create duplicate
+  follow-ups.
+- Accepted general human responses queue the requesting Product Manager with
+  redacted private status output.
+- Private response comments and follow-up content are absent from status
+  snapshots.
+
+### Tests Run
+
+```text
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_response_cards.py tests\test_v2_role_assignment_execution.py tests\test_v2_release_safe_outputs.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_permissions.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_role_assignment_execution.py tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_end_to_end.py
+```
+
+Results:
+
+```text
+43 passed focused suite after QA rework
+62 passed broader connector/release suite after QA rework
+255 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- Follow-up assignment execution still depends on the role service and worker
+  adapter to decide the next safe-output action.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -3154,3 +3230,9 @@ compileall passed
   connector metadata for connector-backed requests and aligned release approval
   default titles between canonical rows and delivered cards. | QA accepted
   2026-06-12
+- RL-058 | engineering | implementation | PB-005 Story 33 | Queued
+  `human_response_followup` assignments after accepted human responses.
+  | QA requested privacy/idempotency/context rework 2026-06-12
+- RL-059 | engineering | QA rework | PB-005 Story 33 | Added duplicate
+  submission detection, private follow-up redaction, private submission comment
+  redaction, and richer follow-up context. | QA accepted 2026-06-12

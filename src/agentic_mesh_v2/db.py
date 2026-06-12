@@ -854,6 +854,13 @@ class V2Database:
                 {"submission_id": submission_id, "status": status, "normalized_value": normalized_value},
             )
 
+    def get_human_response_submission(self, submission_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM human_response_submissions WHERE submission_id = ?",
+            (submission_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def record_context_summary(
         self,
         *,
@@ -3221,6 +3228,7 @@ class V2Database:
         runtime_attention_items = self.list_runtime_attention_items()
         connector_permission_checks = self.list_connector_permission_checks()
         role_assignments = self.list_role_assignments()
+        redacted_role_assignments = _redact_private_role_assignments(role_assignments)
         role_instance_statuses = self.list_role_instance_statuses()
         role_container_lifecycle_actions = self.list_role_container_lifecycle_actions()
         relevance_checks = self.list_relevance_checks()
@@ -3228,6 +3236,10 @@ class V2Database:
         human_response_requests = self.list_human_response_requests()
         redacted_human_response_requests = _redact_private_human_response_requests(human_response_requests)
         human_response_submissions = self.list_human_response_submissions()
+        redacted_human_response_submissions = _redact_private_human_response_submissions(
+            human_response_submissions,
+            human_response_requests,
+        )
         context_summaries = self.list_context_summaries()
         redacted_context_summaries = _redact_private_context_summaries(context_summaries)
         retention_expiry_records = self.list_retention_expiry_records()
@@ -3366,13 +3378,13 @@ class V2Database:
             "connector_attention_items": connector_attention_items,
             "runtime_attention_items": runtime_attention_items,
             "connector_permission_checks": connector_permission_checks,
-            "role_assignments": role_assignments,
+            "role_assignments": redacted_role_assignments,
             "role_instance_statuses": role_instance_statuses,
             "role_container_lifecycle_actions": role_container_lifecycle_actions,
             "relevance_checks": relevance_checks,
             "work_proposals": work_proposals,
             "human_response_requests": redacted_human_response_requests,
-            "human_response_submissions": human_response_submissions,
+            "human_response_submissions": redacted_human_response_submissions,
             "context_summaries": redacted_context_summaries,
             "retention_expiry_records": retention_expiry_records,
             "role_container_lifecycle_actions": role_container_lifecycle_actions,
@@ -3468,6 +3480,27 @@ def _redact_private_safe_output_calls(rows: list[dict[str, Any]]) -> list[dict[s
     return redacted
 
 
+def _redact_private_role_assignments(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    redacted: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        if item.get("visibility_scope") == "private" and item.get("assignment_type") == "human_response_followup":
+            item["title"] = "[redacted private conversation]"
+            item["title_redacted"] = True
+            item["summary"] = "[redacted private conversation]"
+            item["summary_redacted"] = True
+            payload = item.get("payload")
+            if isinstance(payload, dict):
+                scrubbed = dict(payload)
+                for key in ("question", "submission_comment"):
+                    if key in scrubbed:
+                        scrubbed[key] = "[redacted private conversation]"
+                        scrubbed[f"{key}_redacted"] = True
+                item["payload"] = scrubbed
+        redacted.append(item)
+    return redacted
+
+
 def _redact_private_human_response_requests(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     redacted: list[dict[str, Any]] = []
     for row in rows:
@@ -3480,6 +3513,25 @@ def _redact_private_human_response_requests(rows: list[dict[str, Any]]) -> list[
             payload = item.get("payload")
             if isinstance(payload, dict):
                 item["payload"] = _redact_payload_card(payload)
+        redacted.append(item)
+    return redacted
+
+
+def _redact_private_human_response_submissions(
+    rows: list[dict[str, Any]],
+    requests: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    private_request_ids = {
+        str(request["request_id"])
+        for request in requests
+        if request.get("destination_type") == "dm"
+    }
+    redacted: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        if str(item.get("request_id")) in private_request_ids and item.get("comment") is not None:
+            item["comment"] = "[redacted private conversation]"
+            item["comment_redacted"] = True
         redacted.append(item)
     return redacted
 

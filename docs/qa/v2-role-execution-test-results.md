@@ -2919,3 +2919,70 @@ compileall passed
   canonical human response request recording, connector duplicate prevention,
   Teams connector metadata preservation, release title consistency, and focused
   release/connector regression coverage. | accepted after rework 2026-06-12
+
+## PB-005 Story 33 - Human Response Follow-Up Assignments
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_teams_connector_response_cards.py`
+- Related role assignment, release, connector, and status dashboard regression
+  tests
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_response_cards.py tests\test_v2_role_assignment_execution.py tests\test_v2_release_safe_outputs.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_permissions.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_role_assignment_execution.py tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_end_to_end.py
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+43 passed focused suite after rework
+62 passed broader connector/release suite after rework
+255 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation could leak private DM request titles through
+  project-visible follow-up assignments. Engineering made DM follow-ups private
+  and redacted private follow-up title, summary, question, and submission
+  comment in status snapshots.
+- Initial implementation could insert the same deterministic submission id on a
+  webhook retry after the request was already responded. Engineering added an
+  early duplicate-submission return.
+- Initial implementation omitted the original question, response contract, and
+  submission comment from follow-up assignments. Engineering added them to the
+  payload and covered the behavior in tests.
+
+### Acceptance Assessment
+
+- Accepted human responses now queue one requesting-role follow-up assignment.
+- Duplicate accepted callbacks are idempotent.
+- Stale different callbacks remain stale and do not queue duplicate follow-up
+  work.
+- Private response details are redacted from status snapshots while ordinary
+  private assignments remain visible as before.
+
+### Residual Risks
+
+- The follow-up worker still needs to choose and emit the next safe-output
+  action, such as release deployment/no-deployment or product rework.
+
+### Review Log
+
+- QA-RL-047 | qa-engineer | acceptance | PB-005 Story 33 | Verified accepted
+  human response follow-up assignment creation, retry idempotency, stale
+  callback behavior, enriched response context, and private status redaction.
+  | accepted after rework 2026-06-12

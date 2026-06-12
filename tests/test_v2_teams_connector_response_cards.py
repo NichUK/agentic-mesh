@@ -134,14 +134,26 @@ def test_release_approval_card_delivery_and_authorized_submission(tmp_path: Path
         response_value="approved",
         comment="Looks good.",
     )
+    duplicate_submission_id = adapter.submit_card_response(
+        request_id=request_id,
+        responder_ref="nicholas",
+        response_value="approved",
+        comment="Looks good.",
+    )
 
     snapshot = db.status_snapshot()
     request = snapshot["human_response_requests"][0]
     submissions = snapshot["human_response_submissions"]
     deliveries = {record["purpose"]: record for record in snapshot["delivery_records"]}
+    followups = [
+        assignment
+        for assignment in snapshot["role_assignments"]
+        if assignment["assignment_type"] == "human_response_followup"
+    ]
     assert len(snapshot["human_response_requests"]) == 1
     assert request["connector_id"] == "teams-agentic-mesh-dev"
     assert request["status"] == "responded"
+    assert duplicate_submission_id == submission_id
     assert request["response_value"] == "approve"
     assert request["responder_ref"] == "nicholas"
     assert request["required_authority"] == "release_approver"
@@ -153,6 +165,15 @@ def test_release_approval_card_delivery_and_authorized_submission(tmp_path: Path
     assert deliveries["release_approval.card"]["status"] == "sent"
     assert deliveries["release_approval.card"]["payload"]["card"]["type"] == "AdaptiveCard"
     assert deliveries["card.update"]["status"] == "sent"
+    assert len(followups) == 1
+    assert followups[0]["role_id"] == "release-manager"
+    assert followups[0]["work_item_id"] == "work-release-card"
+    assert followups[0]["source_ref"] == submission_id
+    assert followups[0]["payload"]["request_id"] == request_id
+    assert followups[0]["payload"]["question"] == "Approve release of work-release-card?"
+    assert followups[0]["payload"]["response_value"] == "approve"
+    assert followups[0]["payload"]["submission_comment"] == "Looks good."
+    assert "release.deploy" in followups[0]["payload"]["allowed_tools"]
     assert any(binding["binding_type"] == "human_response" for binding in snapshot["thread_bindings"])
     assert snapshot["counts"]["connector_attention_items"] == 0
 
@@ -218,10 +239,17 @@ def test_stale_card_submission_records_attention_without_mutating_response(tmp_p
     snapshot = db.status_snapshot()
     request = snapshot["human_response_requests"][0]
     submissions = {item["submission_id"]: item for item in snapshot["human_response_submissions"]}
+    followups = [
+        assignment
+        for assignment in snapshot["role_assignments"]
+        if assignment["assignment_type"] == "human_response_followup"
+    ]
     assert request["status"] == "responded"
     assert request["response_value"] == "approve"
     assert submissions["submission-stale"]["status"] == "rejected_stale"
     assert submissions["submission-stale"]["normalized_value"] == "reject"
+    assert len(followups) == 1
+    assert followups[0]["payload"]["response_value"] == "approve"
     assert any(item["reason_class"] == "stale_card_submission" for item in snapshot["connector_attention_items"])
 
 
@@ -309,10 +337,87 @@ def test_general_human_response_request_uses_structured_card(tmp_path: Path) -> 
     )
 
     snapshot = db.status_snapshot()
+    followups = [
+        assignment
+        for assignment in snapshot["role_assignments"]
+        if assignment["assignment_type"] == "human_response_followup"
+    ]
     assert snapshot["human_response_requests"][0]["request_type"] == "human_response"
     assert snapshot["human_response_requests"][0]["required_authority"] == "sponsor"
     assert snapshot["human_response_requests"][0]["title"] == "[redacted private conversation]"
     assert snapshot["human_response_requests"][0]["question"] == "[redacted private conversation]"
     assert snapshot["delivery_records"][0]["purpose"] == "human_response.card"
     assert snapshot["delivery_records"][0]["payload"]["card"]["response_contract_id"] == "product-direction-v1"
+    assert followups == []
     assert "PRIVATE_RESPONSE_SENTINEL" not in str(snapshot)
+
+
+def test_general_human_response_submission_queues_requesting_role_followup(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    adapter = LocalTeamsTestAdapter(db, _config())
+    adapter.install()
+    replayed = adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-product-followup",
+            "conversation_ref": "dm-nicholas-product",
+            "sender_ref": "nicholas",
+            "source_type": "dm",
+            "target_role_id": "product-manager",
+            "target_ref": "bot-product-manager",
+            "body": "Ask me to confirm the product direction.",
+        }
+    )
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    db.create_run(
+        run_id="run-human-response-followup",
+        role_id="product-manager",
+        role_instance_id="product-manager-1",
+        work_item_id=None,
+    )
+    service.record(
+        run_id="run-human-response-followup",
+        call=SafeOutputCall(
+            role_id="product-manager",
+            tool_name="human_response.request",
+            payload={
+                "title": "Confirm PRIVATE_FOLLOWUP_SENTINEL product direction",
+                "question": "Should PRIVATE_FOLLOWUP_SENTINEL be shaped as a dashboard refinement?",
+                "response_contract_id": "product-direction-v1",
+                "required_authority": "sponsor",
+                "conversation_id": replayed.conversation_id,
+                "destination_ref": "dm-nicholas-product",
+                "destination_type": "dm",
+            },
+            terminal=True,
+        ),
+    )
+    request_id = db.status_snapshot()["human_response_requests"][0]["request_id"]
+
+    submission_id = adapter.submit_card_response(
+        request_id=request_id,
+        responder_ref="nicholas",
+        response_value="request_changes",
+        comment="PRIVATE_FOLLOWUP_SENTINEL make it broader than headings.",
+    )
+
+    snapshot = db.status_snapshot()
+    followups = [
+        assignment
+        for assignment in snapshot["role_assignments"]
+        if assignment["assignment_type"] == "human_response_followup"
+    ]
+    assert len(followups) == 1
+    assert followups[0]["role_id"] == "product-manager"
+    assert followups[0]["work_item_id"] is None
+    assert followups[0]["source_ref"] == submission_id
+    assert followups[0]["visibility_scope"] == "private"
+    assert followups[0]["title"] == "[redacted private conversation]"
+    assert followups[0]["summary"] == "[redacted private conversation]"
+    assert followups[0]["payload"]["request_id"] == request_id
+    assert followups[0]["payload"]["response_value"] == "request_changes"
+    assert followups[0]["payload"]["question"] == "[redacted private conversation]"
+    assert followups[0]["payload"]["submission_comment"] == "[redacted private conversation]"
+    assert "queue.propose_item" in followups[0]["payload"]["allowed_tools"]
+    assert "PRIVATE_FOLLOWUP_SENTINEL" not in str(snapshot)

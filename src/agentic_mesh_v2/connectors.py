@@ -826,6 +826,8 @@ class LocalTeamsTestAdapter:
         authority = self._authority_for_human(responder_ref)
         normalized_seed = str(response_value or "").strip().casefold().replace("-", "_").replace(" ", "_")
         resolved_submission_id = submission_id or f"human-response-submission-{_stable_digest(f'{request_id}:{responder_ref}:{normalized_seed}')}"
+        if self.db.get_human_response_submission(resolved_submission_id) is not None:
+            return resolved_submission_id
         try:
             normalized_value = _normalize_response_value(response_value)
         except ValueError:
@@ -907,6 +909,13 @@ class LocalTeamsTestAdapter:
             response_value=normalized_value,
             responder_ref=responder_ref,
         )
+        self._create_human_response_followup_assignment(
+            request=request,
+            submission_id=resolved_submission_id,
+            responder_ref=responder_ref,
+            normalized_value=normalized_value,
+            comment=comment,
+        )
         card = {
             "type": "AdaptiveCard",
             "version": "1.5",
@@ -930,6 +939,53 @@ class LocalTeamsTestAdapter:
             card_update_ref=update_ref,
         )
         return resolved_submission_id
+
+    def _create_human_response_followup_assignment(
+        self,
+        *,
+        request: dict[str, Any],
+        submission_id: str,
+        responder_ref: str,
+        normalized_value: str,
+        comment: str | None,
+    ) -> None:
+        assignment_id = f"assignment-{_stable_digest(f'{submission_id}:followup')}"
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        role_id = str(request["created_by_role"])
+        request_type = str(request["request_type"])
+        private = request.get("destination_type") == "dm"
+        title = f"Human response received: {request['title']}"
+        summary = (
+            f"{responder_ref} responded `{normalized_value}` to "
+            f"{request_type} request {request['request_id']}."
+        )
+        self.db.create_role_assignment(
+            assignment_id=assignment_id,
+            role_id=role_id,
+            work_item_id=str(request["work_item_id"]) if request.get("work_item_id") else None,
+            source_ref=submission_id,
+            title=title,
+            summary=summary,
+            assignment_type="human_response_followup",
+            visibility_scope="private" if private else "project",
+            payload={
+                "source_ref": submission_id,
+                "request_id": request["request_id"],
+                "request_type": request_type,
+                "question": request["question"],
+                "response_contract_id": request["response_contract_id"],
+                "response_value": normalized_value,
+                "submission_comment": comment,
+                "responder_ref": responder_ref,
+                "required_authority": request["required_authority"],
+                "work_item_id": request.get("work_item_id"),
+                "gate_id": request.get("gate_id"),
+                "target_ref": request.get("target_ref"),
+                "thread_ref": request.get("thread_ref"),
+                "allowed_tools": sorted(SafeOutputService(self.db).policy.tools_for_role(role_id)),
+            },
+        )
 
     def record_relevance(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> None:
         with span("v2.teams.relevance", connector_id=self.config.connector_id, role_id=role_id):
