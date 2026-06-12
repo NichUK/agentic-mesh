@@ -1774,6 +1774,96 @@ Results:
 - The command still uses the currently supported worker adapters; Codex-worker
   execution remains behind the worker-adapter implementation boundary.
 
+## PB-005 Story 17 - Command-Backed Codex CLI Worker Adapter
+
+Status: implemented, QA accepted after rework.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Make `adapter: codex-cli` a real worker adapter instead of an unsupported
+future placeholder. This unblocks project role-service construction for roles
+configured with Codex CLI workers while keeping durable effects behind
+safe-output JSON.
+
+### Implementation Notes
+
+- Added `CodexCliWorker`.
+- The adapter runs a configured command, sends assignment and worker metadata
+  as JSON on stdin, and parses safe-output JSON from stdout.
+- Worker metadata includes adapter name, model, reasoning effort, sandbox mode,
+  and credential reference metadata without exposing secret material.
+- Added default command construction for `codex-cli` from `executable` and
+  `args`, defaulting to `codex exec`.
+- Added a longer default timeout of four hours for Codex worker runs.
+- Added validation for command shape, timeout type, reasoning effort,
+  sandbox mode, and auth mapping.
+- Added CLI `--worker codex-cli` support for one-shot and role-service loop
+  commands.
+- Updated project schema worker properties to allow command-backed worker
+  fields: `command`, `executable`, and `args`.
+- Unknown future adapters remain explicit and skippable via existing
+  `--skip-unsupported` project-runner behavior.
+
+### Tests Added
+
+- adapter factory creates and runs a configured `codex-cli` worker
+- adapter factory creates a default `codex-cli` worker command
+- invalid `codex-cli` worker config is rejected
+- project-file role-service execution runs a configured `codex-cli` worker
+- project runner still skips genuinely unsupported future adapters
+- project schema accepts command-backed `codex-cli` worker configuration
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_project_config.py tests\test_v2_project_schema.py
+python -m agentic_mesh.cli validate-config
+```
+
+Results:
+
+```text
+61 passed before QA rework
+64 passed after QA rework
+validate-config not available in this v2 branch environment: No module named agentic_mesh
+```
+
+Additional schema check:
+
+```text
+Direct validation of the full dogfood project.yaml against project.schema.json
+still fails on pre-existing schema drift: release_deployment_targets is present
+in the project file but absent from the schema.
+```
+
+### Known Limitations
+
+- This story does not assemble the final XML-section role prompt or map Codex
+  CLI-specific flags beyond command metadata. Prompt assembly and exact Codex
+  invocation policy remain a later prompt-system slice.
+- The adapter requires Codex-compatible commands to emit safe-output JSON on
+  stdout. Non-JSON model text remains a worker failure until safe-output tool
+  transport is implemented.
+
+### QA Rework
+
+QA found that the direct CLI `--worker codex-cli` path injected the generic
+300-second timeout and overrode the adapter's four-hour Codex default.
+
+Rework:
+
+- Changed direct CLI worker timeout parsing so `--worker-timeout-seconds` is
+  optional.
+- Direct CLI worker config now only includes `timeout_seconds` when the operator
+  explicitly supplies a timeout.
+- Added regression tests proving `--worker codex-cli` preserves the adapter
+  default and still accepts an explicit timeout override.
+- Preserved adapter defaults for `safe-output-subprocess` in the same way.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1878,4 +1968,11 @@ Results:
 - RL-031 | engineering | implementation | PB-005 Story 16 | Added a
   single-role service loop entrypoint for one role-agent instance with bounded
   and continuous modes, shared tick execution, and interrupt receipts. |
+  QA accepted 2026-06-12
+- RL-032 | engineering | implementation | PB-005 Story 17 | Added a
+  command-backed Codex CLI worker adapter, CLI selection support, and schema
+  support for command-backed worker config. | QA requested rework 2026-06-12
+- RL-033 | engineering | QA rework | PB-005 Story 17 | Preserved adapter-level
+  timeout defaults for direct CLI worker overrides so `codex-cli` keeps its
+  four-hour default unless an operator explicitly supplies a timeout. |
   QA accepted 2026-06-12

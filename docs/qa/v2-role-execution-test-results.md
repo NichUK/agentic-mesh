@@ -1788,3 +1788,150 @@ None blocking for PB-005 Story 16.
   single-role service loop CLI registration, explicit role-instance targeting,
   explicit mode selection, bounded aggregate receipts, clean interrupt
   receipts, and scoped implementation claims. | accepted 2026-06-12
+
+## PB-005 Story 17 - Command-Backed Codex CLI Worker Adapter
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: rework required
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/worker_adapters.py`
+- `src/agentic_mesh_v2/cli.py`
+- `config/schemas/project.schema.json`
+- `tests/test_v2_worker_adapters.py`
+- `tests/test_v2_cli_server.py`
+- `tests/test_v2_project_config.py`
+- `tests/test_v2_project_schema.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_project_config.py tests\test_v2_project_schema.py
+```
+
+Results:
+
+```text
+61 passed
+```
+
+Additional QA probe:
+
+```text
+python - << equivalent inline check of agentic_mesh_v2.cli._worker_config_from_args for --worker codex-cli defaults
+```
+
+Result:
+
+```text
+{'adapter': 'codex-cli', 'timeout_seconds': 300}
+```
+
+### Acceptance Assessment
+
+- `adapter: codex-cli` is implemented as a command-backed worker adapter.
+- The adapter sends assignment and worker metadata to stdin and parses
+  safe-output JSON from stdout.
+- The adapter rejects invalid command, timeout, reasoning effort, sandbox mode,
+  and auth mapping configuration.
+- The adapter-level default command is explicit as `codex exec`, and the
+  adapter-level default timeout is four hours.
+- CLI role-service tick/loop commands accept `--worker codex-cli`.
+- Project-file role-service execution can run a configured `codex-cli` command
+  in tests.
+- Unknown future adapters remain explicit/skippable.
+- The project schema allows command-backed worker fields.
+- The engineering log correctly states that prompt assembly and real
+  safe-output tool transport remain future work.
+
+### Required Rework
+
+- The CLI path for `--worker codex-cli` currently injects
+  `timeout_seconds: 300` when no explicit timeout is provided, overriding the
+  adapter's four-hour Codex default. This violates the Story 17 requirement
+  that default Codex command construction use a long default timeout suitable
+  for Codex runs. Change the CLI defaulting behavior so `codex-cli` uses the
+  long default unless the operator explicitly supplies
+  `--worker-timeout-seconds`, and add a regression test for that path.
+
+### Review Log
+
+- QA-RL-030 | qa-engineer | acceptance | PB-005 Story 17 | Focused tests pass,
+  and most adapter/schema/CLI/project-file behavior is covered, but the direct
+  CLI `--worker codex-cli` path overrides the long Codex timeout with 300
+  seconds. | rework required 2026-06-12
+
+## PB-005 Story 17 - Command-Backed Codex CLI Worker Adapter Retest
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/worker_adapters.py`
+- `tests/test_v2_cli_server.py`
+- `tests/test_v2_worker_adapters.py`
+- `tests/test_v2_project_config.py`
+- `tests/test_v2_project_schema.py`
+
+### Commands Run
+
+Direct timeout probe:
+
+```text
+python - << equivalent inline check of agentic_mesh_v2.cli._worker_config_from_args and build_worker_adapter for codex-cli and safe-output-subprocess timeout defaults
+```
+
+Results:
+
+```text
+codex_default_cli_config {'adapter': 'codex-cli'}
+codex_explicit_cli_config {'adapter': 'codex-cli', 'timeout_seconds': 900}
+subprocess_default_cli_config {'adapter': 'safe-output-subprocess', 'command': ['C:\\Python314\\python.exe', '-c', "print('{}')"]}
+codex_default_adapter_timeout 14400
+codex_explicit_adapter_timeout 900
+subprocess_default_adapter_timeout 300
+```
+
+Focused regression suite:
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_project_config.py tests\test_v2_project_schema.py
+```
+
+Results:
+
+```text
+64 passed
+```
+
+### Acceptance Assessment
+
+- Direct CLI `--worker codex-cli` no longer injects `timeout_seconds` when
+  `--worker-timeout-seconds` is omitted.
+- The adapter default of 14400 seconds now applies for direct CLI
+  `--worker codex-cli` when no explicit timeout is supplied.
+- Direct CLI `--worker codex-cli --worker-timeout-seconds N` still passes the
+  explicit timeout through to the adapter.
+- Direct CLI `safe-output-subprocess` also preserves its adapter default when
+  no timeout is supplied.
+- Focused tests pass.
+
+### Residual Gaps
+
+None blocking for PB-005 Story 17.
+
+### Review Log
+
+- QA-RL-031 | qa-engineer | retest | PB-005 Story 17 | Verified the CLI
+  timeout default regression is closed for Codex CLI and preserved for
+  safe-output subprocess, with focused tests passing. | accepted 2026-06-12

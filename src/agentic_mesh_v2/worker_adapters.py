@@ -59,6 +59,71 @@ class SafeOutputSubprocessWorker:
         return parse_safe_output_calls(raw, assignment=assignment, source="subprocess worker")
 
 
+class CodexCliWorker:
+    """Run a Codex-compatible command that emits safe-output JSON."""
+
+    def __init__(
+        self,
+        command: tuple[str, ...],
+        *,
+        timeout_seconds: int = 14400,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        sandbox_mode: str | None = None,
+        auth: dict[str, Any] | None = None,
+    ) -> None:
+        if not command:
+            raise ValueError("codex-cli worker command is required")
+        if timeout_seconds < 1:
+            raise ValueError("timeout_seconds must be at least 1")
+        if model is not None and not model.strip():
+            raise ValueError("codex-cli model must be a non-empty string")
+        if reasoning_effort is not None and reasoning_effort not in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+            raise ValueError("codex-cli reasoning_effort must be one of none, minimal, low, medium, high, xhigh")
+        if sandbox_mode is not None and not sandbox_mode.strip():
+            raise ValueError("codex-cli sandbox_mode must be a non-empty string")
+        self.command = command
+        self.timeout_seconds = timeout_seconds
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.sandbox_mode = sandbox_mode
+        self.auth = dict(auth or {})
+
+    def run(self, assignment: RoleAssignment) -> list[SafeOutputCall]:
+        prompt_payload = {
+            "assignment": _assignment_payload(assignment),
+            "worker": {
+                "adapter": "codex-cli",
+                "model": self.model,
+                "reasoning_effort": self.reasoning_effort,
+                "sandbox_mode": self.sandbox_mode,
+                "auth": self.auth,
+            },
+        }
+        try:
+            result = subprocess.run(
+                list(self.command),
+                input=json.dumps(prompt_payload, sort_keys=True),
+                capture_output=True,
+                check=False,
+                encoding="utf-8",
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(f"codex-cli worker timed out after {self.timeout_seconds} seconds") from exc
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            detail = f": {stderr}" if stderr else ""
+            raise RuntimeError(f"codex-cli worker exited with code {result.returncode}{detail}")
+        if not result.stdout.strip():
+            raise ValueError("codex-cli worker emitted no stdout safe-output JSON")
+        try:
+            raw = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"codex-cli worker emitted invalid JSON: {exc.msg}") from exc
+        return parse_safe_output_calls(raw, assignment=assignment, source="codex-cli worker")
+
+
 def parse_safe_output_calls(raw: Any, *, assignment: RoleAssignment, source: str) -> list[SafeOutputCall]:
     items = raw.get("calls") if isinstance(raw, dict) else raw
     if not isinstance(items, list):
@@ -113,13 +178,57 @@ def build_worker_adapter(config: dict[str, Any]) -> Worker:
         command = config.get("command")
         if not isinstance(command, list) or not command:
             raise ValueError("safe-output-subprocess worker config requires non-empty command list")
-        parsed_command: list[str] = []
-        for index, item in enumerate(command):
-            if not isinstance(item, str) or not item.strip():
-                raise ValueError(f"safe-output-subprocess command item {index} must be a non-empty string")
-            parsed_command.append(item)
-        timeout_seconds = config.get("timeout_seconds", 300)
-        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int):
-            raise ValueError("safe-output-subprocess timeout_seconds must be an integer")
+        parsed_command = _validated_command(command, adapter_name="safe-output-subprocess")
+        timeout_seconds = _validated_timeout(config, adapter_name="safe-output-subprocess", default=300)
         return SafeOutputSubprocessWorker(tuple(parsed_command), timeout_seconds=timeout_seconds)
+    if adapter == "codex-cli":
+        command = config.get("command")
+        if command is None:
+            executable = config.get("executable", "codex")
+            args = config.get("args", ["exec"])
+            if not isinstance(executable, str) or not executable.strip():
+                raise ValueError("codex-cli executable must be a non-empty string")
+            if not isinstance(args, list):
+                raise ValueError("codex-cli args must be a list")
+            command = [executable, *args]
+        if not isinstance(command, list) or not command:
+            raise ValueError("codex-cli worker config requires non-empty command list")
+        parsed_command = _validated_command(command, adapter_name="codex-cli")
+        timeout_seconds = _validated_timeout(config, adapter_name="codex-cli", default=14400)
+        model = config.get("model")
+        reasoning_effort = config.get("reasoning_effort")
+        sandbox_mode = config.get("sandbox_mode")
+        auth = config.get("auth")
+        if model is not None and not isinstance(model, str):
+            raise ValueError("codex-cli model must be a string")
+        if reasoning_effort is not None and not isinstance(reasoning_effort, str):
+            raise ValueError("codex-cli reasoning_effort must be a string")
+        if sandbox_mode is not None and not isinstance(sandbox_mode, str):
+            raise ValueError("codex-cli sandbox_mode must be a string")
+        if auth is not None and not isinstance(auth, dict):
+            raise ValueError("codex-cli auth must be a mapping")
+        return CodexCliWorker(
+            tuple(parsed_command),
+            timeout_seconds=timeout_seconds,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            sandbox_mode=sandbox_mode,
+            auth=auth,
+        )
     raise ValueError(f"unsupported worker adapter `{adapter}`")
+
+
+def _validated_command(command: list[Any], *, adapter_name: str) -> list[str]:
+    parsed_command: list[str] = []
+    for index, item in enumerate(command):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{adapter_name} command item {index} must be a non-empty string")
+        parsed_command.append(item)
+    return parsed_command
+
+
+def _validated_timeout(config: dict[str, Any], *, adapter_name: str, default: int) -> int:
+    timeout_seconds = config.get("timeout_seconds", default)
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int):
+        raise ValueError(f"{adapter_name} timeout_seconds must be an integer")
+    return timeout_seconds

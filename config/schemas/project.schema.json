@@ -704,6 +704,29 @@
           "minimum": 60,
           "description": "Absolute worker execution timeout in seconds."
         },
+        "command": {
+          "type": "array",
+          "description": "Optional explicit worker command. Used by command-backed adapters such as safe-output-subprocess and codex-cli.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "executable": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional executable for adapters that can build a default command."
+        },
+        "args": {
+          "type": "array",
+          "description": "Optional argument list used with executable for adapters that can build a default command.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
         "progress_window_seconds": {
           "type": "integer",
           "minimum": 60,

@@ -77,15 +77,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     tick_parser.add_argument(
         "--worker",
-        choices=["safe-output-file", "safe-output-subprocess"],
+        choices=["safe-output-file", "safe-output-subprocess", "codex-cli"],
         help="Worker adapter to use for claimed assignments.",
     )
     tick_parser.add_argument("--safe-output-file", type=Path)
     tick_parser.add_argument(
         "--worker-command-json",
-        help="JSON array command for the safe-output-subprocess worker.",
+        help="JSON array command for safe-output-subprocess or codex-cli workers.",
     )
-    tick_parser.add_argument("--worker-timeout-seconds", type=int, default=300)
+    tick_parser.add_argument("--worker-timeout-seconds", type=int)
     tick_parser.add_argument("--max-recoveries", type=int, default=50)
     tick_parser.add_argument("--max-assignments", type=int, default=10)
     tick_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
@@ -103,15 +103,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     role_loop_parser.add_argument(
         "--worker",
-        choices=["safe-output-file", "safe-output-subprocess"],
+        choices=["safe-output-file", "safe-output-subprocess", "codex-cli"],
         help="Worker adapter to use for claimed assignments.",
     )
     role_loop_parser.add_argument("--safe-output-file", type=Path)
     role_loop_parser.add_argument(
         "--worker-command-json",
-        help="JSON array command for the safe-output-subprocess worker.",
+        help="JSON array command for safe-output-subprocess or codex-cli workers.",
     )
-    role_loop_parser.add_argument("--worker-timeout-seconds", type=int, default=300)
+    role_loop_parser.add_argument("--worker-timeout-seconds", type=int)
     role_loop_parser.add_argument("--max-recoveries", type=int, default=50)
     role_loop_parser.add_argument("--max-assignments", type=int, default=10)
     role_loop_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
@@ -458,11 +458,20 @@ def _worker_config_from_args(args: argparse.Namespace) -> dict[str, object]:
             raise ValueError("--safe-output-file is required for safe-output-file worker")
         return {"adapter": "safe-output-file", "path": str(args.safe_output_file)}
     if args.worker == "safe-output-subprocess":
-        return {
+        config: dict[str, object] = {
             "adapter": "safe-output-subprocess",
             "command": list(_parse_worker_command(args.worker_command_json)),
-            "timeout_seconds": args.worker_timeout_seconds,
         }
+        if args.worker_timeout_seconds is not None:
+            config["timeout_seconds"] = args.worker_timeout_seconds
+        return config
+    if args.worker == "codex-cli":
+        config: dict[str, object] = {"adapter": "codex-cli"}
+        if args.worker_command_json:
+            config["command"] = list(_parse_worker_command(args.worker_command_json))
+        if args.worker_timeout_seconds is not None:
+            config["timeout_seconds"] = args.worker_timeout_seconds
+        return config
     raise AssertionError(f"unhandled worker adapter: {args.worker}")
 
 

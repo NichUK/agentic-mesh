@@ -616,22 +616,47 @@ roles:
     assert safe_outputs[0]["payload"]["message"] == "Project-configured worker complete."
 
 
-def test_v2_cli_project_file_does_not_fake_unsupported_codex_adapter(tmp_path: Path) -> None:
+def test_v2_cli_project_file_runs_configured_codex_cli_adapter(tmp_path: Path, capsys) -> None:
     db_path = tmp_path / "v2.sqlite3"
     project_file = tmp_path / "project.yaml"
+    python_executable = sys.executable.replace("\\", "/")
     project_file.write_text(
-        """
+        f"""
 project_id: test-project
 roles:
   product-manager:
     worker:
       adapter: codex-cli
-      model: codex
+      command:
+        - "{python_executable}"
+        - "-c"
+        - "import json, sys; payload=json.load(sys.stdin); assert payload['worker']['adapter'] == 'codex-cli'; print(json.dumps({{'calls':[{{'tool_name':'status.complete','payload':{{'message':'Project Codex worker complete.'}},'terminal':True}}]}}))"
+      timeout_seconds: 5
+      model: gpt-test
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+      auth:
+        credential: codex-test
 """,
         encoding="utf-8",
     )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-cli-project-codex-worker",
+            role_id="product-manager",
+            source_ref="msg-cli-project-codex-worker",
+            title="Project Codex worker",
+            summary="Run configured Codex CLI worker adapter.",
+            assignment_type="work_item_handoff",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
 
-    with pytest.raises(ValueError, match="unsupported worker adapter `codex-cli`"):
+    assert (
         main(
             [
                 "--db",
@@ -645,6 +670,64 @@ roles:
                 str(project_file),
             ]
         )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert '"processed_count": 1' in output
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-cli-project-codex-worker")
+        safe_outputs = db.list_safe_output_calls()
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "completed"
+    assert safe_outputs[0]["payload"]["message"] == "Project Codex worker complete."
+
+
+def test_v2_cli_codex_worker_override_preserves_adapter_timeout_default() -> None:
+    config = cli_module._worker_config_from_args(
+        Namespace(
+            worker="codex-cli",
+            worker_command_json=None,
+            worker_timeout_seconds=None,
+        )
+    )
+
+    assert config == {"adapter": "codex-cli"}
+
+
+def test_v2_cli_codex_worker_override_accepts_explicit_timeout() -> None:
+    config = cli_module._worker_config_from_args(
+        Namespace(
+            worker="codex-cli",
+            worker_command_json=None,
+            worker_timeout_seconds=900,
+        )
+    )
+
+    assert config == {
+        "adapter": "codex-cli",
+        "timeout_seconds": 900,
+    }
+
+
+def test_v2_cli_subprocess_worker_override_preserves_adapter_timeout_default(tmp_path: Path) -> None:
+    worker_path = tmp_path / "worker.py"
+    config = cli_module._worker_config_from_args(
+        Namespace(
+            worker="safe-output-subprocess",
+            worker_command_json=json.dumps([sys.executable, str(worker_path)]),
+            worker_timeout_seconds=None,
+        )
+    )
+
+    assert config == {
+        "adapter": "safe-output-subprocess",
+        "command": [sys.executable, str(worker_path)],
+    }
 
 
 def test_v2_cli_runs_project_role_services_once_for_configured_instances(
@@ -765,8 +848,7 @@ project_id: test-project
 roles:
   engineering:
     worker:
-      adapter: codex-cli
-      model: codex
+      adapter: future-ai
   product-manager:
     worker:
       adapter: safe-output-file
@@ -808,7 +890,7 @@ roles:
     assert '"processed_count": 1' in output
     assert '"skipped_count": 1' in output
     assert '"status": "skipped"' in output
-    assert "unsupported worker adapter `codex-cli`" in output
+    assert "unsupported worker adapter `future-ai`" in output
 
 
 def test_v2_cli_runs_project_role_services_loop_for_bounded_cycles(
