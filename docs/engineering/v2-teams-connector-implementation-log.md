@@ -104,8 +104,121 @@ Story 2 - Role Direct Messages And `status.reply`.
 Do not begin Story 2 until QA has reviewed Story 1 and any required rework has
 passed retest.
 
+## Story 2 - Role Direct Messages And `status.reply`
+
+Status: engineering implemented; awaiting QA review
+
+### Objective
+
+Support direct messages to configured role agents as private conversations that
+create role assignments without creating queue/work items by default, and route
+role `status.reply` safe-output calls to exactly one outbound delivery record.
+
+### Files Changed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_teams_connector_direct_messages.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+### Implementation Notes
+
+- Added `role_assignments` as a durable runtime table for connector-created
+  role assignments.
+- Added repository methods to create, complete, and list role assignments.
+- Direct-message replay now creates a private `direct_conversation` assignment
+  when the event targets a configured role.
+- Duplicate inbound direct messages reuse the original receipt and do not create
+  duplicate role assignments.
+- Added `ConnectorSafeOutputService`, which records safe-output calls and
+  routes `status.reply` payloads with connector conversation fields through the
+  local adapter.
+- `status.reply` now creates one sent delivery record in the local adapter path.
+- `SafeOutputService.record()` now returns the actual `call_id`, allowing
+  connector deliveries to reference the safe-output call that caused them.
+- Default `status_snapshot()` redacts private conversation body previews.
+
+### Tests Run
+
+Commands:
+
+```powershell
+pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py
+pytest -q
+```
+
+Results:
+
+```text
+4 passed
+20 passed
+```
+
+Focused coverage added:
+
+- direct message to Product Manager creates one private role assignment
+- duplicate direct message does not create duplicate assignment
+- ordinary DM creates no queue item or work item
+- private DM body preview and external receipt payload body are redacted from
+  default status snapshot
+- role `status.reply` records a safe-output call and creates one sent delivery
+  record
+- completed role assignment is visible in status snapshot
+
+### QA Rework
+
+QA found that Story 2 initially redacted `conversation_events[*].body_preview`
+but still exposed private DM text through
+`external_event_receipts[*].payload.body` in the default status snapshot.
+
+Engineering rework:
+
+- added default redaction for private direct-message receipt payload body fields
+  in `status_snapshot()`
+- preserved raw database storage for future authorized/debug paths
+- added regression assertions to
+  `tests/test_v2_teams_connector_direct_messages.py`
+
+Retest commands:
+
+```powershell
+pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py
+pytest -q
+```
+
+Retest results:
+
+```text
+4 passed
+20 passed
+```
+
+### Known Limitations
+
+- Role assignment claiming is still manual/test-driven; live role-service
+  assignment loops are PB-004 scope.
+- Real Teams delivery remains later-story scope.
+- Delivery retry, duplicate outbound suppression, and unknown outcomes remain
+  Story 5 scope.
+- Direct-message privacy is currently redacted at default status snapshot level;
+  full authorization-aware dashboard access remains later-story scope.
+
+### Next Engineering Story
+
+Story 3 - Project Channel Capture And Role Mentions.
+
+Do not begin Story 3 until QA has reviewed Story 2 and any required rework has
+passed retest.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
-  foundation and local test adapter with focused regression tests. | awaiting
-  QA review 2026-06-12
+  foundation and local test adapter with focused regression tests. | QA passed
+  2026-06-12
+- RL-002 | engineering | implementation | Story 2 | Implemented direct role
+  message assignment and `status.reply` delivery through the local connector
+  adapter. | awaiting QA review 2026-06-12
+- RL-003 | engineering | QA rework | Story 2 | Redacted private direct-message
+  receipt payload bodies from default status snapshots after QA found the
+  partial-redaction gap. | awaiting QA retest 2026-06-12

@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.safe_outputs import SafeOutputCall
+from agentic_mesh_v2.safe_outputs import SafeOutputService
+from agentic_mesh_v2.safe_outputs import ToolPolicy
 
 
 VALID_RETENTION_KEYS = {
@@ -184,6 +187,25 @@ class LocalTeamsTestAdapter:
                 "route_type": route_type,
             },
         )
+        if route_type == "role_direct_message":
+            role_id = self._role_for_direct_message(event)
+            if role_id is not None:
+                self.db.create_role_assignment(
+                    assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}')}",
+                    role_id=role_id,
+                    conversation_id=conversation_id,
+                    source_ref=receipt.receipt_id,
+                    title="Direct Teams conversation",
+                    summary="Human sent a direct message to a role agent.",
+                    assignment_type="direct_conversation",
+                    visibility_scope="private",
+                    payload={
+                        "connector_id": connector_id,
+                        "conversation_id": conversation_id,
+                        "receipt_id": receipt.receipt_id,
+                        "message_id": message_id,
+                    },
+                )
         if route_type == "unknown_role_mention":
             self.db.create_connector_attention_item(
                 attention_id=f"attention-{_stable_digest(f'{receipt.receipt_id}:unknown-role')}",
@@ -245,6 +267,20 @@ class LocalTeamsTestAdapter:
             )
         return delivery_id
 
+    def deliver_status_reply(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
+        message = str(payload.get("message") or "")
+        _required_string(payload, "conversation_id")
+        destination_ref = _required_string(payload, "destination_ref")
+        destination_type = str(payload.get("destination_type") or "dm")
+        return self.send_message(
+            source_ref=call_id,
+            destination_ref=destination_ref,
+            destination_type=destination_type,
+            purpose="status.reply",
+            body=message,
+            role_id=role_id,
+        )
+
     def _route_type(self, *, source_type: str, mentioned_roles: tuple[str, ...], body: str) -> str:
         if source_type == "dm":
             return "role_direct_message"
@@ -257,6 +293,19 @@ class LocalTeamsTestAdapter:
             return "role_mention"
         return "project_channel_context"
 
+    def _role_for_direct_message(self, event: dict[str, Any]) -> str | None:
+        role_id = event.get("target_role_id")
+        if isinstance(role_id, str) and role_id in self.config.role_identities:
+            return role_id
+        target_ref = event.get("target_ref")
+        if isinstance(target_ref, str):
+            for configured_role_id, external_ref in self.config.role_identities.items():
+                if target_ref == external_ref:
+                    return configured_role_id
+        if len(self.config.role_identities) == 1:
+            return next(iter(self.config.role_identities))
+        return None
+
     def _idempotency_key(self, event: dict[str, Any]) -> str:
         return ":".join(
             [
@@ -267,6 +316,28 @@ class LocalTeamsTestAdapter:
                 str(event.get("version", "0")),
             ]
         )
+
+
+class ConnectorSafeOutputService(SafeOutputService):
+    def __init__(
+        self,
+        db: V2Database,
+        *,
+        adapter: LocalTeamsTestAdapter,
+        policy: ToolPolicy | None = None,
+    ) -> None:
+        super().__init__(db, policy)
+        self.adapter = adapter
+
+    def record(self, *, run_id: str, call: SafeOutputCall) -> str:
+        call_id = super().record(run_id=run_id, call=call)
+        if call.tool_name == "status.reply" and "conversation_id" in call.payload:
+            self.adapter.deliver_status_reply(
+                call_id=call_id,
+                role_id=call.role_id,
+                payload=call.payload,
+            )
+        return call_id
 
 
 def _required_string(raw: dict[str, Any], key: str) -> str:

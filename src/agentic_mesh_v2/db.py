@@ -270,6 +270,23 @@ class V2Database:
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS role_assignments (
+                  assignment_id TEXT PRIMARY KEY,
+                  role_id TEXT NOT NULL,
+                  role_instance_id TEXT,
+                  work_item_id TEXT REFERENCES work_items(work_item_id),
+                  conversation_id TEXT,
+                  source_ref TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  assignment_type TEXT NOT NULL,
+                  visibility_scope TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
             self.connection.execute(
@@ -638,6 +655,75 @@ class V2Database:
                 "connector",
                 connector_id,
                 {"attention_id": attention_id, "reason_class": reason_class, "retryable": retryable},
+            )
+
+    def create_role_assignment(
+        self,
+        *,
+        assignment_id: str,
+        role_id: str,
+        source_ref: str,
+        title: str,
+        summary: str,
+        assignment_type: str,
+        visibility_scope: str,
+        payload: dict[str, Any],
+        work_item_id: str | None = None,
+        conversation_id: str | None = None,
+        role_instance_id: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO role_assignments(
+                  assignment_id, role_id, role_instance_id, work_item_id, conversation_id,
+                  source_ref, title, summary, status, assignment_type, visibility_scope, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+                """,
+                (
+                    assignment_id,
+                    role_id,
+                    role_instance_id,
+                    work_item_id,
+                    conversation_id,
+                    source_ref,
+                    title,
+                    summary,
+                    assignment_type,
+                    visibility_scope,
+                    json.dumps(payload, sort_keys=True),
+                ),
+            )
+            self.append_event(
+                "role_assignment.created",
+                "role_assignment",
+                assignment_id,
+                {
+                    "role_id": role_id,
+                    "assignment_type": assignment_type,
+                    "conversation_id": conversation_id,
+                    "visibility_scope": visibility_scope,
+                },
+            )
+
+    def complete_role_assignment(self, assignment_id: str, *, role_instance_id: str | None = None) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE role_assignments
+                SET status = 'completed',
+                    role_instance_id = COALESCE(?, role_instance_id),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE assignment_id = ?
+                """,
+                (role_instance_id, assignment_id),
+            )
+            self.append_event(
+                "role_assignment.completed",
+                "role_assignment",
+                assignment_id,
+                {"role_instance_id": role_instance_id},
             )
 
     def promote_queue_item(
@@ -1070,14 +1156,28 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_role_assignments(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM role_assignments
+            ORDER BY updated_at DESC, assignment_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def status_snapshot(self) -> dict[str, Any]:
         work_items = self.list_work_items()
         queue_items = self.list_queue_items()
         releases = self.list_releases()
         connectors = self.list_connectors()
         connector_events = self.list_conversation_events()
+        redacted_connector_events = _redact_private_conversation_events(connector_events)
+        external_event_receipts = self.list_external_event_receipts()
+        redacted_external_event_receipts = _redact_private_external_event_receipts(external_event_receipts)
         delivery_records = self.list_delivery_records()
         connector_attention_items = self.list_connector_attention_items()
+        role_assignments = self.list_role_assignments()
         states: dict[str, int] = {}
         for item in work_items:
             state = str(item["state"])
@@ -1103,10 +1203,11 @@ class V2Database:
                 "connector_participants": len(self.list_connector_participants()),
                 "conversations": len(self.list_conversations()),
                 "conversation_events": len(connector_events),
-                "external_event_receipts": len(self.list_external_event_receipts()),
+                "external_event_receipts": len(external_event_receipts),
                 "thread_bindings": len(self.list_thread_bindings()),
                 "delivery_records": len(delivery_records),
                 "connector_attention_items": len(connector_attention_items),
+                "role_assignments": len(role_assignments),
             },
             "work_item_states": states,
             "queue_statuses": queue_statuses,
@@ -1120,11 +1221,12 @@ class V2Database:
             "connectors": connectors,
             "connector_participants": self.list_connector_participants(),
             "conversations": self.list_conversations(),
-            "conversation_events": connector_events,
-            "external_event_receipts": self.list_external_event_receipts(),
+            "conversation_events": redacted_connector_events,
+            "external_event_receipts": redacted_external_event_receipts,
             "thread_bindings": self.list_thread_bindings(),
             "delivery_records": delivery_records,
             "connector_attention_items": connector_attention_items,
+            "role_assignments": role_assignments,
             "recent_events": self.list_events()[-50:],
         }
 
@@ -1138,3 +1240,35 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     if "retryable" in result and result["retryable"] is not None:
         result["retryable"] = bool(result["retryable"])
     return result
+
+
+def _redact_private_conversation_events(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    redacted: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        if item.get("visibility_scope") == "private":
+            item["body_preview"] = "[redacted private conversation]"
+            payload = item.get("payload")
+            if isinstance(payload, dict):
+                item["payload"] = {**payload, "body_redacted": True}
+        redacted.append(item)
+    return redacted
+
+
+def _redact_private_external_event_receipts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    redacted: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        payload = item.get("payload")
+        if isinstance(payload, dict) and payload.get("source_type") == "dm":
+            item["payload"] = _redact_payload_body(payload)
+        redacted.append(item)
+    return redacted
+
+
+def _redact_payload_body(payload: dict[str, Any]) -> dict[str, Any]:
+    redacted = dict(payload)
+    if "body" in redacted:
+        redacted["body"] = "[redacted private conversation]"
+        redacted["body_redacted"] = True
+    return redacted

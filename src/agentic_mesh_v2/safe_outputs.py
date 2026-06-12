@@ -135,18 +135,20 @@ class SafeOutputService:
         self.db = db
         self.policy = policy or ToolPolicy()
 
-    def record(self, *, run_id: str, call: SafeOutputCall) -> None:
+    def record(self, *, run_id: str, call: SafeOutputCall) -> str:
         self.policy.authorize(role_id=call.role_id, tool_name=call.tool_name)
         validate_payload(call.tool_name, call.payload)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
+        call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
-            call_id=f"call-{uuid4().hex}",
+            call_id=call_id,
             run_id=run_id,
             role_id=call.role_id,
             tool_name=call.tool_name,
             payload=call.payload,
             terminal=terminal,
         )
+        return call_id
 
 
 def validate_payload(tool_name: str, payload: dict[str, Any]) -> None:
