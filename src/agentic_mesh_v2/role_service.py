@@ -12,6 +12,7 @@ from uuid import uuid4
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputService
+from agentic_mesh_v2.state_machine import TransitionRequest
 
 
 class Worker(Protocol):
@@ -96,12 +97,13 @@ class RoleService:
         if assignment.role_id != self.role_id:
             raise ValueError("assignment role does not match role service")
         run_id = run_id or f"run-{uuid4().hex}"
-        self.db.create_run(
-            run_id=run_id,
-            role_id=self.role_id,
-            role_instance_id=self.role_instance_id,
-            work_item_id=assignment.work_item_id,
-        )
+        if self.db.get_agent_run(run_id) is None:
+            self.db.create_run(
+                run_id=run_id,
+                role_id=self.role_id,
+                role_instance_id=self.role_instance_id,
+                work_item_id=assignment.work_item_id,
+            )
         try:
             assignment = self._with_loaded_memory_context(assignment)
             worker_assignment = replace(
@@ -224,9 +226,19 @@ class RoleService:
             last_run_id=run_id,
             detail="Processing role assignment.",
         )
+        self.db.create_run(
+            run_id=run_id,
+            role_id=self.role_id,
+            role_instance_id=self.role_instance_id,
+            work_item_id=assignment.work_item_id,
+        )
         try:
+            self._activate_work_for_assignment(assignment)
             receipt = self.run_assignment(assignment, run_id=run_id)
         except Exception as exc:
+            run = self.db.get_agent_run(run_id)
+            if run is not None and run.get("status") != "failed":
+                self.db.complete_run(run_id, status="failed", terminal_tool=None)
             self.db.fail_role_assignment(
                 str(assignment.assignment_id),
                 role_instance_id=self.role_instance_id,
@@ -258,6 +270,27 @@ class RoleService:
             detail="Assignment completed.",
         )
         return receipt
+
+    def _activate_work_for_assignment(self, assignment: RoleAssignment) -> None:
+        if assignment.assignment_type != "implementation" or assignment.work_item_id is None:
+            return
+        work_item = self.db.get_work_item(assignment.work_item_id)
+        if work_item.state == "active":
+            return
+        if work_item.state != "ready":
+            raise ValueError(
+                f"implementation assignment requires work item `{assignment.work_item_id}` to be ready or active, found `{work_item.state}`"
+            )
+        self.db.transition_work_item(
+            TransitionRequest(
+                work_item_id=assignment.work_item_id,
+                from_state="ready",
+                to_state="active",
+                actor_role=self.role_id,
+                reason=f"Implementation assignment `{assignment.assignment_id}` claimed by {self.role_instance_id}.",
+                owner=self.role_id,
+            )
+        )
 
     def refresh_assignment_lease(self, assignment_id: str) -> bool:
         return self.db.refresh_role_assignment_lease(

@@ -268,6 +268,7 @@ def test_deferred_product_mark_ready_replay_is_idempotent(tmp_path: Path) -> Non
             call=call,
         )
         work = db.get_work_item("work-runtime-execution")
+        implementation_assignment = db.get_role_assignment("assignment-engineering-implementation")
         assignments = db.list_role_assignments()
         transition_events = [
             event
@@ -338,6 +339,198 @@ def test_distinct_deferred_product_mark_ready_cannot_duplicate_ready_assignment(
     assert work.state == "ready"
     assert len(assignments) == 1
     assert assignments[0]["assignment_id"] == f"assignment-{first_call_id}-work-item-ready"
+
+
+def test_engineering_claiming_implementation_assignment_activates_ready_work(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.transition_work_item(
+            TransitionRequest(
+                work_item_id="work-runtime-execution",
+                from_state="shaping",
+                to_state="ready",
+                actor_role="product-manager",
+                reason="Product definition is ready.",
+                owner="engineering",
+            )
+        )
+        db.create_role_assignment(
+            assignment_id="assignment-engineering-implementation",
+            role_id="engineering",
+            work_item_id="work-runtime-execution",
+            source_ref="call-product-ready",
+            title="Implement runtime execution",
+            summary="Implementation is ready to start.",
+            assignment_type="implementation",
+            visibility_scope="project",
+            payload={},
+        )
+        service = RoleService(
+            db=db,
+            role_id="engineering",
+            role_instance_id="test-project.engineering.1",
+            worker=StaticWorker(
+                [
+                    SafeOutputCall(
+                        role_id="engineering",
+                        tool_name="implementation.record_change",
+                        payload={
+                            "work_item_id": "work-runtime-execution",
+                            "summary": "Engineering started and recorded the implementation change.",
+                        },
+                    ),
+                    SafeOutputCall(
+                        role_id="engineering",
+                        tool_name="handoff.request",
+                        payload={
+                            "target_role": "qa-engineer",
+                            "work_item_id": "work-runtime-execution",
+                            "reason": "Implementation is ready for QA.",
+                        },
+                        terminal=True,
+                    ),
+                ]
+            ),
+        )
+
+        receipt = service.run_next_assignment()
+        work = db.get_work_item("work-runtime-execution")
+        implementation_assignment = db.get_role_assignment("assignment-engineering-implementation")
+        assignments = db.list_role_assignments()
+        transition_events = [
+            event
+            for event in db.list_events("work-runtime-execution")
+            if event["event_type"] == "work_item.transitioned"
+        ]
+    finally:
+        db.close()
+
+    assert receipt is not None
+    assert work.state == "active"
+    assert implementation_assignment is not None
+    assert implementation_assignment["status"] == "completed"
+    assert implementation_assignment["terminal_tool"] == "handoff.request"
+    assert any(row["role_id"] == "qa-engineer" and row["status"] == "queued" for row in assignments)
+    assert any(
+        event["payload"]["from_state"] == "ready"
+        and event["payload"]["to_state"] == "active"
+        and event["payload"]["actor_role"] == "engineering"
+        for event in transition_events
+    )
+
+
+def test_engineering_implementation_assignment_is_idempotent_for_active_work(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.transition_work_item(
+            TransitionRequest(
+                work_item_id="work-runtime-execution",
+                from_state="shaping",
+                to_state="ready",
+                actor_role="product-manager",
+                reason="Product definition is ready.",
+                owner="engineering",
+            )
+        )
+        db.transition_work_item(
+            TransitionRequest(
+                work_item_id="work-runtime-execution",
+                from_state="ready",
+                to_state="active",
+                actor_role="engineering",
+                reason="Engineering already started.",
+                owner="engineering",
+            )
+        )
+        db.create_role_assignment(
+            assignment_id="assignment-engineering-active",
+            role_id="engineering",
+            work_item_id="work-runtime-execution",
+            source_ref="call-product-ready",
+            title="Continue active implementation",
+            summary="Implementation is already active.",
+            assignment_type="implementation",
+            visibility_scope="project",
+            payload={},
+        )
+        service = RoleService(
+            db=db,
+            role_id="engineering",
+            role_instance_id="test-project.engineering.1",
+            worker=StaticWorker(
+                [
+                    SafeOutputCall(
+                        role_id="engineering",
+                        tool_name="status.complete",
+                        payload={"message": "Active implementation assignment checked."},
+                        terminal=True,
+                    )
+                ]
+            ),
+        )
+
+        receipt = service.run_next_assignment()
+        work = db.get_work_item("work-runtime-execution")
+        transition_events = [
+            event
+            for event in db.list_events("work-runtime-execution")
+            if event["event_type"] == "work_item.transitioned"
+            and event["payload"]["from_state"] == "ready"
+            and event["payload"]["to_state"] == "active"
+        ]
+    finally:
+        db.close()
+
+    assert receipt is not None
+    assert work.state == "active"
+    assert len(transition_events) == 1
+
+
+def test_engineering_implementation_assignment_fails_for_non_ready_work(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    try:
+        db.create_role_assignment(
+            assignment_id="assignment-engineering-blocked",
+            role_id="engineering",
+            work_item_id="work-runtime-execution",
+            source_ref="call-product-ready",
+            title="Cannot start blocked work",
+            summary="Implementation should not start from blocked.",
+            assignment_type="implementation",
+            visibility_scope="project",
+            payload={},
+        )
+        worker = StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="engineering",
+                    tool_name="status.complete",
+                    payload={"message": "Should not run."},
+                    terminal=True,
+                )
+            ]
+        )
+        service = RoleService(
+            db=db,
+            role_id="engineering",
+            role_instance_id="test-project.engineering.1",
+            worker=worker,
+        )
+
+        with pytest.raises(ValueError, match="ready or active"):
+            service.run_next_assignment()
+        assignment = db.get_role_assignment("assignment-engineering-blocked")
+        work = db.get_work_item("work-runtime-execution")
+        runs = db.status_snapshot()["agent_runs"]
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "failed"
+    assert "ready or active" in assignment["failure_reason"]
+    assert work.state == "blocked"
+    assert runs[0]["status"] == "failed"
+    assert worker.seen_assignment is None
 
 
 def test_role_service_claims_connector_assignment_and_completes_with_safe_output(tmp_path: Path) -> None:

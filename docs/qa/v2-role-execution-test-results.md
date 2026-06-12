@@ -3607,3 +3607,53 @@ V2 topology validation passed
   shaping-state validation, ready transition, implementation assignment
   creation, same-call replay idempotency, and duplicate deferred-call
   rejection. | accepted after rework 2026-06-12
+
+## PB-005 Story 43 - Engineering Implementation Activation
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/role_service.py`
+- `tests/test_v2_role_assignment_execution.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py -q
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+67 passed before QA review
+compileall passed
+```
+
+### Findings And Rework
+
+- QA found no blocking issues.
+- QA noted a residual test gap that the invalid-state failure test did not
+  explicitly prove the worker was not invoked. Engineering added that assertion.
+
+### Acceptance Assessment
+
+- Engineering implementation assignments transition linked work from `ready` to
+  `active` when claimed.
+- Already-active implementation assignments remain idempotent and do not create
+  duplicate activation transitions.
+- Non-ready/non-active implementation assignments fail visibly before worker
+  execution, with failed run and assignment evidence.
+- Non-implementation assignments remain unchanged.
+
+### Review Log
+
+- QA-RL-071 | qa-engineer | acceptance | PB-005 Story 43 | Verified
+  implementation assignment activation, already-active idempotency, failed
+  invalid-state activation, and run/assignment failure visibility. |
+  accepted 2026-06-12

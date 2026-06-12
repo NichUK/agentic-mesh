@@ -3757,3 +3757,56 @@ PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files a
   for `ready -> active` remains a separate lifecycle execution story.
 - `work_item.mark_ready` is not an administrative close/cancel path and does
   not create release evidence.
+
+## PB-005 Story 43 - Engineering Implementation Activation
+
+Date: 2026-06-12
+
+### Goal
+
+Make the role-service claim boundary activate implementation work. Once Product
+has marked a work item `ready` and queued an Engineering implementation
+assignment, Engineering should be able to claim that assignment and move the
+work item to `active` before executing worker output.
+
+### Changes
+
+- Added role-service activation for `implementation` assignments with a linked
+  work item.
+- Transitioned `ready -> active` when Engineering claims implementation work.
+- Left already-`active` implementation work idempotent so recovered or retried
+  assignments do not duplicate transitions.
+- Rejected implementation assignments for non-`ready`/non-`active` work with a
+  visible role assignment failure.
+- Created the agent run record before activation so pre-worker lifecycle
+  failures appear in runtime run history.
+- Kept non-implementation assignment behavior unchanged.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py -q
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+python scripts\check-pr-size.py --base origin/develop --committed-only
+```
+
+Results:
+
+```text
+67 passed before QA review
+compileall passed
+67 passed after QA residual assertion
+314 passed full suite
+V2 topology validation passed
+PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files and 104887 changed lines against origin/develop
+```
+
+### Notes
+
+- This story activates implementation work only at the role-service claim
+  boundary. It does not change QA approval or release behavior.
+- The worker still owns specialist implementation output through safe-output
+  tools such as `implementation.record_change` and `handoff.request`.
