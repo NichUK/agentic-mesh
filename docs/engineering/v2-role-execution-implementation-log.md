@@ -951,6 +951,81 @@ Results:
 - Only one hibernated role instance is marked hydrating for queued work in this
   first maintenance slice.
 
+## PB-005 Story 3 - Container Lifecycle Command Planning
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add a dry-run container lifecycle planner that maps v2 role-instance
+hibernation state to explicit Docker Compose commands. This story gives the
+future supervisor and Release/Platform roles an auditable command plan before
+actual container stop/start execution is enabled.
+
+### Implementation Notes
+
+- Added `container_lifecycle` project/role config loading.
+- Supported v1 adapter is `docker-compose`.
+- Added `ComposeRoleLifecycleConfig` with:
+  - `compose_files`
+  - `service_name_template`
+  - `working_directory`
+- Service name templates support:
+  - `{project_id}`
+  - `{role_id}`
+  - `{role_instance_id}`
+  - `{index}`
+- Added lifecycle command planning:
+  - `hibernated` role instances plan `docker compose ... stop <service>`
+  - `hydrating` role instances plan `docker compose ... up -d <service>`
+  - other role-instance states are skipped with reasons
+- Added `plan-project-container-lifecycle` CLI command.
+- The CLI emits JSON with action count, skipped count, per-action commands, and
+  skipped reasons. It does not execute the commands.
+
+### Tests Added
+
+- project defaults and role overrides for container lifecycle config
+- invalid lifecycle config rejection
+- Docker Compose stop/start command generation
+- numeric role-instance index validation for `{index}`
+- CLI planning from durable hibernated/hydrating role-instance state
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+32 passed
+71 passed
+```
+
+### QA Rework
+
+- Tightened `compose_files` loading so non-string project YAML entries are
+  rejected instead of coerced to strings.
+- Tightened service-name template validation so only exact allowed field names
+  are accepted; indexing and attribute expressions such as `{project_id[0]}` or
+  `{project_id.__class__}` are rejected.
+- Added regression coverage for both validation gaps.
+
+### Known Limitations
+
+- This story plans container commands only; it does not execute them.
+- Only Docker Compose command planning is implemented. Kubernetes, Helm, and
+  other enterprise deployment adapters remain future slices.
+- The planner maps current runtime state to commands but does not yet record
+  command execution results or update status after container action completion.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1002,3 +1077,9 @@ Results:
 - RL-015 | engineering | implementation | PB-005 Story 2 | Added project
   hibernation maintenance with warm-pool hibernation, queued-work hydration,
   and JSON per-instance receipts. | QA accepted 2026-06-12
+- RL-016 | engineering | implementation | PB-005 Story 3 | Added Docker Compose
+  container lifecycle command planning for hibernated and hydrating role
+  instances. | QA accepted after rework 2026-06-12
+- RL-017 | engineering | QA rework | PB-005 Story 3 | Rejected non-string
+  Compose file config and non-exact template field expressions after QA found
+  validation gaps. | QA accepted 2026-06-12

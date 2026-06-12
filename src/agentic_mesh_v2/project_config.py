@@ -34,6 +34,33 @@ def load_role_hibernation_config(project_file: Path, *, role_id: str) -> dict[st
     return config
 
 
+def load_role_container_lifecycle_config(project_file: Path, *, role_id: str) -> dict[str, Any]:
+    raw = _load_project_mapping(project_file)
+    role = _role_mapping(raw, role_id=role_id)
+    config: dict[str, Any] = {}
+    project_lifecycle = raw.get("container_lifecycle")
+    if isinstance(project_lifecycle, dict):
+        config.update(project_lifecycle)
+    role_lifecycle = role.get("container_lifecycle")
+    if isinstance(role_lifecycle, dict):
+        config.update(role_lifecycle)
+    if "working_directory" in config and isinstance(config["working_directory"], str):
+        working_directory = Path(config["working_directory"])
+        if not working_directory.is_absolute():
+            config["working_directory"] = str(project_file.parent / working_directory)
+    if "compose_files" in config and isinstance(config["compose_files"], list):
+        compose_files: list[str] = []
+        for index, item in enumerate(config["compose_files"]):
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"container_lifecycle compose_files item {index} must be a non-empty string")
+            compose_file = Path(item)
+            if not compose_file.is_absolute():
+                compose_file = project_file.parent / compose_file
+            compose_files.append(str(compose_file))
+        config["compose_files"] = compose_files
+    return config
+
+
 def list_project_role_service_configs(project_file: Path) -> list[ProjectRoleServiceConfig]:
     raw = _load_project_mapping(project_file)
     project_id = raw.get("project_id")

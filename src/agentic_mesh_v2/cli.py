@@ -5,6 +5,8 @@ import json
 import time
 from pathlib import Path
 
+from agentic_mesh_v2.container_lifecycle import ComposeRoleLifecycleConfig
+from agentic_mesh_v2.container_lifecycle import plan_compose_lifecycle_action
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
 from agentic_mesh_v2.hibernation import HibernationPolicy
@@ -12,6 +14,7 @@ from agentic_mesh_v2.hibernation import HibernationService
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
 from agentic_mesh_v2.project_config import list_project_role_service_configs
+from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
 from agentic_mesh_v2.project_config import load_role_hibernation_config
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.role_service import RoleService
@@ -123,6 +126,12 @@ def main(argv: list[str] | None = None) -> int:
         "--hydrate-reason",
         default="Project hibernation maintenance found queued role work.",
     )
+
+    container_lifecycle_parser = subparsers.add_parser(
+        "plan-project-container-lifecycle",
+        help="Plan container lifecycle commands for hibernated or hydrating project role instances.",
+    )
+    container_lifecycle_parser.add_argument("--project-file", type=Path, required=True)
 
     topology_parser = subparsers.add_parser(
         "validate-topology",
@@ -262,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.command == "run-project-hibernation-maintenance":
                 result = _run_project_hibernation_maintenance(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            if args.command == "plan-project-container-lifecycle":
+                result = _plan_project_container_lifecycle(db, args)
                 print(json.dumps(result, sort_keys=True))
                 return 0
         finally:
@@ -473,6 +486,73 @@ def _run_project_hibernation_maintenance(db: V2Database, args: argparse.Namespac
         "project_file": str(args.project_file),
         **totals,
         "role_instances": entries,
+    }
+
+
+def _plan_project_container_lifecycle(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    statuses = {
+        row["role_instance_id"]: row
+        for row in db.list_role_instance_statuses()
+    }
+    actions: list[dict[str, object]] = []
+    skipped: list[dict[str, str]] = []
+    for config in list_project_role_service_configs(args.project_file):
+        row = statuses.get(config.role_instance_id)
+        if row is None:
+            skipped.append(
+                {
+                    "role_id": config.role_id,
+                    "role_instance_id": config.role_instance_id,
+                    "reason": "Role instance has no runtime status.",
+                }
+            )
+            continue
+        raw_lifecycle = load_role_container_lifecycle_config(args.project_file, role_id=config.role_id)
+        if not raw_lifecycle:
+            skipped.append(
+                {
+                    "role_id": config.role_id,
+                    "role_instance_id": config.role_instance_id,
+                    "reason": "Role has no container_lifecycle config.",
+                }
+            )
+            continue
+        lifecycle_config = ComposeRoleLifecycleConfig.from_mapping(raw_lifecycle)
+        action = plan_compose_lifecycle_action(
+            config=lifecycle_config,
+            project_id=config.project_id,
+            role_id=config.role_id,
+            role_instance_id=config.role_instance_id,
+            status=str(row["status"]),
+            reason=str(row.get("hibernation_reason") or row.get("wake_reason") or row.get("detail") or ""),
+        )
+        if action is None:
+            skipped.append(
+                {
+                    "role_id": config.role_id,
+                    "role_instance_id": config.role_instance_id,
+                    "reason": f"Role instance status `{row['status']}` has no container lifecycle action.",
+                }
+            )
+            continue
+        actions.append(
+            {
+                "role_id": action.role_id,
+                "role_instance_id": action.role_instance_id,
+                "action": action.action,
+                "service_name": action.service_name,
+                "command": list(action.command),
+                "working_directory": str(action.working_directory) if action.working_directory is not None else None,
+                "reason": action.reason,
+            }
+        )
+    return {
+        "status": "ok",
+        "project_file": str(args.project_file),
+        "action_count": len(actions),
+        "skipped_count": len(skipped),
+        "actions": actions,
+        "skipped": skipped,
     }
 
 

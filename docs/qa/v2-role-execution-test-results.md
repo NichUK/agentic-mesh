@@ -947,3 +947,78 @@ scope:
   hibernation, warm-pool preservation, queued-work hydration, JSON receipts,
   focused and broader runtime tests, and factual scope limits. | accepted
   2026-06-12
+
+## PB-005 Story 3 - Container Lifecycle Command Planning
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after retest
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/container_lifecycle.py`
+- `src/agentic_mesh_v2/project_config.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_container_lifecycle.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py
+```
+
+Result:
+
+```text
+32 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+71 passed
+```
+
+### Acceptance Assessment
+
+- Project and role `container_lifecycle` config loads with project defaults and
+  role overrides.
+- Docker Compose lifecycle config validates adapter, compose files, service
+  name template, working directory, and exact allowed template fields.
+- Regression checks reject non-string `compose_files` entries and template
+  field expressions such as `{project_id[0]}` and `{project_id.__class__}`.
+- Hibernated role instances plan `docker compose ... stop <service>`.
+- Hydrating role instances plan `docker compose ... up -d <service>`.
+- Non-actionable role states are skipped with reasons.
+- `plan-project-container-lifecycle` reads durable role-instance status and
+  emits JSON action/skipped counts plus command details.
+- The engineering log is factual: this is dry-run planning only, with no actual
+  container stop/start, Kubernetes/Helm execution, or execution result
+  recording.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 3 because they remain later PB-005
+scope:
+
+- The command plans Docker Compose lifecycle commands only; it does not execute
+  them.
+- Kubernetes, Helm, and other deployment adapters remain future slices.
+- Planned lifecycle actions do not yet record execution results or update
+  runtime status after container action completion.
+
+### Review Log
+
+- QA-RL-016 | qa-engineer | acceptance | PB-005 Story 3 | Verified dry-run
+  Docker Compose lifecycle command planning, project/role config loading,
+  strict compose-file and template-field validation after QA rework,
+  durable-status CLI JSON receipts, focused and broader runtime tests, and
+  factual scope limits. | accepted 2026-06-12

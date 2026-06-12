@@ -997,6 +997,80 @@ roles:
     assert statuses["test-project.product-manager.1"]["wake_reason"] == "Queued test work."
 
 
+def test_v2_cli_plans_project_container_lifecycle_from_runtime_status(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+container_lifecycle:
+  adapter: docker-compose
+  compose_files:
+    - docker-compose.yml
+  service_name_template: "{project_id}-{role_id}-{index}"
+  working_directory: deploy
+roles:
+  product-manager:
+    instances: 2
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.update_role_instance_hibernation(
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            status="hibernated",
+            reason="Idle grace elapsed.",
+        )
+        db.update_role_instance_hibernation(
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.2",
+            status="hydrating",
+            reason="Queued work arrived.",
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "plan-project-container-lifecycle",
+                "--project-file",
+                str(project_file),
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["action_count"] == 2
+    assert output["skipped_count"] == 0
+    assert output["actions"][0]["action"] == "stop"
+    assert output["actions"][0]["command"] == [
+        "docker",
+        "compose",
+        "-f",
+        str(project_dir / "docker-compose.yml"),
+        "stop",
+        "test-project-product-manager-1",
+    ]
+    assert output["actions"][0]["working_directory"] == str(project_dir / "deploy")
+    assert output["actions"][1]["action"] == "start"
+    assert output["actions"][1]["command"][-3:] == ["up", "-d", "test-project-product-manager-2"]
+
+
 @pytest.mark.parametrize(
     ("extra_args", "message"),
     [
