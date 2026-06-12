@@ -46,6 +46,12 @@ Teams is the human collaboration surface. It must not become the orchestration
 engine. Runtime state, routing, queue capture, safe-output calls, approvals,
 handoffs, and release evidence remain owned by the v2 runtime.
 
+Agents must not use Teams as their agent-to-agent transport. Inter-agent
+consults, handoffs, relevance decisions, blockers, and lifecycle progression
+must use the v2 runtime and safe-output tools. Teams may show human-visible
+summaries, questions, approvals, links, and discussion context, but it is not
+the communication bus between agents.
+
 ## Human Team Collaboration Intent
 
 Agentic Mesh should support the collaboration patterns that already work in
@@ -58,8 +64,10 @@ The intended experience is:
   role's voice and authority.
 - A role can ask a human for clarification, a decision, approval, risk
   acceptance, or missing context.
-- A human or role can bring another human or role into a discussion when the
-  decision needs more perspectives.
+- A human can bring another human or role agent into a visible discussion when
+  the decision needs more perspectives.
+- A role that needs another role's specialist input uses runtime consult or
+  handoff tools, then may post a human-facing Teams summary when useful.
 - A channel can act as a project room where important discussion is visible to
   the team without forcing every role to reply.
 - Feature or epic channels can narrow context for larger bodies of work.
@@ -218,12 +226,15 @@ the connector:
 - Use direct messages for focused questions that need one accountable human to
   answer and might be missed in a busy channel.
 - Use a suitable channel, group chat, or thread when the question needs visible
-  discussion between multiple humans, multiple agents, or a project group.
+  discussion between multiple humans, a human and one or more role agents, or a
+  project group.
 - Mention the specific humans or agents whose input is needed when using a
   channel or group discussion.
 - Allow the human to loop in another human or agent, turning a direct
   clarification into a broader discussion when that is the natural way to reach
   the decision.
+- If the role itself needs another role's input, use runtime consult or handoff
+  first; do not simulate inter-agent routing through Teams mentions.
 - Preserve the conversation link and final decision back to the originating
   work item, queue item, approval, risk, or document update.
 
@@ -256,6 +267,7 @@ V2 Teams connector MVP scope:
 
 - Do not resurrect v1 Teams listener behavior.
 - Do not use Teams bot-to-bot mentions as an orchestration mechanism.
+- Do not use Teams as the agent-to-agent communication path.
 - Do not create work items automatically for every Teams message.
 - Do not make every role reply to every channel message.
 - Do not rely on JSON final responses for normal conversation output.

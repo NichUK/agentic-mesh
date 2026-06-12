@@ -36,6 +36,11 @@ specialists:
 Teams is the collaboration surface. The v2 runtime remains the orchestration,
 state, approval, safe-output, and audit authority.
 
+Agents must not use Teams to talk to each other. Agent-to-agent consults,
+handoffs, blockers, and lifecycle transitions use the v2 runtime and
+safe-output tools. Teams is for humans talking with agents, agents asking
+humans for input, human-visible summaries, approvals, and project-room context.
+
 ## Handoff Assignments
 
 ### UX Designer
@@ -57,6 +62,8 @@ Questions to answer:
 - How should humans see whether a conversation became durable work?
 - How should Markdown content be rendered without truncation or unreadable
   formatting?
+- How should human-visible discussion differ from internal role consults and
+  handoffs?
 
 Expected outputs:
 
@@ -83,6 +90,8 @@ Questions to answer:
   proactive work proposals, handoffs, approvals, and delivery failures?
 - How should this design generalise to Slack, GitHub Issues, Azure DevOps, and
   other input systems?
+- How does the architecture prevent Teams from becoming an agent-to-agent
+  transport while still preserving human-visible context?
 
 Expected outputs:
 
@@ -133,6 +142,8 @@ Questions to answer:
   releases, or deployments?
 - How should role instructions guide DM versus channel versus group-chat
   communication without rigidly enforcing one style?
+- How should prompts tell agents to use runtime consult/handoff tools for
+  specialist agent input rather than Teams messages?
 
 Expected outputs:
 
@@ -179,6 +190,8 @@ Questions to answer:
 - What scenarios prove relevance checks avoid noisy team-wide replies?
 - What scenarios prove agent-initiated questions are delivered and bound back
   to the originating work?
+- What scenarios prove agent-to-agent consults and handoffs do not depend on
+  Teams messages?
 - What scenarios prove idempotency, delivery failure reporting, and permission
   failures?
 
