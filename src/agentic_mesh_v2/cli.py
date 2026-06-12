@@ -21,9 +21,10 @@ from agentic_mesh_v2.project_config import load_role_hibernation_config
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
 from agentic_mesh_v2.role_service import RoleService
-from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputError
-from agentic_mesh_v2.safe_outputs import SafeOutputService
+from agentic_mesh_v2.safe_output_mcp import run_safe_output_mcp_stdio
+from agentic_mesh_v2.safe_output_transport import parse_safe_output_payload_json
+from agentic_mesh_v2.safe_output_transport import record_safe_output_for_run
 from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.topology import ProjectRepo
 from agentic_mesh_v2.topology import RuntimeTopology
@@ -69,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
         "--terminal",
         action="store_true",
         help="Mark this call terminal in addition to terminal-tool defaults.",
+    )
+
+    subparsers.add_parser(
+        "run-safe-output-mcp-stdio",
+        help="Run the v2 safe-output MCP-compatible JSON-RPC stdio server.",
     )
 
     recover_parser = subparsers.add_parser(
@@ -381,6 +387,9 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     print(json.dumps(result, sort_keys=True))
                     return 0
+            if args.command == "run-safe-output-mcp-stdio":
+                run_safe_output_mcp_stdio(db)
+                return 0
             if args.command == "recover-stale-assignments":
                 recovered = db.recover_stale_role_assignments(
                     role_id=args.role_id,
@@ -448,38 +457,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _record_safe_output_cli(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
-    run = db.get_agent_run(args.run_id)
-    if run is None:
-        raise ValueError(f"agent run `{args.run_id}` was not found")
-    if run.get("status") != "running":
-        raise ValueError(f"agent run `{args.run_id}` is not running")
-    if run.get("role_id") != args.role_id:
-        raise ValueError(
-            f"agent run `{args.run_id}` belongs to role `{run.get('role_id')}`, not `{args.role_id}`"
-        )
-    try:
-        payload = json.loads(args.payload_json)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"--payload-json must be valid JSON: {exc.msg}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("--payload-json must be a JSON object")
-    call = SafeOutputCall(
+    return record_safe_output_for_run(
+        db,
+        run_id=args.run_id,
         role_id=args.role_id,
         tool_name=args.tool_name,
-        payload=payload,
+        payload=parse_safe_output_payload_json(args.payload_json),
         terminal=bool(args.terminal),
     )
-    call_id = SafeOutputService(db).record(run_id=args.run_id, call=call)
-    stored = db.list_safe_output_calls()
-    recorded = next((row for row in stored if row.get("call_id") == call_id), None)
-    return {
-        "status": "ok",
-        "run_id": args.run_id,
-        "role_id": args.role_id,
-        "tool_name": args.tool_name,
-        "call_id": call_id,
-        "terminal": bool(recorded.get("terminal")) if recorded is not None else bool(args.terminal),
-    }
 
 
 def _parse_project_repo(value: str) -> ProjectRepo:
