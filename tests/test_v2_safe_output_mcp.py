@@ -5,6 +5,7 @@ from io import StringIO
 from pathlib import Path
 
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.safe_output_mcp import SAFE_OUTPUT_MCP_TOOL
 from agentic_mesh_v2.safe_output_mcp import handle_safe_output_mcp_request
 from agentic_mesh_v2.safe_output_mcp import run_safe_output_mcp_stdio
@@ -59,6 +60,42 @@ def test_safe_output_mcp_records_tool_call_for_running_role_run(tmp_path: Path) 
     assert calls[0]["role_id"] == "product-manager"
     assert calls[0]["tool_name"] == "status.reply"
     assert calls[0]["payload"]["message"] == "Product reply through MCP."
+
+
+def test_safe_output_mcp_with_configured_service_publishes_document(tmp_path: Path) -> None:
+    db = _db_with_work_run(tmp_path, "run-mcp-document")
+    document_root = tmp_path / "docs"
+    try:
+        response = handle_safe_output_mcp_request(
+            db,
+            {
+                "jsonrpc": "2.0",
+                "id": "call-document",
+                "method": "tools/call",
+                "params": {
+                    "name": SAFE_OUTPUT_MCP_TOOL,
+                    "arguments": {
+                        "run_id": "run-mcp-document",
+                        "role_id": "product-manager",
+                        "tool_name": "document.propose_update",
+                        "payload": {
+                            "path": "work-items/work-mcp-document/020-product-definition.md",
+                            "document_type": "product_definition",
+                            "content": _product_definition_content(),
+                        },
+                    },
+                },
+            },
+            service=SafeOutputService(db, document_library_root=document_root),
+        )
+        artifacts = db.list_artifacts()
+    finally:
+        db.close()
+
+    assert response is not None
+    assert response["result"]["structuredContent"]["status"] == "ok"
+    assert len(artifacts) == 1
+    assert (document_root / "work-items" / "work-mcp-document" / "020-product-definition.md").exists()
 
 
 def test_safe_output_mcp_accepts_initialized_notification_without_error(tmp_path: Path) -> None:
@@ -289,3 +326,57 @@ def _db_with_run(tmp_path: Path, run_id: str) -> V2Database:
         work_item_id=None,
     )
     return db
+
+
+def _db_with_work_run(tmp_path: Path, run_id: str) -> V2Database:
+    db = V2Database(tmp_path / f"{run_id}.sqlite3")
+    db.migrate()
+    db.create_queue_item(
+        queue_item_id="queue-mcp-document",
+        title="MCP document publication",
+        summary="Publish a document through MCP safe output.",
+        owner_role="product-manager",
+    )
+    db.mark_queue_ready("queue-mcp-document", actor_role="product-manager", reason="Ready.")
+    db.promote_queue_item(
+        queue_item_id="queue-mcp-document",
+        work_item_id="work-mcp-document",
+        owner_role="product-manager",
+    )
+    db.create_run(
+        run_id=run_id,
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        work_item_id="work-mcp-document",
+    )
+    return db
+
+
+def _product_definition_content() -> str:
+    return """# Product Definition
+
+## Objective
+
+Publish a valid product definition through MCP.
+
+## Scope
+
+The slice covers MCP safe-output recording and document artifact publication.
+
+## Non-Goals
+
+It does not add remote document backends.
+
+## Acceptance Criteria
+
+- MCP records a document safe-output call.
+- The document is written under the configured library root.
+
+## Sponsor Questions
+
+No sponsor questions remain open for this test document.
+
+## Review Log
+
+- REV-0001 | product-manager | accepted | Initial MCP document evidence.
+"""

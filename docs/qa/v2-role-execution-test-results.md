@@ -2458,3 +2458,79 @@ compileall passed
   CLI/MCP transport single-effect processing, command override rejection,
   provenance enforcement, and release evidence closure rules. | accepted after
   rework 2026-06-12
+
+## PB-005 Story 26 - Document Safe-Output Publication
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/project_config.py`
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/safe_output_mcp.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_document_safe_outputs.py`
+- `tests/test_v2_safe_output_mcp.py`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_document_safe_outputs.py tests\test_v2_safe_output_mcp.py tests\test_v2_safe_outputs.py tests\test_v2_release_safe_outputs.py tests\test_v2_role_assignment_execution.py::test_role_service_collects_safe_outputs_recorded_by_worker_cli_transport tests\test_v2_cli_server.py::test_v2_cli_run_role_service_tick_loads_worker_from_project_file
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_document_safe_outputs.py tests\test_v2_safe_output_mcp.py tests\test_v2_release_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+29 passed focused engineering rework suite
+24 passed QA recheck focused suite
+234 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation wrote the Markdown file before inserting the artifact.
+  QA found a second valid revision could overwrite the file and then fail on
+  `UNIQUE(work_item_id, path)`, leaving the document library and runtime
+  artifact state inconsistent. Engineering changed artifact recording to upsert
+  on `(work_item_id, path)` and added a repeat-revision regression.
+- Initial role-service CLI transport omitted project-file context. QA found the
+  worker-facing CLI front door did not share the configured document publisher,
+  relying on later RoleService replay instead. Engineering propagated
+  `--project-file` into worker CLI transports and added coverage.
+
+### Acceptance Assessment
+
+- `document.propose_update` publishes validated content under the configured
+  document library root.
+- The document path must match the configured TOGAF-SDLC framework path.
+- Absolute paths and traversal outside the document root are rejected by the
+  containment check.
+- Status-only and incomplete documents are rejected before publication.
+- CLI, MCP, and RoleService paths share configured document publication when
+  project context is supplied.
+- Repeat valid revisions update the current artifact row and keep file/runtime
+  state aligned.
+
+### Residual Risks
+
+- Revision history is provided by the backing document library rather than
+  separate runtime artifact versions.
+- Remote document backends remain future adapters.
+
+### Review Log
+
+- QA-RL-040 | qa-engineer | acceptance | PB-005 Story 26 | Verified
+  document safe-output publication, framework path enforcement, content
+  validation, root containment, CLI/MCP configured-service parity, repeat
+  revision behavior, and artifact traceability. | accepted after rework
+  2026-06-12

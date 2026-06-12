@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.documents import DocumentFramework
+from agentic_mesh_v2.documents import TOGAF_SDLC_V1
+from agentic_mesh_v2.documents import read_existing
+from agentic_mesh_v2.documents import render_path
+from agentic_mesh_v2.documents import validate_document_content
 from agentic_mesh_v2.release import ReleaseEvidence
 from agentic_mesh_v2.release import ReleaseEvidenceLink
 from agentic_mesh_v2.release import ReleaseService
@@ -186,11 +192,15 @@ class SafeOutputService:
         policy: ToolPolicy | None = None,
         release_service: ReleaseService | None = None,
         process_effects: bool = True,
+        document_library_root: Path | None = None,
+        document_framework: DocumentFramework | None = None,
     ) -> None:
         self.db = db
         self.policy = policy or ToolPolicy()
         self.release_service = release_service or ReleaseService(db)
         self.process_effects = process_effects
+        self.document_library_root = Path(document_library_root).resolve(strict=False) if document_library_root else None
+        self.document_framework = document_framework or TOGAF_SDLC_V1
 
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:
         self.policy.authorize(role_id=call.role_id, tool_name=call.tool_name)
@@ -216,6 +226,8 @@ class SafeOutputService:
         return call_id
 
     def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        if call.tool_name == "document.propose_update":
+            self._publish_document_update(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "release.record_no_deployment":
             self._record_no_deployment(call)
         if call.tool_name == "release.deploy":
@@ -223,6 +235,47 @@ class SafeOutputService:
         if call.tool_name == "release.close":
             self._close_released_work(call)
         return None
+
+    def _publish_document_update(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        if self.document_library_root is None:
+            return
+        if _artifact_exists(self.db, artifact_id=f"artifact-{call_id}"):
+            return
+        source_run = self.db.get_agent_run(run_id)
+        work_item_id = _optional_text(call.payload.get("work_item_id"))
+        if work_item_id is None and source_run is not None:
+            work_item_id = _optional_text(source_run.get("work_item_id"))
+        if work_item_id is None:
+            raise SafeOutputError("document.propose_update requires work_item_id or a work-item-backed run")
+        document_type = _required_text(call.payload, "document_type")
+        relative_path = _required_text(call.payload, "path")
+        expected_path = render_path(
+            framework=self.document_framework,
+            document_type=document_type,
+            work_item_id=work_item_id,
+        )
+        if relative_path != expected_path:
+            raise SafeOutputError(
+                f"document.propose_update path must match framework path `{expected_path}`"
+            )
+        target = _contained_document_path(self.document_library_root, relative_path)
+        content = _required_text(call.payload, "content")
+        validate_document_content(
+            framework=self.document_framework,
+            document_type=document_type,
+            content=content,
+            existing_content=read_existing(self.document_library_root, relative_path),
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content.rstrip() + "\n", encoding="utf-8")
+        self.db.add_artifact(
+            artifact_id=f"artifact-{call_id}",
+            work_item_id=work_item_id,
+            path=relative_path,
+            document_type=document_type,
+            status=_optional_text(call.payload.get("status")) or "proposed",
+            created_by_role=call.role_id,
+        )
 
     def _record_no_deployment(self, call: SafeOutputCall) -> None:
         self.release_service.record_no_deployment(
@@ -447,6 +500,22 @@ def _has_successful_deployment(db: V2Database, *, release_id: str, work_item_id:
         and run.get("status") == "succeeded"
         for run in db.list_deployment_runs()
     )
+
+
+def _artifact_exists(db: V2Database, *, artifact_id: str) -> bool:
+    return any(artifact.get("artifact_id") == artifact_id for artifact in db.list_artifacts())
+
+
+def _contained_document_path(root: Path, relative_path: str) -> Path:
+    candidate = Path(relative_path)
+    if candidate.is_absolute():
+        raise SafeOutputError("document paths must be relative to the document library root")
+    resolved = (root / candidate).resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise SafeOutputError("document path must resolve inside the document library root") from exc
+    return resolved
 
 
 def _optional_text(value: object) -> str | None:

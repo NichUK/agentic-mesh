@@ -25,6 +25,13 @@ class RoleMemoryConfig:
     memory_filename: str
 
 
+@dataclass(frozen=True)
+class DocumentLibraryConfig:
+    backend: str
+    root: Path
+    structure_policy: str
+
+
 def load_role_worker_config(project_file: Path, *, role_id: str) -> dict[str, Any]:
     raw = _load_project_mapping(project_file)
     role = _role_mapping(raw, role_id=role_id)
@@ -69,6 +76,25 @@ def load_role_container_lifecycle_config(project_file: Path, *, role_id: str) ->
             compose_files.append(str(compose_file))
         config["compose_files"] = compose_files
     return config
+
+
+def load_document_library_config(project_file: Path) -> DocumentLibraryConfig | None:
+    raw = _load_project_mapping(project_file)
+    config = raw.get("document_library")
+    if not isinstance(config, dict):
+        return None
+    backend = _non_empty_string(config.get("backend"), default="filesystem")
+    if backend not in {"filesystem", "git"}:
+        raise ValueError(f"document_library backend `{backend}` is not supported yet")
+    root_value = _non_empty_string(config.get("root"), default=".")
+    root = Path(root_value)
+    if not root.is_absolute():
+        root = project_file.parent / root
+    return DocumentLibraryConfig(
+        backend=backend,
+        root=root.resolve(strict=False),
+        structure_policy=_non_empty_string(config.get("structure_policy"), default="togaf-sdlc-v1"),
+    )
 
 
 def load_role_memory_config(project_file: Path, *, role_id: str) -> RoleMemoryConfig:

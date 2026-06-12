@@ -7,6 +7,7 @@ from typing import TextIO
 
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.safe_outputs import SafeOutputError
+from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.safe_output_transport import record_safe_output_for_run
 
 
@@ -56,7 +57,12 @@ def safe_output_mcp_tools() -> list[dict[str, Any]]:
     ]
 
 
-def handle_safe_output_mcp_request(db: V2Database, request: dict[str, Any]) -> dict[str, Any] | None:
+def handle_safe_output_mcp_request(
+    db: V2Database,
+    request: dict[str, Any],
+    *,
+    service: SafeOutputService | None = None,
+) -> dict[str, Any] | None:
     if not isinstance(request, dict):
         return _error_response(None, -32600, "JSON-RPC request must be an object")
     request_id = request.get("id")
@@ -79,7 +85,7 @@ def handle_safe_output_mcp_request(db: V2Database, request: dict[str, Any]) -> d
         if method == "tools/list":
             return _success_response(request_id, {"tools": safe_output_mcp_tools()})
         if method == "tools/call":
-            return _handle_tool_call(db, request_id=request_id, params=request.get("params"))
+            return _handle_tool_call(db, request_id=request_id, params=request.get("params"), service=service)
     except (ValueError, SafeOutputError) as exc:
         return _error_response(request_id, -32602, str(exc))
 
@@ -89,6 +95,7 @@ def handle_safe_output_mcp_request(db: V2Database, request: dict[str, Any]) -> d
 def run_safe_output_mcp_stdio(
     db: V2Database,
     *,
+    service: SafeOutputService | None = None,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> None:
@@ -102,7 +109,7 @@ def run_safe_output_mcp_stdio(
         except json.JSONDecodeError as exc:
             response: dict[str, Any] | None = _error_response(None, -32700, f"parse error: {exc.msg}")
         else:
-            response = handle_safe_output_mcp_request(db, request)
+            response = handle_safe_output_mcp_request(db, request, service=service)
         if response is not None:
             output_stream.write(json.dumps(response, sort_keys=True))
             output_stream.write("\n")
@@ -114,6 +121,7 @@ def _handle_tool_call(
     *,
     request_id: object,
     params: object,
+    service: SafeOutputService | None = None,
 ) -> dict[str, Any]:
     if request_id is None:
         raise ValueError("tools/call requires a JSON-RPC request id")
@@ -141,6 +149,7 @@ def _handle_tool_call(
         tool_name=tool_name,
         payload=payload,
         terminal=terminal,
+        service=service,
     )
     return _success_response(
         request_id,

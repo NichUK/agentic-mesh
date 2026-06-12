@@ -16,6 +16,7 @@ from agentic_mesh_v2.hibernation import HibernationService
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
 from agentic_mesh_v2.project_config import list_project_role_service_configs
+from agentic_mesh_v2.project_config import load_document_library_config
 from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
 from agentic_mesh_v2.project_config import load_role_hibernation_config
 from agentic_mesh_v2.project_config import load_role_memory_context
@@ -23,6 +24,7 @@ from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.safe_outputs import SafeOutputError
+from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.safe_output_mcp import run_safe_output_mcp_stdio
 from agentic_mesh_v2.safe_output_transport import parse_safe_output_payload_json
 from agentic_mesh_v2.safe_output_transport import record_safe_output_for_run
@@ -72,10 +74,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Mark this call terminal in addition to terminal-tool defaults.",
     )
+    safe_output_parser.add_argument(
+        "--project-file",
+        type=Path,
+        help="Optional project.yaml used to resolve configured safe-output effects such as document publication.",
+    )
 
-    subparsers.add_parser(
+    safe_output_mcp_parser = subparsers.add_parser(
         "run-safe-output-mcp-stdio",
         help="Run the v2 safe-output MCP-compatible JSON-RPC stdio server.",
+    )
+    safe_output_mcp_parser.add_argument(
+        "--project-file",
+        type=Path,
+        help="Optional project.yaml used to resolve configured safe-output effects such as document publication.",
     )
 
     recover_parser = subparsers.add_parser(
@@ -389,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps(result, sort_keys=True))
                     return 0
             if args.command == "run-safe-output-mcp-stdio":
-                run_safe_output_mcp_stdio(db)
+                run_safe_output_mcp_stdio(db, service=_safe_output_service_or_none(db, args.project_file))
                 return 0
             if args.command == "recover-stale-assignments":
                 recovered = db.recover_stale_role_assignments(
@@ -465,6 +477,7 @@ def _record_safe_output_cli(db: V2Database, args: argparse.Namespace) -> dict[st
         tool_name=args.tool_name,
         payload=parse_safe_output_payload_json(args.payload_json),
         terminal=bool(args.terminal),
+        service=_safe_output_service_or_none(db, args.project_file),
     )
 
 
@@ -537,6 +550,21 @@ def _memory_context_loader(project_file: Path | None):
     return load
 
 
+def _safe_output_service(db: V2Database, project_file: Path | None) -> SafeOutputService:
+    if project_file is None:
+        return SafeOutputService(db)
+    document_library = load_document_library_config(project_file)
+    if document_library is None:
+        return SafeOutputService(db)
+    return SafeOutputService(db, document_library_root=document_library.root)
+
+
+def _safe_output_service_or_none(db: V2Database, project_file: Path | None) -> SafeOutputService | None:
+    if project_file is None:
+        return None
+    return _safe_output_service(db, project_file)
+
+
 def _run_role_service_tick(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
     worker = build_worker_adapter(_worker_config_from_args(args))
     prompt_assembler = build_prompt_assembler_for_project(args.project_file) if args.project_file is not None else None
@@ -545,6 +573,8 @@ def _run_role_service_tick(db: V2Database, args: argparse.Namespace) -> dict[str
         role_id=args.role_id,
         role_instance_id=args.role_instance_id,
         worker=worker,
+        safe_outputs=_safe_output_service(db, args.project_file),
+        safe_output_project_file=args.project_file,
         prompt_assembler=prompt_assembler,
         memory_context_loader=_memory_context_loader(args.project_file),
         assignment_lease_seconds=args.assignment_lease_seconds,
@@ -634,6 +664,8 @@ def _run_project_role_services_once(db: V2Database, args: argparse.Namespace) ->
             role_id=config.role_id,
             role_instance_id=config.role_instance_id,
             worker=worker,
+            safe_outputs=_safe_output_service(db, args.project_file),
+            safe_output_project_file=args.project_file,
             prompt_assembler=build_prompt_assembler_for_project(args.project_file),
             memory_context_loader=_memory_context_loader(args.project_file),
             assignment_lease_seconds=args.assignment_lease_seconds,

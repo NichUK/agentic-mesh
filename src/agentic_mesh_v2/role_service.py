@@ -4,6 +4,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from typing import Protocol
 from uuid import uuid4
@@ -70,6 +71,7 @@ class RoleService:
         role_instance_id: str,
         worker: Worker,
         safe_outputs: SafeOutputService | None = None,
+        safe_output_project_file: Path | None = None,
         prompt_assembler: Any | None = None,
         memory_context_loader: Callable[[str], tuple[str, ...]] | None = None,
         assignment_lease_seconds: int = 300,
@@ -79,6 +81,7 @@ class RoleService:
         self.role_instance_id = role_instance_id
         self.worker = worker
         self.safe_outputs = safe_outputs or SafeOutputService(db)
+        self.safe_output_project_file = safe_output_project_file
         self.prompt_assembler = prompt_assembler
         self.memory_context_loader = memory_context_loader
         self.assignment_lease_seconds = assignment_lease_seconds
@@ -119,6 +122,7 @@ class RoleService:
                         run_id,
                         "--role-id",
                         self.role_id,
+                        *_project_file_args(self.safe_output_project_file),
                     ],
                 },
             )
@@ -369,3 +373,9 @@ def _dedupe_context(values: tuple[str, ...]) -> tuple[str, ...]:
         seen.add(value)
         deduped.append(value)
     return tuple(deduped)
+
+
+def _project_file_args(project_file: Path | None) -> list[str]:
+    if project_file is None:
+        return []
+    return ["--project-file", str(project_file)]

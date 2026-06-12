@@ -2457,6 +2457,89 @@ compileall passed
 - This story uses the existing Compose deployment target release service. Other
   deployment adapters remain future stories.
 
+## PB-005 Story 26 - Document Safe-Output Publication
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Make `document.propose_update` a real safe-output tool effect: valid slice
+documents are published into the configured project document library and linked
+back to the work item as artifacts.
+
+### Changes
+
+- Added `document_library` project config loading for filesystem/git-backed
+  document roots.
+- Wired project-configured role-service runners to use a `SafeOutputService`
+  with the configured document library root.
+- Added document publication to `SafeOutputService.process_recorded_call` for
+  `document.propose_update`.
+- Enforced TOGAF-SDLC document framework paths, required sections, status-only
+  rejection, duplicate-content rejection, and document-root containment before
+  writing files.
+- Recorded published documents as work-item artifacts.
+- Added project-file support to the `record-safe-output` CLI and safe-output
+  MCP stdio server so external agents can use the same configured publication
+  front door.
+- Propagated `--project-file` into role-service worker CLI transports so the
+  tool call itself can apply configured effects, with RoleService replay acting
+  as idempotent reconciliation.
+- Changed artifact recording to upsert on `(work_item_id, path)` so a later
+  valid document revision updates the artifact row instead of splitting file
+  and runtime state.
+
+### QA Rework
+
+QA found repeat document updates could overwrite the Markdown file and then
+fail on the artifact uniqueness constraint, leaving the document library ahead
+of runtime artifact state. Engineering changed artifact recording to upsert and
+added a repeat-revision regression.
+
+QA found role-service worker CLI transports omitted `--project-file`, so the
+worker-facing safe-output CLI did not share the configured document publisher.
+Engineering added project-file propagation and transport coverage.
+
+### Tests Added
+
+- Valid `document.propose_update` writes the slice document and records a
+  matching artifact.
+- Repeat valid document revisions update the artifact row and keep file/runtime
+  state aligned.
+- Framework path mismatches and status-only/incomplete documents are rejected.
+- CLI `record-safe-output --project-file` publishes documents immediately.
+- Role-service worker CLI transport includes project-file context and publishes
+  once through the configured service.
+- MCP safe-output calls can publish documents when supplied a configured
+  service.
+
+### Tests Run
+
+```text
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_document_safe_outputs.py tests\test_v2_safe_output_mcp.py tests\test_v2_safe_outputs.py tests\test_v2_release_safe_outputs.py tests\test_v2_role_assignment_execution.py::test_role_service_collects_safe_outputs_recorded_by_worker_cli_transport tests\test_v2_cli_server.py::test_v2_cli_run_role_service_tick_loads_worker_from_project_file
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+29 passed focused suite after rework
+234 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- This story publishes filesystem/git document-library roots only. OneDrive and
+  SharePoint backends remain future adapters.
+- Document revision history is delegated to the backing document library. The
+  runtime artifact row points at the current published artifact path.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -2603,3 +2686,9 @@ compileall passed
   record release intent without immediate effects, rejected deployment command
   overrides, required release provenance, and added MCP/provenance regression
   coverage. | QA accepted 2026-06-12
+- RL-045 | engineering | implementation | PB-005 Story 26 | Published
+  `document.propose_update` safe outputs into configured document-library roots
+  and recorded work-item artifacts. | QA requested rework 2026-06-12
+- RL-046 | engineering | QA rework | PB-005 Story 26 | Made repeat document
+  revisions artifact-upserted and propagated project-file context through the
+  worker-facing safe-output CLI transport. | QA accepted 2026-06-12

@@ -2411,6 +2411,11 @@ class V2Database:
                 """
                 INSERT INTO artifacts(artifact_id, work_item_id, path, document_type, status, created_by_role)
                 VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(work_item_id, path) DO UPDATE SET
+                  artifact_id = excluded.artifact_id,
+                  document_type = excluded.document_type,
+                  status = excluded.status,
+                  created_by_role = excluded.created_by_role
                 """,
                 (artifact_id, work_item_id, path, document_type, status, created_by_role),
             )
