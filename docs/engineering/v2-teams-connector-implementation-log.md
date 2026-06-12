@@ -1050,11 +1050,102 @@ Rework completed:
 - Authority records are local configured people/groups, not live Entra group
   expansion.
 
+## Story 13 - Dashboard And Observability Completion
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Story 13 expands the v2 status dashboard/read model so sponsors and operators
+can see connector health, role identities, channel bindings, conversations,
+deliveries, relevance checks, context summaries, work proposals, permission
+checks, and attention items without reading raw SQLite tables.
+
+### Implementation Notes
+
+- Extended status JSON with `connector_metrics`:
+  - inbound events
+  - duplicates suppressed
+  - active conversations
+  - delivery failures
+  - relevance decision counts
+  - ambiguous binding count
+  - private DM promotions
+  - compaction count
+  - permission failure count
+- Added duplicate-suppression audit events when repeated external receipts are
+  detected.
+- Expanded `/status` HTML with compact sections for:
+  - connector metrics
+  - role identities
+  - channel bindings
+  - conversations
+  - conversation events
+  - permission checks
+  - relevance checks
+  - work proposals
+  - human responses
+  - context summaries
+- Preserved default redaction behavior for private DM body previews, private
+  response-card title/question text, private delivery payloads, private
+  safe-output payloads, and private context summaries.
+- Added OpenTelemetry spans for connector install, permission validation,
+  identity mapping, receive, idempotency, route classification, conversation
+  append, role wake, delivery, delivery retry, response binding, relevance,
+  compaction, and raw retention expiry.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_permissions.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_context_retention.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py tests\test_v2_teams_connector_permissions.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+3 passed
+15 passed
+54 passed
+69 passed
+```
+
+### QA Rework
+
+QA found that bound private-channel messages were stored with project
+visibility, so their body previews and raw receipt payloads could appear in
+default status JSON and the new HTML conversation-event table.
+
+Rework completed:
+
+- Bound private channels now create conversation events with
+  `visibility_scope=private`.
+- Default status redaction now treats external receipts from both DMs and
+  private channels as private payloads.
+- Added a focused dashboard regression proving a private-channel sentinel is
+  absent from both status JSON and HTML while the event still records its
+  private channel scope.
+
+### Known Limitations
+
+- The HTML view is still a compact operator dashboard, not the final
+  authorization-aware control-plane UI.
+- Metrics are runtime read-model counts, not a Prometheus/OpenTelemetry metrics
+  exporter yet.
+- OTEL span tests are smoke-level through code paths; no live collector export
+  validation is included in this story.
+
 ### Next Engineering Story
 
-Story 13 - Dashboard And Observability Completion.
+Story 14 - Release, Deployment, Rollback, And Dogfood Validation.
 
-Do not begin Story 13 until QA has reviewed Story 12 and any required rework has
+Do not begin Story 14 until QA has reviewed Story 13 and any required rework has
 passed retest.
 
 ## Review Log
@@ -1143,3 +1234,12 @@ passed retest.
 - RL-022 | engineering | QA rework | Story 12 | Rejected unbound Teams channel
   ingress before project context capture and added regression coverage for
   outside-boundary channel messages. | awaiting QA retest 2026-06-12
+- RL-023 | engineering | implementation | Story 13 | Added connector metrics,
+  full connector dashboard sections, duplicate-suppression metrics, private
+  redaction smoke tests, and OTEL spans around connector receive/routing,
+  delivery, relevance, permission, response, and compaction paths. | awaiting
+  QA review 2026-06-12
+- RL-024 | engineering | QA rework | Story 13 | Marked bound private-channel
+  events as private visibility, redacted private-channel receipt payloads, and
+  added status JSON/HTML redaction regression coverage. | awaiting QA retest
+  2026-06-12

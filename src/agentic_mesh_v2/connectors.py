@@ -12,6 +12,7 @@ from agentic_mesh_v2.permissions import runtime_capabilities_for_receive
 from agentic_mesh_v2.permissions import runtime_capabilities_for_response
 from agentic_mesh_v2.permissions import runtime_capabilities_for_send
 from agentic_mesh_v2.permissions import startup_capabilities_for
+from agentic_mesh_v2.observability import span
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.safe_outputs import ToolPolicy
@@ -135,122 +136,125 @@ class LocalTeamsTestAdapter:
         self.config = config
 
     def install(self) -> None:
-        self.db.upsert_connector(
-            connector_id=self.config.connector_id,
-            project_id=self.config.project_id,
-            connector_type=self.config.connector_type,
-            display_name=self.config.display_name,
-            status="validating",
-            health={},
-        )
-        permission_healthy = self.validate_startup_permissions()
-        self.db.upsert_connector(
-            connector_id=self.config.connector_id,
-            project_id=self.config.project_id,
-            connector_type=self.config.connector_type,
-            display_name=self.config.display_name,
-            status="configured" if permission_healthy else "permission_failed",
-            health={
-                "project_team_ref": self.config.project_team_ref,
-                "default_project_channel_ref": self.config.default_project_channel_ref,
-                "identity_models": sorted({identity.identity_model for identity in self.config.role_identities.values()}),
-                "channel_bindings": [binding.__dict__ for binding in self.config.channel_bindings.values()],
-                "permission_health": "healthy" if permission_healthy else "failed",
-            },
-        )
-        for role_id, identity in self.config.role_identities.items():
-            self.db.upsert_connector_participant(
-                participant_id=f"{self.config.connector_id}:role:{role_id}",
+        with span("v2.teams.install", connector_id=self.config.connector_id):
+            self.db.upsert_connector(
                 connector_id=self.config.connector_id,
-                participant_type="role",
-                display_name=identity.display_name,
-                external_ref=identity.external_ref,
-                role_id=role_id,
-                metadata={
-                    "alias": identity.alias,
-                    "mention_handle": identity.mention_handle,
-                    "identity_model": identity.identity_model,
-                    "enabled": identity.enabled,
+                project_id=self.config.project_id,
+                connector_type=self.config.connector_type,
+                display_name=self.config.display_name,
+                status="validating",
+                health={},
+            )
+            permission_healthy = self.validate_startup_permissions()
+            self.db.upsert_connector(
+                connector_id=self.config.connector_id,
+                project_id=self.config.project_id,
+                connector_type=self.config.connector_type,
+                display_name=self.config.display_name,
+                status="configured" if permission_healthy else "permission_failed",
+                health={
+                    "project_team_ref": self.config.project_team_ref,
+                    "default_project_channel_ref": self.config.default_project_channel_ref,
+                    "identity_models": sorted({identity.identity_model for identity in self.config.role_identities.values()}),
+                    "channel_bindings": [binding.__dict__ for binding in self.config.channel_bindings.values()],
+                    "permission_health": "healthy" if permission_healthy else "failed",
                 },
             )
-        for external_ref, authorities in self.config.human_authorities.items():
-            self.db.upsert_connector_participant(
-                participant_id=f"{self.config.connector_id}:human:{external_ref}",
-                connector_id=self.config.connector_id,
-                participant_type="human",
-                display_name=external_ref,
-                external_ref=external_ref,
-                authority=authorities,
-            )
+            for role_id, identity in self.config.role_identities.items():
+                with span("v2.teams.identity_mapping", connector_id=self.config.connector_id, role_id=role_id):
+                    self.db.upsert_connector_participant(
+                        participant_id=f"{self.config.connector_id}:role:{role_id}",
+                        connector_id=self.config.connector_id,
+                        participant_type="role",
+                        display_name=identity.display_name,
+                        external_ref=identity.external_ref,
+                        role_id=role_id,
+                        metadata={
+                            "alias": identity.alias,
+                            "mention_handle": identity.mention_handle,
+                            "identity_model": identity.identity_model,
+                            "enabled": identity.enabled,
+                        },
+                    )
+            for external_ref, authorities in self.config.human_authorities.items():
+                self.db.upsert_connector_participant(
+                    participant_id=f"{self.config.connector_id}:human:{external_ref}",
+                    connector_id=self.config.connector_id,
+                    participant_type="human",
+                    display_name=external_ref,
+                    external_ref=external_ref,
+                    authority=authorities,
+                )
 
     def validate_startup_permissions(self) -> bool:
-        capabilities = startup_capabilities_for(
-            project_team_ref=self.config.project_team_ref,
-            default_project_channel_ref=self.config.default_project_channel_ref,
-            role_ids=sorted(self.config.role_identities),
-            channel_refs=sorted(self.config.channel_bindings),
-        )
-        healthy = True
-        for capability in capabilities:
-            status = self.config.permission_model.status_for(capability)
-            check_status = "pass" if status == "granted" else "fail"
-            healthy = healthy and check_status == "pass"
-            self.db.record_connector_permission_check(
-                check_id=f"permission-{_stable_digest(f'{self.config.connector_id}:startup:{capability}')}",
-                connector_id=self.config.connector_id,
-                check_type="startup",
-                capability=capability,
-                status=check_status,
-                required_status="granted",
-                actual_status=status,
-                phase="runtime" if capability in {"member_metadata_access", "send_capability"} else "setup",
-                next_action=_permission_next_action(capability, status),
+        with span("v2.teams.permission_validation", connector_id=self.config.connector_id, check_type="startup"):
+            capabilities = startup_capabilities_for(
+                project_team_ref=self.config.project_team_ref,
+                default_project_channel_ref=self.config.default_project_channel_ref,
+                role_ids=sorted(self.config.role_identities),
+                channel_refs=sorted(self.config.channel_bindings),
             )
-            if check_status == "fail":
-                self._permission_attention(
+            healthy = True
+            for capability in capabilities:
+                status = self.config.permission_model.status_for(capability)
+                check_status = "pass" if status == "granted" else "fail"
+                healthy = healthy and check_status == "pass"
+                self.db.record_connector_permission_check(
+                    check_id=f"permission-{_stable_digest(f'{self.config.connector_id}:startup:{capability}')}",
+                    connector_id=self.config.connector_id,
+                    check_type="startup",
                     capability=capability,
-                    status=status,
-                    source_ref=f"startup:{capability}",
-                    retryable=True,
+                    status=check_status,
+                    required_status="granted",
+                    actual_status=status,
+                    phase="runtime" if capability in {"member_metadata_access", "send_capability"} else "setup",
+                    next_action=_permission_next_action(capability, status),
                 )
-        for declaration in self.config.permission_model.declarations:
-            declaration_status = "pass"
-            next_action = "No action required."
-            if declaration.required and declaration.status != "granted":
-                declaration_status = "fail"
-                next_action = f"Restore or grant required {declaration.phase} permission `{declaration.permission}`."
-            if declaration.broad_graph and not declaration.approval_ref:
-                declaration_status = "fail"
-                next_action = (
-                    f"Document explicit security approval before using broad Graph permission "
-                    f"`{declaration.permission}`."
-                )
-            healthy = healthy and declaration_status == "pass"
-            self.db.record_connector_permission_check(
-                check_id=f"permission-{_stable_digest(f'{self.config.connector_id}:declaration:{declaration.permission}:{declaration.phase}')}",
-                connector_id=self.config.connector_id,
-                check_type="permission",
-                capability=declaration.permission,
-                status=declaration_status,
-                required_status="granted" if declaration.required else "documented",
-                actual_status=declaration.status,
-                phase=declaration.phase,
-                consent_type=declaration.consent_type,
-                permission_name=declaration.permission,
-                required=declaration.required,
-                broad_graph=declaration.broad_graph,
-                approval_ref=declaration.approval_ref,
-                next_action=next_action,
-            )
-            if declaration_status == "fail":
-                self._permission_attention(
+                if check_status == "fail":
+                    self._permission_attention(
+                        capability=capability,
+                        status=status,
+                        source_ref=f"startup:{capability}",
+                        retryable=True,
+                    )
+            for declaration in self.config.permission_model.declarations:
+                declaration_status = "pass"
+                next_action = "No action required."
+                if declaration.required and declaration.status != "granted":
+                    declaration_status = "fail"
+                    next_action = f"Restore or grant required {declaration.phase} permission `{declaration.permission}`."
+                if declaration.broad_graph and not declaration.approval_ref:
+                    declaration_status = "fail"
+                    next_action = (
+                        f"Document explicit security approval before using broad Graph permission "
+                        f"`{declaration.permission}`."
+                    )
+                healthy = healthy and declaration_status == "pass"
+                self.db.record_connector_permission_check(
+                    check_id=f"permission-{_stable_digest(f'{self.config.connector_id}:declaration:{declaration.permission}:{declaration.phase}')}",
+                    connector_id=self.config.connector_id,
+                    check_type="permission",
                     capability=declaration.permission,
-                    status=declaration.status,
-                    source_ref=f"permission:{declaration.permission}",
-                    retryable=True,
+                    status=declaration_status,
+                    required_status="granted" if declaration.required else "documented",
+                    actual_status=declaration.status,
+                    phase=declaration.phase,
+                    consent_type=declaration.consent_type,
+                    permission_name=declaration.permission,
+                    required=declaration.required,
+                    broad_graph=declaration.broad_graph,
+                    approval_ref=declaration.approval_ref,
                     next_action=next_action,
                 )
-        return healthy
+                if declaration_status == "fail":
+                    self._permission_attention(
+                        capability=declaration.permission,
+                        status=declaration.status,
+                        source_ref=f"permission:{declaration.permission}",
+                        retryable=True,
+                        next_action=next_action,
+                    )
+            return healthy
 
     def replay_event(self, event: dict[str, Any]) -> ReplayedEvent:
         connector_id = self.config.connector_id
@@ -259,13 +263,14 @@ class LocalTeamsTestAdapter:
         external_conversation_ref = _required_string(event, "conversation_ref")
         sender_ref = _required_string(event, "sender_ref")
         source_type = _required_string(event, "source_type")
-        self._ensure_runtime_capabilities(
-            runtime_capabilities_for_receive(
-                source_type=source_type,
-                conversation_ref=external_conversation_ref,
-            ),
-            source_ref=message_id,
-        )
+        with span("v2.teams.receive", connector_id=connector_id, source_type=source_type):
+            self._ensure_runtime_capabilities(
+                runtime_capabilities_for_receive(
+                    source_type=source_type,
+                    conversation_ref=external_conversation_ref,
+                ),
+                source_ref=message_id,
+            )
         channel_binding = self._channel_binding(external_conversation_ref, source_type=source_type)
         if source_type != "dm" and channel_binding is None:
             self._permission_attention(
@@ -294,18 +299,24 @@ class LocalTeamsTestAdapter:
         body = str(event.get("body", ""))
         mentioned_roles = () if unbound_private_channel else self._mentioned_roles(event)
         route_type = self._route_type(source_type=source_type, mentioned_roles=mentioned_roles, body=body)
+        with span("v2.teams.route_classification", connector_id=connector_id, route_type=route_type):
+            pass
         if unbound_private_channel:
             route_type = "unbound_private_channel"
+        visibility_scope = "private" if source_type == "dm" else "project"
+        if channel_binding is not None and channel_binding.private:
+            visibility_scope = "private"
         idempotency_key = self._idempotency_key(event)
         receipt_id = f"receipt-{_stable_digest(idempotency_key)}"
-        receipt = self.db.record_external_event_receipt(
-            receipt_id=receipt_id,
-            connector_id=connector_id,
-            idempotency_key=idempotency_key,
-            external_event_id=message_id,
-            event_type=event_type,
-            payload=event,
-        )
+        with span("v2.teams.idempotency", connector_id=connector_id, external_event_id=message_id):
+            receipt = self.db.record_external_event_receipt(
+                receipt_id=receipt_id,
+                connector_id=connector_id,
+                idempotency_key=idempotency_key,
+                external_event_id=message_id,
+                event_type=event_type,
+                payload=event,
+            )
         conversation_id = f"conversation-{_stable_digest(f'{connector_id}:{external_conversation_ref}')}"
         if receipt.duplicate:
             return ReplayedEvent(receipt.receipt_id, conversation_id, True, route_type, mentioned_roles)
@@ -359,46 +370,48 @@ class LocalTeamsTestAdapter:
                 ),
             )
         conversation_event_id = f"conversation-event-{_stable_digest(f'{receipt.receipt_id}:event')}"
-        self.db.record_conversation_event(
-            conversation_event_id=conversation_event_id,
-            conversation_id=conversation_id,
-            receipt_id=receipt.receipt_id,
-            connector_id=connector_id,
-            event_type=route_type,
-            sender_participant_id=f"{connector_id}:human:{sender_ref}",
-            body_preview=body[:240],
-            visibility_scope="private" if source_type == "dm" else "project",
-            role_id=str(mentioned_roles[0]) if len(mentioned_roles) == 1 else None,
-            thread_ref=str(thread_ref) if thread_ref else None,
-            payload={
-                "source_type": source_type,
-                "message_id": message_id,
-                "mentioned_roles": list(mentioned_roles),
-                "route_type": route_type,
-                "channel_scope": channel_binding.__dict__ if channel_binding else None,
-            },
-        )
+        with span("v2.teams.conversation_append", connector_id=connector_id, route_type=route_type):
+            self.db.record_conversation_event(
+                conversation_event_id=conversation_event_id,
+                conversation_id=conversation_id,
+                receipt_id=receipt.receipt_id,
+                connector_id=connector_id,
+                event_type=route_type,
+                sender_participant_id=f"{connector_id}:human:{sender_ref}",
+                body_preview=body[:240],
+                visibility_scope=visibility_scope,
+                role_id=str(mentioned_roles[0]) if len(mentioned_roles) == 1 else None,
+                thread_ref=str(thread_ref) if thread_ref else None,
+                payload={
+                    "source_type": source_type,
+                    "message_id": message_id,
+                    "mentioned_roles": list(mentioned_roles),
+                    "route_type": route_type,
+                    "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                },
+            )
         if route_type == "role_direct_message":
             role_id = self._role_for_direct_message(event)
             if role_id is not None:
-                self.db.create_role_assignment(
-                    assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}')}",
-                    role_id=role_id,
-                    conversation_id=conversation_id,
-                    source_ref=receipt.receipt_id,
-                    title="Direct Teams conversation",
-                    summary="Human sent a direct message to a role agent.",
-                    assignment_type="direct_conversation",
-                    visibility_scope="private",
-                    payload={
-                        "connector_id": connector_id,
-                        "conversation_id": conversation_id,
-                        "conversation_event_id": conversation_event_id,
-                        "receipt_id": receipt.receipt_id,
-                        "message_id": message_id,
-                        "channel_scope": channel_binding.__dict__ if channel_binding else None,
-                    },
-                )
+                with span("v2.teams.role_wake", connector_id=connector_id, role_id=role_id):
+                    self.db.create_role_assignment(
+                        assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}')}",
+                        role_id=role_id,
+                        conversation_id=conversation_id,
+                        source_ref=receipt.receipt_id,
+                        title="Direct Teams conversation",
+                        summary="Human sent a direct message to a role agent.",
+                        assignment_type="direct_conversation",
+                        visibility_scope="private",
+                        payload={
+                            "connector_id": connector_id,
+                            "conversation_id": conversation_id,
+                            "conversation_event_id": conversation_event_id,
+                            "receipt_id": receipt.receipt_id,
+                            "message_id": message_id,
+                            "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                        },
+                    )
             else:
                 self.db.create_connector_attention_item(
                     attention_id=f"attention-{_stable_digest(f'{receipt.receipt_id}:unrouteable-dm')}",
@@ -414,49 +427,51 @@ class LocalTeamsTestAdapter:
                 )
         if route_type == "role_mention":
             for role_id in mentioned_roles:
-                self.db.create_role_assignment(
-                    assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}')}",
-                    role_id=role_id,
-                    conversation_id=conversation_id,
-                    source_ref=receipt.receipt_id,
-                    title="Teams role mention",
-                    summary="Human mentioned a role in a project channel.",
-                    assignment_type="channel_role_mention",
-                    visibility_scope="project",
-                    payload={
-                        "connector_id": connector_id,
-                        "conversation_id": conversation_id,
-                        "conversation_event_id": conversation_event_id,
-                        "receipt_id": receipt.receipt_id,
-                        "message_id": message_id,
-                        "thread_ref": thread_ref,
-                        "channel_scope": channel_binding.__dict__ if channel_binding else None,
-                    },
-                )
+                with span("v2.teams.role_wake", connector_id=connector_id, role_id=role_id):
+                    self.db.create_role_assignment(
+                        assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}')}",
+                        role_id=role_id,
+                        conversation_id=conversation_id,
+                        source_ref=receipt.receipt_id,
+                        title="Teams role mention",
+                        summary="Human mentioned a role in a project channel.",
+                        assignment_type="channel_role_mention",
+                        visibility_scope="project",
+                        payload={
+                            "connector_id": connector_id,
+                            "conversation_id": conversation_id,
+                            "conversation_event_id": conversation_event_id,
+                            "receipt_id": receipt.receipt_id,
+                            "message_id": message_id,
+                            "thread_ref": thread_ref,
+                            "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                        },
+                    )
         if route_type == "team_wide_prompt":
             for role_id, identity in self.config.role_identities.items():
                 if not identity.enabled:
                     continue
-                self.db.create_role_assignment(
-                    assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}:relevance')}",
-                    role_id=role_id,
-                    conversation_id=conversation_id,
-                    source_ref=receipt.receipt_id,
-                    title="Team-wide relevance check",
-                    summary="Human asked all roles to consider whether they have material specialist input.",
-                    assignment_type="team_wide_relevance_check",
-                    visibility_scope="project",
-                    payload={
-                        "connector_id": connector_id,
-                        "conversation_id": conversation_id,
-                        "conversation_event_id": conversation_event_id,
-                        "receipt_id": receipt.receipt_id,
-                        "message_id": message_id,
-                        "thread_ref": thread_ref,
-                        "channel_scope": channel_binding.__dict__ if channel_binding else None,
-                        "threshold": 0.6,
-                    },
-                )
+                with span("v2.teams.role_wake", connector_id=connector_id, role_id=role_id):
+                    self.db.create_role_assignment(
+                        assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}:relevance')}",
+                        role_id=role_id,
+                        conversation_id=conversation_id,
+                        source_ref=receipt.receipt_id,
+                        title="Team-wide relevance check",
+                        summary="Human asked all roles to consider whether they have material specialist input.",
+                        assignment_type="team_wide_relevance_check",
+                        visibility_scope="project",
+                        payload={
+                            "connector_id": connector_id,
+                            "conversation_id": conversation_id,
+                            "conversation_event_id": conversation_event_id,
+                            "receipt_id": receipt.receipt_id,
+                            "message_id": message_id,
+                            "thread_ref": thread_ref,
+                            "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                            "threshold": 0.6,
+                        },
+                    )
         if route_type in {"unknown_role_mention", "disabled_role_identity", "unbound_private_channel"}:
             reason_class = "unknown_role_mention" if route_type == "unknown_role_mention" else "disabled_role_identity"
             if route_type == "unbound_private_channel":
@@ -491,10 +506,11 @@ class LocalTeamsTestAdapter:
         fail: bool = False,
         outcome: str | None = None,
     ) -> str:
-        self._ensure_runtime_capabilities(
-            runtime_capabilities_for_send(),
-            source_ref=source_ref,
-        )
+        with span("v2.teams.delivery_prepare", connector_id=self.config.connector_id, purpose=purpose):
+            self._ensure_runtime_capabilities(
+                runtime_capabilities_for_send(),
+                source_ref=source_ref,
+            )
         if role_id is not None and not self._role_enabled(role_id):
             self.db.create_connector_attention_item(
                 attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{source_ref}:{role_id}:disabled-send')}",
@@ -530,83 +546,86 @@ class LocalTeamsTestAdapter:
         return delivery_id
 
     def schedule_delivery_retry(self, delivery_id: str) -> None:
-        delivery = self.db.get_delivery_record(delivery_id)
-        if delivery is None:
-            raise ValueError(f"unknown delivery `{delivery_id}`")
-        if delivery["status"] == "sent":
-            return
-        if delivery["status"] not in RETRYABLE_DELIVERY_STATUSES:
-            raise ValueError(f"delivery `{delivery_id}` is not retryable from status `{delivery['status']}`")
-        self.db.update_delivery_record(delivery_id, status="retry_scheduled")
+        with span("v2.teams.delivery_retry_schedule", connector_id=self.config.connector_id, delivery_id=delivery_id):
+            delivery = self.db.get_delivery_record(delivery_id)
+            if delivery is None:
+                raise ValueError(f"unknown delivery `{delivery_id}`")
+            if delivery["status"] == "sent":
+                return
+            if delivery["status"] not in RETRYABLE_DELIVERY_STATUSES:
+                raise ValueError(f"delivery `{delivery_id}` is not retryable from status `{delivery['status']}`")
+            self.db.update_delivery_record(delivery_id, status="retry_scheduled")
 
     def retry_delivery(self, delivery_id: str, *, outcome: str = "sent") -> str:
-        if outcome not in DELIVERY_OUTCOMES:
-            raise ValueError(f"unknown delivery outcome `{outcome}`")
-        delivery = self.db.get_delivery_record(delivery_id)
-        if delivery is None:
-            raise ValueError(f"unknown delivery `{delivery_id}`")
-        if delivery["status"] == "sent":
+        with span("v2.teams.delivery_retry", connector_id=self.config.connector_id, delivery_id=delivery_id, outcome=outcome):
+            if outcome not in DELIVERY_OUTCOMES:
+                raise ValueError(f"unknown delivery outcome `{outcome}`")
+            delivery = self.db.get_delivery_record(delivery_id)
+            if delivery is None:
+                raise ValueError(f"unknown delivery `{delivery_id}`")
+            if delivery["status"] == "sent":
+                return delivery_id
+            if delivery["status"] not in RETRYABLE_DELIVERY_STATUSES:
+                raise ValueError(f"delivery `{delivery_id}` is not retryable from status `{delivery['status']}`")
+            self.schedule_delivery_retry(delivery_id)
+            self._apply_delivery_outcome(delivery_id=delivery_id, outcome=outcome)
             return delivery_id
-        if delivery["status"] not in RETRYABLE_DELIVERY_STATUSES:
-            raise ValueError(f"delivery `{delivery_id}` is not retryable from status `{delivery['status']}`")
-        self.schedule_delivery_retry(delivery_id)
-        self._apply_delivery_outcome(delivery_id=delivery_id, outcome=outcome)
-        return delivery_id
 
     def _apply_delivery_outcome(self, *, delivery_id: str, outcome: str) -> None:
-        delivery = self.db.get_delivery_record(delivery_id)
-        if delivery is None:
-            raise ValueError(f"unknown delivery `{delivery_id}`")
-        self.db.update_delivery_record(delivery_id, status="sending")
-        attempt_number = self.db.count_delivery_attempts(delivery_id) + 1
-        external_message_id = None
-        error_class = None
-        error_detail = None
-        if outcome == "sent":
-            external_message_id = f"local-teams-message-{_stable_digest(f'{delivery_id}:{attempt_number}')}"
-        elif outcome == "failed_transient":
-            error_class = "simulated_transient_send_failure"
-            error_detail = "Local test adapter simulated a transient Teams delivery failure."
-        elif outcome == "failed_permanent":
-            error_class = "simulated_permanent_send_failure"
-            error_detail = "Local test adapter simulated a permanent Teams delivery failure."
-        elif outcome == "unknown":
-            error_class = "simulated_unknown_send_outcome"
-            error_detail = "Local test adapter simulated an unknown Teams delivery outcome."
-        self.db.record_delivery_attempt(
-            attempt_id=f"delivery-attempt-{_stable_digest(f'{delivery_id}:{attempt_number}')}",
-            delivery_id=delivery_id,
-            connector_id=self.config.connector_id,
-            attempt_number=attempt_number,
-            status=outcome,
-            external_message_id=external_message_id,
-            error_class=error_class,
-            error_detail=error_detail,
-        )
-        self.db.update_delivery_record(
-            delivery_id,
-            status=outcome,
-            external_message_id=external_message_id,
-            error_class=error_class,
-            error_detail=error_detail,
-        )
-        if outcome in {"failed_transient", "failed_permanent", "unknown"}:
-            retryable = outcome != "failed_permanent"
-            reason_class = f"delivery_{outcome}"
-            next_action = {
-                "failed_transient": "Inspect connector delivery failure and retry when safe.",
-                "failed_permanent": "Correct connector configuration or destination before retrying with a new delivery.",
-                "unknown": "Check Teams for the message before retrying to avoid duplicate human-visible sends.",
-            }[outcome]
-            self.db.create_connector_attention_item(
-                attention_id=f"attention-{_stable_digest(f'{delivery_id}:{attempt_number}:{outcome}')}",
+        with span("v2.teams.delivery", connector_id=self.config.connector_id, delivery_id=delivery_id, outcome=outcome):
+            delivery = self.db.get_delivery_record(delivery_id)
+            if delivery is None:
+                raise ValueError(f"unknown delivery `{delivery_id}`")
+            self.db.update_delivery_record(delivery_id, status="sending")
+            attempt_number = self.db.count_delivery_attempts(delivery_id) + 1
+            external_message_id = None
+            error_class = None
+            error_detail = None
+            if outcome == "sent":
+                external_message_id = f"local-teams-message-{_stable_digest(f'{delivery_id}:{attempt_number}')}"
+            elif outcome == "failed_transient":
+                error_class = "simulated_transient_send_failure"
+                error_detail = "Local test adapter simulated a transient Teams delivery failure."
+            elif outcome == "failed_permanent":
+                error_class = "simulated_permanent_send_failure"
+                error_detail = "Local test adapter simulated a permanent Teams delivery failure."
+            elif outcome == "unknown":
+                error_class = "simulated_unknown_send_outcome"
+                error_detail = "Local test adapter simulated an unknown Teams delivery outcome."
+            self.db.record_delivery_attempt(
+                attempt_id=f"delivery-attempt-{_stable_digest(f'{delivery_id}:{attempt_number}')}",
+                delivery_id=delivery_id,
                 connector_id=self.config.connector_id,
-                owner="operator",
-                reason_class=reason_class,
-                next_action=next_action,
-                retryable=retryable,
-                source_ref=delivery_id,
+                attempt_number=attempt_number,
+                status=outcome,
+                external_message_id=external_message_id,
+                error_class=error_class,
+                error_detail=error_detail,
             )
+            self.db.update_delivery_record(
+                delivery_id,
+                status=outcome,
+                external_message_id=external_message_id,
+                error_class=error_class,
+                error_detail=error_detail,
+            )
+            if outcome in {"failed_transient", "failed_permanent", "unknown"}:
+                retryable = outcome != "failed_permanent"
+                reason_class = f"delivery_{outcome}"
+                next_action = {
+                    "failed_transient": "Inspect connector delivery failure and retry when safe.",
+                    "failed_permanent": "Correct connector configuration or destination before retrying with a new delivery.",
+                    "unknown": "Check Teams for the message before retrying to avoid duplicate human-visible sends.",
+                }[outcome]
+                self.db.create_connector_attention_item(
+                    attention_id=f"attention-{_stable_digest(f'{delivery_id}:{attempt_number}:{outcome}')}",
+                    connector_id=self.config.connector_id,
+                    owner="operator",
+                    reason_class=reason_class,
+                    next_action=next_action,
+                    retryable=retryable,
+                    source_ref=delivery_id,
+                )
 
     def deliver_status_reply(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
         message = str(payload.get("message") or "")
@@ -735,10 +754,11 @@ class LocalTeamsTestAdapter:
         role_id: str | None = None,
         outcome: str = "sent",
     ) -> str:
-        self._ensure_runtime_capabilities(
-            runtime_capabilities_for_send(),
-            source_ref=source_ref,
-        )
+        with span("v2.teams.delivery_prepare", connector_id=self.config.connector_id, purpose=purpose):
+            self._ensure_runtime_capabilities(
+                runtime_capabilities_for_send(),
+                source_ref=source_ref,
+            )
         if role_id is not None and not self._role_enabled(role_id):
             self.db.create_connector_attention_item(
                 attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{source_ref}:{role_id}:disabled-card-send')}",
@@ -782,10 +802,11 @@ class LocalTeamsTestAdapter:
         submission_id: str | None = None,
         update_outcome: str = "sent",
     ) -> str:
-        self._ensure_runtime_capabilities(
-            runtime_capabilities_for_response(),
-            source_ref=request_id,
-        )
+        with span("v2.teams.response_binding", connector_id=self.config.connector_id, request_id=request_id):
+            self._ensure_runtime_capabilities(
+                runtime_capabilities_for_response(),
+                source_ref=request_id,
+            )
         request = self.db.get_human_response_request(request_id)
         if request is None:
             self.db.create_connector_attention_item(
@@ -907,29 +928,31 @@ class LocalTeamsTestAdapter:
         return resolved_submission_id
 
     def record_relevance(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> None:
-        conversation_event_id = _required_string(payload, "conversation_event_id")
-        decision = _required_string(payload, "decision")
-        if decision not in {"material", "not_relevant", "exception"}:
-            raise ValueError(f"unknown relevance decision `{decision}`")
-        score = _float_field(payload, "score")
-        threshold = _float_field(payload, "threshold")
-        noop = _bool_field(payload, "noop", default=decision == "not_relevant")
-        self.db.record_relevance_check(
-            relevance_check_id=f"relevance-{_stable_digest(f'{conversation_event_id}:{role_id}')}",
-            conversation_event_id=conversation_event_id,
-            role_id=role_id,
-            score=score,
-            threshold=threshold,
-            decision=decision,
-            reason=_required_string(payload, "reason"),
-            noop=noop,
-            exception_reason=str(payload["exception_reason"]) if payload.get("exception_reason") else None,
-            safe_output_ref=call_id,
-            delivery_ref=str(payload["delivery_ref"]) if payload.get("delivery_ref") else None,
-        )
+        with span("v2.teams.relevance", connector_id=self.config.connector_id, role_id=role_id):
+            conversation_event_id = _required_string(payload, "conversation_event_id")
+            decision = _required_string(payload, "decision")
+            if decision not in {"material", "not_relevant", "exception"}:
+                raise ValueError(f"unknown relevance decision `{decision}`")
+            score = _float_field(payload, "score")
+            threshold = _float_field(payload, "threshold")
+            noop = _bool_field(payload, "noop", default=decision == "not_relevant")
+            self.db.record_relevance_check(
+                relevance_check_id=f"relevance-{_stable_digest(f'{conversation_event_id}:{role_id}')}",
+                conversation_event_id=conversation_event_id,
+                role_id=role_id,
+                score=score,
+                threshold=threshold,
+                decision=decision,
+                reason=_required_string(payload, "reason"),
+                noop=noop,
+                exception_reason=str(payload["exception_reason"]) if payload.get("exception_reason") else None,
+                safe_output_ref=call_id,
+                delivery_ref=str(payload["delivery_ref"]) if payload.get("delivery_ref") else None,
+            )
 
     def _ensure_runtime_capabilities(self, capabilities: list[str], *, source_ref: str) -> None:
-        failures = self.config.permission_model.failing_capabilities(capabilities)
+        with span("v2.teams.permission_validation", connector_id=self.config.connector_id, check_type="runtime"):
+            failures = self.config.permission_model.failing_capabilities(capabilities)
         if not failures:
             return
         for capability, status in failures:

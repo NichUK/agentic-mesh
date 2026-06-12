@@ -995,6 +995,12 @@ class V2Database:
                     """,
                     (idempotency_key,),
                 )
+                self.append_event(
+                    "connector.event_duplicate_suppressed",
+                    "connector",
+                    connector_id,
+                    {"receipt_id": str(existing["receipt_id"]), "event_type": event_type},
+                )
                 return ExternalEventReceipt(str(existing["receipt_id"]), True)
             self.connection.execute(
                 """
@@ -2153,6 +2159,49 @@ class V2Database:
         for record in delivery_records:
             status = str(record["status"])
             delivery_statuses[status] = delivery_statuses.get(status, 0) + 1
+        relevance_decisions: dict[str, int] = {}
+        for record in relevance_checks:
+            decision = str(record["decision"])
+            relevance_decisions[decision] = relevance_decisions.get(decision, 0) + 1
+        ambiguous_binding_reasons = {
+            "ambiguous_binding",
+            "unbound_thread_reply",
+            "unbound_private_channel",
+            "unknown_role_mention",
+            "unrouteable_role_direct_message",
+            "connector_permission_failed",
+        }
+        connector_metrics = {
+            "inbound_events": len(external_event_receipts),
+            "duplicates_suppressed": sum(
+                1
+                for event in self.list_events()
+                if event.get("event_type") == "connector.event_duplicate_suppressed"
+            ),
+            "active_conversations": len(self.list_conversations()),
+            "delivery_failures": sum(
+                1
+                for record in delivery_records
+                if str(record.get("status")) in {"failed_transient", "failed_permanent", "unknown"}
+            ),
+            "relevance_decisions": relevance_decisions,
+            "ambiguous_bindings": sum(
+                1
+                for item in connector_attention_items
+                if item.get("reason_class") in ambiguous_binding_reasons
+            ),
+            "private_dm_promotions": sum(
+                1
+                for proposal in work_proposals
+                if proposal.get("redaction") == "private_source_redacted"
+            ),
+            "compaction_count": len(context_summaries),
+            "permission_failures": sum(
+                1
+                for check in connector_permission_checks
+                if check.get("status") == "fail"
+            ),
+        }
         return {
             "database": str(self.path),
             "counts": {
@@ -2183,6 +2232,7 @@ class V2Database:
             "work_item_states": states,
             "queue_statuses": queue_statuses,
             "delivery_statuses": delivery_statuses,
+            "connector_metrics": connector_metrics,
             "queue_items": queue_items,
             "work_items": work_items,
             "agent_runs": self.list_agent_runs(),
@@ -2247,7 +2297,7 @@ def _redact_private_external_event_receipts(rows: list[dict[str, Any]]) -> list[
     for row in rows:
         item = dict(row)
         payload = item.get("payload")
-        if isinstance(payload, dict) and payload.get("source_type") == "dm":
+        if isinstance(payload, dict) and payload.get("source_type") in {"dm", "private_channel"}:
             item["payload"] = _redact_payload_body(payload)
         redacted.append(item)
     return redacted

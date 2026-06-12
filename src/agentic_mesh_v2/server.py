@@ -45,6 +45,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     def _render_status(self) -> str:
         snapshot = self._snapshot()
         counts = snapshot["counts"]
+        metrics = snapshot.get("connector_metrics") if isinstance(snapshot.get("connector_metrics"), dict) else {}
         return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -58,11 +59,14 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     .tile {{ border: 1px solid #d1d5db; padding: 0.55rem 0.7rem; min-width: 8rem; }}
     .tile span {{ color: #4b5563; display: block; font-size: 0.8rem; }}
     .tile strong {{ display: block; font-size: 1.25rem; }}
-    table {{ border-collapse: collapse; width: 100%; margin: 0.8rem 0 1.5rem; table-layout: fixed; }}
-    th, td {{ border: 1px solid #d1d5db; padding: 0.45rem 0.55rem; vertical-align: top; overflow-wrap: anywhere; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 0.8rem 0 1.5rem; table-layout: fixed; font-size: 0.92rem; }}
+    th, td {{ border: 1px solid #d1d5db; padding: 0.38rem 0.5rem; vertical-align: top; overflow-wrap: anywhere; }}
     th {{ background: #f3f4f6; text-align: left; }}
     .status {{ font-weight: 700; }}
     .muted {{ color: #6b7280; }}
+    .small {{ font-size: 0.8rem; }}
+    .section-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: 1rem; }}
+    .section-grid > section {{ min-width: 0; }}
     code {{ background: #f3f4f6; border: 1px solid #e5e7eb; padding: 0.05rem 0.2rem; }}
   </style>
 </head>
@@ -83,14 +87,53 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     {self._count_tile("Artifacts", counts["artifacts"])}
     {self._count_tile("Releases", counts["releases"])}
     {self._count_tile("Connectors", counts["connectors"])}
+    {self._count_tile("Role identities", counts["connector_participants"])}
     {self._count_tile("Conversation events", counts["conversation_events"])}
     {self._count_tile("Deliveries", counts["delivery_records"])}
+    {self._count_tile("Relevance checks", counts["relevance_checks"])}
+    {self._count_tile("Context summaries", counts["context_summaries"])}
+    {self._count_tile("Permission checks", counts["connector_permission_checks"])}
     {self._count_tile("Connector attention", counts["connector_attention_items"])}
+  </div>
+  <h2>Connector Metrics</h2>
+  <div class="tiles">
+    {self._count_tile("Inbound events", metrics.get("inbound_events", 0))}
+    {self._count_tile("Duplicates suppressed", metrics.get("duplicates_suppressed", 0))}
+    {self._count_tile("Active conversations", metrics.get("active_conversations", 0))}
+    {self._count_tile("Delivery failures", metrics.get("delivery_failures", 0))}
+    {self._count_tile("Ambiguous bindings", metrics.get("ambiguous_bindings", 0))}
+    {self._count_tile("Private DM promotions", metrics.get("private_dm_promotions", 0))}
+    {self._count_tile("Compactions", metrics.get("compaction_count", 0))}
+    {self._count_tile("Permission failures", metrics.get("permission_failures", 0))}
   </div>
   <h2>Connector Health</h2>
   {self._connector_table(snapshot["connectors"])}
+  <div class="section-grid">
+    <section>
+      <h2>Role Identities</h2>
+      {self._role_identity_table(snapshot["connector_participants"])}
+    </section>
+    <section>
+      <h2>Channel Bindings</h2>
+      {self._channel_binding_table(snapshot["connectors"])}
+    </section>
+  </div>
+  <h2>Conversations</h2>
+  {self._conversation_table(snapshot["conversations"])}
+  <h2>Conversation Events</h2>
+  {self._conversation_event_table(snapshot["conversation_events"])}
   <h2>Delivery Records</h2>
   {self._delivery_table(snapshot["delivery_records"])}
+  <h2>Permission Checks</h2>
+  {self._permission_table(snapshot["connector_permission_checks"])}
+  <h2>Relevance Checks</h2>
+  {self._relevance_table(snapshot["relevance_checks"])}
+  <h2>Work Proposals</h2>
+  {self._proposal_table(snapshot["work_proposals"])}
+  <h2>Human Responses</h2>
+  {self._human_response_table(snapshot["human_response_requests"])}
+  <h2>Context Summaries</h2>
+  {self._context_summary_table(snapshot["context_summaries"])}
   <h2>Connector Attention</h2>
   {self._connector_attention_table(snapshot["connector_attention_items"])}
   <h2>Work Items</h2>
@@ -158,6 +201,177 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 "</tr>"
             )
         return "<table><tr><th>Delivery</th><th>Status / Error</th><th>Destination</th><th>External Message</th><th>Updated</th></tr>" + "".join(body) + "</table>"
+
+    def _role_identity_table(self, rows: object) -> str:
+        items = [
+            row for row in (list(rows) if isinstance(rows, list) else [])
+            if row.get("participant_type") == "role"
+        ]
+        if not items:
+            return '<p class="muted">No v2 role identities.</p>'
+        body = []
+        for row in items:
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            body.append(
+                "<tr>"
+                f"<td>{_e(row.get('role_id'))}<br><span class=\"muted\">{_e(row.get('display_name'))}</span></td>"
+                f"<td>{_e(row.get('external_ref'))}<br>{_e(metadata.get('mention_handle', ''))}</td>"
+                f"<td>{_e(metadata.get('identity_model', ''))}<br>{_e(metadata.get('alias', ''))}</td>"
+                f"<td>{_e(metadata.get('enabled', ''))}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Role</th><th>External / Mention</th><th>Model / Alias</th><th>Enabled</th></tr>" + "".join(body) + "</table>"
+
+    def _channel_binding_table(self, rows: object) -> str:
+        connectors = list(rows) if isinstance(rows, list) else []
+        bindings = []
+        for connector in connectors:
+            health = connector.get("health") if isinstance(connector.get("health"), dict) else {}
+            default = health.get("default_project_channel_ref")
+            if default:
+                bindings.append(
+                    {
+                        "channel_ref": default,
+                        "scope_type": "project",
+                        "display_name": "Project",
+                        "visibility": "project",
+                        "work_scope": "",
+                        "private": False,
+                    }
+                )
+            configured_bindings = health.get("channel_bindings", [])
+            if not isinstance(configured_bindings, list):
+                configured_bindings = []
+            for item in configured_bindings:
+                if isinstance(item, dict):
+                    bindings.append(item)
+        if not bindings:
+            return '<p class="muted">No v2 channel bindings.</p>'
+        body = []
+        for binding in bindings:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(binding.get('channel_ref'))}</code><br>{_e(binding.get('display_name'))}</td>"
+                f"<td>{_e(binding.get('scope_type'))}<br>{_e(binding.get('work_scope') or '')}</td>"
+                f"<td>{_e(binding.get('visibility'))}<br>{_e(binding.get('private'))}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Channel</th><th>Scope / Work</th><th>Visibility / Private</th></tr>" + "".join(body) + "</table>"
+
+    def _conversation_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 conversations.</p>'
+        body = []
+        for row in items[:20]:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['conversation_id'])}</code><br>{_e(row['connector'])}</td>"
+                f"<td>{_e(row['external_ref'])}</td>"
+                f"<td>{_e(row.get('sponsor_ref') or '')}</td>"
+                f"<td>{_e(row['updated_at'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Conversation</th><th>External Ref</th><th>Sponsor</th><th>Updated</th></tr>" + "".join(body) + "</table>"
+
+    def _conversation_event_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 conversation events.</p>'
+        body = []
+        for row in items[:20]:
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            channel = payload.get("channel_scope") if isinstance(payload.get("channel_scope"), dict) else {}
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['conversation_event_id'])}</code><br>{_e(row['event_type'])}</td>"
+                f"<td>{_e(row['visibility_scope'])}<br>{_e(row.get('role_id') or '')}</td>"
+                f"<td>{_e(channel.get('display_name', ''))}<br>{_e(channel.get('work_scope', ''))}</td>"
+                f"<td>{_e(row.get('body_preview', ''))}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Event</th><th>Visibility / Role</th><th>Channel / Work</th><th>Preview</th></tr>" + "".join(body) + "</table>"
+
+    def _permission_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 permission checks.</p>'
+        body = []
+        for row in items[:30]:
+            body.append(
+                "<tr>"
+                f"<td>{_e(row['check_type'])}<br><code>{_e(row['capability'])}</code></td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row['actual_status'])}</td>"
+                f"<td>{_e(row['phase'])}<br>{_e(row.get('consent_type') or '')}</td>"
+                f"<td>{_e(row.get('permission_name') or '')}<br>{_e('broad' if row.get('broad_graph') else '')}</td>"
+                f"<td>{_e(row.get('approval_ref') or '')}<br><span class=\"small\">{_e(row['next_action'])}</span></td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Check</th><th>Status / Actual</th><th>Phase / Consent</th><th>Permission</th><th>Approval / Action</th></tr>" + "".join(body) + "</table>"
+
+    def _relevance_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 relevance checks.</p>'
+        body = []
+        for row in items[:20]:
+            body.append(
+                "<tr>"
+                f"<td>{_e(row['role_id'])}<br><code>{_e(row['conversation_event_id'])}</code></td>"
+                f"<td><span class=\"status\">{_e(row['decision'])}</span><br>{_e(row['score'])} / {_e(row['threshold'])}</td>"
+                f"<td>{_e(row['reason'])}</td>"
+                f"<td>{_e(row.get('noop'))}<br>{_e(row.get('delivery_ref') or '')}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Role / Event</th><th>Decision / Score</th><th>Reason</th><th>No-op / Delivery</th></tr>" + "".join(body) + "</table>"
+
+    def _proposal_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 work proposals.</p>'
+        body = []
+        for row in items[:20]:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['queue_item_id'])}</code><br>{_e(row['work_type'])}</td>"
+                f"<td>{_e(row['classification'])}<br>{_e(row['urgency'])}</td>"
+                f"<td>{_e(row['proposed_by_role'])}<br>{_e(row['suggested_owner'])}</td>"
+                f"<td>{_e(row['rationale'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Queue / Type</th><th>Class / Urgency</th><th>Proposer / Owner</th><th>Rationale</th></tr>" + "".join(body) + "</table>"
+
+    def _human_response_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 human response requests.</p>'
+        body = []
+        for row in items[:20]:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['request_id'])}</code><br>{_e(row['request_type'])}</td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row['required_authority'])}</td>"
+                f"<td>{_e(row['title'])}<br><span class=\"muted\">{_e(row['question'])}</span></td>"
+                f"<td>{_e(row.get('work_item_id') or '')}<br>{_e(row.get('gate_id') or '')}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Request</th><th>Status / Authority</th><th>Title / Question</th><th>Work / Gate</th></tr>" + "".join(body) + "</table>"
+
+    def _context_summary_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 context summaries.</p>'
+        body = []
+        for row in items[:20]:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['summary_id'])}</code><br>{_e(row['classification'])}</td>"
+                f"<td>{_e(row['visibility_scope'])}<br>{_e(row['retention_key'])}</td>"
+                f"<td>{_e(row['summary'])}</td>"
+                f"<td>{_e(', '.join(row.get('durable_refs') or []))}<br>{_e(row.get('target_ref') or '')}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Summary</th><th>Visibility / Retention</th><th>Text</th><th>Durable / Target</th></tr>" + "".join(body) + "</table>"
 
     def _connector_attention_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []

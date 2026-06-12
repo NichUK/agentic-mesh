@@ -2126,3 +2126,191 @@ event.
   private channels fail closed before receipt/context capture and record
   permission attention plus failed runtime channel-binding checks. Story 12 is
   accepted for the local connector scope. | accepted 2026-06-12
+
+# V2 Teams Connector Story 13 QA Review
+
+Status: QA reviewed current tree - changes requested
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Review Scope
+
+Story 13 dashboard/status/observability completion:
+
+- status JSON `connector_metrics`
+- `/status` HTML connector dashboard sections
+- private text redaction in default status/dashboard views
+- duplicate-suppression read-model evidence
+- connector metrics accuracy for the local-adapter paths
+- OpenTelemetry span additions around connector, context, and status paths
+
+QA reviewed only the Story 13 dashboard/status/observability changes in the
+sponsor-named files. QA appended this result file only.
+
+## Findings
+
+- P1 - bound private-channel message text leaks into default status and the
+  new HTML conversation-event table. Story 13 adds a `/status` Conversation
+  Events section that renders `row["body_preview"]`. The status redaction
+  helper redacts only rows with `visibility_scope == "private"`, but
+  `LocalTeamsTestAdapter.replay_event()` records all non-DM events, including
+  explicitly bound `source_type="private_channel"` events, with
+  `visibility_scope="project"`. A bound private channel carries
+  `payload.channel_scope.visibility="private"` and `private=true`, yet the
+  raw private-channel body preview appears in both `status_snapshot()` and the
+  rendered HTML. Relevant code: `src/agentic_mesh_v2/connectors.py` lines
+  378-387, `src/agentic_mesh_v2/db.py` lines 2282-2290, and
+  `src/agentic_mesh_v2/server.py` lines 277-290.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 13 workspace changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_status_dashboard.py` | Passed: 2 passed in 0.66s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_permissions.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_context_retention.py` | Passed: 15 passed in 1.72s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py tests\test_v2_teams_connector_permissions.py` | Passed: 54 passed in 6.39s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 68 passed in 7.06s. |
+| In-memory bound private-channel status/dashboard sentinel probe | Failed Story 13 private-status expectation: `snapshot_contains_sentinel=True`, `html_contains_sentinel=True`, `event_visibility_scope="project"`, `channel_scope_visibility="private"`, and `body_preview="PRIVATE_CHANNEL_DASHBOARD_SENTINEL incident details"`. |
+
+## Decision
+
+Changes requested before Story 13 QA acceptance.
+
+The focused dashboard test, requested connector regression subset, full
+Story 1-13 connector regression pack, and full pytest suite are green.
+Connector metrics matched the exercised local-adapter paths for duplicate
+suppression, active conversations, delivery failures, relevance decisions,
+compactions, and permission failures. The OTEL span additions did not break
+the connector, context, delivery, response, relevance, or status paths covered
+by the regression pack.
+
+The Story 13 dashboard is not accepted yet because the newly rendered
+Conversation Events table exposes raw body text from explicitly bound private
+Teams channels. Default operator status views must treat private-channel body
+text at least as carefully as private DM text, or avoid rendering the preview
+in the unauthorised dashboard/read model.
+
+## Passing Evidence
+
+| Story 13 expectation | QA result |
+| --- | --- |
+| Status JSON exposes connector dashboard sections and metrics | Pass for the checked-in fixture. `connector_metrics`, permission checks, context summaries, work proposals, human responses, relevance checks, and connector records are present. |
+| Duplicate suppression is counted | Pass. Focused dashboard test records one duplicate external event and reports `duplicates_suppressed == 1`. |
+| Connector metrics are accurate for exercised local-adapter paths | Pass for covered metrics. Regression tests and the Story 13 fixture verify inbound receipts, active conversations, delivery failures, relevance decision counts, compaction count, and permission failure counts. |
+| HTML renders connector dashboard sections | Pass. The new sections for connector metrics, role identities, channel bindings, conversations, conversation events, permission checks, relevance checks, work proposals, human responses, and context summaries render in the focused dashboard test. |
+| Private DM text remains redacted in the Story 13 HTML fixture | Pass. The `PRIVATE_DASHBOARD_SENTINEL` DM/request/summary sentinel does not appear in the focused HTML smoke test. |
+| Private channel text remains redacted in default status/dashboard views | Fail. Bound private-channel body text appears in both default status JSON and the new HTML Conversation Events table. |
+
+## Required Rework
+
+- Redact `conversation_events[*].body_preview` and any body-bearing payloads
+  when `payload.channel_scope.visibility == "private"` or
+  `payload.channel_scope.private == true`, not only when
+  `visibility_scope == "private"`.
+- Alternatively, store bound private-channel conversation events with private
+  visibility and ensure assignments/relevance behavior still works.
+- Add a focused Story 13 regression that renders `/status` with a bound private
+  channel sentinel and asserts the sentinel is absent from both the whole
+  default snapshot and HTML output.
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra, permission, throttling, or dashboard
+  access-control behavior has been validated.
+- Story 13 metrics are read-model counts, not exported Prometheus/OTEL metrics.
+  QA verified count behavior through the local status snapshot only.
+- OTEL spans are covered as smoke through the instrumented code paths. No live
+  collector export validation was performed.
+
+## Review Log
+
+- RL-024 | qa-engineer | Story 13 QA | Focused dashboard tests, requested
+  connector regression subset, Story 1-13 connector regression pack, and full
+  pytest all pass. QA requests changes because the new HTML Conversation
+  Events dashboard table and default status snapshot expose raw text from
+  explicitly bound private Teams channels. | changes requested 2026-06-12
+
+# V2 Teams Connector Story 13 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 13 P1 rework for the private-channel dashboard/status redaction finding:
+
+- bound private-channel conversation events should be stored with
+  `visibility_scope="private"`
+- default status snapshots should redact bound private-channel
+  `conversation_events[*].body_preview`
+- default status snapshots should redact bound private-channel external
+  receipt payload body text
+- rendered `/status` HTML should not expose bound private-channel body text
+- focused dashboard tests, connector regressions, and full pytest should remain
+  green
+
+QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 13 rework changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_status_dashboard.py` | Passed: 3 passed in 0.83s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_permissions.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_context_retention.py` | Passed: 15 passed in 1.87s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py tests\test_v2_teams_connector_permissions.py` | Passed: 55 passed in 7.04s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 69 passed in 7.45s. |
+| In-memory bound private-channel status/dashboard sentinel retest probe | Passed: `snapshot_contains_sentinel=False`, `html_contains_sentinel=False`, `event_visibility_scope="private"`, `channel_scope_visibility="private"`, `body_preview="[redacted private conversation]"`, `external_receipt_body="[redacted private conversation]"`, `external_receipt_redacted=True`, and `role_assignments=1`. |
+
+## Retest Decision
+
+Story 13 passes QA for the implemented local Teams connector dashboard/status
+scope.
+
+The prior P1 finding is closed. Bound private-channel events now land in the
+default status read model as private conversation events, their previews are
+redacted, and the rendered HTML Conversation Events table no longer exposes
+the private-channel sentinel. External receipt payload bodies for
+`source_type="private_channel"` are also redacted like DM receipts.
+
+## Acceptance Retest
+
+| Story 13 expectation | Retest result |
+| --- | --- |
+| Bound private-channel conversation events are marked private | Pass. Independent probe showed `event_visibility_scope="private"` for the bound private channel. |
+| Default status JSON redacts bound private-channel body preview | Pass. Probe showed `body_preview="[redacted private conversation]"` and no private-channel sentinel in the whole snapshot. |
+| Default status JSON redacts bound private-channel external receipt body | Pass. Probe showed `external_receipt_body="[redacted private conversation]"` and `external_receipt_redacted=True`. |
+| `/status` HTML does not expose bound private-channel body text | Pass. Probe showed `html_contains_sentinel=False`; focused dashboard regression remains green. |
+| Role routing still works from bound private channels | Pass. Probe preserved one role assignment, and focus-channel tests remain green. |
+| Connector dashboard/status regressions remain green | Pass. Focused dashboard tests, permissions/focus/context subset, Story 1-13 connector regression pack, and full pytest all pass. |
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra, permission, throttling, or dashboard
+  access-control behavior has been validated.
+- Story 13 metrics remain status read-model counts, not exported
+  Prometheus/OpenTelemetry metrics.
+- OTEL spans are still covered through instrumented code-path smoke only; no
+  live collector export validation was performed.
+
+## Review Log
+
+- RL-025 | qa-engineer | Story 13 QA retest | Focused dashboard tests,
+  requested connector regression subset, Story 1-13 connector regression pack,
+  full pytest, and the prior private-channel sentinel probe all pass. Prior P1
+  is closed: bound private-channel events are private in the status read model
+  and redacted from both status JSON and rendered HTML while preserving role
+  assignment behavior. Story 13 is accepted for the local connector scope. |
+  accepted 2026-06-12
