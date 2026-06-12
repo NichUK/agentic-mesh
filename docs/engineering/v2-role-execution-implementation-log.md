@@ -2690,6 +2690,71 @@ compileall passed
   dispositions, and automated sub-slice kickoff from review comments remain
   later stories.
 
+## PB-005 Story 29 - Work Item Evidence Safe Outputs
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted
+
+### Intent
+
+Make `implementation.record_change` and `test_evidence.record` create durable
+runtime evidence so implementation and QA work is visible beyond raw
+safe-output rows.
+
+### Changes
+
+- Added a `work_item_evidence` table with work item, evidence type, summary,
+  role, safe-output reference, and timestamp fields.
+- Added a unique safe-output reference constraint and migration-safe index for
+  idempotent replay handling.
+- Added `V2Database.add_work_item_evidence` and
+  `V2Database.list_work_item_evidence`.
+- Added work-item evidence counts and rows to the v2 status snapshot.
+- Wired `implementation.record_change` to record `implementation_change`
+  evidence.
+- Wired `test_evidence.record` to record `test_evidence` evidence.
+- Prevalidates target work item existence before direct effects-enabled
+  recording, so invalid work item evidence does not persist a replay-poisoned
+  safe-output row.
+
+### QA Rework
+
+No QA rework was requested.
+
+### Tests Added
+
+- Implementation and test-evidence safe outputs create durable work-item
+  evidence rows.
+- Evidence rows are tied to real safe-output call ids and role ids.
+- Replay of the same safe-output id is idempotent and emits one evidence event.
+- Unknown work item ids fail before recording a direct safe-output row.
+- Status snapshots expose work-item evidence counts and rows.
+
+### Tests Run
+
+```text
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_work_item_evidence_safe_outputs.py tests\test_v2_safe_outputs.py tests\test_v2_end_to_end.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+12 passed focused engineering suite
+246 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- Evidence summaries are runtime facts, not replacements for full
+  implementation and quality documents.
+- Quality decision tools remain later stories.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -2855,3 +2920,6 @@ compileall passed
   configured review-comment targets before recording, scoped idempotency to
   review-log entries, and restored record-only behavior for unconfigured
   services. | QA accepted 2026-06-12
+- RL-051 | engineering | implementation | PB-005 Story 29 | Recorded
+  `implementation.record_change` and `test_evidence.record` safe outputs as
+  durable work-item evidence rows. | QA accepted 2026-06-12

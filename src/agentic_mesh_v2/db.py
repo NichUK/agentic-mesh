@@ -230,6 +230,17 @@ class V2Database:
                   UNIQUE(project_id, role_id, summary, provenance_ref)
                 );
 
+                CREATE TABLE IF NOT EXISTS work_item_evidence (
+                  evidence_id TEXT PRIMARY KEY,
+                  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id),
+                  evidence_type TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  role_id TEXT NOT NULL,
+                  safe_output_ref TEXT NOT NULL REFERENCES safe_output_calls(call_id),
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(safe_output_ref)
+                );
+
                 CREATE TABLE IF NOT EXISTS connectors (
                   connector_id TEXT PRIMARY KEY,
                   project_id TEXT NOT NULL,
@@ -561,6 +572,12 @@ class V2Database:
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_role_memory_unique_fact
                 ON role_memory(project_id, role_id, summary, provenance_ref)
+                """
+            )
+            self.connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_work_item_evidence_safe_output
+                ON work_item_evidence(safe_output_ref)
                 """
             )
 
@@ -2470,6 +2487,41 @@ class V2Database:
                 {"project_id": project_id, "summary": summary, "provenance_ref": provenance_ref},
             )
 
+    def add_work_item_evidence(
+        self,
+        *,
+        evidence_id: str,
+        work_item_id: str,
+        evidence_type: str,
+        summary: str,
+        role_id: str,
+        safe_output_ref: str,
+    ) -> None:
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                INSERT INTO work_item_evidence(
+                  evidence_id, work_item_id, evidence_type, summary, role_id, safe_output_ref
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(safe_output_ref) DO NOTHING
+                """,
+                (evidence_id, work_item_id, evidence_type, summary, role_id, safe_output_ref),
+            )
+            if cursor.rowcount == 0:
+                return
+            self.append_event(
+                "work_item_evidence.recorded",
+                "work_item",
+                work_item_id,
+                {
+                    "evidence_type": evidence_type,
+                    "summary": summary,
+                    "role_id": role_id,
+                    "safe_output_ref": safe_output_ref,
+                },
+            )
+
     def upsert_release(
         self,
         *,
@@ -2878,6 +2930,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_work_item_evidence(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM work_item_evidence
+            ORDER BY created_at DESC, evidence_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_releases(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -3173,6 +3235,7 @@ class V2Database:
         redacted_safe_output_calls = _redact_private_safe_output_calls(safe_output_calls)
         agent_prompts = self.list_agent_prompts()
         role_memory = self.list_role_memory()
+        work_item_evidence = self.list_work_item_evidence()
         states: dict[str, int] = {}
         for item in work_items:
             state = str(item["state"])
@@ -3272,6 +3335,7 @@ class V2Database:
                 "context_summaries": len(context_summaries),
                 "retention_expiry_records": len(retention_expiry_records),
                 "role_memory": len(role_memory),
+                "work_item_evidence": len(work_item_evidence),
             },
             "work_item_states": states,
             "queue_statuses": queue_statuses,
@@ -3284,6 +3348,7 @@ class V2Database:
             "agent_runs": self.list_agent_runs(),
             "agent_prompts": agent_prompts,
             "role_memory": role_memory,
+            "work_item_evidence": work_item_evidence,
             "safe_output_calls": redacted_safe_output_calls,
             "artifacts": self.list_artifacts(),
             "releases": releases,

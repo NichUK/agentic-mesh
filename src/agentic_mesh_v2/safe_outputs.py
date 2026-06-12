@@ -212,6 +212,8 @@ class SafeOutputService:
         validate_payload(call.tool_name, call.payload)
         if self.process_effects and call.tool_name == "document.add_review_comment":
             self._validate_document_review_comment_target(call)
+        if self.process_effects and call.tool_name in {"implementation.record_change", "test_evidence.record"}:
+            self._validate_work_item_evidence_target(call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -239,6 +241,10 @@ class SafeOutputService:
             self._append_document_review_comment(call_id=call_id, call=call)
         if call.tool_name == "memory.propose_update":
             self._publish_role_memory_update(call_id=call_id, call=call)
+        if call.tool_name == "implementation.record_change":
+            self._record_work_item_evidence(call_id=call_id, call=call, evidence_type="implementation_change")
+        if call.tool_name == "test_evidence.record":
+            self._record_work_item_evidence(call_id=call_id, call=call, evidence_type="test_evidence")
         if call.tool_name == "release.record_no_deployment":
             self._record_no_deployment(call)
         if call.tool_name == "release.deploy":
@@ -346,6 +352,27 @@ class SafeOutputService:
                 summary=summary,
                 provenance_ref=provenance_ref,
             )
+
+    def _validate_work_item_evidence_target(self, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        self.db.get_work_item(work_item_id)
+
+    def _record_work_item_evidence(
+        self,
+        *,
+        call_id: str,
+        call: SafeOutputCall,
+        evidence_type: str,
+    ) -> None:
+        self._validate_work_item_evidence_target(call)
+        self.db.add_work_item_evidence(
+            evidence_id=f"evidence-{call_id}",
+            work_item_id=_required_text(call.payload, "work_item_id"),
+            evidence_type=evidence_type,
+            summary=_single_line_text(_required_text(call.payload, "summary")),
+            role_id=call.role_id,
+            safe_output_ref=call_id,
+        )
 
     def _record_no_deployment(self, call: SafeOutputCall) -> None:
         self.release_service.record_no_deployment(

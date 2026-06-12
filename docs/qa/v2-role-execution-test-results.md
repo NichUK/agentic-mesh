@@ -2666,3 +2666,59 @@ compileall passed
   same-document Review Log publication, target prevalidation, scoped replay
   idempotency, unconfigured record-only behavior, and regression coverage. |
   accepted after rework 2026-06-12
+
+## PB-005 Story 29 - Work Item Evidence Safe Outputs
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_work_item_evidence_safe_outputs.py`
+- Related status and end-to-end tests
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_work_item_evidence_safe_outputs.py tests\test_v2_safe_outputs.py tests\test_v2_end_to_end.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+81 passed QA focused suites
+246 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+No QA findings.
+
+### Acceptance Assessment
+
+- `implementation.record_change` creates durable implementation evidence.
+- `test_evidence.record` creates durable QA evidence.
+- Evidence rows are tied to existing work items and safe-output call ids.
+- Replay is idempotent by safe-output reference.
+- Invalid work item ids fail before direct effects-enabled recording.
+- Status snapshots expose work-item evidence counts and rows.
+
+### Residual Risks
+
+- Rich evidence documents and quality decision transitions remain later stories.
+
+### Review Log
+
+- QA-RL-043 | qa-engineer | acceptance | PB-005 Story 29 | Verified
+  implementation and test-evidence safe-output publication, work-item target
+  validation, safe-output idempotency, status visibility, and end-to-end
+  compatibility. | accepted 2026-06-12
