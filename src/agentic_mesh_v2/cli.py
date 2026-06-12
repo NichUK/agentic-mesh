@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 from agentic_mesh_v2.db import V2Database
@@ -85,6 +86,22 @@ def main(argv: list[str] | None = None) -> int:
     project_tick_parser.add_argument("--max-assignments", type=int, default=10)
     project_tick_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
     project_tick_parser.add_argument(
+        "--skip-unsupported",
+        action="store_true",
+        help="Skip role instances whose worker adapter is not implemented yet.",
+    )
+
+    project_loop_parser = subparsers.add_parser(
+        "run-project-role-services-loop",
+        help="Run a bounded repeated role-service loop for configured project role instances.",
+    )
+    project_loop_parser.add_argument("--project-file", type=Path, required=True)
+    project_loop_parser.add_argument("--cycles", type=int, required=True)
+    project_loop_parser.add_argument("--poll-seconds", type=float, default=5.0)
+    project_loop_parser.add_argument("--max-recoveries", type=int, default=50)
+    project_loop_parser.add_argument("--max-assignments", type=int, default=10)
+    project_loop_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
+    project_loop_parser.add_argument(
         "--skip-unsupported",
         action="store_true",
         help="Skip role instances whose worker adapter is not implemented yet.",
@@ -222,6 +239,10 @@ def main(argv: list[str] | None = None) -> int:
                 result = _run_project_role_services_once(db, args)
                 print(json.dumps(result, sort_keys=True))
                 return 0
+            if args.command == "run-project-role-services-loop":
+                result = _run_project_role_services_loop(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
         finally:
             db.close()
 
@@ -334,6 +355,33 @@ def _run_project_role_services_once(db: V2Database, args: argparse.Namespace) ->
         "project_file": str(args.project_file),
         **totals,
         "role_instances": entries,
+    }
+
+
+def _run_project_role_services_loop(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    if args.cycles < 1:
+        raise ValueError("--cycles must be at least 1")
+    if args.poll_seconds < 0:
+        raise ValueError("--poll-seconds must be zero or greater")
+
+    cycles: list[dict[str, object]] = []
+    totals = {"processed_count": 0, "recovered_count": 0, "skipped_count": 0}
+    for index in range(1, args.cycles + 1):
+        cycle = _run_project_role_services_once(db, args)
+        cycle["cycle"] = index
+        cycles.append(cycle)
+        totals["processed_count"] += int(cycle["processed_count"])
+        totals["recovered_count"] += int(cycle["recovered_count"])
+        totals["skipped_count"] += int(cycle["skipped_count"])
+        if index < args.cycles and args.poll_seconds:
+            time.sleep(args.poll_seconds)
+
+    return {
+        "status": "ok",
+        "project_file": str(args.project_file),
+        "cycles_requested": args.cycles,
+        **totals,
+        "cycles": cycles,
     }
 
 

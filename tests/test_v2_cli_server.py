@@ -805,6 +805,127 @@ roles:
     assert "unsupported worker adapter `codex-cli`" in output
 
 
+def test_v2_cli_runs_project_role_services_loop_for_bounded_cycles(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    calls_path = project_dir / "calls.json"
+    calls_path.write_text(
+        """
+        {
+          "calls": [
+            {
+              "tool_name": "status.complete",
+              "payload": {"message": "Loop worker complete."},
+              "terminal": true
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-project-loop",
+            role_id="product-manager",
+            source_ref="msg-project-loop",
+            title="Project loop assignment",
+            summary="Run configured project role service loop.",
+            assignment_type="work_item_handoff",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-role-services-loop",
+                "--project-file",
+                str(project_file),
+                "--cycles",
+                "2",
+                "--poll-seconds",
+                "0",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["cycles_requested"] == 2
+    assert output["processed_count"] == 1
+    assert output["cycles"][0]["processed_count"] == 1
+    assert output["cycles"][1]["processed_count"] == 0
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-project-loop")
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "message"),
+    [
+        (["--cycles", "0"], "--cycles must be at least 1"),
+        (["--cycles", "1", "--poll-seconds", "-0.1"], "--poll-seconds must be zero or greater"),
+    ],
+)
+def test_v2_cli_project_role_services_loop_rejects_invalid_bounds(
+    tmp_path: Path,
+    extra_args: list[str],
+    message: str,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-role-services-loop",
+                "--project-file",
+                str(project_file),
+                *extra_args,
+            ]
+        )
+
+
 def test_v2_cli_validate_topology_accepts_distinct_roots(tmp_path: Path, capsys) -> None:
     source = tmp_path / "source"
     deployed = tmp_path / "deployed"

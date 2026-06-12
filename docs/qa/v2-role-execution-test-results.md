@@ -735,3 +735,66 @@ scope:
 ### Review Log
 
 - QA-RL-012 | qa-engineer | acceptance | PB-004 Story 12 | Verified project role-service config expansion, invalid instance-count rejection, bounded project runner execution, idle instance visibility, explicit unsupported-adapter behavior, and factual scope limits. | accepted 2026-06-12
+
+## PB-004 Story 13 - Bounded Project Role-Service Loop
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+57 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+126 passed
+```
+
+### Acceptance Assessment
+
+- `run-project-role-services-loop` runs the existing project-wide role-service
+  pass for a bounded number of cycles.
+- `--cycles` rejects values below 1.
+- `--poll-seconds` rejects negative values.
+- JSON output includes total processed, recovered, and skipped counts plus
+  per-cycle receipts.
+- A second cycle with no queued assignment is represented as idle/no processed
+  work instead of duplicating the completed assignment.
+- The engineering log is factual and does not claim daemonized supervision,
+  hibernation, event wake-up, or scheduled retry support.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 13 because they remain later v2 runtime
+scope:
+
+- The loop is a bounded CLI/operator entry point, not a daemonized role-service
+  supervisor.
+- The command sleeps between cycles but does not yet wake from connector events,
+  scheduled retry timers, or hibernation/hydration lifecycle events.
+
+### Review Log
+
+- QA-RL-013 | qa-engineer | acceptance | PB-004 Story 13 | Verified bounded project role-service loop execution, cycle/poll validation, aggregate and per-cycle JSON receipts, idle second-cycle behavior, and factual scope limits. | accepted 2026-06-12

@@ -14,7 +14,7 @@ Source documents:
 
 ## PB-004 Story 1 - Claim And Run Role Assignments
 
-Status: implemented, awaiting QA review.
+Status: implemented, QA accepted.
 
 Owner role: Engineering
 
@@ -759,6 +759,64 @@ Results:
 - The project runner does not yet merge organization defaults or deployment
   profile overrides.
 
+## PB-004 Story 13 - Bounded Project Role-Service Loop
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add an explicit bounded loop command for project role services so local
+operators and future container entrypoints can run repeated project-wide
+role-service ticks without introducing an uncontrolled daemon.
+
+### Implementation Notes
+
+- Added `run-project-role-services-loop`.
+- The loop command accepts:
+  - `--project-file`
+  - `--cycles`
+  - `--poll-seconds`
+  - `--max-recoveries`
+  - `--max-assignments`
+  - `--assignment-lease-seconds`
+  - `--skip-unsupported`
+- The command runs the existing project-wide role-service pass once per cycle.
+- JSON output includes total processed/recovered/skipped counts and per-cycle
+  results.
+- Loop bounds reject zero/negative cycles and negative polling intervals.
+
+### Tests Added
+
+- bounded loop with two cycles processes work in the first cycle and reports an
+  idle second cycle
+- completed assignment state is preserved after the loop
+- invalid cycle count and negative poll interval are rejected
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+57 passed
+126 passed
+```
+
+### Known Limitations
+
+- This is bounded loop execution, not an always-on supervisor or hibernating
+  container manager.
+- The command sleeps between cycles but does not yet wake from external events,
+  connector notifications, or scheduled retry timers.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -800,4 +858,7 @@ Results:
   into the shared worker factory path. | QA accepted 2026-06-12
 - RL-012 | engineering | implementation | PB-004 Story 12 | Added project
   role-service instance expansion and a CLI command to run one bounded tick for
-  each configured role instance. | awaiting QA review 2026-06-12
+  each configured role instance. | QA accepted 2026-06-12
+- RL-013 | engineering | implementation | PB-004 Story 13 | Added a bounded
+  project role-service loop command with cycle/poll validation and per-cycle
+  JSON receipts. | QA accepted 2026-06-12
