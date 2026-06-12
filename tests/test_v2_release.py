@@ -91,6 +91,39 @@ def test_release_close_requires_deployment_or_no_deployment_disposition(tmp_path
     assert db.get_work_item("work-1").state == "closed"
 
 
+def test_release_close_allows_already_released_work(tmp_path: Path) -> None:
+    db = _releasedb(tmp_path)
+    service = ReleaseService(db)
+    evidence = ReleaseEvidence(
+        work_item_id="work-1",
+        release_id="rel-1",
+        scope="Tiny feature.",
+        commit_ref="abc123",
+        approval_ref="approval-1",
+        rollback_plan="Revert commit abc123.",
+        residual_risks="None known.",
+    )
+
+    service.record_no_deployment(evidence, reason="Documentation-only release.")
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-1",
+            from_state="release_review",
+            to_state="released",
+            actor_role="release-manager",
+            reason="Release evidence accepted.",
+        )
+    )
+    service.close_released_work(
+        work_item_id="work-1",
+        from_state="released",
+        actor_role="release-manager",
+        reason="Sponsor approved no-deployment closure.",
+    )
+
+    assert db.get_work_item("work-1").state == "closed"
+
+
 def test_deployed_release_cannot_close_without_deployment_run_and_evidence_links(tmp_path: Path) -> None:
     db = _releasedb(tmp_path)
     service = ReleaseService(db)

@@ -3462,3 +3462,84 @@ Results:
   blocked-state validation, target-role requirement, atomic evidence and
   assignment effect, attention clearing, replay/deferred replay behavior, and
   fake-claim hardening. | accepted after QA review 2026-06-12
+
+## PB-005 Story 41 - Release Manager Work-Item Closure
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after rework
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/release.py`
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_release.py`
+- `tests/test_v2_release_deployment.py`
+- `tests/test_v2_release_safe_outputs.py`
+- `tests/test_v2_safe_outputs.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_release.py tests\test_v2_release_safe_outputs.py tests\test_v2_safe_outputs.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_end_to_end.py -q
+python -m pytest tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_release_safe_outputs.py tests\test_v2_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_release_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_end_to_end.py -q
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+```
+
+Results:
+
+```text
+29 passed before QA review
+compileall passed before QA review
+87 passed before QA review
+38 passed after QA rework
+96 passed after QA rework
+307 passed full suite
+V2 topology validation passed
+```
+
+### Findings And Rework
+
+- QA found no release-evidence bypass through `work_item.close`.
+- QA noted that closure effect processing trusted an optional `from_state`
+  payload, which could make an already-released work item fail after recording
+  if a stale state was supplied. Engineering removed payload trust and now uses
+  the current database state for closure effects.
+- QA found that release evidence link status was not gating deployed closure.
+  Engineering tightened direct release and safe-output deployment validation so
+  release evidence links must have `accepted` status.
+- Engineering added alias-specific tests for `work_item.close` on already
+  released work and for deployed closure with an incomplete closure evidence
+  package.
+
+### Acceptance Assessment
+
+- `work_item.close` is terminal and Release Manager scoped.
+- `work_item.close` routes through the same release closure semantics as
+  `release.close`.
+- Missing release records are rejected before a safe-output call is recorded.
+- Deployed closure requires successful deployment plus accepted release evidence
+  links.
+- No-deployment closure remains supported when the release manager has recorded
+  an explicit no-deployment disposition.
+- Deferred replay is idempotent and does not duplicate closure transitions.
+- Status replies cannot claim closure without using the durable closure tool
+  for the tested language variant.
+
+### Review Log
+
+- QA-RL-067 | qa-engineer | changes-requested | PB-005 Story 41 |
+  Closure semantics accepted in principle, but stale `from_state` trust and
+  non-accepted release evidence statuses required hardening. | addressed
+  2026-06-12
+- QA-RL-068 | qa-engineer | acceptance | PB-005 Story 41 | Verified
+  release-evidence closure path, no-deployment closure, already-released
+  closure, rejected missing release/deployed evidence, accepted evidence-link
+  status enforcement, and replay idempotency. | accepted after rework
+  2026-06-12

@@ -36,6 +36,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "noop",
         "report.blocked",
         "report.incomplete",
+        "work_item.close",
         "work_item.reopen",
         "work_item.supersede",
         "work_item.override_blocker",
@@ -228,6 +229,8 @@ class SafeOutputService:
             self._validate_release_decision_target(call)
         if self.process_effects and call.tool_name in {"release.deploy", "release.record_no_deployment"}:
             self._validate_release_activation_approval(call)
+        if self.process_effects and call.tool_name in {"release.close", "work_item.close"}:
+            self._validate_work_item_close_target(call)
         if self.process_effects and call.tool_name == "report.blocked":
             self._validate_optional_work_item_target(run_id=run_id, call=call)
         if self.process_effects and call.tool_name == "work_item.reopen":
@@ -282,6 +285,8 @@ class SafeOutputService:
         if call.tool_name == "release.deploy":
             self._deploy_release(call)
         if call.tool_name == "release.close":
+            self._close_released_work(call)
+        if call.tool_name == "work_item.close":
             self._close_released_work(call)
         if call.tool_name == "report.blocked":
             self._block_linked_work_item(call_id=call_id, run_id=run_id, call=call)
@@ -427,6 +432,32 @@ class SafeOutputService:
         if work_item.state != "blocked":
             raise SafeOutputError(
                 f"`work_item.override_blocker` requires work item state `blocked`, found `{work_item.state}`"
+            )
+
+    def _validate_work_item_close_target(self, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state == "closed":
+            return
+        if work_item.state != "released" and "released" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
+            raise SafeOutputError(
+                f"`{call.tool_name}` cannot close work item `{work_item_id}` from state `{work_item.state}`"
+            )
+        release = _latest_release_record(self.db, work_item_id=work_item_id)
+        if release is None:
+            raise SafeOutputError(f"`{call.tool_name}` requires a release record for `{work_item_id}`")
+        release_status = str(release["status"])
+        if release_status not in {"deployed", "no_deployment_disposition"}:
+            raise SafeOutputError(
+                f"`{call.tool_name}` requires deployed or no-deployment release evidence for `{work_item_id}`"
+            )
+        if release_status == "deployed" and not _has_deployed_release_closure_evidence(
+            self.db,
+            release_id=str(release["release_id"]),
+            work_item_id=work_item_id,
+        ):
+            raise SafeOutputError(
+                f"`{call.tool_name}` requires successful deployment and release evidence links for `{work_item_id}`"
             )
 
     def _record_work_item_evidence(
@@ -719,6 +750,9 @@ class SafeOutputService:
             raise SafeOutputError(
                 f"`{call.tool_name}` requires approval_ref to reference an approved release decision for this work item"
             )
+        if call.tool_name == "release.deploy":
+            _smoke_checks(call.payload.get("smoke_checks"))
+            _release_evidence_links(call.payload.get("evidence_links"))
 
     def _route_release_changes_requested(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
         work_item_id = _required_text(call.payload, "work_item_id")
@@ -880,7 +914,7 @@ class SafeOutputService:
             return
         self.release_service.close_released_work(
             work_item_id=work_item_id,
-            from_state=_optional_text(call.payload.get("from_state")) or work_item.state,
+            from_state=work_item.state,
             actor_role=call.role_id,
             reason=_required_text(call.payload, "reason"),
         )
@@ -997,6 +1031,7 @@ def _reject_fake_claims(tool_name: str, payload: dict[str, Any]) -> None:
             "deployed",
             "released",
             "closed work-",
+            "closed the work item",
             "superseded",
             "overrode blocker",
             "overrode the blocker",
@@ -1147,12 +1182,17 @@ def _release_evidence_links(value: object) -> tuple[ReleaseEvidenceLink, ...]:
             raise SafeOutputError(
                 f"release.deploy evidence_links item {index} requires artifact_ref, artifact_type, and role_id"
             )
+        status = _optional_text(item.get("status")) or "accepted"
+        if status.casefold() != "accepted":
+            raise SafeOutputError(
+                f"release.deploy evidence_links item {index} must have status `accepted`"
+            )
         links.append(
             ReleaseEvidenceLink(
                 artifact_ref=artifact_ref,
                 artifact_type=artifact_type,
                 role_id=role_id,
-                status=_optional_text(item.get("status")) or "accepted",
+                status=status,
             )
         )
     return tuple(links)
@@ -1202,6 +1242,36 @@ def _has_successful_deployment(db: V2Database, *, release_id: str, work_item_id:
         and run.get("status") == "succeeded"
         for run in db.list_deployment_runs()
     )
+
+
+def _latest_release_record(db: V2Database, *, work_item_id: str) -> dict[str, Any] | None:
+    row = db.connection.execute(
+        "SELECT * FROM releases WHERE work_item_id = ? ORDER BY updated_at DESC LIMIT 1",
+        (work_item_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _has_deployed_release_closure_evidence(db: V2Database, *, release_id: str, work_item_id: str) -> bool:
+    if not _has_successful_deployment(db, release_id=release_id, work_item_id=work_item_id):
+        return False
+    required = {
+        "product",
+        "architecture",
+        "security",
+        "prompt",
+        "engineering",
+        "qa",
+        "release",
+    }
+    present = {
+        str(link.get("artifact_type"))
+        for link in db.list_release_evidence_links()
+        if link.get("release_id") == release_id
+        and link.get("work_item_id") == work_item_id
+        and str(link.get("status") or "").casefold() == "accepted"
+    }
+    return required <= present
 
 
 def _has_work_item_evidence_ref(db: V2Database, *, safe_output_ref: str) -> bool:

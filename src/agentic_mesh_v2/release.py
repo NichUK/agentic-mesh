@@ -281,15 +281,16 @@ class ReleaseService:
                 release_id=str(release["release_id"]),
                 work_item_id=work_item_id,
             )
-        self.db.transition_work_item(
-            TransitionRequest(
-                work_item_id=work_item_id,
-                from_state=from_state,
-                to_state="released",
-                actor_role=actor_role,
-                reason=reason,
+        if from_state != "released":
+            self.db.transition_work_item(
+                TransitionRequest(
+                    work_item_id=work_item_id,
+                    from_state=from_state,
+                    to_state="released",
+                    actor_role=actor_role,
+                    reason=reason,
+                )
             )
-        )
         self.db.transition_work_item(
             TransitionRequest(
                 work_item_id=work_item_id,
@@ -370,6 +371,15 @@ def _require_release_evidence_links(evidence_links: tuple[ReleaseEvidenceLink, .
         "qa",
         "release",
     }
+    non_accepted = sorted(
+        f"{link.artifact_type}:{link.status}"
+        for link in evidence_links
+        if link.status.casefold() != "accepted"
+    )
+    if non_accepted:
+        raise ReleaseError(
+            "release evidence links must be accepted: " + ", ".join(non_accepted)
+        )
     present = {link.artifact_type for link in evidence_links}
     missing = sorted(required - present)
     if missing:

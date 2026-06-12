@@ -207,6 +207,35 @@ def test_release_requires_complete_evidence_and_passing_smoke(tmp_path: Path) ->
         )
 
 
+def test_release_evidence_links_must_be_accepted(tmp_path: Path) -> None:
+    db = _db_with_release_work(tmp_path)
+    release = ReleaseService(db)
+    release.register_compose_target(_target(_compose_file(tmp_path)))
+    links = (
+        ReleaseEvidenceLink(
+            "work-items/work-release-deployment/020-product-definition.md",
+            "product",
+            "product-manager",
+            status="rejected",
+        ),
+        *_links()[1:],
+    )
+
+    with pytest.raises(ReleaseError, match="must be accepted"):
+        release.record_compose_deployment(
+            ReleaseEvidence(
+                work_item_id="work-release-deployment",
+                release_id="release-rejected-evidence",
+                scope="Rejected evidence release.",
+                rollback_plan="Do not deploy until evidence is accepted.",
+                residual_risks="Evidence has not been accepted.",
+            ),
+            target_id="target-compose-dogfood",
+            smoke_checks={"healthz": "passed"},
+            evidence_links=links,
+        )
+
+
 def test_failed_compose_command_records_failed_deployment_without_release(tmp_path: Path) -> None:
     db = _db_with_release_work(tmp_path)
 

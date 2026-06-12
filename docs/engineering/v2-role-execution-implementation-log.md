@@ -3623,3 +3623,76 @@ Results:
   an active work item with no continuation owner.
 - `work_item.close` remains the final follow-up release-manager authority story
   and still needs product semantics before implementation.
+
+## PB-005 Story 41 - Release Manager Work-Item Closure
+
+Date: 2026-06-12
+
+### Goal
+
+Make the existing Release Manager `work_item.close` safe-output tool perform
+real runtime closure without creating a shortcut around release evidence.
+Closure should be possible only when the work item already has deployed or
+explicit no-deployment release evidence.
+
+### Changes
+
+- Marked `work_item.close` as a terminal safe-output tool.
+- Added pre-recording validation for `release.close` and `work_item.close` so
+  invalid closure attempts are rejected before a durable safe-output call is
+  written.
+- Routed `work_item.close` through the existing release closure implementation,
+  preserving the same release record, deployment, and no-deployment rules as
+  `release.close`.
+- Added release-record validation requiring the latest release to be
+  `deployed` or `no_deployment_disposition`.
+- Added deployed-release validation requiring a successful deployment run and
+  the full release evidence link set before closure.
+- Fixed release closure from an already `released` state so it closes directly
+  instead of attempting a `released -> released` transition.
+- Extended fake-claim validation so status messages cannot claim they
+  `closed the work item` without using the durable closure tool.
+- Added focused coverage for successful no-deployment work-item closure,
+  missing-release rejection before recording, deferred replay idempotency, and
+  already-released closure.
+- Removed optional `from_state` payload trust during closure effect processing;
+  closure now derives source state from the current database row.
+- Tightened release evidence semantics so deployment and deployed-release
+  closure require accepted release evidence links, not just matching artifact
+  types.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_release.py tests\test_v2_release_safe_outputs.py tests\test_v2_safe_outputs.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_end_to_end.py -q
+python -m pytest tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_release_safe_outputs.py tests\test_v2_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_release_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_end_to_end.py -q
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+python -m agentic_mesh.cli validate-config
+python scripts\check-pr-size.py --base origin/develop --committed-only
+```
+
+Results:
+
+```text
+29 passed
+compileall passed
+87 passed
+38 passed after QA rework
+96 passed after QA rework
+307 passed full suite
+V2 topology validation passed
+V1 validate-config command unavailable on this branch: ModuleNotFoundError: No module named 'agentic_mesh'
+PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files and 103878 changed lines against origin/develop
+```
+
+### Notes
+
+- `work_item.close` intentionally does not close arbitrary active, blocked, or
+  superseded work. Use `work_item.supersede`, `work_item.reopen`, or
+  `work_item.override_blocker` for those authority paths.
+- `work_item.close` is a release-evidence closure tool, not an administrative
+  abandon/cancel tool.
