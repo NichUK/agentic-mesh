@@ -607,12 +607,17 @@ roles:
     db = V2Database(db_path)
     try:
         assignment = db.get_role_assignment("assignment-cli-project-worker")
+        prompts = db.list_agent_prompts()
         safe_outputs = db.list_safe_output_calls()
     finally:
         db.close()
 
     assert assignment is not None
     assert assignment["status"] == "completed"
+    assert len(prompts) == 1
+    assert prompts[0]["assignment_id"] == "assignment-cli-project-worker"
+    assert "<agentic-mesh-worker-prompt" in prompts[0]["prompt_text"]
+    assert "CLI project worker" in prompts[0]["prompt_text"]
     assert safe_outputs[0]["payload"]["message"] == "Project-configured worker complete."
 
 
@@ -630,7 +635,7 @@ roles:
       command:
         - "{python_executable}"
         - "-c"
-        - "import json, sys; payload=json.load(sys.stdin); assert payload['worker']['adapter'] == 'codex-cli'; print(json.dumps({{'calls':[{{'tool_name':'status.complete','payload':{{'message':'Project Codex worker complete.'}},'terminal':True}}]}}))"
+        - "import json, sys; payload=json.load(sys.stdin); assert payload['worker']['adapter'] == 'codex-cli'; assert payload['prompt'] and '<agentic-mesh-worker-prompt' in payload['prompt']; print(json.dumps({{'calls':[{{'tool_name':'status.complete','payload':{{'message':'Project Codex worker complete.'}},'terminal':True}}]}}))"
       timeout_seconds: 5
       model: gpt-test
       reasoning_effort: high
@@ -678,12 +683,15 @@ roles:
     db = V2Database(db_path)
     try:
         assignment = db.get_role_assignment("assignment-cli-project-codex-worker")
+        prompts = db.list_agent_prompts()
         safe_outputs = db.list_safe_output_calls()
     finally:
         db.close()
 
     assert assignment is not None
     assert assignment["status"] == "completed"
+    assert len(prompts) == 1
+    assert prompts[0]["assignment_id"] == "assignment-cli-project-codex-worker"
     assert safe_outputs[0]["payload"]["message"] == "Project Codex worker complete."
 
 

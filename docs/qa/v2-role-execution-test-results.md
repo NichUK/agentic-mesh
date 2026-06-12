@@ -1998,3 +1998,74 @@ restart entries.
   role-agent service deployment wiring, lifecycle service-name alignment,
   continuous role-service commands, linuxch restart policy, and scoped
   implementation claims. | accepted 2026-06-12
+
+## PB-005 Story 19 - XML Worker Prompt Assembly And Audit
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `config/prompts/worker/system-security.xml`
+- `config/prompts/worker/safe-outputs.xml`
+- `config/prompts/worker/instructions.xml`
+- `src/agentic_mesh_v2/prompt_builder.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `src/agentic_mesh_v2/worker_adapters.py`
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_prompt_builder.py`
+- `tests/test_v2_role_assignment_execution.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+git status --short --branch
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_prompt_builder.py tests\test_v2_role_assignment_execution.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests
+$env:PYTHONPYCACHEPREFIX=<temp>; python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+77 passed focused suite
+193 passed full suite
+compileall passed
+```
+
+### Acceptance Assessment
+
+- Prompt assembly is config/data driven: prompt component files, role YAML,
+  project YAML, assignment fields, flow hints, conversation context, memory
+  context, and safe-output tool policy are rendered together.
+- Prompt XML includes `system-security`, `safe-outputs`, `role`, `project`,
+  `assignment`, `current-flow-state`, `conversation-context`, `memory-context`,
+  and `instructions`.
+- Full prompt audit is recorded before worker execution and exposed through
+  runtime state.
+- Prompt assembly failure completes the run and assignment as failed rather
+  than leaving stale running state.
+- `RoleAssignment.generated_prompt` reaches the worker, and `CodexCliWorker`
+  sends it as top-level stdin `prompt`.
+- Engineering evidence correctly does not claim native MCP/safe-output tool
+  transport is complete.
+
+### Residual Risks
+
+- Prompt quality is intentionally first-cut text and needs future
+  prompt-engineering refinement.
+- Native MCP/safe-output tool transport is still not implemented; workers must
+  continue emitting safe-output JSON on stdout.
+
+### Review Log
+
+- QA-RL-033 | qa-engineer | acceptance | PB-005 Story 19 | Verified XML prompt
+  assembly, full prompt audit, worker prompt injection, Codex CLI prompt
+  payload, prompt-failure runtime recovery, and scoped implementation claims. |
+  accepted 2026-06-12

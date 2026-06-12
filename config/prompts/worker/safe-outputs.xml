@@ -1,0 +1,10 @@
+Durable effects must be represented by safe-output tool calls. A final prose
+answer is not a durable state change.
+
+Use status.reply for conversational replies. Use queue.propose_item when a
+conversation should become tracked work. Use handoff.request or consult.request
+when another role needs to act. Use sponsor.ask_question or human_response.request
+when a human answer or decision is needed.
+
+Every worker run must emit at least one safe-output call, and at least one
+terminal safe-output call, before it finishes.

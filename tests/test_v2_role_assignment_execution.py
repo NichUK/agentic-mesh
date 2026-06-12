@@ -28,6 +28,23 @@ class EmptyWorker:
         return []
 
 
+class StaticPromptAssembler:
+    def render(self, assignment: RoleAssignment):
+        return type(
+            "PromptRender",
+            (),
+            {
+                "prompt_text": f"<prompt>{assignment.role_id}:{assignment.title}</prompt>",
+                "component_manifest": {"components": ["static-test"]},
+            },
+        )()
+
+
+class FailingPromptAssembler:
+    def render(self, assignment: RoleAssignment):
+        raise ValueError("prompt component missing")
+
+
 def _config() -> ConnectorConfig:
     return ConnectorConfig.from_dict(
         {
@@ -162,6 +179,95 @@ def test_role_service_claims_connector_assignment_and_completes_with_safe_output
     event_types = [event["event_type"] for event in db.list_events()]
     assert "role_assignment.claimed" in event_types
     assert "role_assignment.completed" in event_types
+
+
+def test_role_service_records_prompt_audit_and_passes_prompt_to_worker(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-prompt-audit",
+        role_id="product-manager",
+        source_ref="msg-prompt-audit",
+        title="Prompt audit",
+        summary="Record the full prompt before worker execution.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    worker = StaticWorker(
+        [
+            SafeOutputCall(
+                role_id="product-manager",
+                tool_name="status.complete",
+                payload={"message": "Prompt audit complete."},
+                terminal=True,
+            )
+        ]
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=worker,
+        prompt_assembler=StaticPromptAssembler(),
+    )
+
+    receipt = service.run_next_assignment()
+
+    assert receipt is not None
+    assert worker.seen_assignment is not None
+    assert worker.seen_assignment.generated_prompt == "<prompt>product-manager:Prompt audit</prompt>"
+    prompts = db.list_agent_prompts()
+    assert len(prompts) == 1
+    assert prompts[0]["run_id"] == receipt.run_id
+    assert prompts[0]["assignment_id"] == "assignment-prompt-audit"
+    assert prompts[0]["prompt_text"] == "<prompt>product-manager:Prompt audit</prompt>"
+    assert prompts[0]["component_manifest"] == {"components": ["static-test"]}
+    assert db.status_snapshot()["counts"]["agent_prompts"] == 1
+    event_types = [event["event_type"] for event in db.list_events()]
+    assert "agent_prompt.recorded" in event_types
+
+
+def test_role_service_marks_run_failed_when_prompt_assembly_fails(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-prompt-failure",
+        role_id="product-manager",
+        source_ref="msg-prompt-failure",
+        title="Prompt failure",
+        summary="Prompt assembly should fail visibly.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    worker = StaticWorker(
+        [
+            SafeOutputCall(
+                role_id="product-manager",
+                tool_name="status.complete",
+                payload={"message": "Should not run."},
+                terminal=True,
+            )
+        ]
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=worker,
+        prompt_assembler=FailingPromptAssembler(),
+    )
+
+    with pytest.raises(ValueError, match="prompt component missing"):
+        service.run_next_assignment()
+
+    snapshot = db.status_snapshot()
+    assert worker.seen_assignment is None
+    assert snapshot["agent_runs"][0]["status"] == "failed"
+    assert snapshot["counts"]["agent_prompts"] == 0
+    assert snapshot["role_assignments"][0]["status"] == "failed"
+    assert "prompt component missing" in snapshot["role_assignments"][0]["failure_reason"]
 
 
 def test_role_service_does_not_claim_assignments_for_other_roles(tmp_path: Path) -> None:

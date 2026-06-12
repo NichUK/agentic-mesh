@@ -91,6 +91,7 @@ class CodexCliWorker:
 
     def run(self, assignment: RoleAssignment) -> list[SafeOutputCall]:
         prompt_payload = {
+            "prompt": assignment.generated_prompt,
             "assignment": _assignment_payload(assignment),
             "worker": {
                 "adapter": "codex-cli",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Any
 from typing import Protocol
 from uuid import uuid4
@@ -29,6 +30,7 @@ class RoleAssignment:
     payload: dict[str, Any] | None = None
     conversation_context: tuple[str, ...] = ()
     memory_context: tuple[str, ...] = ()
+    generated_prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ class RoleService:
         role_instance_id: str,
         worker: Worker,
         safe_outputs: SafeOutputService | None = None,
+        prompt_assembler: Any | None = None,
         assignment_lease_seconds: int = 300,
     ) -> None:
         self.db = db
@@ -71,6 +74,7 @@ class RoleService:
         self.role_instance_id = role_instance_id
         self.worker = worker
         self.safe_outputs = safe_outputs or SafeOutputService(db)
+        self.prompt_assembler = prompt_assembler
         self.assignment_lease_seconds = assignment_lease_seconds
         self.db.update_role_instance_status(
             role_id=self.role_id,
@@ -90,7 +94,20 @@ class RoleService:
             work_item_id=assignment.work_item_id,
         )
         try:
-            calls = self.worker.run(assignment)
+            worker_assignment = assignment
+            if self.prompt_assembler is not None:
+                prompt = self.prompt_assembler.render(assignment)
+                self.db.record_agent_prompt(
+                    prompt_id=f"prompt-{uuid4().hex}",
+                    run_id=run_id,
+                    role_id=self.role_id,
+                    role_instance_id=self.role_instance_id,
+                    assignment_id=assignment.assignment_id,
+                    prompt_text=prompt.prompt_text,
+                    component_manifest=prompt.component_manifest,
+                )
+                worker_assignment = replace(assignment, generated_prompt=prompt.prompt_text)
+            calls = self.worker.run(worker_assignment)
         except Exception:
             self.db.complete_run(run_id, status="failed", terminal_tool=None)
             raise

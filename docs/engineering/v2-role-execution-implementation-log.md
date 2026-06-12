@@ -1945,6 +1945,82 @@ Schema JSON validation passed
   that require real Codex output remain dependent on the later prompt/tool
   transport slice.
 
+## PB-005 Story 19 - XML Worker Prompt Assembly And Audit
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; awaiting QA
+
+### Intent
+
+Replace opaque assignment-only worker input with an auditable XML-section
+prompt built from prompt components, role charters, project config, assignment
+context, flow state, memory, and safe-output tool policy.
+
+### Changes
+
+- Added reusable prompt components under `config/prompts/worker/`:
+  - `system-security.xml`
+  - `safe-outputs.xml`
+  - `instructions.xml`
+- Added `agentic_mesh_v2.prompt_builder.PromptAssembler`.
+- The prompt assembler renders:
+  - `system-security`
+  - `safe-outputs` with available tool names
+  - role charter fields from `config/roles/{role_id}.yaml`
+  - project goal, flow, document library, and role memory config
+  - assignment data
+  - current flow state and source/target document hints
+  - conversation and memory context
+  - common instructions
+- Added `agent_prompts` as a runtime audit table.
+- Role services now record the full generated prompt before worker execution
+  when project-file context is available.
+- Role services pass the generated prompt to workers through
+  `RoleAssignment.generated_prompt`.
+- `CodexCliWorker` includes the generated prompt as a top-level `prompt` field
+  in the stdin payload while still preserving assignment and worker metadata.
+- Status snapshots now expose prompt audit counts and records.
+
+### Tests Added
+
+- prompt assembler renders XML sections from config components, role charter,
+  project config, assignment context, conversation context, memory context, and
+  safe-output tools
+- role service records prompt audit rows and passes generated prompts to the
+  worker
+- prompt assembly failure marks the agent run and role assignment failed rather
+  than leaving runtime state as running
+- project-file CLI role execution records prompt audit rows
+- project-file Codex CLI adapter receives the generated prompt in stdin
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_prompt_builder.py tests\test_v2_role_assignment_execution.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests
+```
+
+Results:
+
+```text
+77 passed focused suite
+compileall passed
+193 passed full suite
+```
+
+### Known Limitations
+
+- This story assembles and audits prompts, but it does not yet provide native
+  MCP/CLI safe-output tool invocation from inside Codex. Workers still need to
+  emit safe-output JSON on stdout until the safe-output transport slice lands.
+- Prompt component text is intentionally simple for the first cut; later
+  prompt-engineering slices should refine role-specific prompt evaluation
+  cases and richer flow guidance.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added

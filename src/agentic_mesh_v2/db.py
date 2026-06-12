@@ -132,6 +132,17 @@ class V2Database:
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS agent_prompts (
+                  prompt_id TEXT PRIMARY KEY,
+                  run_id TEXT NOT NULL REFERENCES agent_runs(run_id),
+                  role_id TEXT NOT NULL,
+                  role_instance_id TEXT NOT NULL,
+                  assignment_id TEXT,
+                  prompt_text TEXT NOT NULL,
+                  component_manifest_json TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS approvals (
                   approval_id TEXT PRIMARY KEY,
                   work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id),
@@ -2341,6 +2352,43 @@ class V2Database:
                 {"status": status, "terminal_tool": terminal_tool},
             )
 
+    def record_agent_prompt(
+        self,
+        *,
+        prompt_id: str,
+        run_id: str,
+        role_id: str,
+        role_instance_id: str,
+        assignment_id: str | None,
+        prompt_text: str,
+        component_manifest: dict[str, Any],
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO agent_prompts(
+                  prompt_id, run_id, role_id, role_instance_id, assignment_id,
+                  prompt_text, component_manifest_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    prompt_id,
+                    run_id,
+                    role_id,
+                    role_instance_id,
+                    assignment_id,
+                    prompt_text,
+                    json.dumps(component_manifest, sort_keys=True),
+                ),
+            )
+            self.append_event(
+                "agent_prompt.recorded",
+                "agent_run",
+                run_id,
+                {"role_id": role_id, "assignment_id": assignment_id},
+            )
+
     def get_agent_run(self, run_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             "SELECT * FROM agent_runs WHERE run_id = ?",
@@ -2739,6 +2787,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_agent_prompts(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM agent_prompts
+            ORDER BY created_at DESC, prompt_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_artifacts(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -3042,6 +3100,7 @@ class V2Database:
         retention_expiry_records = self.list_retention_expiry_records()
         safe_output_calls = self.list_safe_output_calls()
         redacted_safe_output_calls = _redact_private_safe_output_calls(safe_output_calls)
+        agent_prompts = self.list_agent_prompts()
         states: dict[str, int] = {}
         for item in work_items:
             state = str(item["state"])
@@ -3111,6 +3170,7 @@ class V2Database:
                 "queue_items": len(queue_items),
                 "work_items": len(work_items),
                 "agent_runs": len(self.list_agent_runs()),
+                "agent_prompts": len(agent_prompts),
                 "safe_output_calls": len(safe_output_calls),
                 "artifacts": len(self.list_artifacts()),
                 "releases": len(releases),
@@ -3149,6 +3209,7 @@ class V2Database:
             "queue_items": queue_items,
             "work_items": work_items,
             "agent_runs": self.list_agent_runs(),
+            "agent_prompts": agent_prompts,
             "safe_output_calls": redacted_safe_output_calls,
             "artifacts": self.list_artifacts(),
             "releases": releases,
@@ -3192,6 +3253,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "compose_files_json",
         "command_json",
         "evidence_json",
+        "component_manifest_json",
     ):
         if isinstance(result.get(key), str):
             result[key.removesuffix("_json")] = json.loads(result[key])

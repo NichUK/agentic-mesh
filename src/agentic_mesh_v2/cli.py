@@ -19,6 +19,7 @@ from agentic_mesh_v2.project_config import list_project_role_service_configs
 from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
 from agentic_mesh_v2.project_config import load_role_hibernation_config
 from agentic_mesh_v2.project_config import load_role_worker_config
+from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.topology import ProjectRepo
@@ -477,11 +478,13 @@ def _worker_config_from_args(args: argparse.Namespace) -> dict[str, object]:
 
 def _run_role_service_tick(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
     worker = build_worker_adapter(_worker_config_from_args(args))
+    prompt_assembler = build_prompt_assembler_for_project(args.project_file) if args.project_file is not None else None
     service = RoleService(
         db=db,
         role_id=args.role_id,
         role_instance_id=args.role_instance_id,
         worker=worker,
+        prompt_assembler=prompt_assembler,
         assignment_lease_seconds=args.assignment_lease_seconds,
     )
     receipt = service.run_service_tick(
@@ -569,6 +572,7 @@ def _run_project_role_services_once(db: V2Database, args: argparse.Namespace) ->
             role_id=config.role_id,
             role_instance_id=config.role_instance_id,
             worker=worker,
+            prompt_assembler=build_prompt_assembler_for_project(args.project_file),
             assignment_lease_seconds=args.assignment_lease_seconds,
         )
         receipt = service.run_service_tick(
