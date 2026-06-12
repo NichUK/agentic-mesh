@@ -3657,3 +3657,66 @@ compileall passed
   implementation assignment activation, already-active idempotency, failed
   invalid-state activation, and run/assignment failure visibility. |
   accepted 2026-06-12
+
+## PB-005 Story 44 - Role-Service End-To-End Release Proof
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Under Review
+
+- `tests/test_v2_end_to_end.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_end_to_end.py tests\test_v2_role_assignment_execution.py tests\test_v2_release_safe_outputs.py tests\test_v2_release_deployment.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest tests\test_v2_end_to_end.py tests\test_v2_role_assignment_execution.py tests\test_v2_release_safe_outputs.py tests\test_v2_release_deployment.py -q
+```
+
+Results:
+
+```text
+82 passed before QA review
+compileall passed
+82 passed after QA rework
+```
+
+### Findings And Rework
+
+- QA found no blocking defects.
+- QA requested that the E2E proof assert implementation evidence, not only
+  release evidence. Engineering added explicit implementation, test, and
+  release evidence assertions.
+- QA requested that approval request creation avoid direct database shortcuts.
+  Engineering moved release approval to `release.request_approval` through the
+  connector safe-output service and simulated sponsor approval through the
+  local Teams response-card adapter, which queues the Release Manager follow-up
+  assignment.
+
+### Acceptance Assessment
+
+- Product Manager, Engineering, QA Engineer, and Release Manager all execute
+  through `RoleService` in the happy-path proof.
+- Product readiness, implementation activation, QA approval, release approval,
+  deployment, and closure are all driven through safe-output calls.
+- Human approval is represented by the connector response-card path and creates
+  the release follow-up assignment without manual work-item mutation.
+- The proof asserts implementation evidence, test evidence, release decision
+  evidence, deployment evidence, release evidence links, safe-output audit
+  events, human-response events, and final closed state.
+
+### Review Log
+
+- QA-RL-072 | qa-engineer | accepted-with-notes | PB-005 Story 44 |
+  Add implementation evidence assertions and avoid direct database approval
+  request creation where possible. | addressed 2026-06-12
+- QA-RL-073 | qa-engineer | acceptance | PB-005 Story 44 | Verified
+  role-service E2E proof, connector-backed human approval follow-up,
+  evidence assertions, deployment proof, release record, and closed final
+  state. | accepted after rework 2026-06-12

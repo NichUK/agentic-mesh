@@ -3810,3 +3810,65 @@ PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files a
   boundary. It does not change QA approval or release behavior.
 - The worker still owns specialist implementation output through safe-output
   tools such as `implementation.record_change` and `handoff.request`.
+
+## PB-005 Story 44 - Role-Service End-To-End Release Proof
+
+Date: 2026-06-12
+
+### Goal
+
+Upgrade the v2 happy-path proof so it demonstrates a real role-service and
+safe-output driven slice release instead of relying on manual database
+transitions and direct release-service mutation.
+
+### Changes
+
+- Reworked `test_v2_one_real_slice_release_happy_path` to run Product Manager,
+  Engineering, QA Engineer, and Release Manager through `RoleService`.
+- Product Manager now publishes product evidence and uses
+  `work_item.mark_ready` to move shaped work to `ready` and queue Engineering.
+- Engineering now claims the implementation assignment, activates the work item
+  through the role-service claim boundary, records implementation evidence, and
+  hands off to QA.
+- QA now records test evidence and uses `quality.approve` to move the work item
+  to `release_review` and queue Release Manager.
+- Release Manager now requests sponsor approval through `release.request_approval`
+  using the connector safe-output service.
+- Sponsor approval is simulated through the local Teams response-card adapter,
+  which creates the Release Manager human-response follow-up assignment.
+- Release Manager now records the sponsor decision, deploys through
+  `release.deploy`, and closes with `work_item.close` in a role-service run.
+- The E2E proof still asserts deployment evidence, release evidence links,
+  implementation/test/release evidence, safe-output audit events, human
+  response events, and final closed state.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_end_to_end.py tests\test_v2_role_assignment_execution.py tests\test_v2_release_safe_outputs.py tests\test_v2_release_deployment.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest tests\test_v2_end_to_end.py tests\test_v2_role_assignment_execution.py tests\test_v2_release_safe_outputs.py tests\test_v2_release_deployment.py -q
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+python scripts\check-pr-size.py --base origin/develop --committed-only
+```
+
+Results:
+
+```text
+82 passed before QA review
+compileall passed
+82 passed after QA rework
+314 passed full suite
+V2 topology validation passed
+PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files and 105216 changed lines against origin/develop
+```
+
+### Notes
+
+- The sponsor approval response is simulated through the connector response-card
+  adapter so the runtime queues the follow-up assignment through the same path
+  as a real human response.
+- This proof uses the local Compose release adapter with an injectable command
+  runner; real tenant/container smoke remains deployment evidence rather than
+  a unit-test responsibility.
