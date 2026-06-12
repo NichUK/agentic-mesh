@@ -1099,3 +1099,74 @@ operations scope:
   guarded CLI execution, status/dashboard visibility, focused and broader
   runtime tests, and factual scope limits after QA rework. | accepted
   2026-06-12
+
+## PB-005 Story 5 - Bounded Project Supervisor Tick
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_cli_server.py
+```
+
+Result:
+
+```text
+45 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+76 passed
+```
+
+### Acceptance Assessment
+
+- `run-project-supervisor-tick` is available as a bounded CLI command.
+- The tick runs project hibernation maintenance before container lifecycle
+  handling.
+- Container lifecycle planning reads the durable role-instance state updated by
+  the same tick.
+- By default, lifecycle actions are recorded as planned and commands are not
+  executed.
+- `--execute` routes through the existing guarded container lifecycle executor
+  path.
+- JSON output contains nested hibernation and container lifecycle receipts.
+- Regression coverage proves an idle surplus instance can hibernate and record
+  a stop plan, then later hydrate on queued role work and record a start plan.
+- The engineering log is factual: this is bounded supervisor command behavior,
+  not a daemon, scheduler, retry, rollback, or alerting implementation.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 5 because they remain later lifecycle
+operations scope:
+
+- The supervisor tick is operator-triggered and bounded, not a background
+  daemon or scheduler.
+- Retry, rollback, alert routing, and repeated automated supervision remain
+  future slices.
+
+### Review Log
+
+- QA-RL-018 | qa-engineer | acceptance | PB-005 Story 5 | Verified bounded
+  supervisor tick command behavior, hibernation-before-lifecycle ordering,
+  updated durable-state lifecycle records, default planned-only mode, guarded
+  `--execute` path reuse, nested JSON receipts, focused and broader runtime
+  tests, and factual scope limits. | accepted 2026-06-12

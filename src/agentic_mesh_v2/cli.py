@@ -147,6 +147,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_container_lifecycle_parser.add_argument("--timeout-seconds", type=int, default=300)
 
+    supervisor_tick_parser = subparsers.add_parser(
+        "run-project-supervisor-tick",
+        help="Run one bounded project supervisor tick: hibernation maintenance plus container lifecycle action handling.",
+    )
+    supervisor_tick_parser.add_argument("--project-file", type=Path, required=True)
+    supervisor_tick_parser.add_argument(
+        "--hibernate-reason",
+        default="Project supervisor tick found an idle safe role instance.",
+    )
+    supervisor_tick_parser.add_argument(
+        "--hydrate-reason",
+        default="Project supervisor tick found queued role work.",
+    )
+    supervisor_tick_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually run planned container lifecycle commands. Without this flag, actions are recorded as planned only.",
+    )
+    supervisor_tick_parser.add_argument("--timeout-seconds", type=int, default=300)
+
     topology_parser = subparsers.add_parser(
         "validate-topology",
         help="Validate v2 source/runtime/project repository boundaries.",
@@ -293,6 +313,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.command == "run-project-container-lifecycle":
                 result = _run_project_container_lifecycle(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            if args.command == "run-project-supervisor-tick":
+                result = _run_project_supervisor_tick(db, args)
                 print(json.dumps(result, sort_keys=True))
                 return 0
         finally:
@@ -563,6 +587,18 @@ def _run_project_container_lifecycle(db: V2Database, args: argparse.Namespace) -
         "skipped_count": len(skipped),
         "actions": receipts,
         "skipped": skipped,
+    }
+
+
+def _run_project_supervisor_tick(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    hibernation = _run_project_hibernation_maintenance(db, args)
+    lifecycle = _run_project_container_lifecycle(db, args)
+    return {
+        "status": "ok",
+        "project_file": str(args.project_file),
+        "execute": bool(args.execute),
+        "hibernation": hibernation,
+        "container_lifecycle": lifecycle,
     }
 
 

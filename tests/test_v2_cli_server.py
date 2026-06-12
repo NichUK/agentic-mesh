@@ -1139,6 +1139,119 @@ roles:
     ]
 
 
+def test_v2_cli_project_supervisor_tick_hibernates_and_hydrates_with_lifecycle_records(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+container_lifecycle:
+  adapter: docker-compose
+  compose_files:
+    - docker-compose.yml
+  service_name_template: "{project_id}-{role_id}-{index}"
+roles:
+  product-manager:
+    instances: 2
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+    hibernation:
+      idle_after_seconds: 1
+      min_warm_instances: 1
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        for index in (1, 2):
+            db.update_role_instance_status(
+                role_id="product-manager",
+                role_instance_id=f"test-project.product-manager.{index}",
+                status="idle",
+                detail="Idle before supervisor tick.",
+            )
+        db.connection.execute(
+            """
+            UPDATE role_instance_status
+            SET heartbeat_at = datetime('now', '-120 seconds')
+            WHERE role_id = 'product-manager'
+            """
+        )
+        db.connection.commit()
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-supervisor-tick",
+                "--project-file",
+                str(project_file),
+                "--hibernate-reason",
+                "Supervisor idle hibernation.",
+            ]
+        )
+        == 0
+    )
+
+    first = json.loads(capsys.readouterr().out)
+    assert first["hibernation"]["hibernated_count"] == 1
+    assert first["container_lifecycle"]["planned_count"] == 1
+    assert first["container_lifecycle"]["actions"][0]["action"] == "stop"
+    db = V2Database(db_path)
+    try:
+        db.create_role_assignment(
+            assignment_id="assignment-supervisor-wake",
+            role_id="product-manager",
+            source_ref="msg-supervisor-wake",
+            title="Wake product manager",
+            summary="Queued work should hydrate a hibernated product manager.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-supervisor-tick",
+                "--project-file",
+                str(project_file),
+                "--hydrate-reason",
+                "Supervisor queued work wake.",
+            ]
+        )
+        == 0
+    )
+
+    second = json.loads(capsys.readouterr().out)
+    assert second["hibernation"]["hydrating_count"] == 1
+    assert second["container_lifecycle"]["planned_count"] == 1
+    assert second["container_lifecycle"]["actions"][0]["action"] == "start"
+    db = V2Database(db_path)
+    try:
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    assert snapshot["counts"]["role_container_lifecycle_actions"] == 2
+    assert {row["status"] for row in snapshot["role_container_lifecycle_actions"]} == {"planned"}
+    assert {row["action"] for row in snapshot["role_container_lifecycle_actions"]} == {"start", "stop"}
+
+
 @pytest.mark.parametrize(
     ("extra_args", "message"),
     [

@@ -1098,6 +1098,62 @@ Results:
 - Stop action success does not yet change the role-instance status beyond the
   already recorded `hibernated` state.
 
+## PB-005 Story 5 - Bounded Project Supervisor Tick
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add one bounded project supervisor command that runs hibernation maintenance and
+then records or executes the resulting container lifecycle actions. This joins
+the PB-005 logical hibernation state and container lifecycle action surfaces in
+one operator/supervisor entry point without introducing a daemon.
+
+### Implementation Notes
+
+- Added `run-project-supervisor-tick`.
+- The command runs project hibernation maintenance first.
+- It then runs project container lifecycle handling against the updated durable
+  role-instance state.
+- By default, container lifecycle actions are recorded as planned only.
+- With `--execute`, lifecycle commands are executed through the existing guarded
+  executor path.
+- JSON output includes both nested hibernation and container lifecycle receipts.
+
+### Tests Added
+
+- supervisor tick hibernates a surplus idle role instance and records a planned
+  stop action
+- supervisor tick hydrates a hibernated role instance when queued role work
+  appears and records a planned start action
+- planned lifecycle records remain durable after the two supervisor ticks
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+45 passed
+76 passed
+```
+
+### Known Limitations
+
+- This is still a bounded command, not an always-on daemon or scheduler.
+- `--execute` uses the existing command executor but is not automatically run
+  by a background supervisor.
+- Retry, rollback, and alert routing for failed lifecycle actions remain later
+  slices.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1161,3 +1217,6 @@ Results:
 - RL-019 | engineering | QA rework | PB-005 Story 4 | Made lifecycle action
   attempts append-only with correlation fingerprints and preserved repeated
   failure evidence after QA found overwrite risk. | QA accepted 2026-06-12
+- RL-020 | engineering | implementation | PB-005 Story 5 | Added a bounded
+  project supervisor tick that chains hibernation maintenance and container
+  lifecycle action handling. | QA accepted 2026-06-12
