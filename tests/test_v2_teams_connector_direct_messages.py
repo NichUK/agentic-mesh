@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import sys
 
 from agentic_mesh_v2.connectors import ConnectorConfig
 from agentic_mesh_v2.connectors import ConnectorSafeOutputService
@@ -7,6 +9,7 @@ from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.role_service import RoleAssignment
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
+from agentic_mesh_v2.worker_adapters import SafeOutputSubprocessWorker
 
 
 class StaticWorker:
@@ -152,3 +155,58 @@ def test_role_dm_status_reply_creates_delivery_without_work_item(tmp_path: Path)
     assert delivery["purpose"] == "status.reply"
     assert delivery["destination_type"] == "dm"
     assert delivery["status"] == "sent"
+
+
+def test_cli_recorded_dm_status_reply_is_delivered_by_connector_safe_output_service(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    adapter = LocalTeamsTestAdapter(db, _config())
+    adapter.install()
+
+    replayed = adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-dm-cli-transport",
+            "conversation_ref": "dm-nicholas-product",
+            "sender_ref": "nicholas",
+            "source_type": "dm",
+            "target_role_id": "product-manager",
+            "target_ref": "bot-product-manager",
+            "body": "Please reply through the safe-output CLI transport.",
+        }
+    )
+    worker_script = (
+        "import json, subprocess, sys; "
+        "payload=json.load(sys.stdin); "
+        "command=payload['safe_output_transport']['record_command']; "
+        "reply={"
+        "'message':'Product Manager reply through CLI transport.',"
+        f"'conversation_id':'{replayed.conversation_id}',"
+        "'destination_ref':'dm-nicholas-product',"
+        "'destination_type':'dm'"
+        "}; "
+        "subprocess.run(command + ["
+        "'--tool-name','status.reply',"
+        "'--payload-json',json.dumps(reply)"
+        "], check=True, capture_output=True)"
+    )
+    role = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="product-manager-1",
+        safe_outputs=ConnectorSafeOutputService(db, adapter=adapter),
+        worker=SafeOutputSubprocessWorker((sys.executable, "-c", worker_script), timeout_seconds=10),
+    )
+
+    receipt = role.run_next_assignment()
+
+    assert receipt is not None
+    assert receipt.terminal_tool == "status.reply"
+    snapshot = db.status_snapshot()
+    assert snapshot["counts"]["safe_output_calls"] == 1
+    assert snapshot["counts"]["delivery_records"] == 1
+    assert snapshot["delivery_statuses"] == {"sent": 1}
+    delivery = snapshot["delivery_records"][0]
+    assert delivery["purpose"] == "status.reply"
+    assert delivery["source_ref"] == snapshot["safe_output_calls"][0]["call_id"]
+    assert delivery["destination_ref"] == "dm-nicholas-product"

@@ -183,7 +183,11 @@ class SafeOutputService:
                 run_id=run_id,
                 call=call,
             )
+        self.process_recorded_call(call_id=call_id, run_id=run_id, call=call)
         return call_id
+
+    def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        return None
 
     def _record_role_assignment_from_route(
         self,

@@ -1125,12 +1125,17 @@ class ConnectorSafeOutputService(SafeOutputService):
             self._validate_work_proposal_source(call.payload)
         if call.tool_name in {"human_response.request", "release.request_approval"}:
             self._validate_response_card_payload(call.payload)
-        call_id = super().record(run_id=run_id, call=call)
+        return super().record(run_id=run_id, call=call)
+
+    def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
         if call.tool_name == "relevance.record":
             self.adapter.record_relevance(call_id=call_id, role_id=call.role_id, payload=call.payload)
         if call.tool_name == "queue.propose_item":
+            self._validate_work_proposal_source(call.payload)
             self._record_work_proposal(call_id=call_id, role_id=call.role_id, payload=call.payload)
         if call.tool_name == "status.reply" and "conversation_id" in call.payload:
+            self._reject_noop_relevance_reply(run_id=run_id, role_id=call.role_id)
+            self._validate_reply_references(call.payload)
             self.adapter.deliver_status_reply(
                 call_id=call_id,
                 role_id=call.role_id,
@@ -1143,6 +1148,7 @@ class ConnectorSafeOutputService(SafeOutputService):
                 payload=call.payload,
             )
         if call.tool_name == "human_response.request" and "conversation_id" in call.payload:
+            self._validate_response_card_payload(call.payload)
             self.adapter.deliver_response_card(
                 call_id=call_id,
                 role_id=call.role_id,
@@ -1150,13 +1156,13 @@ class ConnectorSafeOutputService(SafeOutputService):
                 request_type="human_response",
             )
         if call.tool_name == "release.request_approval" and "conversation_id" in call.payload:
+            self._validate_response_card_payload(call.payload)
             self.adapter.deliver_response_card(
                 call_id=call_id,
                 role_id=call.role_id,
                 payload=call.payload,
                 request_type="release_approval",
             )
-        return call_id
 
     def _reject_noop_relevance_reply(self, *, run_id: str, role_id: str) -> None:
         for check in self.adapter.db.list_relevance_checks_for_run(run_id, role_id):

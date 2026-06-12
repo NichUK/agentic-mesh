@@ -135,14 +135,27 @@ class RoleService:
             self.db.complete_run(run_id, status="failed", terminal_tool=None)
             raise
         try:
+            directly_recorded_call_ids: set[str] = set()
             for call in calls:
                 if call.role_id != self.role_id:
                     raise ValueError("worker emitted safe-output for another role")
-                self.safe_outputs.record(run_id=run_id, call=call)
+                directly_recorded_call_ids.add(self.safe_outputs.record(run_id=run_id, call=call))
             recorded_calls = self.db.list_safe_output_calls_for_run(run_id)
             for call in recorded_calls:
                 if call.get("role_id") != self.role_id:
                     raise ValueError("worker emitted safe-output for another role")
+                call_id = str(call["call_id"])
+                if call_id not in directly_recorded_call_ids:
+                    self.safe_outputs.process_recorded_call(
+                        call_id=call_id,
+                        run_id=run_id,
+                        call=SafeOutputCall(
+                            role_id=str(call["role_id"]),
+                            tool_name=str(call["tool_name"]),
+                            payload=dict(call["payload"]),
+                            terminal=bool(call["terminal"]),
+                        ),
+                    )
             terminal_calls = [call for call in recorded_calls if call.get("terminal")]
             if not recorded_calls:
                 raise ValueError("role worker did not emit any safe-output calls")

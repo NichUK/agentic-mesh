@@ -2189,3 +2189,65 @@ compileall passed
   CLI-recorded safe-output collection, run-bound transport injection, Codex
   transport payload, subprocess strictness, and scoped implementation claims. |
   accepted 2026-06-12
+
+## PB-005 Story 22 - Connector Side Effects For CLI-Recorded Safe Outputs
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `tests/test_v2_teams_connector_direct_messages.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+git status --short --branch
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_direct_messages.py tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+27 passed focused suite
+204 passed full suite
+compileall passed
+```
+
+### Acceptance Assessment
+
+- Base safe-output recording still handles durable persistence and
+  handoff/consult materialization before invoking the post-record hook.
+- `ConnectorSafeOutputService` now centralizes connector side effects in
+  `process_recorded_call`.
+- Direct `ConnectorSafeOutputService.record` calls still process side effects
+  once.
+- `RoleService` skips post-processing calls it directly recorded from legacy
+  stdout and processes DB-recorded CLI transport calls.
+- CLI-recorded Teams DM `status.reply` produces exactly one safe-output call and
+  one delivery record.
+- Engineering evidence correctly leaves MCP and generic background processing
+  as later work.
+
+### Residual Risks
+
+- `process_recorded_call` is not itself idempotency-guarded if called repeatedly
+  outside the current `RoleService` path. Future background processors should
+  add explicit dedupe semantics before reusing it.
+- Connector side-effect coverage is local Teams adapter focused.
+
+### Review Log
+
+- QA-RL-036 | qa-engineer | acceptance | PB-005 Story 22 | Verified connector
+  side effects for CLI-recorded safe outputs, direct-call non-duplication,
+  Teams DM delivery evidence, and scoped implementation claims. | accepted
+  2026-06-12

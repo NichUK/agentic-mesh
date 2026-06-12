@@ -2161,6 +2161,65 @@ compileall passed
   connector-specific delivery side effects still need a later processor or
   connector-aware safe-output execution path.
 
+## PB-005 Story 22 - Connector Side Effects For CLI-Recorded Safe Outputs
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; awaiting QA
+
+### Intent
+
+Ensure safe-output calls recorded through the CLI transport can still trigger
+connector-aware side effects, such as Teams DM delivery, when the role service
+is running with a connector-aware safe-output service.
+
+### Changes
+
+- Added a `SafeOutputService.process_recorded_call` hook.
+- Base `SafeOutputService.record` now records the safe-output call, performs
+  base durable route materialization, and then invokes the post-record hook.
+- `ConnectorSafeOutputService` now implements connector-specific post-record
+  side effects in `process_recorded_call`.
+- `RoleService` tracks safe-output calls it directly recorded from legacy
+  worker stdout and only post-processes DB-recorded calls that arrived through
+  another transport, such as the CLI.
+- CLI-recorded `status.reply`, `sponsor.ask_question`,
+  `human_response.request`, `release.request_approval`, `queue.propose_item`,
+  and `relevance.record` can now receive connector-aware post-processing when
+  the role service is configured with `ConnectorSafeOutputService`.
+- Existing direct `ConnectorSafeOutputService.record` behavior remains
+  single-shot; connector deliveries are not duplicated.
+
+### Tests Added
+
+- A Product Manager DM assignment can record `status.reply` through the
+  run-bound safe-output CLI command and still produce a Teams delivery record
+  through `ConnectorSafeOutputService`.
+- Existing returned-call DM delivery remains at a single delivery record.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_direct_messages.py tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+27 passed
+compileall passed
+```
+
+### Known Limitations
+
+- This story covers connector side effects when the role service already has a
+  connector-aware safe-output service. A generic background processor for
+  connector side effects outside role-service execution remains a later slice.
+- MCP exposure remains a later slice.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
