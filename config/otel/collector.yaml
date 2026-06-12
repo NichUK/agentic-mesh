@@ -22,12 +22,12 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/observability-gateway]
+      exporters: [debug, otlp/observability-gateway]
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/observability-gateway]
+      exporters: [debug, otlp/observability-gateway]
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/observability-gateway]
+      exporters: [debug, otlp/observability-gateway]
