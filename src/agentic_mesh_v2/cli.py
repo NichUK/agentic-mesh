@@ -179,6 +179,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     supervisor_tick_parser.add_argument("--timeout-seconds", type=int, default=300)
 
+    supervisor_loop_parser = subparsers.add_parser(
+        "run-project-supervisor-loop",
+        help="Run a bounded repeated project supervisor loop.",
+    )
+    supervisor_loop_parser.add_argument("--project-file", type=Path, required=True)
+    supervisor_loop_parser.add_argument("--cycles", type=int, required=True)
+    supervisor_loop_parser.add_argument("--poll-seconds", type=float, default=5.0)
+    supervisor_loop_parser.add_argument(
+        "--hibernate-reason",
+        default="Project supervisor loop found an idle safe role instance.",
+    )
+    supervisor_loop_parser.add_argument(
+        "--hydrate-reason",
+        default="Project supervisor loop found queued role work.",
+    )
+    supervisor_loop_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually run planned container lifecycle commands. Without this flag, actions are recorded as planned only.",
+    )
+    supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
+
     topology_parser = subparsers.add_parser(
         "validate-topology",
         help="Validate v2 source/runtime/project repository boundaries.",
@@ -333,6 +355,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.command == "run-project-supervisor-tick":
                 result = _run_project_supervisor_tick(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            if args.command == "run-project-supervisor-loop":
+                result = _run_project_supervisor_loop(db, args)
                 print(json.dumps(result, sort_keys=True))
                 return 0
         finally:
@@ -651,6 +677,48 @@ def _run_project_supervisor_tick(db: V2Database, args: argparse.Namespace) -> di
         "execute": bool(args.execute),
         "hibernation": hibernation,
         "container_lifecycle": lifecycle,
+    }
+
+
+def _run_project_supervisor_loop(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    if args.cycles < 1:
+        raise ValueError("--cycles must be at least 1")
+    if args.poll_seconds < 0:
+        raise ValueError("--poll-seconds must be zero or greater")
+
+    cycles: list[dict[str, object]] = []
+    hibernation_totals = {"hibernated_count": 0, "hydrating_count": 0, "kept_awake_count": 0}
+    lifecycle_totals = {
+        "action_count": 0,
+        "planned_count": 0,
+        "existing_planned_count": 0,
+        "executed_count": 0,
+        "failed_count": 0,
+        "skipped_count": 0,
+    }
+    for index in range(1, args.cycles + 1):
+        cycle = _run_project_supervisor_tick(db, args)
+        cycle["cycle"] = index
+        cycles.append(cycle)
+        hibernation = cycle["hibernation"]
+        lifecycle = cycle["container_lifecycle"]
+        if isinstance(hibernation, dict):
+            for key in hibernation_totals:
+                hibernation_totals[key] += int(hibernation.get(key, 0))
+        if isinstance(lifecycle, dict):
+            for key in lifecycle_totals:
+                lifecycle_totals[key] += int(lifecycle.get(key, 0))
+        if index < args.cycles and args.poll_seconds:
+            time.sleep(args.poll_seconds)
+
+    return {
+        "status": "ok",
+        "project_file": str(args.project_file),
+        "cycles_requested": args.cycles,
+        "execute": bool(args.execute),
+        "hibernation_totals": hibernation_totals,
+        "container_lifecycle_totals": lifecycle_totals,
+        "cycles": cycles,
     }
 
 

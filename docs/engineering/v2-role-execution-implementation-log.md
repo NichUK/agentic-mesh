@@ -1483,6 +1483,63 @@ Results:
   action fingerprint. Failed and succeeded execution attempts remain separate
   evidence.
 
+## PB-005 Story 12 - Bounded Project Supervisor Loop
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add a bounded repeated project supervisor command that runs the existing
+supervisor tick for a fixed number of cycles. This gives operators and future
+container entrypoints a safe loop primitive without introducing an always-on
+daemon yet.
+
+### Implementation Notes
+
+- Added `run-project-supervisor-loop`.
+- Added `--cycles` and `--poll-seconds` bounds matching the project
+  role-services loop behavior.
+- Each cycle runs hibernation maintenance followed by container lifecycle
+  handling through the existing supervisor tick path.
+- JSON output includes per-cycle receipts plus aggregate hibernation and
+  container lifecycle totals.
+- Plan-only lifecycle idempotency means repeated cycles reuse an existing
+  planned lifecycle action instead of appending duplicates.
+
+### Tests Added
+
+- bounded supervisor loop runs two cycles and aggregates hibernation and
+  container lifecycle totals
+- second plan-only cycle reports `already_planned` for the existing lifecycle
+  action
+- repeated supervisor cycles leave only one planned lifecycle action record
+- invalid cycle and poll bounds are rejected
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+26 passed
+83 passed
+```
+
+### Known Limitations
+
+- This is still bounded/operator-controlled execution, not an always-on daemon
+  or host-level service supervisor.
+- The loop delegates lifecycle execution behavior to the existing `--execute`
+  flag and does not add new retry scheduling or alert delivery.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1571,3 +1628,6 @@ Results:
   planned lifecycle action records for duplicate plan-only lifecycle and retry
   commands while preserving append-only execution evidence. | QA accepted
   2026-06-12
+- RL-027 | engineering | implementation | PB-005 Story 12 | Added a bounded
+  project supervisor loop with cycle/poll validation, aggregate JSON receipts,
+  and idempotent plan-only lifecycle handling. | QA accepted 2026-06-12

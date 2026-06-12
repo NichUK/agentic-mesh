@@ -1520,3 +1520,56 @@ None blocking for PB-005 Story 11.
   commands, `already_planned`/`existing_planned_count` reporting, and
   preservation of append-only failed/succeeded execution evidence. | accepted
   2026-06-12
+
+## PB-005 Story 12 - Bounded Project Supervisor Loop
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+26 passed
+83 passed
+```
+
+### Acceptance Assessment
+
+- `run-project-supervisor-loop` validates `--cycles` must be at least 1 and
+  `--poll-seconds` must be zero or greater.
+- Each loop cycle delegates to the existing supervisor tick path, preserving
+  hibernation maintenance and container lifecycle behavior.
+- JSON output includes per-cycle receipts plus aggregate hibernation totals
+  and container lifecycle totals.
+- Repeated plan-only cycles reuse the existing planned lifecycle action and
+  report `already_planned`/`existing_planned_count` instead of appending
+  duplicate planned records.
+- The command remains bounded and operator-controlled through explicit
+  `--cycles`; it does not claim daemon, scheduler, or host-service behavior.
+
+### Residual Gaps
+
+None blocking for PB-005 Story 12.
+
+### Review Log
+
+- QA-RL-025 | qa-engineer | acceptance | PB-005 Story 12 | Verified bounded
+  supervisor loop validation, per-cycle receipts, aggregate hibernation and
+  container lifecycle totals, plan-only lifecycle idempotency across repeated
+  cycles, and no daemon/scheduler claim. | accepted 2026-06-12

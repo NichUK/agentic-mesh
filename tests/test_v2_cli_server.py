@@ -1358,6 +1358,94 @@ roles:
     assert {row["action"] for row in snapshot["role_container_lifecycle_actions"]} == {"start", "stop"}
 
 
+def test_v2_cli_project_supervisor_loop_reuses_planned_lifecycle_records(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+container_lifecycle:
+  adapter: docker-compose
+  compose_files:
+    - docker-compose.yml
+  service_name_template: "{project_id}-{role_id}-{index}"
+roles:
+  product-manager:
+    instances: 1
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+    hibernation:
+      idle_after_seconds: 1
+      min_warm_instances: 0
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.update_role_instance_status(
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            status="idle",
+            detail="Idle before supervisor loop.",
+        )
+        db.connection.execute(
+            """
+            UPDATE role_instance_status
+            SET heartbeat_at = datetime('now', '-120 seconds')
+            WHERE role_id = 'product-manager'
+            """
+        )
+        db.connection.commit()
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-supervisor-loop",
+                "--project-file",
+                str(project_file),
+                "--cycles",
+                "2",
+                "--poll-seconds",
+                "0",
+                "--hibernate-reason",
+                "Loop idle hibernation.",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["cycles_requested"] == 2
+    assert output["hibernation_totals"]["hibernated_count"] == 1
+    assert output["container_lifecycle_totals"]["planned_count"] == 1
+    assert output["container_lifecycle_totals"]["existing_planned_count"] == 1
+    assert output["cycles"][0]["container_lifecycle"]["actions"][0]["status"] == "planned"
+    assert output["cycles"][1]["container_lifecycle"]["actions"][0]["status"] == "already_planned"
+    assert (
+        output["cycles"][0]["container_lifecycle"]["actions"][0]["action_id"]
+        == output["cycles"][1]["container_lifecycle"]["actions"][0]["action_id"]
+    )
+    db = V2Database(db_path)
+    try:
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    assert snapshot["counts"]["role_container_lifecycle_actions"] == 1
+    assert snapshot["role_container_lifecycle_actions"][0]["status"] == "planned"
+
+
 @pytest.mark.parametrize(
     ("extra_args", "message"),
     [
@@ -1390,6 +1478,45 @@ roles:
                 "--db",
                 str(db_path),
                 "run-project-role-services-loop",
+                "--project-file",
+                str(project_file),
+                *extra_args,
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "message"),
+    [
+        (["--cycles", "0"], "--cycles must be at least 1"),
+        (["--cycles", "1", "--poll-seconds", "-0.1"], "--poll-seconds must be zero or greater"),
+    ],
+)
+def test_v2_cli_project_supervisor_loop_rejects_invalid_bounds(
+    tmp_path: Path,
+    extra_args: list[str],
+    message: str,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-supervisor-loop",
                 "--project-file",
                 str(project_file),
                 *extra_args,
