@@ -299,6 +299,27 @@
     {
       "accountability": "accountable_owner",
       "contributing_roles": [
+        "qa-engineer",
+        "release-manager"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "engineering",
+      "path": "docs/engineering/v2-teams-connector-implementation-log.md",
+      "required_sections": [
+        "story_1_-_connector_foundation_and_local_test_adapter",
+        "files_changed",
+        "implementation_notes",
+        "tests_run",
+        "known_limitations",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "story_1_implemented"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
         "product-manager",
         "ux-designer",
         "security-architect",
@@ -323,6 +344,27 @@
       ],
       "review_on_contribution": true,
       "status": "draft_downstream_design"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "engineering",
+        "release-manager"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "qa-engineer",
+      "path": "docs/qa/v2-teams-connector-test-results.md",
+      "required_sections": [
+        "purpose",
+        "story_1_-_connector_foundation_and_local_test_adapter",
+        "commands_run",
+        "qa_decision",
+        "coverage_assessment",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "story_1_passed"
     },
     {
       "accountability": "accountable_owner",

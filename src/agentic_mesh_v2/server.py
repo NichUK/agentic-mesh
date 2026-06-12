@@ -82,7 +82,17 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     {self._count_tile("Safe outputs", counts["safe_output_calls"])}
     {self._count_tile("Artifacts", counts["artifacts"])}
     {self._count_tile("Releases", counts["releases"])}
+    {self._count_tile("Connectors", counts["connectors"])}
+    {self._count_tile("Conversation events", counts["conversation_events"])}
+    {self._count_tile("Deliveries", counts["delivery_records"])}
+    {self._count_tile("Connector attention", counts["connector_attention_items"])}
   </div>
+  <h2>Connector Health</h2>
+  {self._connector_table(snapshot["connectors"])}
+  <h2>Delivery Records</h2>
+  {self._delivery_table(snapshot["delivery_records"])}
+  <h2>Connector Attention</h2>
+  {self._connector_attention_table(snapshot["connector_attention_items"])}
   <h2>Work Items</h2>
   {self._work_items_table(snapshot["work_items"])}
   <h2>Queue</h2>
@@ -113,6 +123,58 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 "</tr>"
             )
         return "<table><tr><th>Item</th><th>Summary</th><th>State / Role</th><th>Next Action</th><th>Updated</th></tr>" + "".join(body) + "</table>"
+
+    def _connector_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 connectors.</p>'
+        body = []
+        for row in items:
+            health = row.get("health") if isinstance(row.get("health"), dict) else {}
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['connector_id'])}</code><br><span class=\"muted\">{_e(row['display_name'])}</span></td>"
+                f"<td>{_e(row['connector_type'])}<br>{_e(row['project_id'])}</td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span></td>"
+                f"<td>{_e(health.get('project_team_ref', ''))}<br>{_e(health.get('default_project_channel_ref', ''))}</td>"
+                f"<td>{_e(row['updated_at'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Connector</th><th>Type / Project</th><th>Status</th><th>Team / Channel</th><th>Updated</th></tr>" + "".join(body) + "</table>"
+
+    def _delivery_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 delivery records.</p>'
+        body = []
+        for row in items[:20]:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['delivery_id'])}</code><br><span class=\"muted\">{_e(row['purpose'])}</span></td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row.get('error_class') or '')}</td>"
+                f"<td>{_e(row['destination_type'])}<br>{_e(row['destination_ref'])}</td>"
+                f"<td>{_e(row.get('external_message_id') or '')}</td>"
+                f"<td>{_e(row['updated_at'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Delivery</th><th>Status / Error</th><th>Destination</th><th>External Message</th><th>Updated</th></tr>" + "".join(body) + "</table>"
+
+    def _connector_attention_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 connector attention items.</p>'
+        body = []
+        for row in items:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['attention_id'])}</code><br>{_e(row['connector_id'])}</td>"
+                f"<td><span class=\"status\">{_e(row['reason_class'])}</span><br>{_e(row['status'])}</td>"
+                f"<td>{_e(row['owner'])}</td>"
+                f"<td>{_e(row['next_action'])}</td>"
+                f"<td>{_e(row['retryable'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Attention</th><th>Reason / Status</th><th>Owner</th><th>Next Action</th><th>Retryable</th></tr>" + "".join(body) + "</table>"
 
     def _queue_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []
