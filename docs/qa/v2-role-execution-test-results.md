@@ -420,3 +420,62 @@ These are not blockers for PB-004 Story 7 because they remain later v2 runtime s
 ### Review Log
 
 - QA-RL-007 | qa-engineer | acceptance | PB-004 Story 7 | Verified operator stale-recovery CLI, role-scoped recovery, `--limit` behavior, audit reason propagation, useful JSON output, and explicit non-claim of scheduler or worker-adapter behavior. | accepted 2026-06-12
+
+## PB-004 Story 8 - Role-Service Tick Worker Adapter CLI
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/worker_adapters.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+30 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+99 passed
+```
+
+### Acceptance Assessment
+
+- `SafeOutputFileWorker` is a deterministic file-backed adapter boundary for exercising role-service execution without claiming Codex/OpenAI integration.
+- The adapter validates input shape, including malformed top-level file shape, non-object calls, missing `tool_name`, and non-object payloads.
+- The adapter binds safe-output calls to the claimed assignment role and rejects explicit mismatched `role_id` values.
+- `agentic-mesh-v2 run-role-service-tick` uses `RoleService`, processes a queued assignment, records safe outputs, terminal assignment state, and role-instance idle status.
+- CLI output includes useful JSON run receipts with status, role identity, recovered count, processed count, assignment id, run id, terminal tool, and safe-output count.
+- Malformed adapter output records the assignment as failed with the validation reason.
+- The engineering log is factual and does not claim prompt generation, daemon supervision, or Codex/OpenAI worker integration.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 8 because they remain later v2 runtime scope:
+
+- No Codex/OpenAI worker adapter is implemented yet.
+- No prompt generation or prompt audit is implemented by this story.
+- No daemonized role-service supervisor is implemented by this story.
+
+### Review Log
+
+- QA-RL-008 | qa-engineer | acceptance | PB-004 Story 8 | Verified deterministic safe-output-file worker adapter, role binding, malformed-file validation, role-service tick CLI execution, terminal assignment recording, role-instance status, useful JSON receipts, and factual scope boundaries. | accepted 2026-06-12

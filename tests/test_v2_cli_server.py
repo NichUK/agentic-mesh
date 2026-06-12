@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from agentic_mesh_v2.cli import main
 from agentic_mesh_v2.db import V2Database
 
@@ -154,6 +156,191 @@ def test_v2_cli_recovery_respects_limit(tmp_path: Path, capsys) -> None:
 
     assert statuses.count("queued") == 1
     assert statuses.count("claimed") == 1
+
+
+def test_v2_cli_run_role_service_tick_processes_assignment_from_safe_output_file(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    safe_output_path = tmp_path / "calls.json"
+    safe_output_path.write_text(
+        """
+        {
+          "calls": [
+            {
+              "tool_name": "status.complete",
+              "payload": {"message": "Assignment complete from file worker."},
+              "terminal": true
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-cli-runner",
+            role_id="product-manager",
+            source_ref="msg-cli-runner",
+            title="CLI runner assignment",
+            summary="Run a role-service tick through a worker adapter.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-role-service-tick",
+                "--role-id",
+                "product-manager",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--worker",
+                "safe-output-file",
+                "--safe-output-file",
+                str(safe_output_path),
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert '"processed_count": 1' in output
+    assert '"terminal_tool": "status.complete"' in output
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-cli-runner")
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "completed"
+    assert assignment["terminal_tool"] == "status.complete"
+    assert snapshot["role_instance_statuses"][0]["status"] == "idle"
+
+
+def test_v2_cli_run_role_service_tick_rejects_mismatched_safe_output_role(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    safe_output_path = tmp_path / "calls.json"
+    safe_output_path.write_text(
+        """
+        {
+          "calls": [
+            {
+              "role_id": "engineering",
+              "tool_name": "status.complete",
+              "payload": {"message": "Wrong role."},
+              "terminal": true
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-cli-runner-mismatch",
+            role_id="product-manager",
+            source_ref="msg-cli-runner-mismatch",
+            title="CLI runner mismatch",
+            summary="Reject mismatched role output.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    with pytest.raises(ValueError, match="does not match assignment role"):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-role-service-tick",
+                "--role-id",
+                "product-manager",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--worker",
+                "safe-output-file",
+                "--safe-output-file",
+                str(safe_output_path),
+            ]
+        )
+
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-cli-runner-mismatch")
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "failed"
+    assert "does not match assignment role" in assignment["failure_reason"]
+
+
+def test_v2_cli_run_role_service_tick_rejects_malformed_safe_output_file(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    safe_output_path = tmp_path / "calls.json"
+    safe_output_path.write_text('{"calls": {"not": "a list"}}', encoding="utf-8")
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-cli-runner-malformed",
+            role_id="product-manager",
+            source_ref="msg-cli-runner-malformed",
+            title="CLI runner malformed",
+            summary="Reject malformed worker output.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    with pytest.raises(ValueError, match="calls list"):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-role-service-tick",
+                "--role-id",
+                "product-manager",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--worker",
+                "safe-output-file",
+                "--safe-output-file",
+                str(safe_output_path),
+            ]
+        )
+
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-cli-runner-malformed")
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "failed"
+    assert "calls list" in assignment["failure_reason"]
 
 
 def test_v2_cli_validate_topology_accepts_distinct_roots(tmp_path: Path, capsys) -> None:

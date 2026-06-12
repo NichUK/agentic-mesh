@@ -449,6 +449,71 @@ Results:
 - The command does not execute role workers; real worker-adapter CLI/supervisor
   integration remains a later PB-004/PB-005 slice.
 
+## PB-004 Story 8 - Role-Service Tick Worker Adapter CLI
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add the first explicit worker-adapter boundary for running a role-service tick
+from the CLI. The adapter is deterministic and file-backed so local operators,
+tests, and future supervisors can exercise role claiming, safe-output recording,
+and terminal assignment handling through the same `RoleService` path without
+pretending Codex CLI integration is complete.
+
+### Implementation Notes
+
+- Added `agentic_mesh_v2.worker_adapters.SafeOutputFileWorker`.
+- The file adapter reads either a JSON list of safe-output calls or an object
+  with a `calls` list.
+- The adapter binds calls to the claimed assignment role and rejects explicit
+  mismatched `role_id` values.
+- Added `run-role-service-tick` to the v2 CLI with:
+  - `--role-id`
+  - `--role-instance-id`
+  - `--worker safe-output-file`
+  - `--safe-output-file`
+  - `--max-recoveries`
+  - `--max-assignments`
+  - `--assignment-lease-seconds`
+- CLI JSON output reports recovered count, processed count, and run receipts.
+
+### Tests Added
+
+- CLI role-service tick processes a queued assignment from a safe-output file.
+- CLI role-service tick records terminal assignment state and role-instance
+  idle status.
+- CLI role-service tick rejects a safe-output file that emits for another role
+  and records the assignment failure reason.
+- CLI role-service tick rejects malformed safe-output files and records the
+  assignment failure reason.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+30 passed
+99 passed
+```
+
+### Known Limitations
+
+- `safe-output-file` is a deterministic local/operator adapter, not the final
+  Codex/OpenAI worker adapter.
+- The CLI runner runs one bounded tick and exits; daemonized container service
+  supervision remains later PB-004/PB-005 work.
+- The adapter does not generate prompts or invoke models.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -473,4 +538,8 @@ Results:
   2026-06-12
 - RL-007 | engineering | implementation | PB-004 Story 7 | Added an operator
   CLI command for bounded role-scoped stale assignment recovery with auditable
-  JSON output. | awaiting QA review 2026-06-12
+  JSON output. | QA accepted 2026-06-12
+- RL-008 | engineering | implementation | PB-004 Story 8 | Added a
+  deterministic safe-output-file worker adapter and CLI role-service tick runner
+  with bounded recovery/drain options and JSON run receipts. | awaiting QA
+  review 2026-06-12

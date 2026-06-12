@@ -8,9 +8,11 @@ from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
+from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.topology import ProjectRepo
 from agentic_mesh_v2.topology import RuntimeTopology
+from agentic_mesh_v2.worker_adapters import SafeOutputFileWorker
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,6 +47,23 @@ def main(argv: list[str] | None = None) -> int:
         default="Recovered by operator stale-assignment recovery command.",
         help="Audit reason to record on recovered assignments.",
     )
+
+    tick_parser = subparsers.add_parser(
+        "run-role-service-tick",
+        help="Run one bounded role-service maintenance tick.",
+    )
+    tick_parser.add_argument("--role-id", required=True)
+    tick_parser.add_argument("--role-instance-id", required=True)
+    tick_parser.add_argument(
+        "--worker",
+        choices=["safe-output-file"],
+        required=True,
+        help="Worker adapter to use for claimed assignments.",
+    )
+    tick_parser.add_argument("--safe-output-file", type=Path, required=True)
+    tick_parser.add_argument("--max-recoveries", type=int, default=50)
+    tick_parser.add_argument("--max-assignments", type=int, default=10)
+    tick_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
 
     topology_parser = subparsers.add_parser(
         "validate-topology",
@@ -133,6 +152,42 @@ def main(argv: list[str] | None = None) -> int:
                             "role_id": args.role_id,
                             "recovered_count": len(recovered),
                             "assignment_ids": [row["assignment_id"] for row in recovered],
+                        },
+                        sort_keys=True,
+                    )
+                )
+                return 0
+            if args.command == "run-role-service-tick":
+                worker = SafeOutputFileWorker(args.safe_output_file)
+                service = RoleService(
+                    db=db,
+                    role_id=args.role_id,
+                    role_instance_id=args.role_instance_id,
+                    worker=worker,
+                    assignment_lease_seconds=args.assignment_lease_seconds,
+                )
+                receipt = service.run_service_tick(
+                    max_recoveries=args.max_recoveries,
+                    max_assignments=args.max_assignments,
+                )
+                print(
+                    json.dumps(
+                        {
+                            "status": receipt.status,
+                            "role_id": args.role_id,
+                            "role_instance_id": args.role_instance_id,
+                            "recovered_count": receipt.recovered_count,
+                            "processed_count": receipt.processed_count,
+                            "runs": [
+                                {
+                                    "assignment_id": run.assignment_id,
+                                    "run_id": run.run_id,
+                                    "status": run.status,
+                                    "terminal_tool": run.terminal_tool,
+                                    "safe_output_count": run.safe_output_count,
+                                }
+                                for run in receipt.receipts
+                            ],
                         },
                         sort_keys=True,
                     )
