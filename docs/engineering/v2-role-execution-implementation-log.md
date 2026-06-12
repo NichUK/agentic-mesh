@@ -3250,6 +3250,13 @@ compileall passed
 - RL-063 | engineering | QA rework | PB-005 Story 35 | Moved release
   activation approval validation to the release-effect boundary so deferred
   CLI/MCP replay cannot bypass approval checks. | QA accepted 2026-06-12
+- RL-064 | engineering | implementation | PB-005 Story 36 | Routed
+  `release.record_decision` request-changes decisions back to active
+  Engineering work with an idempotent `release_rework` assignment. |
+  QA requested replay rework 2026-06-12
+- RL-065 | engineering | QA rework | PB-005 Story 36 | Guarded stale
+  request-changes replay before state transition and added normal-history
+  release-review coverage. | QA accepted 2026-06-12
 
 ## PB-005 Story 34 - Release Decision Evidence
 
@@ -3344,3 +3351,51 @@ Results:
   effect replay. Engineering moved the check into `release.deploy` and
   `release.record_no_deployment` effect handlers and added deferred regression
   coverage.
+
+## PB-005 Story 36 - Release Request-Changes Rework Routing
+
+Date: 2026-06-12
+
+### Goal
+
+Make a Release Manager `request_changes` decision actionable instead of inert
+release evidence. The work item should return to Engineering with enough
+context to perform the requested rework.
+
+### Changes
+
+- Extended `release.record_decision` processing so `request_changes` decisions
+  route the work item from `release_review` back to `active`.
+- Set the active role back to `engineering`.
+- Queued an idempotent Engineering `release_rework` assignment linked to the
+  release-decision safe-output call.
+- Included release feedback, source documents, target outputs, current flow
+  state, and Engineering allowed tools in the assignment payload.
+- Added replay repair so a partial effect with decision evidence and state
+  transition can recreate the missing Engineering assignment without duplicate
+  evidence or duplicate assignments.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_end_to_end.py tests\test_v2_role_assignment_execution.py tests\test_v2_quality_decision_safe_outputs.py -q
+```
+
+Results:
+
+```text
+18 passed before QA rework
+55 passed before QA rework
+19 passed after QA rework
+56 passed after QA rework
+```
+
+### Notes
+
+- This story only routes `request_changes`. `reject` remains durable evidence
+  without a lifecycle mutation until the product/release policy for rejection
+  semantics is made explicit.
+- QA found stale replay could reroute a later release review back to active.
+  Engineering now returns before any state transition when the deterministic
+  rework assignment already exists and added normal-history regression coverage.

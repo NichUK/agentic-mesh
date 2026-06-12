@@ -3124,3 +3124,79 @@ Results:
   deferred release activation approval enforcement, rejected arbitrary refs,
   wrong-work-item decision refs, rejected decisions, and CLI decision-ref
   chaining. | accepted after rework 2026-06-12
+
+## PB-005 Story 36 - Release Request-Changes Rework Routing
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_release_safe_outputs.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_end_to_end.py tests\test_v2_role_assignment_execution.py tests\test_v2_quality_decision_safe_outputs.py -q
+```
+
+Results:
+
+```text
+18 passed before QA rework
+55 passed before QA rework
+19 passed after QA rework
+56 passed after QA rework
+```
+
+### Findings And Rework
+
+- Initial implementation could replay an old request-changes safe-output after
+  Engineering rework had returned the item to `release_review`, incorrectly
+  moving it back to `active`.
+- Engineering now checks for the deterministic `release_rework` assignment
+  before any state transition, making old replay harmless once the rework route
+  has already been created.
+- Engineering added normal-history coverage through `quality.approve` so the
+  original release-review assignment can coexist with the Engineering rework
+  assignment.
+- Engineering added explicit approve/reject non-routing assertions.
+
+### Acceptance Assessment
+
+- `release.record_decision` with `request_changes` records
+  `release_decision` evidence.
+- The work item moves from `release_review` back to `active` with
+  `current_role=engineering`.
+- Exactly one queued Engineering `release_rework` assignment is created with
+  source decision, reason, source documents, target outputs, and Engineering
+  safe-output tools.
+- Replay after partial transition/evidence effects recreates a missing
+  Engineering assignment without duplicating evidence or assignments.
+- Replay after the original rework route exists does not move a later
+  `release_review` attempt back to `active`.
+- `approve` and `reject` decisions do not create `release_rework` assignments.
+
+### Residual Risks
+
+- `reject` release decisions are still evidence-only until the release policy
+  chooses whether rejection cancels work, routes to rework, or asks for sponsor
+  clarification.
+
+### Review Log
+
+- QA-RL-053 | qa-engineer | review-pending | PB-005 Story 36 | Focused release
+  request-changes rework routing implemented and engineering tests passed.
+  | pending QA review 2026-06-12
+- QA-RL-054 | qa-engineer | rework-request | PB-005 Story 36 | Found stale
+  replay could move a later release-review attempt back to active. |
+  rework requested 2026-06-12
+- QA-RL-055 | qa-engineer | acceptance | PB-005 Story 36 | Verified
+  request-changes rework routing, stale replay guard, normal release-review
+  assignment history, replay repair, and approve/reject non-routing.
+  | accepted after rework 2026-06-12

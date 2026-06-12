@@ -264,7 +264,7 @@ class SafeOutputService:
         if call.tool_name == "release.request_approval":
             self._record_human_response_request(call_id=call_id, call=call, request_type="release_approval")
         if call.tool_name == "release.record_decision":
-            self._record_release_decision(call_id=call_id, call=call)
+            self._record_release_decision(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "release.record_no_deployment":
             self._record_no_deployment(call)
         if call.tool_name == "release.deploy":
@@ -479,18 +479,20 @@ class SafeOutputService:
                 f"release.record_decision decision `{decision}` does not match approval_ref response `{response_value}`"
             )
 
-    def _record_release_decision(self, *, call_id: str, call: SafeOutputCall) -> None:
-        if _has_work_item_evidence_ref(self.db, safe_output_ref=call_id):
-            return
-        self._validate_release_decision_target(call)
-        self.db.add_work_item_evidence(
-            evidence_id=f"evidence-{call_id}",
-            work_item_id=_required_text(call.payload, "work_item_id"),
-            evidence_type="release_decision",
-            summary=_release_decision_summary(call.payload),
-            role_id=call.role_id,
-            safe_output_ref=call_id,
-        )
+    def _record_release_decision(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        decision = _normalize_release_decision(_required_text(call.payload, "decision"))
+        if not _has_work_item_evidence_ref(self.db, safe_output_ref=call_id):
+            self._validate_release_decision_target(call)
+            self.db.add_work_item_evidence(
+                evidence_id=f"evidence-{call_id}",
+                work_item_id=_required_text(call.payload, "work_item_id"),
+                evidence_type="release_decision",
+                summary=_release_decision_summary(call.payload),
+                role_id=call.role_id,
+                safe_output_ref=call_id,
+            )
+        if decision == "request_changes":
+            self._route_release_changes_requested(call_id=call_id, run_id=run_id, call=call)
 
     def _validate_release_activation_approval(self, call: SafeOutputCall) -> None:
         work_item_id = _required_text(call.payload, "work_item_id")
@@ -504,6 +506,69 @@ class SafeOutputService:
             raise SafeOutputError(
                 f"`{call.tool_name}` requires approval_ref to reference an approved release decision for this work item"
             )
+
+    def _route_release_changes_requested(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        if self.db.get_role_assignment(_release_rework_assignment_id(call_id)) is not None:
+            return
+        work_item = self.db.get_work_item(work_item_id)
+        reason = _optional_text(call.payload.get("reason")) or "Release changes requested."
+        if work_item.state == "release_review":
+            self.db.transition_work_item(
+                TransitionRequest(
+                    work_item_id=work_item_id,
+                    from_state="release_review",
+                    to_state="active",
+                    actor_role=call.role_id,
+                    reason=reason,
+                    owner="engineering",
+                )
+            )
+        elif work_item.state != "active":
+            return
+        self._create_release_rework_assignment(
+            call_id=call_id,
+            run_id=run_id,
+            call=call,
+            reason=reason,
+        )
+
+    def _create_release_rework_assignment(
+        self,
+        *,
+        call_id: str,
+        run_id: str,
+        call: SafeOutputCall,
+        reason: str,
+    ) -> None:
+        assignment_id = _release_rework_assignment_id(call_id)
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        work_item_id = _required_text(call.payload, "work_item_id")
+        self.db.create_role_assignment(
+            assignment_id=assignment_id,
+            role_id="engineering",
+            work_item_id=work_item_id,
+            source_ref=call_id,
+            title="Release changes requested",
+            summary=_single_line_text(reason),
+            assignment_type="release_rework",
+            visibility_scope="project",
+            payload={
+                "safe_output_ref": call_id,
+                "source_run_id": run_id,
+                "source_role": call.role_id,
+                "target_role": "engineering",
+                "reason": _single_line_text(reason),
+                "route_tool": call.tool_name,
+                "work_item_id": work_item_id,
+                "current_flow_state": "active",
+                "release_decision": "request_changes",
+                "source_documents": _string_list(call.payload.get("source_documents")),
+                "target_outputs": _string_list(call.payload.get("target_outputs")),
+                "allowed_tools": sorted(self.policy.tools_for_role("engineering")),
+            },
+        )
 
     def _record_human_response_request(
         self,
@@ -914,6 +979,10 @@ def _release_decision_summary_field(summary: str, field_name: str) -> str | None
             value = text[len(prefix) :].strip()
             return value or None
     return None
+
+
+def _release_rework_assignment_id(call_id: str) -> str:
+    return f"assignment-{call_id}-release-rework"
 
 
 def _artifact_exists(db: V2Database, *, artifact_id: str) -> bool:

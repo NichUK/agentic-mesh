@@ -225,6 +225,7 @@ def test_release_record_decision_records_release_decision_evidence(tmp_path: Pat
         )
         evidence = db.list_work_item_evidence()
         event_types = [event["event_type"] for event in db.list_events()]
+        assignments = db.list_role_assignments()
         work = db.get_work_item("work-release-safe-output")
     finally:
         db.close()
@@ -239,6 +240,7 @@ def test_release_record_decision_records_release_decision_evidence(tmp_path: Pat
     )
     assert event_types.count("work_item_evidence.recorded") == 1
     assert work.state == "released"
+    assert [row for row in assignments if row["assignment_type"] == "release_rework"] == []
 
 
 def test_release_record_decision_rejects_mismatched_approval_response(tmp_path: Path) -> None:
@@ -340,6 +342,8 @@ def test_release_record_decision_accepts_response_request_id_alias(tmp_path: Pat
             ),
         )
         evidence = db.list_work_item_evidence()
+        work = db.get_work_item("work-release-safe-output")
+        assignments = db.list_role_assignments()
     finally:
         db.close()
 
@@ -349,6 +353,215 @@ def test_release_record_decision_accepts_response_request_id_alias(tmp_path: Pat
         f"Release decision: request_changes; approval_ref: {request_id}; "
         "reason: Sponsor requested one more correction."
     )
+    assert work.state == "active"
+    assert len([row for row in assignments if row["assignment_type"] == "release_rework"]) == 1
+
+
+def test_release_request_changes_routes_work_back_to_engineering(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-request-changes-route",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+
+        call_id = service.record(
+            run_id="run-release-request-changes-route",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "decision": "request_changes",
+                    "reason": "Sponsor needs clearer release notes before approval.",
+                    "source_documents": ["work-items/work-release-safe-output/140-release-record.md"],
+                    "target_outputs": ["updated release notes", "QA regression note"],
+                },
+                terminal=True,
+            ),
+        )
+        service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-release-request-changes-route",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "decision": "request_changes",
+                    "reason": "Sponsor needs clearer release notes before approval.",
+                    "source_documents": ["work-items/work-release-safe-output/140-release-record.md"],
+                    "target_outputs": ["updated release notes", "QA regression note"],
+                },
+                terminal=True,
+            ),
+        )
+        work = db.get_work_item("work-release-safe-output")
+        work_row = next(row for row in db.list_work_items() if row["work_item_id"] == "work-release-safe-output")
+        evidence = db.list_work_item_evidence()
+        assignments = db.list_role_assignments()
+        transition_events = [
+            event
+            for event in db.list_events("work-release-safe-output")
+            if event["event_type"] == "work_item.transitioned"
+        ]
+    finally:
+        db.close()
+
+    assert work.state == "active"
+    assert work_row["current_role"] == "engineering"
+    decisions = [row for row in evidence if row["evidence_type"] == "release_decision"]
+    assert len(decisions) == 1
+    rework_assignments = [row for row in assignments if row["assignment_type"] == "release_rework"]
+    assert len(rework_assignments) == 1
+    assert rework_assignments[0]["assignment_id"] == f"assignment-{call_id}-release-rework"
+    assert rework_assignments[0]["role_id"] == "engineering"
+    assert rework_assignments[0]["status"] == "queued"
+    assert rework_assignments[0]["payload"]["safe_output_ref"] == call_id
+    assert rework_assignments[0]["payload"]["release_decision"] == "request_changes"
+    assert rework_assignments[0]["payload"]["source_documents"] == [
+        "work-items/work-release-safe-output/140-release-record.md"
+    ]
+    assert rework_assignments[0]["payload"]["target_outputs"] == ["updated release notes", "QA regression note"]
+    assert "implementation.record_change" in rework_assignments[0]["payload"]["allowed_tools"]
+    assert sum(
+        1
+        for event in transition_events
+        if event["payload"]["from_state"] == "release_review"
+        and event["payload"]["to_state"] == "active"
+    ) == 1
+
+
+def test_release_request_changes_replay_repairs_missing_engineering_assignment(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-request-changes-replay",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        call = SafeOutputCall(
+            role_id="release-manager",
+            tool_name="release.record_decision",
+            payload={
+                "work_item_id": "work-release-safe-output",
+                "decision": "request_changes",
+                "reason": "Sponsor needs clearer rollback notes.",
+            },
+            terminal=True,
+        )
+        call_id = SafeOutputService(db, process_effects=False).record(
+            run_id="run-release-request-changes-replay",
+            call=call,
+        )
+        db.add_work_item_evidence(
+            evidence_id=f"evidence-{call_id}",
+            work_item_id="work-release-safe-output",
+            evidence_type="release_decision",
+            summary="Release decision: request_changes; reason: Sponsor needs clearer rollback notes.",
+            role_id="release-manager",
+            safe_output_ref=call_id,
+        )
+        db.transition_work_item(
+            TransitionRequest(
+                work_item_id="work-release-safe-output",
+                from_state="release_review",
+                to_state="active",
+                actor_role="release-manager",
+                reason="Simulate transition committed before assignment write failed.",
+                owner="engineering",
+            )
+        )
+        service = SafeOutputService(db)
+        service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-release-request-changes-replay",
+            call=call,
+        )
+        service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-release-request-changes-replay",
+            call=call,
+        )
+        assignments = db.list_role_assignments()
+        evidence = db.list_work_item_evidence()
+    finally:
+        db.close()
+
+    assert len(assignments) == 1
+    assert assignments[0]["assignment_id"] == f"assignment-{call_id}-release-rework"
+    assert assignments[0]["role_id"] == "engineering"
+    assert assignments[0]["assignment_type"] == "release_rework"
+    assert len([row for row in evidence if row["evidence_type"] == "release_decision"]) == 1
+
+
+def test_release_request_changes_replay_does_not_reroute_after_rework_returns_to_release_review(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review_from_quality_approve(db)
+        db.create_run(
+            run_id="run-release-request-changes-reroute-guard",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        call = SafeOutputCall(
+            role_id="release-manager",
+            tool_name="release.record_decision",
+            payload={
+                "work_item_id": "work-release-safe-output",
+                "decision": "request_changes",
+                "reason": "Sponsor needs clearer release notes before approval.",
+            },
+            terminal=True,
+        )
+        call_id = service.record(run_id="run-release-request-changes-reroute-guard", call=call)
+        db.transition_work_item(
+            TransitionRequest(
+                work_item_id="work-release-safe-output",
+                from_state="active",
+                to_state="release_review",
+                actor_role="qa-engineer",
+                reason="Rework completed and QA returned the item to release review.",
+                owner="release-manager",
+            )
+        )
+        service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-release-request-changes-reroute-guard",
+            call=call,
+        )
+        work = db.get_work_item("work-release-safe-output")
+        work_row = next(row for row in db.list_work_items() if row["work_item_id"] == "work-release-safe-output")
+        assignments = db.list_role_assignments()
+        transition_events = [
+            event
+            for event in db.list_events("work-release-safe-output")
+            if event["event_type"] == "work_item.transitioned"
+        ]
+    finally:
+        db.close()
+
+    assert work.state == "release_review"
+    assert work_row["current_role"] == "release-manager"
+    assert len([row for row in assignments if row["assignment_type"] == "release_review"]) == 1
+    assert len([row for row in assignments if row["assignment_type"] == "release_rework"]) == 1
+    assert sum(
+        1
+        for event in transition_events
+        if event["payload"]["from_state"] == "release_review"
+        and event["payload"]["to_state"] == "active"
+    ) == 1
 
 
 def test_release_record_decision_rejects_conflicting_approval_refs(tmp_path: Path) -> None:
@@ -745,10 +958,14 @@ def test_release_activation_rejects_rejected_release_decision(tmp_path: Path) ->
                 ),
             )
         releases = db.list_releases()
+        work = db.get_work_item("work-release-safe-output")
+        assignments = db.list_role_assignments()
     finally:
         db.close()
 
     assert releases == []
+    assert work.state == "release_review"
+    assert [row for row in assignments if row["assignment_type"] == "release_rework"] == []
 
 
 def test_release_activation_rejects_deferred_unrecorded_approval_ref(tmp_path: Path) -> None:
@@ -963,6 +1180,63 @@ def _work_in_release_review(db: V2Database) -> None:
             actor_role="qa-engineer",
             reason="QA passed.",
         )
+    )
+
+
+def _work_in_release_review_from_quality_approve(db: V2Database) -> None:
+    db.create_queue_item(
+        queue_item_id="queue-release-safe-output",
+        title="Release safe-output work",
+        summary="Exercise release-manager safe-output authority.",
+        owner_role="engineering",
+    )
+    db.mark_queue_ready("queue-release-safe-output", actor_role="product-manager", reason="Ready.")
+    db.promote_queue_item(
+        queue_item_id="queue-release-safe-output",
+        work_item_id="work-release-safe-output",
+        owner_role="engineering",
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-release-safe-output",
+            from_state="shaping",
+            to_state="ready",
+            actor_role="product-manager",
+            reason="Product ready.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-release-safe-output",
+            from_state="ready",
+            to_state="active",
+            actor_role="engineering",
+            reason="Engineering complete.",
+        )
+    )
+    db.create_run(
+        run_id="run-release-safe-output-qa-approval",
+        role_id="qa-engineer",
+        role_instance_id="test-project.qa-engineer.1",
+        work_item_id="work-release-safe-output",
+    )
+    service = SafeOutputService(db)
+    service.record(
+        run_id="run-release-safe-output-qa-approval",
+        call=SafeOutputCall(
+            role_id="qa-engineer",
+            tool_name="test_evidence.record",
+            payload={"work_item_id": "work-release-safe-output", "summary": "Release-safe-output QA evidence passed."},
+        ),
+    )
+    service.record(
+        run_id="run-release-safe-output-qa-approval",
+        call=SafeOutputCall(
+            role_id="qa-engineer",
+            tool_name="quality.approve",
+            payload={"work_item_id": "work-release-safe-output", "summary": "QA approved release review."},
+            terminal=True,
+        ),
     )
 
 
