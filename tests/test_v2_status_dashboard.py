@@ -8,6 +8,7 @@ from agentic_mesh_v2.context import ContextSummaryRequest
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.server import V2StatusHandler
+from agentic_mesh_v2.state_machine import TransitionRequest
 
 
 def _config() -> ConnectorConfig:
@@ -217,11 +218,17 @@ def _rich_snapshot(tmp_path: Path) -> dict[str, object]:
         db.close()
 
 
-def _render(snapshot: dict[str, object], *, project_file: Path | None = None) -> str:
+def _render(
+    snapshot: dict[str, object],
+    *,
+    project_file: Path | None = None,
+    path: str = "/status",
+) -> str:
     handler = object.__new__(V2StatusHandler)
     handler._snapshot = lambda: snapshot  # type: ignore[method-assign]
     handler.db_path = Path(snapshot["database"])
     handler.project_file = project_file
+    handler.path = path
     return handler._render_status()
 
 
@@ -299,6 +306,101 @@ def test_status_html_without_project_file_does_not_fake_supervisor_commands(tmp_
     assert "run-project-supervisor-loop" not in rendered
     assert "run-project-supervisor-service" not in rendered
     assert "Project file:" not in rendered
+
+
+def test_status_html_defaults_to_current_queue_and_work_items_with_show_all_override(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_queue_item(
+        queue_item_id="queue-current",
+        title="Current queue item",
+        summary="Still needs work.",
+        owner_role="product-manager",
+    )
+    db.mark_queue_ready("queue-current", actor_role="product-manager", reason="Ready.")
+    db.promote_queue_item(
+        queue_item_id="queue-current",
+        work_item_id="work-current",
+        owner_role="product-manager",
+    )
+    db.create_queue_item(
+        queue_item_id="queue-closed",
+        title="Closed queue item",
+        summary="Already released.",
+        owner_role="product-manager",
+    )
+    db.mark_queue_ready("queue-closed", actor_role="product-manager", reason="Ready.")
+    db.promote_queue_item(
+        queue_item_id="queue-closed",
+        work_item_id="work-closed",
+        owner_role="product-manager",
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-closed",
+            from_state="shaping",
+            to_state="ready",
+            actor_role="product-manager",
+            reason="Ready.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-closed",
+            from_state="ready",
+            to_state="active",
+            actor_role="engineering",
+            reason="Implemented.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-closed",
+            from_state="active",
+            to_state="release_review",
+            actor_role="qa-engineer",
+            reason="QA passed.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-closed",
+            from_state="release_review",
+            to_state="released",
+            actor_role="release-manager",
+            reason="Released.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-closed",
+            from_state="released",
+            to_state="closed",
+            actor_role="release-manager",
+            reason="Closed.",
+        )
+    )
+    snapshot = db.status_snapshot()
+    db.close()
+
+    assert next(row for row in snapshot["queue_items"] if row["queue_item_id"] == "queue-closed")["status"] == "closed"
+
+    current_html = _render(snapshot)
+    all_html = _render(snapshot, path="/status?show=all")
+    current_work_section = current_html.split("<h2>Work Items</h2>", 1)[1].split("<h2>Queue</h2>", 1)[0]
+    current_queue_section = current_html.split("<h2>Queue</h2>", 1)[1].split("<h2>Releases</h2>", 1)[0]
+    all_work_section = all_html.split("<h2>Work Items</h2>", 1)[1].split("<h2>Queue</h2>", 1)[0]
+    all_queue_section = all_html.split("<h2>Queue</h2>", 1)[1].split("<h2>Releases</h2>", 1)[0]
+
+    assert "queue-current" in current_queue_section
+    assert "work-current" in current_work_section
+    assert "queue-closed" not in current_queue_section
+    assert "work-closed" not in current_work_section
+    assert "Showing 1 of 1 current queue items (2 total" in current_queue_section
+    assert "Showing 1 of 1 current work items (2 total" in current_work_section
+    assert "queue-closed" in all_queue_section
+    assert "work-closed" in all_work_section
+    assert "Show current only" in all_html
 
 
 def test_bound_private_channel_is_redacted_in_status_json_and_html(tmp_path: Path) -> None:

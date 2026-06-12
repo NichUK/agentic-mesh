@@ -3841,3 +3841,53 @@ compileall passed
 - QA-RL-076 | qa-engineer | acceptance | PB-005 Story 46 | Verified
   conversation source-type persistence and destination-type validation, with
   residual caveat for legacy `unknown` source-type rows. | accepted 2026-06-12
+
+## PB-005 Story 47 - Current Queue And Work-Item Dashboard Filtering
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_status_dashboard.py`
+- `tests/test_v2_release_safe_outputs.py`
+
+### Commands Run By Engineering And QA
+
+```text
+python -m pytest tests\test_v2_status_dashboard.py tests\test_v2_release_safe_outputs.py tests\test_v2_end_to_end.py -q
+```
+
+Results:
+
+```text
+32 passed before QA review
+32 passed during QA review
+```
+
+### Acceptance Assessment
+
+- Linked queue items are marked `closed` when their work item transitions to
+  `closed`.
+- `/status` defaults Work Items to current non-terminal rows and caps the table
+  at 25 rows.
+- `/status` defaults Queue to non-closed/non-terminal-linked rows and caps the
+  table at 25 rows.
+- `/status?show=all` shows historical terminal rows and links back to the
+  current-only view.
+
+### Residual Risk
+
+- QA ran the focused test command only; full-suite verification is recorded in
+  the Engineering log.
+
+### Review Log
+
+- QA-RL-077 | qa-engineer | acceptance | PB-005 Story 47 | Verified queue
+  closure, dashboard current-only filters, show-all override, and focused
+  regression coverage. | accepted 2026-06-12

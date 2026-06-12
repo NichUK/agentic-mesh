@@ -3991,3 +3991,55 @@ QA accepted the story with no findings. The only residual caveat is that
 existing migrated conversation rows default to `source_type='unknown'`; strict
 type validation becomes definitive after each conversation is ingested or
 upserted with an explicit source type.
+
+## PB-005 Story 47 - Current Queue And Work-Item Dashboard Filtering
+
+Date: 2026-06-12
+
+### Goal
+
+Keep the status dashboard focused on current work by default. Closed work items
+and their source queue items should remain in the runtime history but not crowd
+the default Queue and Work Items sections.
+
+### Changes
+
+- Closing a work item now marks its linked queue item `closed`.
+- Queue item listings now include linked work-item id and state so historical
+  promoted queue rows can be hidden even if they predate queue closure.
+- The `/status` Work Items section now defaults to non-terminal work items and
+  caps the rendered table at 25 rows.
+- The `/status` Queue section now defaults to queue items whose queue status and
+  linked work state are not terminal, caps the table at 25 rows, and shows the
+  linked work item/state.
+- `/status?show=all` shows terminal/historical queue and work-item rows with a
+  link back to the current-only view.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_status_dashboard.py tests\test_v2_release_safe_outputs.py tests\test_v2_end_to_end.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+python scripts\check-pr-size.py --base origin/develop --committed-only
+```
+
+Results:
+
+```text
+32 passed before QA review
+compileall passed
+320 passed full suite
+V2 topology validation passed
+PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files and 106040 changed lines against origin/develop
+```
+
+### QA Result
+
+QA accepted the scoped implementation with no findings.
+
+### Notes
+
+- Recent Events still show terminal historical ids because that section is an
+  audit feed, not an actionable work queue.

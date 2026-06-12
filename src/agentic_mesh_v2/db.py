@@ -2312,6 +2312,23 @@ class V2Database:
                 "DELETE FROM work_item_attention WHERE work_item_id = ?",
                 (request.work_item_id,),
             )
+            if request.to_state == "closed" and current.queue_item_id is not None:
+                self.connection.execute(
+                    """
+                    UPDATE queue_items
+                    SET status = 'closed',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE queue_item_id = ?
+                      AND status != 'closed'
+                    """,
+                    (current.queue_item_id,),
+                )
+                self.append_event(
+                    "queue_item.closed",
+                    "queue_item",
+                    current.queue_item_id,
+                    {"work_item_id": request.work_item_id},
+                )
             if request.owner and request.reason_class and request.next_action and request.retryable is not None:
                 self.connection.execute(
                     """
@@ -3189,9 +3206,13 @@ class V2Database:
     def list_queue_items(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
-            SELECT *
+            SELECT
+              queue_items.*,
+              work_items.work_item_id AS linked_work_item_id,
+              work_items.state AS linked_work_item_state
             FROM queue_items
-            ORDER BY created_at DESC, queue_item_id
+            LEFT JOIN work_items ON work_items.queue_item_id = queue_items.queue_item_id
+            ORDER BY queue_items.created_at DESC, queue_items.queue_item_id
             """
         ).fetchall()
         return [_row_to_dict(row) for row in rows]

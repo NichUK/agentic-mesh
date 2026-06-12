@@ -7,11 +7,16 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
+
+
+DEFAULT_TABLE_LIMIT = 25
+TERMINAL_WORK_ITEM_STATES = {"closed", "canceled", "superseded", "failed_terminal"}
 
 
 class V2StatusHandler(BaseHTTPRequestHandler):
@@ -47,6 +52,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
         snapshot = self._snapshot()
         counts = snapshot["counts"]
         metrics = snapshot.get("connector_metrics") if isinstance(snapshot.get("connector_metrics"), dict) else {}
+        query = parse_qs(urlparse(getattr(self, "path", "")).query)
+        show_all = "all" in {value.casefold() for values in query.values() for value in values}
         project_file = getattr(self, "project_file", None)
         project_line = (
             f'<br><strong>Project file:</strong> {html.escape(str(project_file))}'
@@ -79,7 +86,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
 </head>
 <body>
   <h1>Agentic Mesh V2 Status</h1>
-  <p><a href="/status.json">Status JSON</a> · <a href="/healthz">Health</a></p>
+  <p><a href="/status.json">Status JSON</a> · <a href="/healthz">Health</a> · <a href="/status?show=all">Show all rows</a></p>
   <div class="banner">
     <strong>Runtime:</strong> agentic_mesh_v2<br>
     <strong>Database:</strong> {html.escape(str(snapshot["database"]))}<br>
@@ -163,9 +170,9 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   <h2>Supervisor Commands</h2>
   {self._supervisor_commands()}
   <h2>Work Items</h2>
-  {self._work_items_table(snapshot["work_items"])}
+  {self._work_items_table(snapshot["work_items"], show_all=show_all)}
   <h2>Queue</h2>
-  {self._queue_table(snapshot["queue_items"])}
+  {self._queue_table(snapshot["queue_items"], show_all=show_all)}
   <h2>Releases</h2>
   {self._release_table(snapshot["releases"])}
   <h2>Deployment Targets</h2>
@@ -184,10 +191,15 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     def _count_tile(self, label: str, value: object) -> str:
         return f'<div class="tile"><span>{html.escape(label)}</span><strong>{html.escape(str(value))}</strong></div>'
 
-    def _work_items_table(self, rows: object) -> str:
+    def _work_items_table(self, rows: object, *, show_all: bool = False, limit: int = DEFAULT_TABLE_LIMIT) -> str:
         items = list(rows) if isinstance(rows, list) else []
+        total = len(items)
+        if not show_all:
+            items = [row for row in items if row.get("state") not in TERMINAL_WORK_ITEM_STATES]
+        filtered = len(items)
+        items = items[:limit]
         if not items:
-            return '<p class="muted">No v2 work items.</p>'
+            return '<p class="muted">No current v2 work items. <a href="/status?show=all">Show all rows</a>.</p>'
         body = []
         for row in items:
             body.append(
@@ -199,7 +211,15 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 f"<td>{_e(row['updated_at'])}</td>"
                 "</tr>"
             )
-        return "<table><tr><th>Item</th><th>Summary</th><th>State / Role</th><th>Next Action</th><th>Updated</th></tr>" + "".join(body) + "</table>"
+        note = _table_filter_note(
+            total=total,
+            filtered=filtered,
+            shown=len(items),
+            limit=limit,
+            show_all=show_all,
+            active_label="current work items",
+        )
+        return note + "<table><tr><th>Item</th><th>Summary</th><th>State / Role</th><th>Next Action</th><th>Updated</th></tr>" + "".join(body) + "</table>"
 
     def _connector_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []
@@ -563,21 +583,42 @@ class V2StatusHandler(BaseHTTPRequestHandler):
             + "</table>"
         )
 
-    def _queue_table(self, rows: object) -> str:
+    def _queue_table(self, rows: object, *, show_all: bool = False, limit: int = DEFAULT_TABLE_LIMIT) -> str:
         items = list(rows) if isinstance(rows, list) else []
+        total = len(items)
+        if not show_all:
+            items = [
+                row
+                for row in items
+                if row.get("status") != "closed"
+                and row.get("linked_work_item_state") not in TERMINAL_WORK_ITEM_STATES
+            ]
+        filtered = len(items)
+        items = items[:limit]
         if not items:
-            return '<p class="muted">No v2 queue items.</p>'
+            return '<p class="muted">No current v2 queue items. <a href="/status?show=all">Show all rows</a>.</p>'
         body = []
         for row in items:
+            linked = row.get("linked_work_item_id") or ""
+            linked_state = row.get("linked_work_item_state") or ""
             body.append(
                 "<tr>"
                 f"<td><code>{_e(row['queue_item_id'])}</code></td>"
                 f"<td>{_e(row['title'])}<br><span class=\"muted\">{_e(row['summary'])}</span></td>"
                 f"<td>{_e(row['status'])}</td>"
                 f"<td>{_e(row['owner_role'])}</td>"
+                f"<td>{_e(linked)}<br><span class=\"muted\">{_e(linked_state)}</span></td>"
                 "</tr>"
             )
-        return "<table><tr><th>Queue Item</th><th>Summary</th><th>Status</th><th>Owner</th></tr>" + "".join(body) + "</table>"
+        note = _table_filter_note(
+            total=total,
+            filtered=filtered,
+            shown=len(items),
+            limit=limit,
+            show_all=show_all,
+            active_label="current queue items",
+        )
+        return note + "<table><tr><th>Queue Item</th><th>Summary</th><th>Status</th><th>Owner</th><th>Linked Work</th></tr>" + "".join(body) + "</table>"
 
     def _release_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []
@@ -690,3 +731,21 @@ def serve(*, host: str, port: int, db_path: Path, project_file: Path | None = No
 
 def _e(value: object) -> str:
     return html.escape("" if value is None else str(value))
+
+
+def _table_filter_note(
+    *,
+    total: int,
+    filtered: int,
+    shown: int,
+    limit: int,
+    show_all: bool,
+    active_label: str,
+) -> str:
+    mode = "all rows" if show_all else active_label
+    toggle = '<a href="/status">Show current only</a>' if show_all else '<a href="/status?show=all">Show all rows</a>'
+    cap = f"; capped at {limit}" if filtered > shown else ""
+    return (
+        f'<p class="muted small">Showing {shown} of {filtered} {html.escape(mode)} '
+        f'({total} total{cap}). {toggle}.</p>'
+    )

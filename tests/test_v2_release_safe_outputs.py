@@ -70,11 +70,13 @@ def test_release_manager_safe_outputs_record_no_deployment_and_close_work(tmp_pa
         )
 
         work = db.get_work_item("work-release-safe-output")
+        queue = db.get_queue_item("queue-release-safe-output")
         releases = db.list_releases()
     finally:
         db.close()
 
     assert work.state == "closed"
+    assert queue["status"] == "closed"
     assert releases[0]["release_id"] == "release-safe-output-no-deployment"
     assert releases[0]["status"] == "no_deployment_disposition"
     assert releases[0]["deployment_result"].startswith("not_required:")
