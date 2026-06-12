@@ -2614,6 +2614,82 @@ compileall passed
 - Memory compaction, pruning, and document-derived refresh remain future
   stories.
 
+## PB-005 Story 28 - Document Review Comment Safe Output
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Make `document.add_review_comment` append visible same-document review evidence
+to existing Markdown artifacts, using the `## Review Log` convention from the
+plan-first/document-review model.
+
+### Changes
+
+- Added `document.add_review_comment` processing in `SafeOutputService`.
+- Appends review comments as `- {call_id} | {role_id} | review-comment |
+  {comment}` entries inside an existing `## Review Log` section.
+- Enforces document-library containment through the existing safe path resolver.
+- Rejects configured-document-library calls when the target document is missing
+  or lacks `## Review Log`.
+- Keeps unconfigured safe-output services record-only/no-effect for review
+  comments, matching other document safe-output behavior.
+- Made replay idempotency scoped to exact `review-comment` entries inside the
+  `## Review Log` section.
+- Prevalidates configured review-comment targets before recording the safe
+  output, so invalid comments do not become replay-poisoned safe-output rows.
+
+### QA Rework
+
+QA found invalid configured review-comment calls were recorded before target
+validation failed, causing replayable bad safe-output rows. Engineering added
+prevalidation before persistence for configured document-library effects.
+
+QA found replay idempotency looked for the call id anywhere in the document,
+not only in `## Review Log`. Engineering scoped idempotency to review-comment
+entries inside that section.
+
+QA found unconfigured services crashed because validation returned early but
+append code continued. Engineering restored the record-only/no-effect behavior
+for services without a document library root.
+
+### Tests Added
+
+- Review comments append to an existing `## Review Log`.
+- Replaying the same call id appends at most one review-log entry.
+- Call ids elsewhere in a document do not suppress the first real review-log
+  comment.
+- Missing target documents and missing review-log sections are rejected before
+  recording safe-output rows.
+- Unconfigured safe-output services record review-comment intent without
+  crashing or applying filesystem effects.
+
+### Tests Run
+
+```text
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_document_safe_outputs.py tests\test_v2_safe_outputs.py tests\test_v2_safe_output_mcp.py tests\test_v2_memory_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+29 passed focused suite after rework
+243 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- Review comments are line-oriented Markdown entries. Rich threaded discussion,
+  dispositions, and automated sub-slice kickoff from review comments remain
+  later stories.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -2772,3 +2848,10 @@ compileall passed
 - RL-048 | engineering | QA rework | PB-005 Story 27 | Added DB-enforced
   role-memory fact uniqueness, duplicate cleanup, exact generated-line
   de-duplication, and status snapshot visibility. | QA accepted 2026-06-12
+- RL-049 | engineering | implementation | PB-005 Story 28 | Appended
+  `document.add_review_comment` safe outputs into same-document `## Review Log`
+  sections. | QA requested rework 2026-06-12
+- RL-050 | engineering | QA rework | PB-005 Story 28 | Prevalidated
+  configured review-comment targets before recording, scoped idempotency to
+  review-log entries, and restored record-only behavior for unconfigured
+  services. | QA accepted 2026-06-12

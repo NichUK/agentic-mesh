@@ -2602,3 +2602,67 @@ compileall passed
   role-memory safe-output publication, DB-enforced de-duplication, exact-line
   file de-duplication, CLI project-file wiring, status snapshot visibility, and
   existing containment behavior. | accepted after rework 2026-06-12
+
+## PB-005 Story 28 - Document Review Comment Safe Output
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_document_safe_outputs.py`
+- Related document safe-output behavior
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_document_safe_outputs.py tests\test_v2_safe_outputs.py tests\test_v2_safe_output_mcp.py tests\test_v2_memory_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+29 passed focused engineering rework suite
+11 passed QA final document-focused recheck
+243 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation recorded invalid configured review-comment calls
+  before target validation failed. QA found those rows could be replayed and
+  fail repeatedly. Engineering prevalidated configured targets before recording.
+- Initial replay idempotency searched the whole document for the call id. QA
+  found call ids in other sections could suppress the first real Review Log
+  append. Engineering scoped the check to exact review-comment entries inside
+  `## Review Log`.
+- Rework initially crashed when no document library root was configured.
+  Engineering restored record-only/no-effect behavior for unconfigured services.
+
+### Acceptance Assessment
+
+- Review comments are written visibly into the same document's `## Review Log`.
+- Missing target documents and missing Review Log sections fail before a
+  configured safe-output row is persisted.
+- Replay is idempotent by call id within the Review Log section.
+- Unconfigured services can still record review-comment intent without
+  filesystem side effects.
+
+### Residual Risks
+
+- Review dispositions and sub-slice automation from comments remain future
+  stories.
+
+### Review Log
+
+- QA-RL-042 | qa-engineer | acceptance | PB-005 Story 28 | Verified
+  same-document Review Log publication, target prevalidation, scoped replay
+  idempotency, unconfigured record-only behavior, and regression coverage. |
+  accepted after rework 2026-06-12

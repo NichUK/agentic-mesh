@@ -176,6 +176,171 @@ def test_document_safe_output_rejects_status_only_or_incomplete_content(tmp_path
     assert artifacts == []
 
 
+def test_document_review_comment_appends_to_existing_review_log(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    document_root = tmp_path / "docs"
+    target = document_root / "work-items" / "work-document-safe-output" / "020-product-definition.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(_product_definition_content(), encoding="utf-8")
+    try:
+        db.migrate()
+        _work_item(db)
+        db.create_run(
+            run_id="run-document-review-comment",
+            role_id="qa-engineer",
+            role_instance_id="test-project.qa-engineer.1",
+            work_item_id="work-document-safe-output",
+        )
+        service = SafeOutputService(db, document_library_root=document_root)
+        call = SafeOutputCall(
+            role_id="qa-engineer",
+            tool_name="document.add_review_comment",
+            payload={
+                "path": "work-items/work-document-safe-output/020-product-definition.md",
+                "comment": "Acceptance criteria are testable and ready for QA.",
+            },
+        )
+        call_id = service.record(run_id="run-document-review-comment", call=call)
+        service.process_recorded_call(call_id=call_id, run_id="run-document-review-comment", call=call)
+    finally:
+        db.close()
+
+    text = target.read_text(encoding="utf-8")
+    assert text.count(f"- {call_id} | qa-engineer | review-comment | Acceptance criteria are testable and ready for QA.") == 1
+
+
+def test_document_review_comment_idempotency_is_scoped_to_review_log(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    document_root = tmp_path / "docs"
+    target = document_root / "work-items" / "work-document-safe-output" / "020-product-definition.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        _product_definition_content().replace(
+            "## Objective",
+            "## Objective\n\n- call-preexisting | qa-engineer | review-comment | Not actually review-log evidence.\n\n## Objective",
+        ),
+        encoding="utf-8",
+    )
+    try:
+        db.migrate()
+        _work_item(db)
+        db.create_run(
+            run_id="run-document-review-comment-scope",
+            role_id="qa-engineer",
+            role_instance_id="test-project.qa-engineer.1",
+            work_item_id="work-document-safe-output",
+        )
+        call = SafeOutputCall(
+            role_id="qa-engineer",
+            tool_name="document.add_review_comment",
+            payload={
+                "path": "work-items/work-document-safe-output/020-product-definition.md",
+                "comment": "Actual review-log evidence.",
+            },
+        )
+        service = SafeOutputService(db, document_library_root=document_root)
+        service.process_recorded_call(call_id="call-preexisting", run_id="run-document-review-comment-scope", call=call)
+        service.process_recorded_call(call_id="call-preexisting", run_id="run-document-review-comment-scope", call=call)
+    finally:
+        db.close()
+
+    text = target.read_text(encoding="utf-8")
+    assert text.count("- call-preexisting | qa-engineer | review-comment | Actual review-log evidence.") == 1
+
+
+def test_document_review_comment_rejects_missing_review_log(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    document_root = tmp_path / "docs"
+    target = document_root / "work-items" / "work-document-safe-output" / "020-product-definition.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Product Definition\n\n## Objective\n\nMissing review log.\n", encoding="utf-8")
+    try:
+        db.migrate()
+        _work_item(db)
+        db.create_run(
+            run_id="run-document-review-comment-missing-log",
+            role_id="qa-engineer",
+            role_instance_id="test-project.qa-engineer.1",
+            work_item_id="work-document-safe-output",
+        )
+        with pytest.raises(SafeOutputError, match="Review Log"):
+            SafeOutputService(db, document_library_root=document_root).record(
+                run_id="run-document-review-comment-missing-log",
+                call=SafeOutputCall(
+                    role_id="qa-engineer",
+                    tool_name="document.add_review_comment",
+                    payload={
+                        "path": "work-items/work-document-safe-output/020-product-definition.md",
+                        "comment": "This cannot be attached without a review log.",
+                    },
+                ),
+            )
+        calls = db.list_safe_output_calls_for_run("run-document-review-comment-missing-log")
+    finally:
+        db.close()
+
+    assert calls == []
+
+
+def test_document_review_comment_rejects_missing_target_document(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_item(db)
+        db.create_run(
+            run_id="run-document-review-comment-missing-target",
+            role_id="qa-engineer",
+            role_instance_id="test-project.qa-engineer.1",
+            work_item_id="work-document-safe-output",
+        )
+        with pytest.raises(SafeOutputError, match="was not found"):
+            SafeOutputService(db, document_library_root=tmp_path / "docs").record(
+                run_id="run-document-review-comment-missing-target",
+                call=SafeOutputCall(
+                    role_id="qa-engineer",
+                    tool_name="document.add_review_comment",
+                    payload={
+                        "path": "work-items/work-document-safe-output/020-product-definition.md",
+                        "comment": "This cannot be attached without a target document.",
+                    },
+                ),
+            )
+        calls = db.list_safe_output_calls_for_run("run-document-review-comment-missing-target")
+    finally:
+        db.close()
+
+    assert calls == []
+
+
+def test_document_review_comment_without_document_root_records_intent_without_effect(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        db.create_run(
+            run_id="run-document-review-comment-unconfigured",
+            role_id="qa-engineer",
+            role_instance_id="test-project.qa-engineer.1",
+            work_item_id=None,
+        )
+        call_id = SafeOutputService(db).record(
+            run_id="run-document-review-comment-unconfigured",
+            call=SafeOutputCall(
+                role_id="qa-engineer",
+                tool_name="document.add_review_comment",
+                payload={
+                    "path": "work-items/work-document-safe-output/020-product-definition.md",
+                    "comment": "No document library is configured in this context.",
+                },
+            ),
+        )
+        calls = db.list_safe_output_calls_for_run("run-document-review-comment-unconfigured")
+    finally:
+        db.close()
+
+    assert calls[0]["call_id"] == call_id
+    assert calls[0]["tool_name"] == "document.add_review_comment"
+
+
 def test_cli_recorded_document_safe_output_publishes_once_in_role_service(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     document_root = tmp_path / "docs"

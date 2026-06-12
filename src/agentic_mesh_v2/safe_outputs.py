@@ -210,6 +210,8 @@ class SafeOutputService:
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:
         self.policy.authorize(role_id=call.role_id, tool_name=call.tool_name)
         validate_payload(call.tool_name, call.payload)
+        if self.process_effects and call.tool_name == "document.add_review_comment":
+            self._validate_document_review_comment_target(call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -233,6 +235,8 @@ class SafeOutputService:
     def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
         if call.tool_name == "document.propose_update":
             self._publish_document_update(call_id=call_id, run_id=run_id, call=call)
+        if call.tool_name == "document.add_review_comment":
+            self._append_document_review_comment(call_id=call_id, call=call)
         if call.tool_name == "memory.propose_update":
             self._publish_role_memory_update(call_id=call_id, call=call)
         if call.tool_name == "release.record_no_deployment":
@@ -283,6 +287,35 @@ class SafeOutputService:
             status=_optional_text(call.payload.get("status")) or "proposed",
             created_by_role=call.role_id,
         )
+
+    def _append_document_review_comment(self, *, call_id: str, call: SafeOutputCall) -> None:
+        if self.document_library_root is None:
+            return
+        self._validate_document_review_comment_target(call)
+        target = _contained_document_path(self.document_library_root, _required_text(call.payload, "path"))
+        content = target.read_text(encoding="utf-8")
+        if _review_comment_exists(content, call_id=call_id):
+            return
+        comment = _single_line_text(_required_text(call.payload, "comment"))
+        target.write_text(
+            _content_with_review_comment(
+                content=content,
+                call_id=call_id,
+                role_id=call.role_id,
+                comment=comment,
+            ),
+            encoding="utf-8",
+        )
+
+    def _validate_document_review_comment_target(self, call: SafeOutputCall) -> None:
+        if self.document_library_root is None:
+            return
+        relative_path = _required_text(call.payload, "path")
+        target = _contained_document_path(self.document_library_root, relative_path)
+        if not target.exists():
+            raise SafeOutputError(f"review comment target document `{relative_path}` was not found")
+        content = target.read_text(encoding="utf-8")
+        _review_log_bounds(content)
 
     def _publish_role_memory_update(self, *, call_id: str, call: SafeOutputCall) -> None:
         if self.role_memory_path_resolver is None:
@@ -569,6 +602,49 @@ def _memory_content_with_entry(
         content = f"{content}\n\n## Safe-Output Memory Updates"
     entry = f"- {call_id} | {_memory_marker(summary=summary, provenance_ref=provenance_ref)}"
     return f"{content.rstrip()}\n{entry}\n"
+
+
+def _content_with_review_comment(
+    *,
+    content: str,
+    call_id: str,
+    role_id: str,
+    comment: str,
+) -> str:
+    lines = content.rstrip().splitlines()
+    _review_start, insert_index = _review_log_bounds(content)
+    entry = f"- {call_id} | {role_id} | review-comment | {comment}"
+    if insert_index == len(lines):
+        return "\n".join([*lines, entry]) + "\n"
+    updated = [*lines[:insert_index], entry, "", *lines[insert_index:]]
+    return "\n".join(updated).rstrip() + "\n"
+
+
+def _review_comment_exists(content: str, *, call_id: str) -> bool:
+    lines = content.splitlines()
+    review_start, review_end = _review_log_bounds(content)
+    expected_prefix = f"- {call_id} | "
+    for line in lines[review_start + 1 : review_end]:
+        text = line.strip()
+        if text.startswith(expected_prefix) and " | review-comment | " in text:
+            return True
+    return False
+
+
+def _review_log_bounds(content: str) -> tuple[int, int]:
+    lines = content.rstrip().splitlines()
+    review_index = next(
+        (index for index, line in enumerate(lines) if line.strip() == "## Review Log"),
+        None,
+    )
+    if review_index is None:
+        raise SafeOutputError("review comment target document must contain a `## Review Log` section")
+    section_end = len(lines)
+    for index in range(review_index + 1, len(lines)):
+        if lines[index].startswith("## "):
+            section_end = index
+            break
+    return review_index, section_end
 
 
 def _memory_marker(*, summary: str, provenance_ref: str) -> str:
