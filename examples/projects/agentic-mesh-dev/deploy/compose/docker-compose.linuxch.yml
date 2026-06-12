@@ -1,89 +1,12 @@
 services:
-  teams-bot-listener:
-    image: agentic-mesh:local
-    command: python -m agentic_mesh.cli teams-bot-listener --host 0.0.0.0 --port 3978
-    environment:
-      AGENTIC_MESH_PUBLIC_BOT_ENDPOINT: https://vpn.nixnet.com/api/messages
-      AGENTIC_MESH_CONFIG_ROOT: /mesh/system
-      AGENTIC_MESH_PROMPT_CONFIG_ROOT: /mesh/system/config/prompts
-      AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project.yaml
-      AGENTIC_MESH_STATE_ROOT: /mesh/project/state
-      AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
-      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}
-      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
-      OTEL_EXPORTER_OTLP_INSECURE: "true"
-      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
-      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=dogfood
-    ports:
-      - "3978:3978"
-    volumes:
-      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
-    working_dir: /mesh/workspaces/agentic-mesh
+  v2-runtime:
     restart: unless-stopped
-
-  router:
-    restart: unless-stopped
-
-  control-plane:
-    restart: unless-stopped
-
-  teams-connector:
-    command: python -m agentic_mesh.cli teams-bot-connector-loop --connector teams --channel all --secret-root /mesh/project/state/secrets --poll-seconds 5
-    restart: unless-stopped
-
-  teams-graph-ingress:
-    profiles:
-      - graph-ingress
 
   otel-collector:
     ports: !reset []
     networks:
       - default
       - observability
-    restart: unless-stopped
-
-  business-analyst:
-    restart: unless-stopped
-
-  product-manager:
-    restart: unless-stopped
-
-  ux-designer:
-    restart: unless-stopped
-
-  enterprise-architect:
-    restart: unless-stopped
-
-  solution-architect:
-    restart: unless-stopped
-
-  security-architect:
-    restart: unless-stopped
-
-  platform-engineer:
-    restart: unless-stopped
-
-  engineering-1:
-    restart: unless-stopped
-
-  engineering-2:
-    restart: unless-stopped
-
-  qa-engineer:
-    restart: unless-stopped
-
-  release-manager:
-    restart: unless-stopped
-
-  technical-writer:
-    restart: unless-stopped
-
-  delivery-manager:
-    restart: unless-stopped
-
-  research-analyst:
     restart: unless-stopped
 
 networks:

@@ -507,3 +507,106 @@ class V2Database:
             }
             for row in rows
         ]
+
+    def list_queue_items(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM queue_items
+            ORDER BY created_at DESC, queue_item_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_work_items(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT wi.*, a.owner AS attention_owner, a.reason_class, a.next_action, a.retryable
+            FROM work_items wi
+            LEFT JOIN work_item_attention a ON a.work_item_id = wi.work_item_id
+            ORDER BY wi.updated_at DESC, wi.work_item_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_agent_runs(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM agent_runs
+            ORDER BY started_at DESC, run_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_safe_output_calls(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM safe_output_calls
+            ORDER BY created_at DESC, call_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_artifacts(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM artifacts
+            ORDER BY created_at DESC, artifact_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_releases(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM releases
+            ORDER BY updated_at DESC, release_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def status_snapshot(self) -> dict[str, Any]:
+        work_items = self.list_work_items()
+        queue_items = self.list_queue_items()
+        releases = self.list_releases()
+        states: dict[str, int] = {}
+        for item in work_items:
+            state = str(item["state"])
+            states[state] = states.get(state, 0) + 1
+        queue_statuses: dict[str, int] = {}
+        for item in queue_items:
+            status = str(item["status"])
+            queue_statuses[status] = queue_statuses.get(status, 0) + 1
+        return {
+            "database": str(self.path),
+            "counts": {
+                "queue_items": len(queue_items),
+                "work_items": len(work_items),
+                "agent_runs": len(self.list_agent_runs()),
+                "safe_output_calls": len(self.list_safe_output_calls()),
+                "artifacts": len(self.list_artifacts()),
+                "releases": len(releases),
+            },
+            "work_item_states": states,
+            "queue_statuses": queue_statuses,
+            "queue_items": queue_items,
+            "work_items": work_items,
+            "agent_runs": self.list_agent_runs(),
+            "safe_output_calls": self.list_safe_output_calls(),
+            "artifacts": self.list_artifacts(),
+            "releases": releases,
+            "recent_events": self.list_events()[-50:],
+        }
+
+
+def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    result = dict(row)
+    for key in ("payload_json",):
+        if isinstance(result.get(key), str):
+            result[key.removesuffix("_json")] = json.loads(result[key])
+            del result[key]
+    return result

@@ -2,7 +2,7 @@ x-agentic-mesh-env: &agentic-mesh-env
   AGENTIC_MESH_CONFIG_ROOT: /mesh/system
   AGENTIC_MESH_PROMPT_CONFIG_ROOT: /mesh/system/config/prompts
   AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project.yaml
-  AGENTIC_MESH_STATE_ROOT: /mesh/project/state
+  AGENTIC_MESH_STATE_ROOT: /mesh/project/state/v2
   AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
   AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}
   OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
@@ -25,83 +25,15 @@ services:
   runtime-image:
     image: agentic-mesh:local
     build: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
-    command: python -m agentic_mesh.cli status
+    command: python -m agentic_mesh_v2.cli init-db
     profiles:
       - build-image
 
-  router:
+  v2-runtime:
     <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli router-loop --poll-seconds 10
-
-  control-plane:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli control-plane-loop --idle-grace-seconds 300 --poll-seconds 5 --auth-admin-host 0.0.0.0 --auth-admin-port 8080
+    command: python -m agentic_mesh_v2.cli --db /mesh/project/state/v2/agentic-mesh-v2.sqlite3 serve --host 0.0.0.0 --port 8080
     ports:
       - "8100:8080"
-
-  teams-connector:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli teams-connector-loop --channel approvals --poll-seconds 5
-
-  teams-graph-ingress:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli teams-graph-ingress-loop --connector teams --channel all-agents --tenant-id 564b667c-5b1a-4bbc-bb43-918b0b765a9b --client-id 9c96d713-3ae4-4da9-998a-1a4a758f2763 --client-secret-file /mesh/project/state/secrets/graph-channel-read-client-secret --poll-seconds 10
-
-  business-analyst:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.business-analyst.1 --poll-seconds 5
-
-  product-manager:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.product-manager.1 --poll-seconds 5
-
-  ux-designer:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.ux-designer.1 --poll-seconds 5
-
-  enterprise-architect:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.enterprise-architect.1 --poll-seconds 5
-
-  solution-architect:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.solution-architect.1 --poll-seconds 5
-
-  security-architect:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.security-architect.1 --poll-seconds 5
-
-  platform-engineer:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.platform-engineer.1 --poll-seconds 5
-
-  engineering-1:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.engineering.1 --poll-seconds 5
-
-  engineering-2:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.engineering.2 --poll-seconds 5
-
-  qa-engineer:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.qa-engineer.1 --poll-seconds 5
-
-  release-manager:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.release-manager.1 --poll-seconds 5
-
-  technical-writer:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.technical-writer.1 --poll-seconds 5
-
-  delivery-manager:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.delivery-manager.1 --poll-seconds 5
-
-  research-analyst:
-    <<: *agentic-mesh-service
-    command: python -m agentic_mesh.cli agent-loop --instance agentic-mesh-dev.research-analyst.1 --poll-seconds 5
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.101.0
