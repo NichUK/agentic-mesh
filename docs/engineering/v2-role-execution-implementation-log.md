@@ -2091,6 +2091,76 @@ compileall passed
 - Worker adapters still accept stdout safe-output JSON for compatibility within
   the v2 branch until the follow-up collection slice lands.
 
+## PB-005 Story 21 - Collect CLI-Recorded Safe Outputs From Worker Runs
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; awaiting QA
+
+### Intent
+
+Let a role worker use the run-bound safe-output CLI transport during execution
+and complete successfully even when the worker does not emit legacy safe-output
+JSON on stdout.
+
+### Changes
+
+- `RoleAssignment` now carries:
+  - `run_id`
+  - `safe_output_transport`
+- `RoleService` injects a run-bound `record-safe-output` command into each
+  worker assignment before prompt generation and worker execution.
+- Generated prompts now include the run-bound transport context because prompt
+  rendering receives the enriched assignment.
+- `RoleService` records legacy stdout-returned calls when present, then
+  collects all safe-output calls already recorded for the run from the DB.
+- Terminal-output validation now uses DB-recorded calls, so a worker can finish
+  by calling the CLI safe-output command instead of returning JSON.
+- `CodexCliWorker` exposes the transport block as top-level stdin
+  `safe_outputs`.
+- `CodexCliWorker` tolerates empty or non-JSON stdout when safe-output
+  transport is available, because durable output should already have been
+  recorded through tools.
+- `SafeOutputSubprocessWorker` tolerates empty stdout when safe-output
+  transport is available but still rejects invalid non-empty JSON to preserve
+  deterministic subprocess behavior.
+- Added `list_safe_output_calls_for_run` for run-scoped collection.
+- Run-scoped safe-output collection orders by SQLite insertion row to preserve
+  terminal-call order even when calls share the same timestamp second.
+
+### Tests Added
+
+- role service completes an assignment when a subprocess worker records
+  `status.complete` through the provided CLI transport and returns no
+  safe-output JSON
+- Codex CLI worker returns no stdout calls and does not fail when safe-output
+  transport is present and stdout contains human/non-JSON text
+- existing subprocess invalid-JSON behavior remains strict
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_safe_outputs.py
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+89 passed
+compileall passed
+```
+
+### Known Limitations
+
+- This story completes the CLI-recorded safe-output collection path. MCP
+  exposure remains a later slice.
+- CLI-recorded `status.reply` calls are recorded as durable safe-output state;
+  connector-specific delivery side effects still need a later processor or
+  connector-aware safe-output execution path.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added

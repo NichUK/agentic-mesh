@@ -95,6 +95,28 @@ def test_build_worker_adapter_creates_codex_cli_worker() -> None:
     assert calls[0].payload["message"] == "Codex adapter complete."
 
 
+def test_codex_cli_worker_allows_non_json_stdout_when_safe_output_transport_is_available() -> None:
+    worker = build_worker_adapter(
+        {
+            "adapter": "codex-cli",
+            "command": [sys.executable, "-c", "print('human summary, not JSON')"],
+            "timeout_seconds": 5,
+        }
+    )
+    assignment = RoleAssignment(
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        work_item_id=None,
+        title="Adapter assignment",
+        summary="Exercise tool transport stdout handling.",
+        safe_output_transport={"transport": "cli"},
+    )
+
+    calls = worker.run(assignment)
+
+    assert calls == []
+
+
 def test_build_worker_adapter_creates_default_codex_cli_worker() -> None:
     worker = build_worker_adapter({"adapter": "codex-cli"})
 

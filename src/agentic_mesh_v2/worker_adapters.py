@@ -51,6 +51,8 @@ class SafeOutputSubprocessWorker:
             detail = f": {stderr}" if stderr else ""
             raise RuntimeError(f"subprocess worker exited with code {result.returncode}{detail}")
         if not result.stdout.strip():
+            if assignment.safe_output_transport is not None:
+                return []
             raise ValueError("subprocess worker emitted no stdout safe-output JSON")
         try:
             raw = json.loads(result.stdout)
@@ -92,6 +94,7 @@ class CodexCliWorker:
     def run(self, assignment: RoleAssignment) -> list[SafeOutputCall]:
         prompt_payload = {
             "prompt": assignment.generated_prompt,
+            "safe_outputs": assignment.safe_output_transport,
             "assignment": _assignment_payload(assignment),
             "worker": {
                 "adapter": "codex-cli",
@@ -117,10 +120,14 @@ class CodexCliWorker:
             detail = f": {stderr}" if stderr else ""
             raise RuntimeError(f"codex-cli worker exited with code {result.returncode}{detail}")
         if not result.stdout.strip():
+            if assignment.safe_output_transport is not None:
+                return []
             raise ValueError("codex-cli worker emitted no stdout safe-output JSON")
         try:
             raw = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
+            if assignment.safe_output_transport is not None:
+                return []
             raise ValueError(f"codex-cli worker emitted invalid JSON: {exc.msg}") from exc
         return parse_safe_output_calls(raw, assignment=assignment, source="codex-cli worker")
 

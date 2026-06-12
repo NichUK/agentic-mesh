@@ -2127,3 +2127,65 @@ compileall passed
   CLI recording, ownership validation, shared policy enforcement, structured
   receipts, boolean decoding, and scoped implementation claims. | accepted
   2026-06-12
+
+## PB-005 Story 21 - Collect CLI-Recorded Safe Outputs From Worker Runs
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/role_service.py`
+- `src/agentic_mesh_v2/worker_adapters.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_role_assignment_execution.py`
+- `tests/test_v2_worker_adapters.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+89 passed focused suite
+203 passed full suite
+compileall passed
+```
+
+### Acceptance Assessment
+
+- Role services inject `run_id` and CLI `safe_output_transport` before prompt
+  rendering and worker execution.
+- Legacy stdout-returned calls are recorded first; then run-scoped DB calls are
+  collected and checked for role ownership and terminal output.
+- A worker can complete by recording `status.complete` through the CLI transport
+  and returning no safe-output JSON.
+- `CodexCliWorker` sends top-level `safe_outputs` and tolerates non-JSON stdout
+  only when transport is present.
+- `SafeOutputSubprocessWorker` allows empty stdout with transport but still
+  rejects invalid non-empty JSON.
+- Engineering evidence does not overclaim MCP or connector delivery side
+  effects.
+
+### Residual Risks
+
+- QA noted terminal selection could be ambiguous if multiple terminal calls
+  shared a timestamp second. Engineering changed run-scoped safe-output
+  collection to order by SQLite insertion row after QA review, preserving insert
+  order for this local SQLite runtime.
+
+### Review Log
+
+- QA-RL-035 | qa-engineer | acceptance | PB-005 Story 21 | Verified
+  CLI-recorded safe-output collection, run-bound transport injection, Codex
+  transport payload, subprocess strictness, and scoped implementation claims. |
+  accepted 2026-06-12

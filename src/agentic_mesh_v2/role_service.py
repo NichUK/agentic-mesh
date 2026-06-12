@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from dataclasses import replace
 from typing import Any
@@ -31,6 +32,8 @@ class RoleAssignment:
     conversation_context: tuple[str, ...] = ()
     memory_context: tuple[str, ...] = ()
     generated_prompt: str | None = None
+    run_id: str | None = None
+    safe_output_transport: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -94,9 +97,29 @@ class RoleService:
             work_item_id=assignment.work_item_id,
         )
         try:
-            worker_assignment = assignment
+            worker_assignment = replace(
+                assignment,
+                run_id=run_id,
+                safe_output_transport={
+                    "transport": "cli",
+                    "run_id": run_id,
+                    "role_id": self.role_id,
+                    "record_command": [
+                        sys.executable,
+                        "-m",
+                        "agentic_mesh_v2.cli",
+                        "--db",
+                        str(self.db.path),
+                        "record-safe-output",
+                        "--run-id",
+                        run_id,
+                        "--role-id",
+                        self.role_id,
+                    ],
+                },
+            )
             if self.prompt_assembler is not None:
-                prompt = self.prompt_assembler.render(assignment)
+                prompt = self.prompt_assembler.render(worker_assignment)
                 self.db.record_agent_prompt(
                     prompt_id=f"prompt-{uuid4().hex}",
                     run_id=run_id,
@@ -106,27 +129,29 @@ class RoleService:
                     prompt_text=prompt.prompt_text,
                     component_manifest=prompt.component_manifest,
                 )
-                worker_assignment = replace(assignment, generated_prompt=prompt.prompt_text)
+                worker_assignment = replace(worker_assignment, generated_prompt=prompt.prompt_text)
             calls = self.worker.run(worker_assignment)
         except Exception:
             self.db.complete_run(run_id, status="failed", terminal_tool=None)
             raise
-        terminal_calls: list[SafeOutputCall] = []
         try:
             for call in calls:
                 if call.role_id != self.role_id:
                     raise ValueError("worker emitted safe-output for another role")
                 self.safe_outputs.record(run_id=run_id, call=call)
-                if call.terminal:
-                    terminal_calls.append(call)
-            if not calls:
+            recorded_calls = self.db.list_safe_output_calls_for_run(run_id)
+            for call in recorded_calls:
+                if call.get("role_id") != self.role_id:
+                    raise ValueError("worker emitted safe-output for another role")
+            terminal_calls = [call for call in recorded_calls if call.get("terminal")]
+            if not recorded_calls:
                 raise ValueError("role worker did not emit any safe-output calls")
             if not terminal_calls:
                 raise ValueError("role worker did not emit a terminal safe-output call")
         except Exception:
             self.db.complete_run(run_id, status="failed", terminal_tool=None)
             raise
-        terminal_tool = terminal_calls[-1].tool_name
+        terminal_tool = str(terminal_calls[-1]["tool_name"])
         self.db.complete_run(
             run_id,
             status="completed",
@@ -136,7 +161,7 @@ class RoleService:
             run_id=run_id,
             status="completed",
             terminal_tool=terminal_tool,
-            safe_output_count=len(calls),
+            safe_output_count=len(recorded_calls),
             assignment_id=assignment.assignment_id,
         )
 

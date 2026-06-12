@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import sys
 
 import pytest
 
@@ -11,6 +13,7 @@ from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.server import V2StatusHandler
+from agentic_mesh_v2.worker_adapters import SafeOutputSubprocessWorker
 
 
 class StaticWorker:
@@ -226,6 +229,49 @@ def test_role_service_records_prompt_audit_and_passes_prompt_to_worker(tmp_path:
     assert db.status_snapshot()["counts"]["agent_prompts"] == 1
     event_types = [event["event_type"] for event in db.list_events()]
     assert "agent_prompt.recorded" in event_types
+
+
+def test_role_service_collects_safe_outputs_recorded_by_worker_cli_transport(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-cli-transport",
+        role_id="product-manager",
+        source_ref="msg-cli-transport",
+        title="CLI safe-output transport",
+        summary="Worker should record safe output through the CLI transport.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    worker_script = (
+        "import json, subprocess, sys; "
+        "payload=json.load(sys.stdin); "
+        "command=payload['safe_output_transport']['record_command']; "
+        "subprocess.run(command + ["
+        "'--tool-name','status.complete',"
+        "'--payload-json',json.dumps({'message':'Recorded through CLI transport.'})"
+        "], check=True, capture_output=True)"
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=SafeOutputSubprocessWorker((sys.executable, "-c", worker_script), timeout_seconds=10),
+    )
+
+    receipt = service.run_next_assignment()
+
+    assert receipt is not None
+    assert receipt.terminal_tool == "status.complete"
+    assert receipt.safe_output_count == 1
+    assignment = db.get_role_assignment("assignment-cli-transport")
+    calls = db.list_safe_output_calls_for_run(receipt.run_id)
+    assert assignment is not None
+    assert assignment["status"] == "completed"
+    assert calls[0]["tool_name"] == "status.complete"
+    assert calls[0]["payload"]["message"] == "Recorded through CLI transport."
+    assert calls[0]["terminal"] is True
 
 
 def test_role_service_marks_run_failed_when_prompt_assembly_fails(tmp_path: Path) -> None:

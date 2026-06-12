@@ -2787,6 +2787,18 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_safe_output_calls_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM safe_output_calls
+            WHERE run_id = ?
+            ORDER BY rowid
+            """,
+            (run_id,),
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_agent_prompts(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
