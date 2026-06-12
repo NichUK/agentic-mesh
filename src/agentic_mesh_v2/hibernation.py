@@ -44,6 +44,14 @@ class HibernationDecision:
     idle_seconds: int | None = None
 
 
+@dataclass(frozen=True)
+class HydrationDecision:
+    role_id: str
+    role_instance_id: str
+    hydrated: bool
+    reason: str
+
+
 class HibernationService:
     def __init__(self, db: V2Database, policy: HibernationPolicy | None = None) -> None:
         self.db = db
@@ -122,6 +130,28 @@ class HibernationService:
             reason=reason,
         )
 
+    def hydrate_for_pending_work(self, *, role_id: str, reason: str) -> list[HydrationDecision]:
+        if not reason.strip():
+            raise ValueError("hydration reason is required")
+        if not self._role_has_queued_work(role_id):
+            return []
+        hydrated: list[HydrationDecision] = []
+        for instance in self.db.list_role_instance_statuses():
+            if instance["role_id"] != role_id or instance["status"] not in HIBERNATED_STATUSES:
+                continue
+            role_instance_id = str(instance["role_instance_id"])
+            self.mark_hydrating(role_id=role_id, role_instance_id=role_instance_id, reason=reason)
+            hydrated.append(
+                HydrationDecision(
+                    role_id=role_id,
+                    role_instance_id=role_instance_id,
+                    hydrated=True,
+                    reason=reason,
+                )
+            )
+            break
+        return hydrated
+
     def _instance(self, role_instance_id: str) -> dict[str, Any] | None:
         for item in self.db.list_role_instance_statuses():
             if item["role_instance_id"] == role_instance_id:
@@ -136,6 +166,12 @@ class HibernationService:
             if assignment.get("role_instance_id") == role_instance_id and status == "claimed":
                 return "Role instance has claimed work."
         return None
+
+    def _role_has_queued_work(self, role_id: str) -> bool:
+        return any(
+            assignment["role_id"] == role_id and assignment["status"] == "queued"
+            for assignment in self.db.list_role_assignments()
+        )
 
     def _warm_instance_count(self, role_id: str) -> int:
         return sum(

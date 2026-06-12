@@ -891,6 +891,66 @@ Results:
 - Worker subprocess checkpointing and cooperative suspend remain later PB-005
   work.
 
+## PB-005 Story 2 - Project Hibernation Maintenance Tick
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add a bounded project hibernation maintenance command so an operator or future
+supervisor can apply hibernation policy across configured project role
+instances. The command records logical hibernation and hydration state; it does
+not stop or start containers.
+
+### Implementation Notes
+
+- Added `run-project-hibernation-maintenance`.
+- The command expands configured project role instances from `project.yaml`.
+- For each role, the command loads project/role hibernation policy.
+- The command marks eligible idle role instances `hibernated` after the safe
+  point and grace-period checks pass.
+- The command respects `min_warm_instances` while hibernating multiple
+  instances of the same role.
+- If queued work exists for a role, the command marks one hibernated instance
+  `hydrating` and records the wake reason.
+- JSON output includes hibernated, hydrating, and kept-awake counts plus
+  per-instance reasons.
+
+### Tests Added
+
+- project hibernation maintenance hibernates only surplus idle instances when a
+  warm-instance floor is configured
+- queued role work hydrates a hibernated instance
+- maintenance output reports hibernated, hydrating, and kept-awake counts
+- wake reason is durable after hydration
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_hibernation.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+27 passed
+58 passed
+```
+
+### Known Limitations
+
+- This story still records logical runtime state only. Actual container
+  stop/start integration remains a later PB-005 slice.
+- The hydration trigger is a bounded maintenance scan for queued assignments,
+  not a connector event listener or scheduler.
+- Only one hibernated role instance is marked hydrating for queued work in this
+  first maintenance slice.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -939,3 +999,6 @@ Results:
 - RL-014 | engineering | implementation | PB-005 Story 1 | Added hibernation
   policy loading, safe-point evaluation, durable hibernation/hydration state,
   and dashboard evidence. | QA accepted 2026-06-12
+- RL-015 | engineering | implementation | PB-005 Story 2 | Added project
+  hibernation maintenance with warm-pool hibernation, queued-work hydration,
+  and JSON per-instance receipts. | QA accepted 2026-06-12

@@ -887,6 +887,116 @@ roles:
     assert assignment["status"] == "completed"
 
 
+def test_v2_cli_runs_project_hibernation_maintenance_and_hydrates_on_queued_work(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  product-manager:
+    instances: 2
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+    hibernation:
+      idle_after_seconds: 1
+      min_warm_instances: 1
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        for index in (1, 2):
+            db.update_role_instance_status(
+                role_id="product-manager",
+                role_instance_id=f"test-project.product-manager.{index}",
+                status="idle",
+                detail="Idle before maintenance.",
+            )
+        db.connection.execute(
+            """
+            UPDATE role_instance_status
+            SET heartbeat_at = datetime('now', '-120 seconds')
+            WHERE role_id = 'product-manager'
+            """
+        )
+        db.connection.commit()
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-hibernation-maintenance",
+                "--project-file",
+                str(project_file),
+                "--hibernate-reason",
+                "Idle test maintenance.",
+            ]
+        )
+        == 0
+    )
+
+    first = json.loads(capsys.readouterr().out)
+    assert first["hibernated_count"] == 1
+    assert first["hydrating_count"] == 0
+    assert first["kept_awake_count"] == 1
+    db = V2Database(db_path)
+    try:
+        statuses = {row["role_instance_id"]: row for row in db.status_snapshot()["role_instance_statuses"]}
+        assert statuses["test-project.product-manager.1"]["status"] == "hibernated"
+        assert statuses["test-project.product-manager.2"]["status"] == "idle"
+        db.create_role_assignment(
+            assignment_id="assignment-wake-product",
+            role_id="product-manager",
+            source_ref="msg-wake-product",
+            title="Wake product manager",
+            summary="Queued work should hydrate a hibernated instance.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-hibernation-maintenance",
+                "--project-file",
+                str(project_file),
+                "--hydrate-reason",
+                "Queued test work.",
+            ]
+        )
+        == 0
+    )
+
+    second = json.loads(capsys.readouterr().out)
+    assert second["hydrating_count"] == 1
+    assert second["hibernated_count"] == 0
+    assert second["kept_awake_count"] == 1
+    db = V2Database(db_path)
+    try:
+        statuses = {row["role_instance_id"]: row for row in db.status_snapshot()["role_instance_statuses"]}
+    finally:
+        db.close()
+
+    assert statuses["test-project.product-manager.1"]["status"] == "hydrating"
+    assert statuses["test-project.product-manager.1"]["wake_reason"] == "Queued test work."
+
+
 @pytest.mark.parametrize(
     ("extra_args", "message"),
     [

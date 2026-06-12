@@ -7,9 +7,12 @@ from pathlib import Path
 
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
+from agentic_mesh_v2.hibernation import HibernationPolicy
+from agentic_mesh_v2.hibernation import HibernationService
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
 from agentic_mesh_v2.project_config import list_project_role_service_configs
+from agentic_mesh_v2.project_config import load_role_hibernation_config
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.server import serve
@@ -105,6 +108,20 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-unsupported",
         action="store_true",
         help="Skip role instances whose worker adapter is not implemented yet.",
+    )
+
+    project_hibernation_parser = subparsers.add_parser(
+        "run-project-hibernation-maintenance",
+        help="Run one bounded hibernation/hydration maintenance tick for configured project role instances.",
+    )
+    project_hibernation_parser.add_argument("--project-file", type=Path, required=True)
+    project_hibernation_parser.add_argument(
+        "--hibernate-reason",
+        default="Project hibernation maintenance found an idle safe role instance.",
+    )
+    project_hibernation_parser.add_argument(
+        "--hydrate-reason",
+        default="Project hibernation maintenance found queued role work.",
     )
 
     topology_parser = subparsers.add_parser(
@@ -241,6 +258,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.command == "run-project-role-services-loop":
                 result = _run_project_role_services_loop(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            if args.command == "run-project-hibernation-maintenance":
+                result = _run_project_hibernation_maintenance(db, args)
                 print(json.dumps(result, sort_keys=True))
                 return 0
         finally:
@@ -382,6 +403,76 @@ def _run_project_role_services_loop(db: V2Database, args: argparse.Namespace) ->
         "cycles_requested": args.cycles,
         **totals,
         "cycles": cycles,
+    }
+
+
+def _run_project_hibernation_maintenance(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    entries: list[dict[str, object]] = []
+    totals = {"hibernated_count": 0, "hydrating_count": 0, "kept_awake_count": 0}
+    hydrated_instances: set[str] = set()
+    hydrated_roles: set[str] = set()
+    configs = list_project_role_service_configs(args.project_file)
+    for config in configs:
+        policy = HibernationPolicy.from_mapping(
+            load_role_hibernation_config(args.project_file, role_id=config.role_id)
+        )
+        service = HibernationService(db, policy)
+        if config.role_id not in hydrated_roles:
+            hydration_decisions = service.hydrate_for_pending_work(
+                role_id=config.role_id,
+                reason=args.hydrate_reason,
+            )
+            hydrated_roles.add(config.role_id)
+            for hydration in hydration_decisions:
+                hydrated_instances.add(hydration.role_instance_id)
+                totals["hydrating_count"] += 1
+                entries.append(
+                    {
+                        "role_id": hydration.role_id,
+                        "role_instance_id": hydration.role_instance_id,
+                        "status": "hydrating",
+                        "reason": hydration.reason,
+                    }
+                )
+        if config.role_instance_id in hydrated_instances:
+            continue
+        decision = service.mark_hibernating(
+            role_id=config.role_id,
+            role_instance_id=config.role_instance_id,
+            reason=args.hibernate_reason,
+        )
+        if decision.can_hibernate:
+            service.mark_hibernated(
+                role_id=config.role_id,
+                role_instance_id=config.role_instance_id,
+                reason=args.hibernate_reason,
+            )
+            totals["hibernated_count"] += 1
+            entries.append(
+                {
+                    "role_id": config.role_id,
+                    "role_instance_id": config.role_instance_id,
+                    "status": "hibernated",
+                    "reason": args.hibernate_reason,
+                    "idle_seconds": decision.idle_seconds,
+                }
+            )
+        else:
+            totals["kept_awake_count"] += 1
+            entries.append(
+                {
+                    "role_id": config.role_id,
+                    "role_instance_id": config.role_instance_id,
+                    "status": "kept_awake",
+                    "reason": decision.reason,
+                    "idle_seconds": decision.idle_seconds,
+                }
+            )
+    return {
+        "status": "ok",
+        "project_file": str(args.project_file),
+        **totals,
+        "role_instances": entries,
     }
 
 

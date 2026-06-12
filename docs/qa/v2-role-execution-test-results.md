@@ -873,3 +873,77 @@ scope:
   behavior, durable hibernation and hydration state fields, dashboard/status
   visibility, focused regression tests, full pytest, and factual scope limits.
   | accepted 2026-06-12
+
+## PB-005 Story 2 - Project Hibernation Maintenance Tick
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/hibernation.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_hibernation.py tests\test_v2_cli_server.py
+```
+
+Result:
+
+```text
+27 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+58 passed
+```
+
+### Acceptance Assessment
+
+- `run-project-hibernation-maintenance` expands configured project role
+  instances from `project.yaml`.
+- Project and role hibernation policy is loaded before evaluating each role
+  instance.
+- Eligible idle instances are hibernated only after safe-point, queued-work,
+  warm-floor, and grace-period checks.
+- `min_warm_instances` is respected across multiple instances of the same
+  role.
+- Queued role work marks one hibernated instance as `hydrating` and records the
+  wake reason.
+- JSON output reports hibernated, hydrating, and kept-awake counts with
+  per-instance reasons.
+- The engineering log is factual and does not claim real container stop/start,
+  event-driven wake scheduling, or full hydration.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 2 because they remain later PB-005
+scope:
+
+- The maintenance command records logical hibernation and hydration state only;
+  it does not stop or start containers.
+- Hydration is found by a bounded maintenance scan for queued assignments, not
+  by an event-driven scheduler.
+- Only one hibernated instance per role is marked hydrating for queued work in
+  this slice.
+
+### Review Log
+
+- QA-RL-015 | qa-engineer | acceptance | PB-005 Story 2 | Verified project
+  hibernation maintenance expansion, policy loading, idle safe-point
+  hibernation, warm-pool preservation, queued-work hydration, JSON receipts,
+  focused and broader runtime tests, and factual scope limits. | accepted
+  2026-06-12
