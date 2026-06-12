@@ -119,6 +119,7 @@ class ContainerLifecycleExecutor:
 
     def execute(self, action: ContainerLifecycleAction) -> tuple[str, ContainerCommandResult]:
         action_id = self.record_plan(action)
+        action_fingerprint = _action_fingerprint(action)
         result = self.runner(
             list(action.command),
             cwd=action.working_directory,
@@ -144,6 +145,11 @@ class ContainerLifecycleExecutor:
                     "or deployment target, then retry the lifecycle action."
                 ),
                 retryable=True,
+            )
+        elif result.exit_code == 0:
+            self.db.close_runtime_attention_for_container_lifecycle(
+                action_fingerprint=action_fingerprint,
+                resolved_by_action_id=action_id,
             )
         if result.exit_code == 0 and action.action == "start":
             self.db.update_role_instance_status(

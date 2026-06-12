@@ -337,3 +337,70 @@ def test_container_lifecycle_executor_preserves_repeated_attempt_evidence(tmp_pa
     attention_items = db.status_snapshot()["runtime_attention_items"]
     assert len(attention_items) == 2
     assert {item["source_ref"] for item in attention_items} == {first_id, third_id}
+
+
+def test_successful_retry_closes_matching_lifecycle_attention(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.update_role_instance_hibernation(
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Idle grace elapsed.",
+    )
+
+    attempts = 0
+
+    def runner(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ContainerCommandResult:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            return ContainerCommandResult(exit_code=17, stderr="compose failed")
+        return ContainerCommandResult(exit_code=0, stdout="stopped")
+
+    config = ComposeRoleLifecycleConfig.from_mapping(
+        {
+            "adapter": "docker-compose",
+            "compose_files": [str(tmp_path / "compose.yml")],
+            "service_name_template": "{project_id}-{role_id}-{index}",
+        }
+    )
+    action = plan_compose_lifecycle_action(
+        config=config,
+        project_id="test-project",
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Idle grace elapsed.",
+    )
+    assert action is not None
+    unrelated_action = plan_compose_lifecycle_action(
+        config=config,
+        project_id="test-project",
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Different maintenance reason.",
+    )
+    assert unrelated_action is not None
+    executor = ContainerLifecycleExecutor(db, runner=runner)
+
+    first_id, first_result = executor.execute(action)
+    unrelated_id, unrelated_result = executor.execute(unrelated_action)
+    second_id, second_result = executor.execute(action)
+
+    snapshot = db.status_snapshot()
+    assert first_result.exit_code == 17
+    assert unrelated_result.exit_code == 17
+    assert second_result.exit_code == 0
+    rows = snapshot["role_container_lifecycle_actions"]
+    assert {row["action_id"]: row["status"] for row in rows} == {
+        first_id: "failed",
+        unrelated_id: "failed",
+        second_id: "succeeded",
+    }
+    attention_by_source = {item["source_ref"]: item for item in snapshot["runtime_attention_items"]}
+    assert attention_by_source[first_id]["status"] == "closed"
+    assert second_id in attention_by_source[first_id]["next_action"]
+    assert attention_by_source[unrelated_id]["status"] == "open"
+    assert any(event["event_type"] == "runtime.attention_closed" for event in snapshot["recent_events"])

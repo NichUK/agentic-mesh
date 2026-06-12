@@ -1213,6 +1213,63 @@ Results:
   future supervisor stories should add ownership/closure handling across other
   runtime failure classes.
 
+## PB-005 Story 7 - Lifecycle Attention Resolution on Success
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Close stale runtime attention after a successful retry of the same
+role-container lifecycle action target. A previous failure should remain as
+evidence, but it should no longer appear as open operator work once a matching
+lifecycle action succeeds.
+
+### Implementation Notes
+
+- Added `close_runtime_attention_for_container_lifecycle`.
+- Runtime attention closure matches open `container_lifecycle_failed` items by
+  the failed action's `action_fingerprint`.
+- A successful lifecycle execution now closes matching open failure attention
+  and records a `runtime.attention_closed` event.
+- The closed attention keeps its original source action reference, preserving
+  the failed-attempt evidence while updating the next action to identify the
+  successful resolving action.
+
+### Tests Added
+
+- fail-then-success retry on the same lifecycle action closes the prior runtime
+  attention item
+- closed attention preserves the original failed action reference and names the
+  successful resolving action
+- unrelated failed lifecycle attention with a different fingerprint remains
+  open
+- `runtime.attention_closed` is present in the recent event stream
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+16 passed
+77 passed
+```
+
+### Known Limitations
+
+- This resolves attention only when an identical lifecycle action fingerprint
+  later succeeds.
+- This story does not add scheduled retries, alert delivery, or operator
+  action buttons.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1283,3 +1340,7 @@ Results:
   attention records for failed role-container lifecycle actions, linked them
   to failed action evidence, and surfaced them on the v2 dashboard. | QA
   accepted 2026-06-12
+- RL-022 | engineering | implementation | PB-005 Story 7 | Closed matching
+  runtime lifecycle-failure attention after successful retry while preserving
+  failed action evidence and recording a closure event. | QA accepted
+  2026-06-12

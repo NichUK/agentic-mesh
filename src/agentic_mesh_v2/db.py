@@ -1456,6 +1456,59 @@ class V2Database:
                 {"attention_id": attention_id, "reason_class": reason_class, "retryable": retryable},
             )
 
+    def close_runtime_attention_for_container_lifecycle(
+        self,
+        *,
+        action_fingerprint: str,
+        resolved_by_action_id: str,
+    ) -> int:
+        if not action_fingerprint.strip():
+            raise ValueError("container lifecycle action_fingerprint is required")
+        if not resolved_by_action_id.strip():
+            raise ValueError("resolved_by_action_id is required")
+        with self.connection:
+            rows = self.connection.execute(
+                """
+                SELECT runtime_attention_items.attention_id
+                FROM runtime_attention_items
+                JOIN role_container_lifecycle_actions
+                  ON role_container_lifecycle_actions.action_id = runtime_attention_items.source_ref
+                WHERE runtime_attention_items.source_type = 'role_container_lifecycle'
+                  AND runtime_attention_items.reason_class = 'container_lifecycle_failed'
+                  AND runtime_attention_items.status = 'open'
+                  AND role_container_lifecycle_actions.action_fingerprint = ?
+                """,
+                (action_fingerprint,),
+            ).fetchall()
+            attention_ids = [str(row["attention_id"]) for row in rows]
+            if not attention_ids:
+                return 0
+            placeholders = ", ".join("?" for _ in attention_ids)
+            self.connection.execute(
+                f"""
+                UPDATE runtime_attention_items
+                SET status = 'closed',
+                    next_action = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE attention_id IN ({placeholders})
+                """,
+                (
+                    f"Resolved by successful lifecycle action {resolved_by_action_id}.",
+                    *attention_ids,
+                ),
+            )
+            self.append_event(
+                "runtime.attention_closed",
+                "role_container_lifecycle",
+                resolved_by_action_id,
+                {
+                    "reason_class": "container_lifecycle_failed",
+                    "action_fingerprint": action_fingerprint,
+                    "attention_ids": attention_ids,
+                },
+            )
+            return len(attention_ids)
+
     def record_connector_permission_check(
         self,
         *,

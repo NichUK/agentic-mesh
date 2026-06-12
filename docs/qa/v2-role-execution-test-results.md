@@ -1231,3 +1231,62 @@ operations scope:
   retain distinct evidence, status/dashboard visibility is present, focused
   tests pass, and documentation states the remaining retry/alerting limits. |
   accepted 2026-06-12
+
+## PB-005 Story 7 - Lifecycle Attention Resolution on Success
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/container_lifecycle.py`
+- `tests/test_v2_container_lifecycle.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+41 passed
+```
+
+### Acceptance Assessment
+
+- Reviewed after the tightened retry regression was present in the workspace.
+- Successful retry of the same role-container lifecycle action closes prior
+  open runtime attention matched by the failed action fingerprint.
+- Failed lifecycle action rows remain present and keep their failed status;
+  attention closure updates only the runtime attention item, not the action
+  evidence.
+- The closed attention retains the failed action as `source_ref` and names the
+  successful resolving action in `next_action`.
+- An unrelated failed lifecycle action with a different fingerprint remains
+  open after the successful retry.
+- A `runtime.attention_closed` event is recorded for the resolving lifecycle
+  action.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 7 because they remain later runtime
+operations scope:
+
+- Attention closure depends on an identical action fingerprint; broader
+  operator-driven reconciliation and scheduled retry policy are still future
+  work.
+
+### Review Log
+
+- QA-RL-020 | qa-engineer | acceptance | PB-005 Story 7 | Verified successful
+  matching lifecycle retry closes previous runtime attention, preserves failed
+  action evidence, leaves unrelated failed-action attention open, records
+  `runtime.attention_closed`, and passes focused runtime tests. | accepted
+  2026-06-12
