@@ -15,6 +15,7 @@ from agentic_mesh_v2.server import V2StatusHandler
 
 def _render(snapshot: dict[str, object]) -> str:
     handler = object.__new__(V2StatusHandler)
+    handler.db_path = Path("runtime.sqlite3")
     handler._snapshot = lambda: snapshot  # type: ignore[method-assign]
     return handler._render_status()
 
@@ -289,6 +290,9 @@ def test_container_lifecycle_executor_records_failed_stop_without_changing_insta
     html = _render(snapshot)
     assert "Runtime Attention" in html
     assert "container_lifecycle_failed" in html
+    assert "Operator Action" in html
+    assert "retry-container-lifecycle-action --action-id" in html
+    assert attention["source_ref"] in html
 
 
 def test_container_lifecycle_executor_preserves_repeated_attempt_evidence(tmp_path: Path) -> None:
@@ -404,6 +408,9 @@ def test_successful_retry_closes_matching_lifecycle_attention(tmp_path: Path) ->
     assert second_id in attention_by_source[first_id]["next_action"]
     assert attention_by_source[unrelated_id]["status"] == "open"
     assert any(event["event_type"] == "runtime.attention_closed" for event in snapshot["recent_events"])
+    html = _render(snapshot)
+    assert f'retry-container-lifecycle-action --action-id &quot;{unrelated_id}&quot;' in html
+    assert f'retry-container-lifecycle-action --action-id &quot;{first_id}&quot;' not in html
 
 
 def test_execute_retry_reuses_failed_action_details(tmp_path: Path) -> None:

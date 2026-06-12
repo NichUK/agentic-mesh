@@ -1327,6 +1327,60 @@ Results:
   Compose access.
 - UI action buttons and alert routing remain future slices.
 
+## PB-005 Story 9 - Dashboard Retry Guidance for Runtime Attention
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Surface the lifecycle retry command directly on the v2 status dashboard for
+open retryable container lifecycle failures. Operators should not need to infer
+or reconstruct the command from raw attention and action records.
+
+### Implementation Notes
+
+- Added an Operator Action column to the Runtime Attention table.
+- Open retryable `container_lifecycle_failed` attention now shows:
+  - a plan-only retry command
+  - an explicit `--execute` retry command
+- Rendered commands quote the database path and action id for safer copy/paste.
+- Closed or non-retryable runtime attention does not show a retry command.
+- The server remains read-only; the dashboard provides commands rather than
+  executing lifecycle actions from HTTP.
+
+### Tests Added
+
+- runtime attention HTML includes retry commands for open container lifecycle
+  failures
+- retry guidance includes the failed lifecycle action id
+- closed matching lifecycle attention no longer shows a retry command
+- unrelated still-open lifecycle attention continues to show its retry command
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+21 passed
+80 passed
+```
+
+### Known Limitations
+
+- This story provides copyable command guidance, not executable dashboard
+  buttons.
+- Commands include the dashboard process database path and assume the operator
+  is running from an environment where `agentic_mesh_v2.cli` is available.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1405,3 +1459,6 @@ Results:
   CLI command to plan or execute a retry from failed role-container lifecycle
   action evidence while preserving fingerprint-based attention closure. |
   QA accepted 2026-06-12
+- RL-024 | engineering | implementation | PB-005 Story 9 | Added dashboard
+  retry guidance for open retryable lifecycle failure attention without adding
+  HTTP-side lifecycle execution. | QA accepted 2026-06-12

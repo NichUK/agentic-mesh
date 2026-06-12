@@ -1355,3 +1355,62 @@ operations scope:
   unknown and non-failed action ids, preserves action fingerprints for
   attention closure, defaults to plan-only unless `--execute` is supplied, and
   passes focused runtime tests. | accepted 2026-06-12
+
+## PB-005 Story 9 - Dashboard Retry Guidance for Runtime Attention
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_container_lifecycle.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+21 passed
+44 passed
+```
+
+### Acceptance Assessment
+
+- Open retryable `role_container_lifecycle` attention with
+  `container_lifecycle_failed` now shows plan-only and `--execute` retry
+  commands on the status dashboard.
+- The retry commands use the failed lifecycle action's `source_ref` as the
+  `--action-id` and quote both the `--db` path and `--action-id` value for
+  safer copy/paste; the regression checks the HTML-escaped quoted action id.
+- Closed matching lifecycle attention does not show a retry command.
+- Unrelated still-open lifecycle attention continues to show its retry command.
+- The server remains read-only: review found only `do_GET` routes and no HTTP
+  execution endpoint or form/action path for lifecycle retries.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 9 because they remain later runtime
+operations scope:
+
+- The dashboard provides copyable operator commands, not one-click execution.
+- Command execution still depends on an operator environment where
+  `agentic_mesh_v2.cli` can access the configured runtime database and Docker
+  Compose target.
+
+### Review Log
+
+- QA-RL-022 | qa-engineer | acceptance | PB-005 Story 9 | Verified dashboard
+  retry guidance appears only for open retryable container lifecycle failures,
+  uses quoted source failed action ids, omits retry commands for closed
+  attention, keeps unrelated open attention actionable, remains HTTP read-only,
+  and passes focused tests. | accepted 2026-06-12

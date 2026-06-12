@@ -475,6 +475,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
             return '<p class="muted">No v2 runtime attention items.</p>'
         body = []
         for row in items:
+            operator_action = self._runtime_attention_operator_action(row)
             body.append(
                 "<tr>"
                 f"<td><code>{_e(row['attention_id'])}</code><br>{_e(row['source_type'])}<br>{_e(row['source_ref'])}</td>"
@@ -482,9 +483,30 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 f"<td>{_e(row['owner'])}</td>"
                 f"<td>{_e(row['next_action'])}</td>"
                 f"<td>{_e(row['retryable'])}</td>"
+                f"<td>{operator_action}</td>"
                 "</tr>"
             )
-        return "<table><tr><th>Attention / Source</th><th>Reason / Status</th><th>Owner</th><th>Next Action</th><th>Retryable</th></tr>" + "".join(body) + "</table>"
+        return "<table><tr><th>Attention / Source</th><th>Reason / Status</th><th>Owner</th><th>Next Action</th><th>Retryable</th><th>Operator Action</th></tr>" + "".join(body) + "</table>"
+
+    def _runtime_attention_operator_action(self, row: dict[str, object]) -> str:
+        if (
+            row.get("status") == "open"
+            and row.get("source_type") == "role_container_lifecycle"
+            and row.get("reason_class") == "container_lifecycle_failed"
+            and bool(row.get("retryable"))
+        ):
+            db_path = getattr(self, "db_path", Path("/mesh/project/state/v2/agentic-mesh-v2.sqlite3"))
+            source_ref = str(row.get("source_ref") or "")
+            plan_command = (
+                f'python -m agentic_mesh_v2.cli --db "{db_path}" '
+                f'retry-container-lifecycle-action --action-id "{source_ref}"'
+            )
+            execute_command = f"{plan_command} --execute"
+            return (
+                f"<span class=\"small\">Plan retry:</span><br><code>{_e(plan_command)}</code>"
+                f"<br><span class=\"small\">Execute retry:</span><br><code>{_e(execute_command)}</code>"
+            )
+        return '<span class="muted">No operator action available.</span>'
 
     def _queue_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []
