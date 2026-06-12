@@ -876,11 +876,95 @@ Rework completed:
 - Authority is checked against configured local human authorities; Entra-backed
   identity/authority hardening remains a later story.
 
+## Story 11 - Context Compaction, Retention, And Durable Knowledge
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Story 11 adds local runtime support for source-linked context compaction and
+raw retention expiry. Messaging history remains conversational by default; the
+context service can compact important source-linked outcomes, while durable
+documents, risks, decisions, releases, and role memory still require their own
+safe-output or document lifecycle actions.
+
+### Implementation Notes
+
+- Added `focus_channel_days` as a supported connector retention setting.
+- Added `conversation_context_summaries` for source-linked compacted summaries.
+- Added `retention_expiry_records` for raw expiry tombstones with SHA-256
+  content hashes and metadata.
+- Added `ContextRetentionService` with:
+  - retention-key selection for private DM, project channel, focused channel,
+    delivery record, receipt, and compacted summary classes
+  - source-linked context compaction from conversation events
+  - privacy enforcement preventing private DM context from becoming shared
+    context unless an explicit work proposal/promotion exists
+  - raw expiry methods for conversation events, external event receipts, and
+    delivery records
+- Raw expiry scrubs message/card body payloads while preserving source ids,
+  metadata, retention class, and content hashes for audit.
+- Status snapshots now expose context summary and retention expiry counts and
+  records.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_context_retention.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_context_retention.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+5 passed
+8 passed
+43 passed
+60 passed
+```
+
+### QA Rework
+
+QA found three Story 11 guardrail gaps:
+
+- private compacted summaries were exposed directly in default status
+  snapshots
+- durable decision summaries could be recorded without a durable reference or
+  target
+- repeated raw-expiry calls could recompute from already-scrubbed content and
+  diverge from the immutable retention expiry hash
+
+Rework completed:
+
+- Default status snapshots now redact private context summary text.
+- Durable context classifications such as decision, requirement, risk,
+  approval, blocker, instruction, and release fact require either
+  `durable_refs` or `target_ref`.
+- Retention expiry methods are idempotent by `(source_table, source_id)` and
+  return the existing expiry record without mutating already-expired source
+  rows.
+- Added focused regression coverage for all three findings.
+
+### Known Limitations
+
+- Retention expiry is explicit service invocation in this story; no scheduler
+  or age-based automatic expiry loop is implemented yet.
+- Compaction summary text is supplied by the caller; this story does not add a
+  summarization worker or model prompt.
+- Raw expiry keeps hashes and metadata but does not yet create document-library
+  artifacts automatically.
+
 ### Next Engineering Story
 
-Story 11 - Context Compaction, Retention, And Durable Knowledge.
+Story 12 - Permission, Consent, Installation, And Authority Hardening.
 
-Do not begin Story 11 until QA has reviewed Story 10 and any required rework has
+Do not begin Story 12 until QA has reviewed Story 11 and any required rework has
 passed retest.
 
 ## Review Log
@@ -953,3 +1037,12 @@ passed retest.
 - RL-018 | engineering | QA rework | Story 10 | Added rejected-invalid
   submission audit records and retryable attention for malformed card
   responses, with focused regression coverage. | awaiting QA retest 2026-06-12
+- RL-019 | engineering | implementation | Story 11 | Implemented context
+  summary persistence, retention expiry tombstones with content hashes,
+  configurable focus-channel retention, private-DM compaction boundaries, and
+  raw expiry tests for events, receipts, and delivery records. | awaiting QA
+  review 2026-06-12
+- RL-020 | engineering | QA rework | Story 11 | Redacted private context
+  summaries from default status, required durable targets for durable
+  classifications, and made raw expiry idempotent so original hashes remain
+  authoritative. | awaiting QA retest 2026-06-12

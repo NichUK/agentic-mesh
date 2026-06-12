@@ -1760,3 +1760,188 @@ card-update failure visibility, and private-DM response-card redaction.
   `rejected_invalid`, create retryable `invalid_card_submission` attention, and
   leave the original request and delivery/update state unmutated. Story 10 is
   accepted for the local connector scope. | accepted 2026-06-12
+
+# V2 Teams Connector Story 11 QA Review
+
+Status: QA reviewed current tree - changes requested
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Review Scope
+
+Story 11 context compaction, retention, and durable knowledge preservation:
+
+- configurable retention classes for private DM, project channel, focus
+  channel, delivery records, and idempotency receipts
+- context compaction preserves source refs and durable refs
+- private DM compaction remains private unless explicit promotion exists
+- retention expiry scrubs raw payloads while preserving metadata and SHA-256
+  hashes
+- important durable decision summaries survive raw expiry
+
+QA did not edit source. QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 11 workspace changes in connector/db/context/test files. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_context_retention.py` | Passed: 4 passed in 0.43s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py` | Passed: 45 passed in 4.42s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 59 passed in 5.23s. |
+| `agentic-mesh status-json --db .tmp/v2-check.sqlite3` | Blocked in this shell because `agentic-mesh` is not installed on PATH. |
+| `python -m agentic_mesh_v2.cli --db .tmp/v2-qa-story11.sqlite3 init-db; python -m agentic_mesh_v2.cli --db .tmp/v2-qa-story11.sqlite3 status-json` | Passed; emitted empty v2 status JSON including `context_summaries` and `retention_expiry_records` counts. |
+| In-memory private compacted-summary sentinel probe | Failed Story 11 privacy expectation: a private summary containing `PRIVATE_COMPACT_SUMMARY_SENTINEL` appeared verbatim in default `status_snapshot()["context_summaries"]`. |
+| In-memory durable-decision guard probe | Failed Story 11 durable knowledge expectation: a `classification="decision"` project summary with no `durable_refs` and no `target_ref` was accepted. |
+| In-memory repeated raw-expiry hash probe | Failed hash-preservation expectation on retry: first expiry hash matched the retention record, but a second expiry call changed the source row `payload.content_sha256` while the unique expiry record kept the original hash. |
+| In-memory durable decision survival probe | Passed for the current table design: a source-linked decision summary with a document durable ref remained in `context_summaries` after source conversation raw expiry, while the raw event sentinel was scrubbed. |
+
+## Decision
+
+Changes requested before Story 11 QA acceptance.
+
+The implemented happy path is useful and the regression suite is green.
+Retention keys now include focus channels, compaction stores source and durable
+refs, unpromoted private DMs cannot be compacted directly into project
+visibility, and first-pass expiry scrubs raw conversation, receipt, and
+delivery bodies while creating SHA-256 audit records.
+
+Three acceptance guardrails remain incomplete.
+
+## Findings
+
+- P1 - private compacted summaries leak through default status snapshots.
+  `status_snapshot()` returns `context_summaries` directly with no redaction or
+  authorization-aware filtering, so a private DM summary can expose its
+  private text to the default operator read model even though the source DM
+  event and receipt are redacted. Relevant code:
+  `src/agentic_mesh_v2/db.py` lines 1996 and 2061.
+
+- P1 - durable decision compaction does not require a durable target. Story 11
+  says durable outcomes are written to the document library, work-item dossier,
+  source-linked role memory, risk register, decision record, or release
+  evidence. `ContextRetentionService.compact_events()` accepts
+  `classification="decision"` with empty `durable_refs` and no `target_ref`,
+  leaving the decision only in the context-summary table. Relevant code:
+  `src/agentic_mesh_v2/context.py` lines 85-101 and
+  `src/agentic_mesh_v2/db.py` lines 688-724.
+
+- P2 - repeated raw-expiry calls can corrupt the source row audit hash. The
+  service always recomputes a hash from the current row, then the database
+  expiry method overwrites `payload.content_sha256` even when
+  `retention_expiry_records` already ignored the duplicate by
+  `(source_table, source_id)`. On retry, the source row hash can diverge from
+  the original immutable expiry record. Relevant code:
+  `src/agentic_mesh_v2/context.py` lines 108-190 and
+  `src/agentic_mesh_v2/db.py` lines 740-870.
+
+## Passing Evidence
+
+| Story 11 expectation | QA result |
+| --- | --- |
+| Retention policies are configurable for private DM, project channel, focus channel, delivery, and receipt records | Pass for config/read-model selection. Focused tests cover all requested keys and focus-channel fallback behavior. |
+| Compaction preserves source refs and durable refs | Pass for supplied refs. Focused test stores `source_refs` and `durable_refs` in `conversation_context_summaries`. |
+| Private DM compaction remains private unless explicit promotion exists | Partial. Direct project compaction of an unpromoted private DM is rejected, and a work proposal source allows project compaction. Private summaries themselves still leak through default status output. |
+| Retention expiry scrubs raw payloads while preserving metadata and SHA-256 hashes | Partial. First expiry records metadata/hash and scrubs raw body/card fields. Repeated expiry can desynchronize the source row hash from the immutable expiry record. |
+| Important durable decision summaries survive raw expiry | Pass when a durable ref is supplied. Probe confirmed a decision summary with a document ref remains after source raw expiry and the raw event sentinel is scrubbed. Missing guard above still allows decision summaries without durable refs. |
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra, permission, throttling, or tenant
+  retention behavior has been validated.
+- There is not yet a manual evidence package for raw history expiry behavior.
+- Expiry is callable manually through the local service; no scheduler or
+  policy-driven expiry runner was reviewed in this story.
+- Durable refs are opaque strings. QA did not verify that referenced
+  documents, work items, release evidence, or role-memory records actually
+  exist.
+
+## Review Log
+
+- RL-020 | qa-engineer | Story 11 QA | Focused Story 11 tests, Story 1-11
+  connector regressions, full pytest, CLI fallback smoke, and extra privacy,
+  durable-reference, hash-idempotency, and decision-survival probes were run.
+  Tests pass, but QA requests changes because private compacted summaries leak
+  in default status, durable decision compaction can omit durable refs, and
+  repeated raw-expiry calls can desynchronize the source row hash from the
+  immutable expiry record. | changes requested 2026-06-12
+
+# V2 Teams Connector Story 11 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 11 rework for the prior QA findings:
+
+- default status output must redact private context-summary text
+- durable classifications such as decisions, requirements, risks,
+  constraints, approvals, instructions, blockers, and release facts must
+  require either `durable_refs` or `target_ref`
+- repeated raw-expiry calls must return the existing retention expiry record
+  without mutating already-expired source rows or changing source-row hashes
+- durable decision summaries with durable refs must survive source raw expiry
+
+QA did not edit source. QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 11 rework changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_context_retention.py` | Passed: 5 passed in 0.52s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_context_retention.py` | Passed: 8 passed in 0.73s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py` | Passed: 46 passed in 4.68s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 60 passed in 5.52s. |
+| `agentic-mesh status-json --db .tmp/v2-check.sqlite3` | Blocked in this shell because `agentic-mesh` is not installed on PATH. |
+| `python -m agentic_mesh_v2.cli --db .tmp/v2-qa-story11-retest.sqlite3 init-db; python -m agentic_mesh_v2.cli --db .tmp/v2-qa-story11-retest.sqlite3 status-json` | Passed; emitted empty v2 status JSON including `context_summaries` and `retention_expiry_records` counts. |
+| In-memory prior-finding probe for private summary redaction, durable decision guard, and repeated event expiry | Passed: `private_summary_leaks_in_status_snapshot=false`, `private_summary_redacted=true`, `rejected_decision_without_durable_refs=true`, repeat event expiry returned the same id, and source-row hash stayed equal to the retention record. |
+| In-memory all-source repeat-expiry and durable decision survival probe | Passed: repeated conversation event, receipt, and delivery expiry returned the same ids; hashes stayed unchanged; three expiry records remained; raw sentinels were scrubbed; and a document-linked decision summary survived raw expiry. |
+
+## Retest Decision
+
+Story 11 passes QA for the implemented local Teams connector scope.
+
+The prior findings are closed:
+
+- Private context summaries are redacted in default `status_snapshot()` output.
+- Durable classifications are rejected unless they name a durable reference or
+  target.
+- Repeated raw-expiry calls return the existing expiry id and do not mutate the
+  already-expired event, receipt, or delivery source rows.
+
+The focused Story 11 regressions, safe-output pairing, Story 1-11 connector
+regression pack, and full pytest suite all pass.
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra, permission, throttling, or tenant
+  retention behavior has been validated.
+- There is still no manual evidence package for raw history expiry behavior.
+- Expiry is callable through the local service; no scheduler or policy-driven
+  expiry runner was reviewed in this story.
+- Durable refs are still opaque strings. QA verified that durable refs are
+  required and preserved, but not that every referenced document, work item,
+  release evidence, or role-memory record exists.
+
+## Review Log
+
+- RL-021 | qa-engineer | Story 11 QA retest | Focused Story 11 tests,
+  safe-output pairing, Story 1-11 connector regressions, full pytest, CLI
+  fallback smoke, and extra probes all pass. Prior Story 11 findings are
+  closed: private context summaries are redacted in default status, durable
+  classifications require durable refs or a target, and repeated raw expiry is
+  idempotent without source-row hash drift. Story 11 is accepted for the local
+  connector scope. | accepted 2026-06-12

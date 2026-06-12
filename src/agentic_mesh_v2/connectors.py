@@ -13,6 +13,7 @@ from agentic_mesh_v2.safe_outputs import ToolPolicy
 VALID_RETENTION_KEYS = {
     "private_dm_days",
     "project_channel_days",
+    "focus_channel_days",
     "compacted_summary_days",
     "delivery_record_days",
     "idempotency_receipt_days",

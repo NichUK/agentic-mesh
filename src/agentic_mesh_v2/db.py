@@ -377,6 +377,33 @@ class V2Database:
                   payload_json TEXT NOT NULL DEFAULT '{}',
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS conversation_context_summaries (
+                  summary_id TEXT PRIMARY KEY,
+                  connector_id TEXT NOT NULL REFERENCES connectors(connector_id),
+                  conversation_id TEXT NOT NULL,
+                  visibility_scope TEXT NOT NULL,
+                  classification TEXT NOT NULL,
+                  retention_key TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  source_refs_json TEXT NOT NULL DEFAULT '[]',
+                  durable_refs_json TEXT NOT NULL DEFAULT '[]',
+                  target_ref TEXT,
+                  created_by_role TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS retention_expiry_records (
+                  expiry_id TEXT PRIMARY KEY,
+                  connector_id TEXT NOT NULL REFERENCES connectors(connector_id),
+                  source_table TEXT NOT NULL,
+                  source_id TEXT NOT NULL,
+                  retention_key TEXT NOT NULL,
+                  content_sha256 TEXT NOT NULL,
+                  metadata_json TEXT NOT NULL DEFAULT '{}',
+                  expired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(source_table, source_id)
+                );
                 """
             )
             self.connection.execute(
@@ -656,6 +683,190 @@ class V2Database:
                 "human_response_request",
                 request_id,
                 {"submission_id": submission_id, "status": status, "normalized_value": normalized_value},
+            )
+
+    def record_context_summary(
+        self,
+        *,
+        summary_id: str,
+        connector_id: str,
+        conversation_id: str,
+        visibility_scope: str,
+        classification: str,
+        retention_key: str,
+        summary: str,
+        source_refs: list[str],
+        durable_refs: list[str],
+        created_by_role: str,
+        target_ref: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO conversation_context_summaries(
+                  summary_id, connector_id, conversation_id, visibility_scope, classification,
+                  retention_key, summary, source_refs_json, durable_refs_json, target_ref,
+                  created_by_role
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    summary_id,
+                    connector_id,
+                    conversation_id,
+                    visibility_scope,
+                    classification,
+                    retention_key,
+                    summary,
+                    json.dumps(source_refs, sort_keys=True),
+                    json.dumps(durable_refs, sort_keys=True),
+                    target_ref,
+                    created_by_role,
+                ),
+            )
+            self.append_event(
+                "conversation_context.compacted",
+                "conversation",
+                conversation_id,
+                {
+                    "summary_id": summary_id,
+                    "visibility_scope": visibility_scope,
+                    "classification": classification,
+                    "source_refs": source_refs,
+                    "durable_refs": durable_refs,
+                },
+            )
+
+    def record_retention_expiry(
+        self,
+        *,
+        expiry_id: str,
+        connector_id: str,
+        source_table: str,
+        source_id: str,
+        retention_key: str,
+        content_sha256: str,
+        metadata: dict[str, Any],
+    ) -> bool:
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                INSERT OR IGNORE INTO retention_expiry_records(
+                  expiry_id, connector_id, source_table, source_id, retention_key,
+                  content_sha256, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    expiry_id,
+                    connector_id,
+                    source_table,
+                    source_id,
+                    retention_key,
+                    content_sha256,
+                    json.dumps(metadata, sort_keys=True),
+                ),
+            )
+            created = cursor.rowcount > 0
+            if created:
+                self.append_event(
+                    "retention.raw_expired",
+                    source_table,
+                    source_id,
+                    {
+                        "expiry_id": expiry_id,
+                        "retention_key": retention_key,
+                        "content_sha256": content_sha256,
+                    },
+                )
+            return created
+
+    def expire_conversation_event_raw(
+        self,
+        *,
+        conversation_event_id: str,
+        content_sha256: str,
+        retention_key: str,
+    ) -> None:
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT payload_json FROM conversation_events WHERE conversation_event_id = ?",
+                (conversation_event_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown conversation event `{conversation_event_id}`")
+            payload = json.loads(row["payload_json"])
+            payload.pop("body", None)
+            payload["raw_content_expired"] = True
+            payload["content_sha256"] = content_sha256
+            payload["retention_key"] = retention_key
+            self.connection.execute(
+                """
+                UPDATE conversation_events
+                SET body_preview = '[expired raw content]',
+                    payload_json = ?
+                WHERE conversation_event_id = ?
+                """,
+                (json.dumps(payload, sort_keys=True), conversation_event_id),
+            )
+
+    def expire_external_receipt_raw(
+        self,
+        *,
+        receipt_id: str,
+        content_sha256: str,
+        retention_key: str,
+    ) -> None:
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT payload_json FROM external_event_receipts WHERE receipt_id = ?",
+                (receipt_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown external receipt `{receipt_id}`")
+            payload = json.loads(row["payload_json"])
+            payload.pop("body", None)
+            payload["raw_content_expired"] = True
+            payload["content_sha256"] = content_sha256
+            payload["retention_key"] = retention_key
+            self.connection.execute(
+                """
+                UPDATE external_event_receipts
+                SET payload_json = ?,
+                    status = 'expired'
+                WHERE receipt_id = ?
+                """,
+                (json.dumps(payload, sort_keys=True), receipt_id),
+            )
+
+    def expire_delivery_record_raw(
+        self,
+        *,
+        delivery_id: str,
+        content_sha256: str,
+        retention_key: str,
+    ) -> None:
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT payload_json FROM delivery_records WHERE delivery_id = ?",
+                (delivery_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown delivery `{delivery_id}`")
+            payload = json.loads(row["payload_json"])
+            payload.pop("body", None)
+            payload.pop("card", None)
+            payload["raw_content_expired"] = True
+            payload["content_sha256"] = content_sha256
+            payload["retention_key"] = retention_key
+            self.connection.execute(
+                """
+                UPDATE delivery_records
+                SET payload_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE delivery_id = ?
+                """,
+                (json.dumps(payload, sort_keys=True), delivery_id),
             )
 
     def upsert_connector(
@@ -1521,6 +1732,50 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_context_summaries(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM conversation_context_summaries
+            ORDER BY created_at DESC, summary_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def get_retention_expiry_record_by_source(
+        self,
+        *,
+        source_table: str,
+        source_id: str,
+    ) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM retention_expiry_records
+            WHERE source_table = ?
+              AND source_id = ?
+            """,
+            (source_table, source_id),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
+    def get_context_summary(self, summary_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM conversation_context_summaries WHERE summary_id = ?",
+            (summary_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
+    def list_retention_expiry_records(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM retention_expiry_records
+            ORDER BY expired_at DESC, expiry_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_work_items(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -1755,6 +2010,9 @@ class V2Database:
         human_response_requests = self.list_human_response_requests()
         redacted_human_response_requests = _redact_private_human_response_requests(human_response_requests)
         human_response_submissions = self.list_human_response_submissions()
+        context_summaries = self.list_context_summaries()
+        redacted_context_summaries = _redact_private_context_summaries(context_summaries)
+        retention_expiry_records = self.list_retention_expiry_records()
         safe_output_calls = self.list_safe_output_calls()
         redacted_safe_output_calls = _redact_private_safe_output_calls(safe_output_calls)
         states: dict[str, int] = {}
@@ -1792,6 +2050,8 @@ class V2Database:
                 "work_proposals": len(work_proposals),
                 "human_response_requests": len(human_response_requests),
                 "human_response_submissions": len(human_response_submissions),
+                "context_summaries": len(context_summaries),
+                "retention_expiry_records": len(retention_expiry_records),
             },
             "work_item_states": states,
             "queue_statuses": queue_statuses,
@@ -1816,13 +2076,22 @@ class V2Database:
             "work_proposals": work_proposals,
             "human_response_requests": redacted_human_response_requests,
             "human_response_submissions": human_response_submissions,
+            "context_summaries": redacted_context_summaries,
+            "retention_expiry_records": retention_expiry_records,
             "recent_events": self.list_events()[-50:],
         }
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     result = dict(row)
-    for key in ("payload_json", "health_json", "authority_json", "metadata_json"):
+    for key in (
+        "payload_json",
+        "health_json",
+        "authority_json",
+        "metadata_json",
+        "source_refs_json",
+        "durable_refs_json",
+    ):
         if isinstance(result.get(key), str):
             result[key.removesuffix("_json")] = json.loads(result[key])
             del result[key]
@@ -1909,6 +2178,17 @@ def _redact_private_human_response_requests(rows: list[dict[str, Any]]) -> list[
             payload = item.get("payload")
             if isinstance(payload, dict):
                 item["payload"] = _redact_payload_card(payload)
+        redacted.append(item)
+    return redacted
+
+
+def _redact_private_context_summaries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    redacted: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        if item.get("visibility_scope") == "private":
+            item["summary"] = "[redacted private conversation]"
+            item["summary_redacted"] = True
         redacted.append(item)
     return redacted
 
