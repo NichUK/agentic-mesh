@@ -206,6 +206,25 @@ class LocalTeamsTestAdapter:
                         "message_id": message_id,
                     },
                 )
+        if route_type == "role_mention":
+            for role_id in mentioned_roles:
+                self.db.create_role_assignment(
+                    assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}')}",
+                    role_id=role_id,
+                    conversation_id=conversation_id,
+                    source_ref=receipt.receipt_id,
+                    title="Teams role mention",
+                    summary="Human mentioned a role in a project channel.",
+                    assignment_type="channel_role_mention",
+                    visibility_scope="project",
+                    payload={
+                        "connector_id": connector_id,
+                        "conversation_id": conversation_id,
+                        "receipt_id": receipt.receipt_id,
+                        "message_id": message_id,
+                        "thread_ref": thread_ref,
+                    },
+                )
         if route_type == "unknown_role_mention":
             self.db.create_connector_attention_item(
                 attention_id=f"attention-{_stable_digest(f'{receipt.receipt_id}:unknown-role')}",

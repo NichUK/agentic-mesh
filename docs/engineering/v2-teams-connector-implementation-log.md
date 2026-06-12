@@ -211,6 +211,75 @@ Story 3 - Project Channel Capture And Role Mentions.
 Do not begin Story 3 until QA has reviewed Story 2 and any required rework has
 passed retest.
 
+## Story 3 - Project Channel Capture And Role Mentions
+
+Status: engineering implemented; awaiting QA review
+
+### Objective
+
+Capture unmentioned project-channel messages as shared project context without
+waking every role, and create focused role assignments only for configured role
+mentions.
+
+### Files Changed
+
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_project_channels.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+### Implementation Notes
+
+- Unmentioned project-channel messages continue to record conversation events
+  with `visibility_scope = project` and do not create role assignments.
+- Configured role mentions create one `channel_role_mention` assignment per
+  mentioned role.
+- Mention-created assignments preserve source receipt, conversation id, message
+  id, thread ref, project visibility, and connector id in payload.
+- Duplicate role-mention messages reuse the original receipt and do not create
+  duplicate assignments.
+- Unknown role mentions create connector attention and do not create guessed
+  assignments.
+
+### Tests Run
+
+Commands:
+
+```powershell
+pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py
+pytest -q
+```
+
+Results:
+
+```text
+7 passed
+23 passed
+```
+
+Focused coverage added:
+
+- unmentioned channel context creates no role assignment
+- project-channel body preview remains visible as shared project context
+- configured multi-role mention creates focused assignments for each role
+- duplicate role mention does not duplicate assignments
+- thread binding is recorded for mentioned role threads
+- unknown role mention creates attention and no assignment
+
+### Known Limitations
+
+- Feature/epic/focused-work channel bindings remain Story 7 scope.
+- Team-wide relevance checks remain Story 8 scope.
+- Role assignment claiming remains PB-004 live role-service scope.
+- The local adapter still uses explicit `mentioned_roles` fixtures rather than
+  real Teams mention entity parsing.
+
+### Next Engineering Story
+
+Story 4 - Agent-Initiated Human Questions And Thread Binding.
+
+Do not begin Story 4 until QA has reviewed Story 3 and any required rework has
+passed retest.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
@@ -222,3 +291,6 @@ passed retest.
 - RL-003 | engineering | QA rework | Story 2 | Redacted private direct-message
   receipt payload bodies from default status snapshots after QA found the
   partial-redaction gap. | awaiting QA retest 2026-06-12
+- RL-004 | engineering | implementation | Story 3 | Implemented project-channel
+  context capture and configured role-mention assignments with focused tests. |
+  awaiting QA review 2026-06-12

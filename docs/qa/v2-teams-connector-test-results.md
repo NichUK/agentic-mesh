@@ -297,3 +297,120 @@ paths:
   private DM default-status leak for both conversation events and external
   event receipts. Story 2 passes for local connector scope and may proceed to
   Story 3. | accepted 2026-06-12
+
+# V2 Teams Connector Story 3 QA Results
+
+Status: QA reviewed - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Story reviewed: Story 3 - Project Channel Capture And Role Mentions.
+
+Primary references:
+
+- `docs/engineering/v2-teams-connector-implementation-plan.md`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+- `docs/qa/v2-teams-connector-test-plan.md`
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_foundation.py`
+- `tests/test_v2_teams_connector_direct_messages.py`
+- `tests/test_v2_teams_connector_project_channels.py`
+
+## QA Decision
+
+Story 3 passes QA for the implemented local Teams connector scope.
+
+Engineering rework is not required before Story 4. The implemented local
+adapter stores unmentioned project-channel messages as shared project context
+without role assignment or delivery noise, creates focused assignments only for
+configured mentioned roles, suppresses duplicate inbound mention side effects,
+and records operator attention for unknown role mentions without guessing a
+route.
+
+This is not a final Teams connector release approval. Real Teams mention entity
+parsing, focus channels, team-wide relevance, real tenant permissions,
+outbound retry/idempotency, and live role assignment claiming remain later
+story scope.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` and observed existing uncommitted Engineering changes in `docs/engineering/v2-teams-connector-implementation-log.md`, `src/agentic_mesh_v2/connectors.py`, and untracked `tests/test_v2_teams_connector_project_channels.py`. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py` | Passed: 7 passed in 0.46s. |
+| `pytest -q` | Passed: 23 passed in 1.19s. |
+| In-memory Story 3 status probe through `LocalTeamsTestAdapter` and `status_snapshot()` | Initial run printed expected counts but failed Windows temp cleanup because the SQLite connection was still open. Rerun with explicit `db.close()` passed and produced `queue_items=0`, `work_items=0`, `role_assignments=2`, `delivery_records=0`, `external_event_receipts=3`, `conversation_events=3`, `thread_bindings=1`, `attention_items=1`, `assignment_roles=["product-manager", "qa-engineer"]`, and `attention_reasons=["unknown_role_mention"]`. |
+
+## Acceptance Assessment
+
+| Story 3 expectation | QA result |
+| --- | --- |
+| Unmentioned configured project-channel messages are stored as shared context without waking every role | Pass. Focused test stores a project-visible conversation event and creates zero role assignments. Additional probe also showed zero queue items, zero work items, and zero delivery records for unmentioned channel context. |
+| Role mentions resolve only through configured aliases or identities | Pass for the local normalized fixture path. The adapter accepts explicit `mentioned_roles`, validates each role id against configured `role_identities`, and does not create assignments for unknown roles. |
+| Mentioned role receives a focused assignment bound to the source thread | Pass. Mentioned-role assignments use `assignment_type=channel_role_mention`, `visibility_scope=project`, source receipt/conversation/message payload refs, and the tested thread creates one thread binding. |
+| Multiple configured role mentions create explicit assignments for each role | Pass. Product Manager and QA Engineer mentions create two focused assignments with no extra role assignments. |
+| Duplicate role-mention events suppress duplicate side effects | Pass. Duplicate replay reuses the original receipt and returns before creating additional conversation events, thread bindings, or role assignments. |
+| Unknown mentions create attention items and do not guess a route | Pass. Unknown role mention creates one `unknown_role_mention` connector attention item and zero role assignments. |
+| No low-value acknowledgement is posted for unmentioned context | Pass for the local adapter path. No delivery record is created for unmentioned project-channel context. |
+
+## Coverage Assessment
+
+Story 3 automated coverage is sufficient for this local connector slice:
+
+- project-channel no-wake behavior
+- shared project context visibility and visible project body preview
+- configured multi-role mention assignment
+- source thread binding for mentioned-role channel threads
+- duplicate inbound mention suppression
+- unknown mention attention without guessed assignment
+- regression protection across the prior Story 1 foundation and Story 2 direct
+  message/status-reply paths
+
+The full test suite remains green after the Story 3 connector changes.
+
+## Gaps And Risks
+
+- The local adapter still relies on explicit `mentioned_roles` fixture input
+  rather than parsing real Teams mention entities or display handles from raw
+  Teams payloads. This is acceptable for Story 3 local-slice QA and remains a
+  real Teams adapter/substrate risk for later stories.
+- Mixed known and unknown mentions in the same message are not covered by the
+  current focused tests. The current adapter treats any unknown role in the
+  mention list as an `unknown_role_mention` route and creates no assignments.
+  Engineering should clarify the desired behavior before real Teams mention
+  parsing ships.
+- Story 3 does not cover feature, epic, incident, or focused-work channels;
+  those remain Story 7 scope.
+- Story 3 does not cover team-wide relevance checks or material/no-op response
+  scoring; those remain Story 8 scope.
+- Role assignment claiming remains a live role-service/runtime scope item, not
+  completed by the local connector adapter tests.
+- No real Microsoft Teams, Bot Framework, Graph, Entra, consent, installation,
+  permission, tenant, or role identity deployment evidence exists yet.
+
+## Rework Decision
+
+No Engineering rework is required before starting Story 4.
+
+Recommended Story 4 QA gates:
+
+- every `sponsor.ask_question` delivery has an originating runtime binding
+- replies bind back to the correct question, work item, approval, risk, or
+  document context
+- human loop-in records participants and route changes
+- ambiguous replies create connector attention and do not mutate work state
+- safe-output remains the only path for durable work, approval, risk, document,
+  release, or handoff changes
+
+## Review Log
+
+- RL-004 | qa-engineer | Story 3 QA | Project-channel context capture and
+  configured role-mention routing pass for the local connector scope. No
+  blocking Engineering rework is required before Story 4. | accepted
+  2026-06-12
