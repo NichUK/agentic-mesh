@@ -16,9 +16,30 @@ def _config() -> ConnectorConfig:
             "default_project_channel_ref": "channel-project",
             "external_base_url": "http://linuxch:8100",
             "role_identities": {
-                "product-manager": "bot-product-manager",
-                "engineering": "bot-engineering",
-                "qa-engineer": "bot-qa",
+                "product-manager": {
+                    "external_ref": "bot-product-manager",
+                    "display_name": "AM-Product Manager",
+                    "alias": "product-manager",
+                    "mention_handle": "@AM-Product Manager",
+                    "identity_model": "separate_bot",
+                    "enabled": True,
+                },
+                "engineering": {
+                    "external_ref": "bot-engineering",
+                    "display_name": "AM-Engineering",
+                    "alias": "engineering",
+                    "mention_handle": "@AM-Engineering",
+                    "identity_model": "separate_bot",
+                    "enabled": True,
+                },
+                "qa-engineer": {
+                    "external_ref": "bot-qa",
+                    "display_name": "AM-QA Engineer",
+                    "alias": "qa-engineer",
+                    "mention_handle": "@AM-QA Engineer",
+                    "identity_model": "separate_bot",
+                    "enabled": True,
+                },
             },
             "human_authorities": {
                 "nicholas": ["sponsor", "operator"],

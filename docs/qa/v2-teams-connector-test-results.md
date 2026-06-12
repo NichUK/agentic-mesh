@@ -1000,3 +1000,169 @@ Story 6 may begin for the local Teams connector progression.
   success claim is rejected for `status.reply` and `status.complete`, while
   failed delivery evidence remains visible. Story 6 may begin for the local
   connector scope. | accepted 2026-06-12
+
+# V2 Teams Connector Story 6 QA Results
+
+Status: QA reviewed - rework required
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Story reviewed: Story 6 - Separate Visible Role Identities.
+
+Files inspected:
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_teams_connector_role_identities.py`
+- Story 1-5 connector regression tests
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+- `docs/engineering/v2-teams-connector-implementation-plan.md`
+- `docs/qa/v2-teams-connector-test-plan.md`
+- `docs/architecture/v2-teams-connector-architecture.md`
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed current branch and existing uncommitted Engineering changes. QA edited only this results file. |
+| `pytest -q tests\test_v2_teams_connector_role_identities.py` | Passed: 4 passed in 0.26s. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py` | Passed: 17 passed in 1.16s. |
+| `pytest -q` | Passed: 34 passed in 2.05s. |
+| `python -m agentic_mesh_v2.cli --db .tmp\v2-story6-qa.sqlite3 init-db` then `python -m agentic_mesh_v2.cli --db .tmp\v2-story6-qa.sqlite3 status-json` | Passed; migration/status smoke returned an empty status snapshot with connector counts present. |
+| Direct-message identity fallback probe with one enabled role and one disabled role | Failed Story 6 gate: a DM explicitly targeted at disabled `release-manager` via `target_role_id` and `target_ref=bot-release-manager` created an assignment for enabled `product-manager` and no attention item. |
+| Display-name-only direct-message probe with one enabled role | Failed Story 6 gate: a DM using `target_ref=AM-Product Manager` created a `product-manager` assignment and no attention item because the single-enabled-role fallback overrode the untrusted target ref. |
+| Disabled-role outbound delivery probe | Failed disablement expectation: `adapter.send_message(... role_id="release-manager")` created a sent delivery with `role_identity.enabled=false` and no attention item. |
+
+## QA Decision
+
+Story 6 does not pass the QA gate yet.
+
+The checked-in focused tests pass and provide useful coverage for explicit
+role identity config, participant presentation metadata, alias/mention-handle
+resolution, display-name-only channel text, disabled channel mentions, outbound
+identity metadata, bad identity models, and duplicate external refs.
+
+Rework is required because direct-message routing still falls back to the only
+enabled role even when the inbound event carries an explicit disabled or
+display-name-only target. Emergency disablement also does not currently block
+outbound delivery for the disabled role identity.
+
+## Acceptance Assessment
+
+| Story 6 expectation | QA result |
+| --- | --- |
+| Config supports separate app/bot, shared gateway, and hybrid identity models | Pass for local config parsing. The accepted model values are covered by tests. |
+| Each configured role can expose display name, alias, mention handle, external app/bot id, identity model, and enabled flag | Pass. Role participants preserve display name/external ref and metadata in the status snapshot. |
+| Outbound delivery includes configured role identity metadata | Pass for enabled identities. Delivery payloads include role id, external ref, display name, alias, mention handle, identity model, and enabled flag. |
+| Runtime authorization does not rely on display name alone | Fail. Display-name-only DM target input can route through the single-enabled-role fallback. Channel plain-text display names are covered, but DM target handling is not fail-closed. |
+| Disabled role identity creates attention and no assignment | Partial/fail. Disabled channel mentions create `disabled_role_identity` attention and no assignment, but direct messages explicitly targeting a disabled role can be misassigned to another enabled role. |
+| Emergency disablement blocks the role identity | Fail. A disabled role can still send a `sent` outbound delivery through `send_message()` with no attention item. |
+| Regression impact on Stories 1-5 | No automated regression detected in the focused connector slice or full pytest suite; the failing probes are Story 6 identity edge cases not covered by the current tests. |
+
+## Required Rework
+
+- Make direct-message target resolution fail closed when `target_role_id` or
+  `target_ref` is present but maps to a disabled, unknown, or display-name-only
+  identity. Create operator attention instead of falling back to another role.
+- Add regression tests for disabled direct-message targets and display-name-only
+  direct-message targets, including the single-enabled-role configuration.
+- Decide and enforce the outbound emergency-disablement contract. If
+  `enabled=false` means the role identity is disabled, outbound sends for that
+  role should fail closed with attention rather than recording a sent delivery.
+- Keep the single-role DM fallback only for events with no explicit target
+  identity, if that fallback is still desired for the local adapter.
+
+## Residual Gaps
+
+- Story 6 remains local-adapter coverage only. There is no real Teams tenant,
+  Bot Framework, Graph, Entra consent, installation, app registration, or
+  permission evidence yet.
+- The QA plan still records a broader Story 6/12 dependency on Security and
+  Engineering selecting the first real Teams identity model, permission set,
+  app owner model, credential rotation path, and emergency disablement
+  procedure.
+- Connector-level disablement is not implemented or covered in this slice.
+
+## Story 7 Gate
+
+Story 7 should not begin yet. Story 6 needs rework and retest for fail-closed
+direct-message identity routing and disabled outbound identity behavior.
+
+## Review Log
+
+- RL-011 | qa-engineer | Story 6 QA | Focused identity tests, Story 1-6
+  connector regression tests, full pytest, and status-json smoke pass, but
+  direct-message target fallback can route disabled or display-name-only
+  targets to another enabled role, and disabled role identities can still send
+  outbound deliveries. Story 7 should wait for rework and retest. | rework
+  required 2026-06-12
+
+# V2 Teams Connector Story 6 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 6 rework for the prior role identity blockers:
+
+- explicit direct message to disabled `release-manager` must not assign work to
+  enabled `product-manager`
+- display-name-only direct-message target must not fall back to an enabled role
+- disabled role identity must not send outbound delivery
+- prior role identity behavior must remain green
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed current branch and existing uncommitted Engineering/QA changes. QA edited only this results file. |
+| `pytest -q tests\test_v2_teams_connector_role_identities.py` | Passed: 6 passed in 0.36s. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py` | Passed: 19 passed in 1.25s. |
+| `pytest -q` | Passed: 36 passed in 2.08s. |
+
+## Retest Decision
+
+Story 6 now passes QA for the implemented local Teams connector scope.
+
+The prior blockers are fixed in the focused regression tests. Explicit
+disabled-role direct-message targets and display-name-only direct-message
+targets now create operator attention without creating role assignments, and
+disabled role outbound delivery raises before any delivery record or attempt is
+created. Existing role identity metadata, alias/mention routing, enabled
+outbound identity metadata, bad identity model validation, and duplicate
+external-ref validation still pass.
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra consent, installation, app registration,
+  permission, or production identity evidence exists yet.
+- Connector-level disablement and the broader real-tenant emergency
+  disablement operating procedure remain future Story 6/12 follow-up work.
+- Display-name-only safety is covered for the local adapter DM target path and
+  channel plain-text path; real Teams mention entity parsing still needs tenant
+  validation later.
+
+## Story 7 Gate
+
+Story 7 may begin for the local Teams connector progression.
+
+## Review Log
+
+- RL-012 | qa-engineer | Story 6 QA retest | Focused role identity tests,
+  Story 1-6 connector regression tests, and full pytest pass. The prior
+  disabled direct-message misassignment, display-name-only direct-message
+  fallback, and disabled outbound delivery blockers are fixed. Story 7 may
+  begin for the local connector scope. | accepted 2026-06-12

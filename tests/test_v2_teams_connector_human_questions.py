@@ -28,7 +28,14 @@ def _config() -> ConnectorConfig:
             "default_project_channel_ref": "channel-project",
             "external_base_url": "http://linuxch:8100",
             "role_identities": {
-                "product-manager": "bot-product-manager",
+                "product-manager": {
+                    "external_ref": "bot-product-manager",
+                    "display_name": "AM-Product Manager",
+                    "alias": "product-manager",
+                    "mention_handle": "@AM-Product Manager",
+                    "identity_model": "separate_bot",
+                    "enabled": True,
+                },
             },
             "human_authorities": {
                 "nicholas": ["sponsor", "operator"],

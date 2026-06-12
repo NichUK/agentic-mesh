@@ -20,6 +20,18 @@ VALID_RETENTION_KEYS = {
 
 DELIVERY_OUTCOMES = {"sent", "failed_transient", "failed_permanent", "unknown"}
 RETRYABLE_DELIVERY_STATUSES = {"failed_transient", "unknown", "retry_scheduled"}
+IDENTITY_MODELS = {"separate_bot", "shared_gateway", "hybrid"}
+
+
+@dataclass(frozen=True)
+class RoleIdentity:
+    role_id: str
+    external_ref: str
+    display_name: str
+    alias: str
+    mention_handle: str
+    identity_model: str
+    enabled: bool
 
 
 @dataclass(frozen=True)
@@ -31,7 +43,7 @@ class ConnectorConfig:
     project_team_ref: str
     default_project_channel_ref: str
     external_base_url: str
-    role_identities: dict[str, str]
+    role_identities: dict[str, RoleIdentity]
     human_authorities: dict[str, list[str]]
     retention: dict[str, int]
     team_wide_trigger: str
@@ -56,7 +68,7 @@ class ConnectorConfig:
             raise ValueError(f"connector config missing required keys: {', '.join(missing)}")
         if raw["connector_type"] != "teams":
             raise ValueError("story 1 local adapter supports connector_type `teams`")
-        role_identities = _string_map(raw["role_identities"], "role_identities")
+        role_identities = _role_identity_map(raw["role_identities"])
         if not role_identities:
             raise ValueError("connector config must define at least one role identity")
         retention = _positive_int_map(raw["retention"], "retention")
@@ -104,16 +116,23 @@ class LocalTeamsTestAdapter:
             health={
                 "project_team_ref": self.config.project_team_ref,
                 "default_project_channel_ref": self.config.default_project_channel_ref,
+                "identity_models": sorted({identity.identity_model for identity in self.config.role_identities.values()}),
             },
         )
-        for role_id, external_ref in self.config.role_identities.items():
+        for role_id, identity in self.config.role_identities.items():
             self.db.upsert_connector_participant(
                 participant_id=f"{self.config.connector_id}:role:{role_id}",
                 connector_id=self.config.connector_id,
                 participant_type="role",
-                display_name=role_id,
-                external_ref=external_ref,
+                display_name=identity.display_name,
+                external_ref=identity.external_ref,
                 role_id=role_id,
+                metadata={
+                    "alias": identity.alias,
+                    "mention_handle": identity.mention_handle,
+                    "identity_model": identity.identity_model,
+                    "enabled": identity.enabled,
+                },
             )
         for external_ref, authorities in self.config.human_authorities.items():
             self.db.upsert_connector_participant(
@@ -133,7 +152,7 @@ class LocalTeamsTestAdapter:
         sender_ref = _required_string(event, "sender_ref")
         source_type = _required_string(event, "source_type")
         body = str(event.get("body", ""))
-        mentioned_roles = tuple(str(role) for role in event.get("mentioned_roles", ()))
+        mentioned_roles = self._mentioned_roles(event)
         route_type = self._route_type(source_type=source_type, mentioned_roles=mentioned_roles, body=body)
         idempotency_key = self._idempotency_key(event)
         receipt_id = f"receipt-{_stable_digest(idempotency_key)}"
@@ -234,6 +253,19 @@ class LocalTeamsTestAdapter:
                         "message_id": message_id,
                     },
                 )
+            else:
+                self.db.create_connector_attention_item(
+                    attention_id=f"attention-{_stable_digest(f'{receipt.receipt_id}:unrouteable-dm')}",
+                    connector_id=connector_id,
+                    owner="operator",
+                    reason_class="unrouteable_role_direct_message",
+                    next_action=(
+                        "Map the direct message target to an enabled configured role identity "
+                        "or correct the connector identity binding."
+                    ),
+                    retryable=True,
+                    source_ref=receipt.receipt_id,
+                )
         if route_type == "role_mention":
             for role_id in mentioned_roles:
                 self.db.create_role_assignment(
@@ -253,13 +285,19 @@ class LocalTeamsTestAdapter:
                         "thread_ref": thread_ref,
                     },
                 )
-        if route_type == "unknown_role_mention":
+        if route_type in {"unknown_role_mention", "disabled_role_identity"}:
+            reason_class = "unknown_role_mention" if route_type == "unknown_role_mention" else "disabled_role_identity"
+            next_action = (
+                "Map the Teams mention to a configured Agentic Mesh role or correct the message."
+                if route_type == "unknown_role_mention"
+                else "Enable the configured role identity or route the message to an active role."
+            )
             self.db.create_connector_attention_item(
-                attention_id=f"attention-{_stable_digest(f'{receipt.receipt_id}:unknown-role')}",
+                attention_id=f"attention-{_stable_digest(f'{receipt.receipt_id}:{reason_class}')}",
                 connector_id=connector_id,
                 owner="operator",
-                reason_class="unknown_role_mention",
-                next_action="Map the Teams mention to a configured Agentic Mesh role or correct the message.",
+                reason_class=reason_class,
+                next_action=next_action,
                 retryable=True,
                 source_ref=receipt.receipt_id,
             )
@@ -277,6 +315,17 @@ class LocalTeamsTestAdapter:
         fail: bool = False,
         outcome: str | None = None,
     ) -> str:
+        if role_id is not None and not self._role_enabled(role_id):
+            self.db.create_connector_attention_item(
+                attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{source_ref}:{role_id}:disabled-send')}",
+                connector_id=self.config.connector_id,
+                owner="operator",
+                reason_class="disabled_role_identity_delivery",
+                next_action="Enable the role identity or route outbound delivery through an active configured role.",
+                retryable=True,
+                source_ref=source_ref,
+            )
+            raise ValueError(f"role identity `{role_id}` is disabled or not configured")
         requested_outcome = "failed_transient" if fail else outcome or "sent"
         if requested_outcome not in DELIVERY_OUTCOMES:
             raise ValueError(f"unknown delivery outcome `{requested_outcome}`")
@@ -294,7 +343,7 @@ class LocalTeamsTestAdapter:
             purpose=purpose,
             role_id=role_id,
             idempotency_key=idempotency_key,
-            payload={"body": body},
+            payload={"body": body, "role_identity": self._delivery_role_identity(role_id)},
             status="pending",
         )
         self._apply_delivery_outcome(delivery_id=delivery_id, outcome=requested_outcome)
@@ -426,21 +475,62 @@ class LocalTeamsTestAdapter:
             unknown = [role for role in mentioned_roles if role not in self.config.role_identities]
             if unknown:
                 return "unknown_role_mention"
+            disabled = [role for role in mentioned_roles if not self.config.role_identities[role].enabled]
+            if disabled:
+                return "disabled_role_identity"
             return "role_mention"
         return "project_channel_context"
 
     def _role_for_direct_message(self, event: dict[str, Any]) -> str | None:
         role_id = event.get("target_role_id")
-        if isinstance(role_id, str) and role_id in self.config.role_identities:
+        if isinstance(role_id, str) and self._role_enabled(role_id):
             return role_id
+        if isinstance(role_id, str):
+            return None
         target_ref = event.get("target_ref")
         if isinstance(target_ref, str):
-            for configured_role_id, external_ref in self.config.role_identities.items():
-                if target_ref == external_ref:
+            for configured_role_id, identity in self.config.role_identities.items():
+                if target_ref == identity.external_ref and identity.enabled:
                     return configured_role_id
-        if len(self.config.role_identities) == 1:
-            return next(iter(self.config.role_identities))
+            return None
+        enabled_roles = [role for role, identity in self.config.role_identities.items() if identity.enabled]
+        if len(enabled_roles) == 1:
+            return enabled_roles[0]
         return None
+
+    def _mentioned_roles(self, event: dict[str, Any]) -> tuple[str, ...]:
+        explicit = [str(role) for role in event.get("mentioned_roles", ())]
+        refs = [str(ref) for ref in event.get("mentioned_role_refs", ())]
+        resolved = list(explicit)
+        for ref in refs:
+            resolved.append(self._role_for_mention_ref(ref) or f"unknown:{ref}")
+        return tuple(dict.fromkeys(resolved))
+
+    def _role_for_mention_ref(self, ref: str) -> str | None:
+        for role_id, identity in self.config.role_identities.items():
+            if ref in {identity.external_ref, identity.mention_handle, identity.alias}:
+                return role_id
+        return None
+
+    def _role_enabled(self, role_id: str) -> bool:
+        identity = self.config.role_identities.get(role_id)
+        return bool(identity and identity.enabled)
+
+    def _delivery_role_identity(self, role_id: str | None) -> dict[str, Any] | None:
+        if role_id is None:
+            return None
+        identity = self.config.role_identities.get(role_id)
+        if identity is None:
+            return None
+        return {
+            "role_id": role_id,
+            "external_ref": identity.external_ref,
+            "display_name": identity.display_name,
+            "alias": identity.alias,
+            "mention_handle": identity.mention_handle,
+            "identity_model": identity.identity_model,
+            "enabled": identity.enabled,
+        }
 
     def _idempotency_key(self, event: dict[str, Any]) -> str:
         return ":".join(
@@ -487,6 +577,38 @@ def _required_string(raw: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"`{key}` must be a non-empty string")
     return value
+
+
+def _role_identity_map(value: object) -> dict[str, RoleIdentity]:
+    if not isinstance(value, dict):
+        raise ValueError("`role_identities` must be a mapping")
+    result: dict[str, RoleIdentity] = {}
+    seen_external_refs: set[str] = set()
+    for role_id, item in value.items():
+        if not isinstance(role_id, str) or not role_id.strip():
+            raise ValueError("`role_identities` keys must be non-empty role ids")
+        if not isinstance(item, dict):
+            raise ValueError("`role_identities` values must be identity objects")
+        external_ref = _required_string(item, "external_ref")
+        if external_ref in seen_external_refs:
+            raise ValueError("role identity external_ref values must be unique")
+        seen_external_refs.add(external_ref)
+        identity_model = _required_string(item, "identity_model")
+        if identity_model not in IDENTITY_MODELS:
+            raise ValueError(f"unknown role identity model `{identity_model}`")
+        enabled = item.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("role identity `enabled` must be a boolean")
+        result[role_id] = RoleIdentity(
+            role_id=role_id,
+            external_ref=external_ref,
+            display_name=_required_string(item, "display_name"),
+            alias=_required_string(item, "alias"),
+            mention_handle=_required_string(item, "mention_handle"),
+            identity_model=identity_model,
+            enabled=enabled,
+        )
+    return result
 
 
 def _string_map(value: object, name: str) -> dict[str, str]:

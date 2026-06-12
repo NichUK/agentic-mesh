@@ -18,9 +18,30 @@ def _config() -> ConnectorConfig:
             "default_project_channel_ref": "channel-project",
             "external_base_url": "http://linuxch:8100",
             "role_identities": {
-                "product-manager": "bot-product-manager",
-                "engineering": "bot-engineering",
-                "qa-engineer": "bot-qa",
+                "product-manager": {
+                    "external_ref": "bot-product-manager",
+                    "display_name": "AM-Product Manager",
+                    "alias": "product-manager",
+                    "mention_handle": "@AM-Product Manager",
+                    "identity_model": "separate_bot",
+                    "enabled": True,
+                },
+                "engineering": {
+                    "external_ref": "bot-engineering",
+                    "display_name": "AM-Engineering",
+                    "alias": "engineering",
+                    "mention_handle": "@AM-Engineering",
+                    "identity_model": "separate_bot",
+                    "enabled": True,
+                },
+                "qa-engineer": {
+                    "external_ref": "bot-qa",
+                    "display_name": "AM-QA Engineer",
+                    "alias": "qa-engineer",
+                    "mention_handle": "@AM-QA Engineer",
+                    "identity_model": "separate_bot",
+                    "enabled": True,
+                },
             },
             "human_authorities": {
                 "nicholas": ["sponsor", "operator"],
@@ -43,8 +64,26 @@ def test_connector_config_requires_foundation_fields() -> None:
     with pytest.raises(ValueError, match="unknown retention keys"):
         ConnectorConfig.from_dict(
             {
-                **_config().__dict__,
+                "connector_id": "teams-agentic-mesh-dev",
+                "project_id": "agentic-mesh-dev",
+                "connector_type": "teams",
+                "display_name": "Agentic Mesh Dev Teams",
+                "project_team_ref": "team-dev",
+                "default_project_channel_ref": "channel-project",
+                "external_base_url": "http://linuxch:8100",
+                "role_identities": {
+                    "product-manager": {
+                        "external_ref": "bot-product-manager",
+                        "display_name": "AM-Product Manager",
+                        "alias": "product-manager",
+                        "mention_handle": "@AM-Product Manager",
+                        "identity_model": "separate_bot",
+                        "enabled": True,
+                    },
+                },
+                "human_authorities": {"nicholas": ["sponsor", "operator"]},
                 "retention": {"private_dm_days": 30, "mystery_days": 1},
+                "team_wide_trigger": "@all-agents",
             }
         )
 
@@ -138,11 +177,12 @@ def test_local_teams_adapter_replays_foundation_events(tmp_path: Path) -> None:
     assert snapshot["counts"]["conversation_events"] == 4
     assert snapshot["counts"]["thread_bindings"] == 1
     assert snapshot["counts"]["delivery_records"] == 1
-    assert snapshot["counts"]["connector_attention_items"] == 2
+    assert snapshot["counts"]["connector_attention_items"] == 3
     assert snapshot["delivery_statuses"] == {"failed_transient": 1}
     assert snapshot["delivery_records"][0]["delivery_id"] == delivery_id
     assert {item["reason_class"] for item in snapshot["connector_attention_items"]} == {
         "delivery_failed_transient",
+        "unrouteable_role_direct_message",
         "unknown_role_mention",
     }
 

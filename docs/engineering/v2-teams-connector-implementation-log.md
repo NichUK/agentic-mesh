@@ -463,6 +463,101 @@ Story 6 - Separate Visible Role Identities.
 Do not begin Story 6 until QA has reviewed Story 5 and any required rework has
 passed retest.
 
+## Story 6 - Separate Visible Role Identities
+
+Status: engineering implemented; awaiting QA review
+
+### Objective
+
+Allow each configured role to have a distinct Teams-facing identity while
+keeping runtime authorization based on stable configured role bindings rather
+than display names.
+
+### Files Changed
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_teams_connector_foundation.py`
+- `tests/test_v2_teams_connector_direct_messages.py`
+- `tests/test_v2_teams_connector_project_channels.py`
+- `tests/test_v2_teams_connector_human_questions.py`
+- `tests/test_v2_teams_connector_delivery_retry.py`
+- `tests/test_v2_teams_connector_role_identities.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+### Implementation Notes
+
+- Replaced simple role-to-external-ref config parsing with explicit
+  `RoleIdentity` objects containing `external_ref`, `display_name`, `alias`,
+  `mention_handle`, `identity_model`, and `enabled`.
+- Supported identity models are `separate_bot`, `shared_gateway`, and `hybrid`.
+- Role participant records now store presentation metadata separately from
+  runtime `role_id`.
+- Connector health records expose the configured identity models for status and
+  diagnostics.
+- Mention routing resolves explicit role IDs or configured external refs,
+  aliases, and mention handles; plain display-name text does not grant routing
+  authority.
+- Disabled role identities create connector attention and no role assignment.
+- Direct messages to ambiguous or disabled identities create operator attention
+  rather than silently choosing a role.
+- Direct messages with any explicit target hint never fall back to an arbitrary
+  single enabled role if that hint does not resolve to an enabled configured
+  external identity.
+- Disabled or unconfigured role identities cannot send outbound delivery; the
+  adapter records operator attention and raises before creating a delivery
+  record.
+- Outbound delivery payloads include the configured presentation identity used
+  for the role that sent the message.
+- Added participant metadata storage to the v2 SQLite schema, including an
+  idempotent column add for existing local databases.
+
+### Tests Run
+
+Commands:
+
+```powershell
+pytest -q tests\test_v2_teams_connector_role_identities.py
+pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py
+pytest -q
+```
+
+Results:
+
+```text
+6 passed
+19 passed
+36 passed
+```
+
+Focused coverage added:
+
+- role identity config exposes display name, alias, mention handle, identity
+  model, enabled state, and external app/bot id
+- alias/mention refs resolve to stable role IDs
+- display-name-only plain text does not route or authorize a role
+- disabled role identities create attention and no assignment
+- disabled-role DMs and display-name-only DM targets do not fall back to an
+  enabled role
+- disabled role identities cannot send outbound delivery
+- outbound delivery records include the configured role presentation identity
+- bad identity models and duplicate external refs are rejected
+
+### Known Limitations
+
+- This story records and uses local adapter identity metadata only; real Teams
+  app registrations, Bot Framework app IDs, Entra consent, and tenant install
+  validation remain real-connector/security-release scope.
+- Emergency disablement is represented by `enabled=false`; runtime hot-reload
+  and operator UI controls remain later operational slices.
+
+### Next Engineering Story
+
+Story 7 - Feature, Epic, Incident, And Focused-Work Channels.
+
+Do not begin Story 7 until QA has reviewed Story 6 and any required rework has
+passed retest.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
@@ -495,4 +590,12 @@ passed retest.
 - RL-009 | engineering | QA rework | Story 5 | Added safe-output validation
   that rejects connector delivery-success claims in status messages, plus a
   connector-path failing-delivery regression test. | awaiting QA retest
+  2026-06-12
+- RL-010 | engineering | implementation | Story 6 | Implemented explicit
+  Teams-facing role identity objects, participant presentation metadata,
+  configured alias/mention resolution, disabled identity attention, and outbound
+  delivery identity evidence. | awaiting QA review 2026-06-12
+- RL-011 | engineering | QA rework | Story 6 | Removed unsafe direct-message
+  fallback when target hints do not resolve to enabled configured identities and
+  blocked outbound delivery from disabled role identities. | awaiting QA retest
   2026-06-12

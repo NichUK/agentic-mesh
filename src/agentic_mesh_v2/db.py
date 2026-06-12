@@ -197,6 +197,7 @@ class V2Database:
                   external_ref TEXT NOT NULL,
                   role_id TEXT,
                   authority_json TEXT NOT NULL DEFAULT '[]',
+                  metadata_json TEXT NOT NULL DEFAULT '{}',
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   UNIQUE(connector_id, external_ref)
@@ -306,6 +307,15 @@ class V2Database:
                 "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
                 (SCHEMA_VERSION,),
             )
+            self._ensure_column("connector_participants", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        existing = {
+            str(row["name"])
+            for row in self.connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def append_event(
         self,
@@ -397,20 +407,23 @@ class V2Database:
         external_ref: str,
         role_id: str | None = None,
         authority: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         with self.connection:
             self.connection.execute(
                 """
                 INSERT INTO connector_participants(
-                  participant_id, connector_id, participant_type, display_name, external_ref, role_id, authority_json
+                  participant_id, connector_id, participant_type, display_name, external_ref,
+                  role_id, authority_json, metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(participant_id) DO UPDATE SET
                   participant_type = excluded.participant_type,
                   display_name = excluded.display_name,
                   external_ref = excluded.external_ref,
                   role_id = excluded.role_id,
                   authority_json = excluded.authority_json,
+                  metadata_json = excluded.metadata_json,
                   updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -421,6 +434,7 @@ class V2Database:
                     external_ref,
                     role_id,
                     json.dumps(authority or [], sort_keys=True),
+                    json.dumps(metadata or {}, sort_keys=True),
                 ),
             )
 
@@ -1370,7 +1384,7 @@ class V2Database:
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     result = dict(row)
-    for key in ("payload_json", "health_json", "authority_json"):
+    for key in ("payload_json", "health_json", "authority_json", "metadata_json"):
         if isinstance(result.get(key), str):
             result[key.removesuffix("_json")] = json.loads(result[key])
             del result[key]
