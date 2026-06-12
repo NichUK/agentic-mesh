@@ -2080,6 +2080,13 @@ class V2Database:
                 },
             )
 
+    def get_role_container_lifecycle_action(self, action_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM role_container_lifecycle_actions WHERE action_id = ?",
+            (action_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def record_relevance_check(
         self,
         *,

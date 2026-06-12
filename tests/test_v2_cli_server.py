@@ -5,6 +5,10 @@ from pathlib import Path
 import pytest
 
 from agentic_mesh_v2.cli import main
+from agentic_mesh_v2.container_lifecycle import ComposeRoleLifecycleConfig
+from agentic_mesh_v2.container_lifecycle import ContainerCommandResult
+from agentic_mesh_v2.container_lifecycle import ContainerLifecycleExecutor
+from agentic_mesh_v2.container_lifecycle import plan_compose_lifecycle_action
 from agentic_mesh_v2.db import V2Database
 
 
@@ -1137,6 +1141,71 @@ roles:
         "stop",
         "test-project-product-manager-1",
     ]
+
+
+def test_v2_cli_records_failed_container_lifecycle_retry_plan_without_execute(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+
+        def runner(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ContainerCommandResult:
+            return ContainerCommandResult(exit_code=17, stderr="compose failed")
+
+        config = ComposeRoleLifecycleConfig.from_mapping(
+            {
+                "adapter": "docker-compose",
+                "compose_files": [str(tmp_path / "docker-compose.yml")],
+                "service_name_template": "{project_id}-{role_id}-{index}",
+                "working_directory": str(tmp_path / "deploy"),
+            }
+        )
+        action = plan_compose_lifecycle_action(
+            config=config,
+            project_id="test-project",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            status="hibernated",
+            reason="Idle grace elapsed.",
+        )
+        assert action is not None
+        failed_action_id, _ = ContainerLifecycleExecutor(db, runner=runner).execute(action)
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "retry-container-lifecycle-action",
+                "--action-id",
+                failed_action_id,
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "planned"
+    assert output["execute"] is False
+    assert output["retry_of_action_id"] == failed_action_id
+    assert output["action"]["status"] == "planned"
+    assert output["action"]["command"] == list(action.command)
+    assert output["action"]["working_directory"] == str(tmp_path / "deploy")
+
+    db = V2Database(db_path)
+    try:
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    rows = snapshot["role_container_lifecycle_actions"]
+    assert {row["status"] for row in rows} == {"failed", "planned"}
+    assert {row["action_fingerprint"] for row in rows} == {rows[0]["action_fingerprint"]}
 
 
 def test_v2_cli_project_supervisor_tick_hibernates_and_hydrates_with_lifecycle_records(

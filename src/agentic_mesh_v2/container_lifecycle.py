@@ -117,6 +117,16 @@ class ContainerLifecycleExecutor:
         )
         return action_id
 
+    def record_retry_plan(self, source_action_id: str) -> tuple[str, ContainerLifecycleAction]:
+        action = lifecycle_action_from_record(self._failed_action_record(source_action_id))
+        action_id = self.record_plan(action)
+        return action_id, action
+
+    def execute_retry(self, source_action_id: str) -> tuple[str, ContainerLifecycleAction, ContainerCommandResult]:
+        action = lifecycle_action_from_record(self._failed_action_record(source_action_id))
+        action_id, result = self.execute(action)
+        return action_id, action, result
+
     def execute(self, action: ContainerLifecycleAction) -> tuple[str, ContainerCommandResult]:
         action_id = self.record_plan(action)
         action_fingerprint = _action_fingerprint(action)
@@ -160,6 +170,14 @@ class ContainerLifecycleExecutor:
             )
         return action_id, result
 
+    def _failed_action_record(self, source_action_id: str) -> dict[str, Any]:
+        record = self.db.get_role_container_lifecycle_action(source_action_id)
+        if record is None:
+            raise ValueError(f"unknown role container lifecycle action `{source_action_id}`")
+        if record.get("status") != "failed":
+            raise ValueError("only failed role container lifecycle actions can be retried")
+        return record
+
 
 def plan_compose_lifecycle_action(
     *,
@@ -190,6 +208,27 @@ def plan_compose_lifecycle_action(
         command=tuple(command),
         working_directory=config.working_directory,
         reason=reason,
+    )
+
+
+def lifecycle_action_from_record(record: dict[str, Any]) -> ContainerLifecycleAction:
+    command = record.get("command")
+    if not isinstance(command, list) or not command:
+        raise ValueError("role container lifecycle action record has no command")
+    parsed_command: list[str] = []
+    for index, item in enumerate(command):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"role container lifecycle command item {index} must be a non-empty string")
+        parsed_command.append(item)
+    working_directory = record.get("working_directory")
+    return ContainerLifecycleAction(
+        role_id=str(record["role_id"]),
+        role_instance_id=str(record["role_instance_id"]),
+        action=str(record["action"]),
+        service_name=str(record["service_name"]),
+        command=tuple(parsed_command),
+        working_directory=Path(str(working_directory)) if working_directory else None,
+        reason=str(record["reason"]),
     )
 
 

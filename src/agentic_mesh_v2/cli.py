@@ -147,6 +147,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     run_container_lifecycle_parser.add_argument("--timeout-seconds", type=int, default=300)
 
+    retry_container_lifecycle_parser = subparsers.add_parser(
+        "retry-container-lifecycle-action",
+        help="Record or execute a retry of a failed role container lifecycle action.",
+    )
+    retry_container_lifecycle_parser.add_argument("--action-id", required=True)
+    retry_container_lifecycle_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually run the retry command. Without this flag, the retry is recorded as planned only.",
+    )
+    retry_container_lifecycle_parser.add_argument("--timeout-seconds", type=int, default=300)
+
     supervisor_tick_parser = subparsers.add_parser(
         "run-project-supervisor-tick",
         help="Run one bounded project supervisor tick: hibernation maintenance plus container lifecycle action handling.",
@@ -313,6 +325,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.command == "run-project-container-lifecycle":
                 result = _run_project_container_lifecycle(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            if args.command == "retry-container-lifecycle-action":
+                result = _retry_container_lifecycle_action(db, args)
                 print(json.dumps(result, sort_keys=True))
                 return 0
             if args.command == "run-project-supervisor-tick":
@@ -587,6 +603,36 @@ def _run_project_container_lifecycle(db: V2Database, args: argparse.Namespace) -
         "skipped_count": len(skipped),
         "actions": receipts,
         "skipped": skipped,
+    }
+
+
+def _retry_container_lifecycle_action(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    executor = ContainerLifecycleExecutor(db, timeout_seconds=args.timeout_seconds)
+    if args.execute:
+        action_id, action, result = executor.execute_retry(args.action_id)
+        return {
+            "status": "succeeded" if result.exit_code == 0 else "failed",
+            "retry_of_action_id": args.action_id,
+            "execute": True,
+            "action": {
+                **_action_to_dict(action),
+                "action_id": action_id,
+                "status": "succeeded" if result.exit_code == 0 else "failed",
+                "exit_code": result.exit_code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            },
+        }
+    action_id, action = executor.record_retry_plan(args.action_id)
+    return {
+        "status": "planned",
+        "retry_of_action_id": args.action_id,
+        "execute": False,
+        "action": {
+            **_action_to_dict(action),
+            "action_id": action_id,
+            "status": "planned",
+        },
     }
 
 

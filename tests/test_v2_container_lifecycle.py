@@ -404,3 +404,79 @@ def test_successful_retry_closes_matching_lifecycle_attention(tmp_path: Path) ->
     assert second_id in attention_by_source[first_id]["next_action"]
     assert attention_by_source[unrelated_id]["status"] == "open"
     assert any(event["event_type"] == "runtime.attention_closed" for event in snapshot["recent_events"])
+
+
+def test_execute_retry_reuses_failed_action_details(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.update_role_instance_hibernation(
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Idle grace elapsed.",
+    )
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ContainerCommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return ContainerCommandResult(exit_code=17, stderr="compose failed")
+        return ContainerCommandResult(exit_code=0, stdout="stopped")
+
+    config = ComposeRoleLifecycleConfig.from_mapping(
+        {
+            "adapter": "docker-compose",
+            "compose_files": [str(tmp_path / "compose.yml")],
+            "service_name_template": "{project_id}-{role_id}-{index}",
+            "working_directory": str(tmp_path / "deploy"),
+        }
+    )
+    action = plan_compose_lifecycle_action(
+        config=config,
+        project_id="test-project",
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Idle grace elapsed.",
+    )
+    assert action is not None
+    executor = ContainerLifecycleExecutor(db, runner=runner, timeout_seconds=12)
+
+    first_id, first_result = executor.execute(action)
+    retry_id, retry_action, retry_result = executor.execute_retry(first_id)
+
+    assert first_result.exit_code == 17
+    assert retry_result.exit_code == 0
+    assert retry_action == action
+    assert calls == [list(action.command), list(action.command)]
+    rows = db.status_snapshot()["role_container_lifecycle_actions"]
+    row_by_id = {row["action_id"]: row for row in rows}
+    assert row_by_id[first_id]["status"] == "failed"
+    assert row_by_id[retry_id]["status"] == "succeeded"
+    assert row_by_id[first_id]["action_fingerprint"] == row_by_id[retry_id]["action_fingerprint"]
+    assert db.status_snapshot()["runtime_attention_items"][0]["status"] == "closed"
+
+
+def test_retry_rejects_unknown_or_non_failed_lifecycle_action(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.record_role_container_lifecycle_action(
+        action_id="role-container-action-success",
+        action_fingerprint="fingerprint-success",
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        action="stop",
+        service_name="test-project-product-manager-1",
+        command=["docker", "compose", "stop", "test-project-product-manager-1"],
+        working_directory=None,
+        status="succeeded",
+        reason="Idle grace elapsed.",
+        exit_code=0,
+        stdout="stopped",
+    )
+    executor = ContainerLifecycleExecutor(db, runner=lambda command, cwd, timeout_seconds: ContainerCommandResult(0))
+
+    with pytest.raises(ValueError, match="unknown role container lifecycle action"):
+        executor.record_retry_plan("role-container-action-missing")
+    with pytest.raises(ValueError, match="only failed role container lifecycle actions can be retried"):
+        executor.record_retry_plan("role-container-action-success")

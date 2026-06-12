@@ -1290,3 +1290,68 @@ operations scope:
   action evidence, leaves unrelated failed-action attention open, records
   `runtime.attention_closed`, and passes focused runtime tests. | accepted
   2026-06-12
+
+## PB-005 Story 8 - Operator Retry Command for Lifecycle Failures
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/container_lifecycle.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_container_lifecycle.py`
+- `tests/test_v2_cli_server.py`
+- `tests/test_v2_status_dashboard.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+44 passed
+```
+
+### Acceptance Assessment
+
+- Reviewed after the extra negative retry coverage was present in the
+  workspace.
+- `retry-container-lifecycle-action` reconstructs retries from durable failed
+  lifecycle action evidence instead of accepting ad hoc command input.
+- The command defaults to plan-only and executes the stored command only when
+  `--execute` is supplied.
+- Retry planning and execution reuse the stored command, working directory,
+  action reason, service, role, and role instance, preserving the action
+  fingerprint needed for runtime-attention closure.
+- Unknown action IDs and non-failed lifecycle actions are rejected by executor
+  coverage.
+- CLI JSON output includes the source failed action id, execution mode, retry
+  action id, retry status, command details, working directory, and execution
+  output when applicable.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 8 because they remain later runtime
+operations scope:
+
+- This story adds an operator retry command, not automatic retry scheduling or
+  UI action buttons.
+- Execution still depends on the runtime host having a valid Docker Compose
+  environment for the stored command.
+
+### Review Log
+
+- QA-RL-021 | qa-engineer | acceptance | PB-005 Story 8 | Verified retry
+  planning/execution uses failed durable lifecycle action evidence, rejects
+  unknown and non-failed action ids, preserves action fingerprints for
+  attention closure, defaults to plan-only unless `--execute` is supplied, and
+  passes focused runtime tests. | accepted 2026-06-12

@@ -1270,6 +1270,63 @@ Results:
 - This story does not add scheduled retries, alert delivery, or operator
   action buttons.
 
+## PB-005 Story 8 - Operator Retry Command for Lifecycle Failures
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add a v2 operator command that can retry a failed role-container lifecycle
+action from durable action evidence. The command should support safe
+plan-only use by default and execute the retry only when explicitly requested.
+
+### Implementation Notes
+
+- Added `get_role_container_lifecycle_action`.
+- Added lifecycle action reconstruction from a stored lifecycle action record.
+- Added executor methods for retry planning and retry execution.
+- Added CLI command `retry-container-lifecycle-action --action-id`.
+- The command records a planned retry by default.
+- The command executes Docker only when `--execute` is supplied.
+- Retry planning/execution reuses the failed action's stored command, working
+  directory, service, role, instance, and reason so fingerprints remain
+  consistent with runtime-attention closure.
+
+### Tests Added
+
+- executor retry reuses failed action details and action fingerprint
+- retry planning rejects unknown and non-failed lifecycle action ids
+- successful retry closes previous runtime attention
+- CLI plan-only retry records a planned retry without executing Docker
+- CLI retry output includes the source failed action id and retry action details
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+40 passed
+41 passed after negative retry coverage
+79 passed
+80 passed after negative retry coverage
+```
+
+### Known Limitations
+
+- This story provides an operator command, not automatic retry scheduling.
+- The execute path still relies on the configured runtime host having Docker
+  Compose access.
+- UI action buttons and alert routing remain future slices.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1344,3 +1401,7 @@ Results:
   runtime lifecycle-failure attention after successful retry while preserving
   failed action evidence and recording a closure event. | QA accepted
   2026-06-12
+- RL-023 | engineering | implementation | PB-005 Story 8 | Added an operator
+  CLI command to plan or execute a retry from failed role-container lifecycle
+  action evidence while preserving fingerprint-based attention closure. |
+  QA accepted 2026-06-12
