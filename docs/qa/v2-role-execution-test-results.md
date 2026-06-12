@@ -2069,3 +2069,61 @@ compileall passed
   assembly, full prompt audit, worker prompt injection, Codex CLI prompt
   payload, prompt-failure runtime recovery, and scoped implementation claims. |
   accepted 2026-06-12
+
+## PB-005 Story 20 - Safe-Output CLI Transport Command
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+47 passed at QA review
+198 passed full suite at QA review
+compileall passed
+50 passed focused suite after engineering added residual branch tests
+```
+
+### Acceptance Assessment
+
+- `record-safe-output` records through `SafeOutputService` and does not bypass
+  policy validation.
+- The command validates run existence, running status, and role ownership before
+  recording.
+- It rejects invalid JSON, non-object payloads, unauthorized tools, fake durable
+  mutation claims, unknown runs, and non-running runs.
+- Success and failure responses are structured JSON receipts.
+- DB row conversion now exposes `terminal` as a real boolean.
+- Engineering evidence correctly does not claim Codex worker collection of
+  CLI-recorded calls or MCP support.
+
+### Residual Risks
+
+- This story provides the CLI front door only. `CodexCliWorker` still needs a
+  follow-up slice to collect safe-output calls recorded during a subprocess run,
+  and MCP exposure remains a later slice.
+
+### Review Log
+
+- QA-RL-034 | qa-engineer | acceptance | PB-005 Story 20 | Verified safe-output
+  CLI recording, ownership validation, shared policy enforcement, structured
+  receipts, boolean decoding, and scoped implementation claims. | accepted
+  2026-06-12

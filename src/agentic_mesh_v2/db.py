@@ -3258,7 +3258,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         if isinstance(result.get(key), str):
             result[key.removesuffix("_json")] = json.loads(result[key])
             del result[key]
-    for key in ("retryable", "noop", "required", "broad_graph"):
+    for key in ("retryable", "noop", "required", "broad_graph", "terminal"):
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
     return result

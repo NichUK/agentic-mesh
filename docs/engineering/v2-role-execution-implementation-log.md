@@ -2021,6 +2021,76 @@ compileall passed
   prompt-engineering slices should refine role-specific prompt evaluation
   cases and richer flow guidance.
 
+## PB-005 Story 20 - Safe-Output CLI Transport Command
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; awaiting QA
+
+### Intent
+
+Expose a concrete safe-output CLI front door that workers and external agents
+can call to record durable tool intent through the same authorization,
+validation, fake-claim rejection, eventing, and downstream route materialization
+used by role services.
+
+### Changes
+
+- Added `record-safe-output` CLI command.
+- The command requires:
+  - `--run-id`
+  - `--role-id`
+  - `--tool-name`
+  - `--payload-json`
+  - optional `--terminal`
+- The command rejects:
+  - unknown runs
+  - completed/non-running runs
+  - role IDs that do not own the run
+  - invalid JSON payloads
+  - non-object payload JSON
+  - unauthorized tools
+  - fake durable status claims rejected by safe-output policy
+- The command records through `SafeOutputService`, not a special-case DB write.
+- CLI failures return structured JSON with `status: error` instead of leaking
+  stack traces.
+- DB row conversion now returns `terminal` as a real boolean.
+
+### Tests Added
+
+- CLI safe-output command records a valid `status.reply` call for a running
+  Product Manager run.
+- CLI safe-output command rejects a role that does not own the run.
+- CLI safe-output command rejects unknown and non-running runs.
+- CLI safe-output command rejects unauthorized tools without recording a call.
+- CLI safe-output command rejects invalid payload JSON.
+- CLI safe-output command rejects non-object payload JSON.
+- CLI safe-output command rejects fake durable mutation claims.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_safe_outputs.py
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+50 passed
+compileall passed
+```
+
+### Known Limitations
+
+- This story provides the CLI front door for safe-output calls. It does not yet
+  make `CodexCliWorker` collect calls recorded through this command after the
+  subprocess exits, nor does it expose the same service through MCP.
+- Worker adapters still accept stdout safe-output JSON for compatibility within
+  the v2 branch until the follow-up collection slice lands.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added

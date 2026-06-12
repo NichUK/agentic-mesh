@@ -738,6 +738,294 @@ def test_v2_cli_subprocess_worker_override_preserves_adapter_timeout_default(tmp
     }
 
 
+def test_v2_cli_record_safe_output_records_tool_call_for_running_role_run(tmp_path: Path, capsys) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_run(
+            run_id="run-safe-output-cli",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id=None,
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-safe-output-cli",
+                "--role-id",
+                "product-manager",
+                "--tool-name",
+                "status.reply",
+                "--payload-json",
+                '{"message":"Product status reply."}',
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert '"status": "ok"' in output
+    assert '"terminal": true' in output
+    db = V2Database(db_path)
+    try:
+        calls = db.list_safe_output_calls()
+    finally:
+        db.close()
+
+    assert len(calls) == 1
+    assert calls[0]["run_id"] == "run-safe-output-cli"
+    assert calls[0]["role_id"] == "product-manager"
+    assert calls[0]["tool_name"] == "status.reply"
+    assert calls[0]["payload"]["message"] == "Product status reply."
+    assert calls[0]["terminal"] is True
+
+
+def test_v2_cli_record_safe_output_rejects_wrong_role_for_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_run(
+            run_id="run-safe-output-wrong-role",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id=None,
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-safe-output-wrong-role",
+                "--role-id",
+                "release-manager",
+                "--tool-name",
+                "release.close",
+                "--payload-json",
+                '{"work_item_id":"work-1","reason":"Done."}',
+            ]
+        )
+        == 1
+    )
+
+
+def test_v2_cli_record_safe_output_rejects_unknown_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-missing",
+                "--role-id",
+                "product-manager",
+                "--tool-name",
+                "status.reply",
+                "--payload-json",
+                '{"message":"Product status reply."}',
+            ]
+        )
+        == 1
+    )
+
+
+def test_v2_cli_record_safe_output_rejects_non_running_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_run(
+            run_id="run-safe-output-completed",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id=None,
+        )
+        db.complete_run("run-safe-output-completed", status="completed", terminal_tool="status.reply")
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-safe-output-completed",
+                "--role-id",
+                "product-manager",
+                "--tool-name",
+                "status.reply",
+                "--payload-json",
+                '{"message":"Late reply."}',
+            ]
+        )
+        == 1
+    )
+
+
+def test_v2_cli_record_safe_output_rejects_unauthorized_tool_without_recording(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_run(
+            run_id="run-safe-output-unauthorized",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id=None,
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-safe-output-unauthorized",
+                "--role-id",
+                "product-manager",
+                "--tool-name",
+                "release.deploy",
+                "--payload-json",
+                '{"work_item_id":"work-1","target_id":"dogfood","reason":"Ship."}',
+            ]
+        )
+        == 1
+    )
+    db = V2Database(db_path)
+    try:
+        assert db.list_safe_output_calls() == []
+    finally:
+        db.close()
+
+
+def test_v2_cli_record_safe_output_rejects_invalid_payload_json(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_run(
+            run_id="run-safe-output-invalid-json",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id=None,
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-safe-output-invalid-json",
+                "--role-id",
+                "product-manager",
+                "--tool-name",
+                "status.reply",
+                "--payload-json",
+                "not-json",
+            ]
+        )
+        == 1
+    )
+
+
+def test_v2_cli_record_safe_output_rejects_non_object_payload_json(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_run(
+            run_id="run-safe-output-array-json",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id=None,
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-safe-output-array-json",
+                "--role-id",
+                "product-manager",
+                "--tool-name",
+                "status.reply",
+                "--payload-json",
+                '["not","an","object"]',
+            ]
+        )
+        == 1
+    )
+
+
+def test_v2_cli_record_safe_output_rejects_fake_durable_claim(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_run(
+            run_id="run-safe-output-fake-claim",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id=None,
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-safe-output-fake-claim",
+                "--role-id",
+                "product-manager",
+                "--tool-name",
+                "status.reply",
+                "--payload-json",
+                '{"message":"I created work-123."}',
+            ]
+        )
+        == 1
+    )
+
+
 def test_v2_cli_runs_project_role_services_once_for_configured_instances(
     tmp_path: Path,
     capsys,

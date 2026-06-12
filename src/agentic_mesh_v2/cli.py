@@ -21,6 +21,9 @@ from agentic_mesh_v2.project_config import load_role_hibernation_config
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
 from agentic_mesh_v2.role_service import RoleService
+from agentic_mesh_v2.safe_outputs import SafeOutputCall
+from agentic_mesh_v2.safe_outputs import SafeOutputError
+from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.topology import ProjectRepo
 from agentic_mesh_v2.topology import RuntimeTopology
@@ -49,6 +52,24 @@ def main(argv: list[str] | None = None) -> int:
 
     subparsers.add_parser("demo-slice", help="Create one complete v2 end-to-end demo slice.")
     subparsers.add_parser("status-json", help="Print the v2 runtime status snapshot as JSON.")
+
+    safe_output_parser = subparsers.add_parser(
+        "record-safe-output",
+        help="Record one safe-output tool call for an active agent run.",
+    )
+    safe_output_parser.add_argument("--run-id", required=True)
+    safe_output_parser.add_argument("--role-id", required=True)
+    safe_output_parser.add_argument("--tool-name", required=True)
+    safe_output_parser.add_argument(
+        "--payload-json",
+        required=True,
+        help="Safe-output payload object as JSON.",
+    )
+    safe_output_parser.add_argument(
+        "--terminal",
+        action="store_true",
+        help="Mark this call terminal in addition to terminal-tool defaults.",
+    )
 
     recover_parser = subparsers.add_parser(
         "recover-stale-assignments",
@@ -351,6 +372,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "status-json":
                 print(json.dumps(db.status_snapshot(), indent=2, sort_keys=True))
                 return 0
+            if args.command == "record-safe-output":
+                try:
+                    result = _record_safe_output_cli(db, args)
+                except (ValueError, SafeOutputError) as exc:
+                    print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))
+                    return 1
+                else:
+                    print(json.dumps(result, sort_keys=True))
+                    return 0
             if args.command == "recover-stale-assignments":
                 recovered = db.recover_stale_role_assignments(
                     role_id=args.role_id,
@@ -415,6 +445,41 @@ def main(argv: list[str] | None = None) -> int:
             db.close()
 
     raise AssertionError(f"unhandled command: {args.command}")
+
+
+def _record_safe_output_cli(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    run = db.get_agent_run(args.run_id)
+    if run is None:
+        raise ValueError(f"agent run `{args.run_id}` was not found")
+    if run.get("status") != "running":
+        raise ValueError(f"agent run `{args.run_id}` is not running")
+    if run.get("role_id") != args.role_id:
+        raise ValueError(
+            f"agent run `{args.run_id}` belongs to role `{run.get('role_id')}`, not `{args.role_id}`"
+        )
+    try:
+        payload = json.loads(args.payload_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"--payload-json must be valid JSON: {exc.msg}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("--payload-json must be a JSON object")
+    call = SafeOutputCall(
+        role_id=args.role_id,
+        tool_name=args.tool_name,
+        payload=payload,
+        terminal=bool(args.terminal),
+    )
+    call_id = SafeOutputService(db).record(run_id=args.run_id, call=call)
+    stored = db.list_safe_output_calls()
+    recorded = next((row for row in stored if row.get("call_id") == call_id), None)
+    return {
+        "status": "ok",
+        "run_id": args.run_id,
+        "role_id": args.role_id,
+        "tool_name": args.tool_name,
+        "call_id": call_id,
+        "terminal": bool(recorded.get("terminal")) if recorded is not None else bool(args.terminal),
+    }
 
 
 def _parse_project_repo(value: str) -> ProjectRepo:
