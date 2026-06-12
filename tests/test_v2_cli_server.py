@@ -1127,8 +1127,28 @@ roles:
     output = json.loads(capsys.readouterr().out)
     assert output["execute"] is False
     assert output["planned_count"] == 1
+    assert output["existing_planned_count"] == 0
     assert output["executed_count"] == 0
     assert output["actions"][0]["status"] == "planned"
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-container-lifecycle",
+                "--project-file",
+                str(project_file),
+            ]
+        )
+        == 0
+    )
+    second_output = json.loads(capsys.readouterr().out)
+    assert second_output["planned_count"] == 0
+    assert second_output["existing_planned_count"] == 1
+    assert second_output["actions"][0]["status"] == "already_planned"
+    assert second_output["actions"][0]["action_id"] == output["actions"][0]["action_id"]
+
     db = V2Database(db_path)
     try:
         snapshot = db.status_snapshot()
@@ -1196,6 +1216,23 @@ def test_v2_cli_records_failed_container_lifecycle_retry_plan_without_execute(
     assert output["action"]["status"] == "planned"
     assert output["action"]["command"] == list(action.command)
     assert output["action"]["working_directory"] == str(tmp_path / "deploy")
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "retry-container-lifecycle-action",
+                "--action-id",
+                failed_action_id,
+            ]
+        )
+        == 0
+    )
+    second_output = json.loads(capsys.readouterr().out)
+    assert second_output["status"] == "already_planned"
+    assert second_output["action"]["status"] == "already_planned"
+    assert second_output["action"]["action_id"] == output["action"]["action_id"]
 
     db = V2Database(db_path)
     try:

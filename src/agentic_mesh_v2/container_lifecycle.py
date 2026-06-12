@@ -101,8 +101,8 @@ class ContainerLifecycleExecutor:
         self.timeout_seconds = timeout_seconds
 
     def record_plan(self, action: ContainerLifecycleAction) -> str:
-        action_id = _action_id(action)
-        action_fingerprint = _action_fingerprint(action)
+        action_id = _action_id()
+        action_fingerprint = action_fingerprint_for(action)
         self.db.record_role_container_lifecycle_action(
             action_id=action_id,
             action_fingerprint=action_fingerprint,
@@ -117,10 +117,17 @@ class ContainerLifecycleExecutor:
         )
         return action_id
 
-    def record_retry_plan(self, source_action_id: str) -> tuple[str, ContainerLifecycleAction]:
+    def record_plan_if_absent(self, action: ContainerLifecycleAction) -> tuple[str, bool]:
+        action_fingerprint = action_fingerprint_for(action)
+        existing = self.db.find_planned_role_container_lifecycle_action(action_fingerprint)
+        if existing is not None:
+            return str(existing["action_id"]), False
+        return self.record_plan(action), True
+
+    def record_retry_plan(self, source_action_id: str) -> tuple[str, ContainerLifecycleAction, bool]:
         action = lifecycle_action_from_record(self._failed_action_record(source_action_id))
-        action_id = self.record_plan(action)
-        return action_id, action
+        action_id, created = self.record_plan_if_absent(action)
+        return action_id, action, created
 
     def execute_retry(self, source_action_id: str) -> tuple[str, ContainerLifecycleAction, ContainerCommandResult]:
         action = lifecycle_action_from_record(self._failed_action_record(source_action_id))
@@ -129,7 +136,7 @@ class ContainerLifecycleExecutor:
 
     def execute(self, action: ContainerLifecycleAction) -> tuple[str, ContainerCommandResult]:
         action_id = self.record_plan(action)
-        action_fingerprint = _action_fingerprint(action)
+        action_fingerprint = action_fingerprint_for(action)
         result = self.runner(
             list(action.command),
             cwd=action.working_directory,
@@ -270,11 +277,11 @@ def _validate_template(template: str) -> None:
             raise ValueError(f"unsupported service_name_template field `{field_name}`")
 
 
-def _action_id(action: ContainerLifecycleAction) -> str:
+def _action_id() -> str:
     return f"role-container-action-{uuid4().hex}"
 
 
-def _action_fingerprint(action: ContainerLifecycleAction) -> str:
+def action_fingerprint_for(action: ContainerLifecycleAction) -> str:
     value = "|".join(
         [
             action.role_instance_id,

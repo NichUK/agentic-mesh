@@ -1429,6 +1429,60 @@ Results:
 - This story adds count visibility only; it does not add filtering controls to
   the dashboard tables.
 
+## PB-005 Story 11 - Planned Lifecycle Action Idempotency
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Prevent repeated plan-only lifecycle operations from creating duplicate planned
+container lifecycle action records for the same role instance, command, and
+reason. This prepares the supervisor for bounded loops without filling the
+audit trail with identical pending actions.
+
+### Implementation Notes
+
+- Added lookup for an existing planned role-container lifecycle action by
+  action fingerprint.
+- Added `record_plan_if_absent` to reuse an existing planned action rather than
+  append a duplicate.
+- Plan-only `run-project-container-lifecycle` now reports
+  `existing_planned_count` and marks reused actions as `already_planned`.
+- Plan-only `retry-container-lifecycle-action` now reuses existing planned
+  retry actions and reports `already_planned`.
+- Failed and succeeded lifecycle execution records remain append-only.
+
+### Tests Added
+
+- repeated `run-project-container-lifecycle` plan-only calls reuse the existing
+  planned action id and leave only one planned action record
+- repeated retry planning reuses the existing planned retry action id
+- existing planned actions are counted separately from newly planned actions
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+41 passed
+80 passed
+```
+
+### Known Limitations
+
+- This story deduplicates only open planned actions with the same lifecycle
+  action fingerprint. Failed and succeeded execution attempts remain separate
+  evidence.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1513,3 +1567,7 @@ Results:
 - RL-025 | engineering | implementation | PB-005 Story 10 | Added
   open/closed runtime attention counts so resolved lifecycle failures remain
   evidence without inflating active operator work. | QA accepted 2026-06-12
+- RL-026 | engineering | implementation | PB-005 Story 11 | Reused existing
+  planned lifecycle action records for duplicate plan-only lifecycle and retry
+  commands while preserving append-only execution evidence. | QA accepted
+  2026-06-12

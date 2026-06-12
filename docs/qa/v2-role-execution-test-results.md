@@ -1465,3 +1465,58 @@ story's metric-only scope.
   attention total/open/closed/status metrics, dashboard open/closed tiles,
   failed-action open counts, retry-closed matching attention, preservation of
   unrelated open failures, and focused tests. | accepted 2026-06-12
+
+## PB-005 Story 11 - Planned Lifecycle Action Idempotency
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/container_lifecycle.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py
+```
+
+Results:
+
+```text
+41 passed
+```
+
+### Acceptance Assessment
+
+- Duplicate plan-only `run-project-container-lifecycle` calls reuse the
+  existing planned action by `action_fingerprint` instead of appending another
+  planned record.
+- The plan-only lifecycle command reports reused actions as `already_planned`
+  and increments `existing_planned_count`.
+- Duplicate plan-only `retry-container-lifecycle-action` calls reuse the
+  existing planned retry action by fingerprint and report `already_planned`.
+- Failed and succeeded execution attempts still use append-only action records;
+  execution paths continue to call `record_plan` rather than the idempotent
+  plan-only helper.
+- Existing lifecycle tests preserve repeated-attempt evidence for failed and
+  succeeded execution records.
+
+### Residual Gaps
+
+None blocking for PB-005 Story 11.
+
+### Review Log
+
+- QA-RL-024 | qa-engineer | acceptance | PB-005 Story 11 | Verified planned
+  lifecycle action idempotency for duplicate plan-only lifecycle and retry
+  commands, `already_planned`/`existing_planned_count` reporting, and
+  preservation of append-only failed/succeeded execution evidence. | accepted
+  2026-06-12

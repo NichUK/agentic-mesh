@@ -2087,6 +2087,22 @@ class V2Database:
         ).fetchone()
         return _row_to_dict(row) if row is not None else None
 
+    def find_planned_role_container_lifecycle_action(self, action_fingerprint: str) -> dict[str, Any] | None:
+        if not action_fingerprint.strip():
+            raise ValueError("container lifecycle action_fingerprint is required")
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM role_container_lifecycle_actions
+            WHERE action_fingerprint = ?
+              AND status = 'planned'
+            ORDER BY created_at DESC, action_id DESC
+            LIMIT 1
+            """,
+            (action_fingerprint,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def record_relevance_check(
         self,
         *,

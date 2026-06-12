@@ -566,6 +566,7 @@ def _run_project_container_lifecycle(db: V2Database, args: argparse.Namespace) -
     executed_count = 0
     failed_count = 0
     planned_count = 0
+    existing_planned_count = 0
     for action in actions:
         if args.execute:
             action_id, result = executor.execute(action)
@@ -583,13 +584,17 @@ def _run_project_container_lifecycle(db: V2Database, args: argparse.Namespace) -
                 }
             )
         else:
-            action_id = executor.record_plan(action)
-            planned_count += 1
+            action_id, created = executor.record_plan_if_absent(action)
+            status = "planned" if created else "already_planned"
+            if created:
+                planned_count += 1
+            else:
+                existing_planned_count += 1
             receipts.append(
                 {
                     **_action_to_dict(action),
                     "action_id": action_id,
-                    "status": "planned",
+                    "status": status,
                 }
             )
     return {
@@ -598,6 +603,7 @@ def _run_project_container_lifecycle(db: V2Database, args: argparse.Namespace) -
         "execute": bool(args.execute),
         "action_count": len(actions),
         "planned_count": planned_count,
+        "existing_planned_count": existing_planned_count,
         "executed_count": executed_count,
         "failed_count": failed_count,
         "skipped_count": len(skipped),
@@ -623,15 +629,15 @@ def _retry_container_lifecycle_action(db: V2Database, args: argparse.Namespace) 
                 "stderr": result.stderr,
             },
         }
-    action_id, action = executor.record_retry_plan(args.action_id)
+    action_id, action, created = executor.record_retry_plan(args.action_id)
     return {
-        "status": "planned",
+        "status": "planned" if created else "already_planned",
         "retry_of_action_id": args.action_id,
         "execute": False,
         "action": {
             **_action_to_dict(action),
             "action_id": action_id,
-            "status": "planned",
+            "status": "planned" if created else "already_planned",
         },
     }
 
