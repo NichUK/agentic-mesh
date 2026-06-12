@@ -1136,6 +1136,45 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def find_thread_binding(
+        self,
+        *,
+        connector_id: str,
+        external_thread_ref: str,
+        binding_type: str | None = None,
+    ) -> dict[str, Any] | None:
+        if binding_type is None:
+            row = self.connection.execute(
+                """
+                SELECT *
+                FROM thread_bindings
+                WHERE connector_id = ?
+                  AND external_thread_ref = ?
+                ORDER BY
+                  CASE binding_type
+                    WHEN 'human_question' THEN 0
+                    WHEN 'teams_thread' THEN 1
+                    ELSE 2
+                  END,
+                  created_at DESC
+                LIMIT 1
+                """,
+                (connector_id, external_thread_ref),
+            ).fetchone()
+        else:
+            row = self.connection.execute(
+                """
+                SELECT *
+                FROM thread_bindings
+                WHERE connector_id = ?
+                  AND external_thread_ref = ?
+                  AND binding_type = ?
+                LIMIT 1
+                """,
+                (connector_id, external_thread_ref, binding_type),
+            ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def list_delivery_records(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -1176,8 +1215,11 @@ class V2Database:
         external_event_receipts = self.list_external_event_receipts()
         redacted_external_event_receipts = _redact_private_external_event_receipts(external_event_receipts)
         delivery_records = self.list_delivery_records()
+        redacted_delivery_records = _redact_private_delivery_records(delivery_records)
         connector_attention_items = self.list_connector_attention_items()
         role_assignments = self.list_role_assignments()
+        safe_output_calls = self.list_safe_output_calls()
+        redacted_safe_output_calls = _redact_private_safe_output_calls(safe_output_calls)
         states: dict[str, int] = {}
         for item in work_items:
             state = str(item["state"])
@@ -1196,7 +1238,7 @@ class V2Database:
                 "queue_items": len(queue_items),
                 "work_items": len(work_items),
                 "agent_runs": len(self.list_agent_runs()),
-                "safe_output_calls": len(self.list_safe_output_calls()),
+                "safe_output_calls": len(safe_output_calls),
                 "artifacts": len(self.list_artifacts()),
                 "releases": len(releases),
                 "connectors": len(connectors),
@@ -1215,7 +1257,7 @@ class V2Database:
             "queue_items": queue_items,
             "work_items": work_items,
             "agent_runs": self.list_agent_runs(),
-            "safe_output_calls": self.list_safe_output_calls(),
+            "safe_output_calls": redacted_safe_output_calls,
             "artifacts": self.list_artifacts(),
             "releases": releases,
             "connectors": connectors,
@@ -1224,7 +1266,7 @@ class V2Database:
             "conversation_events": redacted_connector_events,
             "external_event_receipts": redacted_external_event_receipts,
             "thread_bindings": self.list_thread_bindings(),
-            "delivery_records": delivery_records,
+            "delivery_records": redacted_delivery_records,
             "connector_attention_items": connector_attention_items,
             "role_assignments": role_assignments,
             "recent_events": self.list_events()[-50:],
@@ -1262,6 +1304,34 @@ def _redact_private_external_event_receipts(rows: list[dict[str, Any]]) -> list[
         payload = item.get("payload")
         if isinstance(payload, dict) and payload.get("source_type") == "dm":
             item["payload"] = _redact_payload_body(payload)
+        redacted.append(item)
+    return redacted
+
+
+def _redact_private_delivery_records(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    redacted: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        payload = item.get("payload")
+        if item.get("destination_type") == "dm" and isinstance(payload, dict):
+            item["payload"] = _redact_payload_body(payload)
+        redacted.append(item)
+    return redacted
+
+
+def _redact_private_safe_output_calls(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    private_tools = {"status.reply", "sponsor.ask_question"}
+    redacted: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        payload = item.get("payload")
+        if item.get("tool_name") in private_tools and isinstance(payload, dict):
+            scrubbed = dict(payload)
+            for key in ("message", "question", "reason"):
+                if key in scrubbed:
+                    scrubbed[key] = "[redacted private conversation]"
+                    scrubbed[f"{key}_redacted"] = True
+            item["payload"] = scrubbed
         redacted.append(item)
     return redacted
 

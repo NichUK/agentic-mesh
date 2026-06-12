@@ -414,3 +414,396 @@ Recommended Story 4 QA gates:
   configured role-mention routing pass for the local connector scope. No
   blocking Engineering rework is required before Story 4. | accepted
   2026-06-12
+
+# V2 Teams Connector Story 4 QA Results
+
+Status: QA reviewed - rework required
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Story reviewed: Story 4 - Agent-Initiated Human Questions And Thread Binding.
+
+Primary references:
+
+- `docs/engineering/v2-teams-connector-implementation-plan.md`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+- `docs/qa/v2-teams-connector-test-plan.md`
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_foundation.py`
+- `tests/test_v2_teams_connector_direct_messages.py`
+- `tests/test_v2_teams_connector_project_channels.py`
+- `tests/test_v2_teams_connector_human_questions.py`
+
+## QA Decision
+
+Story 4 does not pass the QA release gate yet.
+
+Focused and full automated tests pass, and the happy path proves
+`sponsor.ask_question` can create a safe-output call, create one sent delivery
+record, record a `human_question` thread binding, and redact private inbound
+question/reply conversation events in the default status snapshot.
+
+Engineering rework is required before Story 5 because reply binding currently
+depends on fixture-supplied `bound_target_ref` instead of resolving the
+existing `human_question` thread binding. A same-thread sponsor reply without
+`bound_target_ref` binds to the Teams bot target, not the originating work or
+question target. Default status output also exposes private outbound
+question/reason text through `delivery_records[*].payload.body`.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` and observed existing uncommitted Engineering changes in `docs/engineering/v2-teams-connector-implementation-log.md`, `src/agentic_mesh_v2/connectors.py`, and untracked `tests/test_v2_teams_connector_human_questions.py`. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py` | Passed: 8 passed in 0.53s. |
+| `pytest -q` | Passed: 24 passed in 1.29s. |
+| In-memory Story 4 binding and privacy probe through `LocalTeamsTestAdapter`, `RoleService`, `ConnectorSafeOutputService`, and `status_snapshot()` | Failed Story 4 release expectations. A reply in `thread-human-question-probe` without `bound_target_ref` created `teams_thread -> bot-product-manager` while the existing `human_question` binding for the same thread targeted `work-teams-connector`. The same default snapshot redacted private inbound source and answer text, but still contained `private question sentinel` and `private reason sentinel` in the delivery record payload. No attention item was created for the ambiguous or mismatched binding. |
+
+## Acceptance Assessment
+
+| Story 4 expectation | QA result |
+| --- | --- |
+| `sponsor.ask_question` creates a safe-output call and delivery record | Pass for the local adapter happy path. The role run records one `sponsor.ask_question` safe-output call and one sent delivery record with purpose `sponsor.ask_question`. |
+| Outbound human question has an originating runtime binding | Partial. `deliver_human_question()` records a `human_question` thread binding to `work_item_id`, `target_ref`, or the safe-output `call_id`, so the outbound question can carry a source binding. The payload contract remains provisional. |
+| Human question delivery creates a `human_question` thread binding | Pass on the tested happy path. The binding uses the supplied thread ref and target work/question ref. |
+| Sponsor answer in the same Teams thread binds back to the original question/source work | Fail. The implementation records inbound thread replies with `target_ref=event.bound_target_ref or event.target_ref`; it does not look up the existing `human_question` binding by `thread_ref`. The focused test passes only because the fixture supplies `bound_target_ref=work-teams-connector`. |
+| Ambiguous or unbound replies create attention and do not mutate work state | Not covered and currently failing for the probed ambiguity. A same-thread reply that cannot infer the original target creates no attention item and binds to the bot target. |
+| Private question/reply conversation events remain redacted in default status output | Pass for inbound conversation events and external event receipts. Source and answer DM body sentinels were not present in the default snapshot. |
+| Private outbound human-question content is redacted from default status output | Fail. The default snapshot returns delivery records unredacted, including the private question and reason text in `delivery_records[*].payload.body`. |
+| Human loop-in records added participants and preserves the originating runtime binding | Not implemented or covered in Story 4 tests. This remains a QA-plan gap before this story can claim the broader human-loop-in scenario. |
+
+## Coverage Assessment
+
+Automated coverage is useful but too narrow for Story 4 release:
+
+- happy-path `sponsor.ask_question` safe-output routing
+- one sent delivery record for a direct-message human question
+- `human_question` thread binding creation
+- fixture-assisted human reply binding using explicit `bound_target_ref`
+- private inbound conversation-event preview redaction
+- regression coverage across Stories 1, 2, and 3
+
+Missing or insufficient coverage:
+
+- reply binding lookup from existing `human_question` bindings when Teams only
+  supplies the thread/message reference
+- ambiguous reply behavior and connector attention creation
+- same-thread reply without `bound_target_ref`
+- human loop-in participant or route-change audit
+- channel or group-chat question routes beyond accepting a destination type
+- whole-snapshot redaction of private outbound delivery payloads
+- negative evidence that human replies do not mutate work, approval, risk,
+  document, release, or handoff state from free text
+
+## Private Redaction Assessment
+
+Private inbound body redaction remains intact for Story 4:
+
+- private `conversation_events[*].body_preview` values are redacted
+- private direct-message `external_event_receipts[*].payload.body` values are
+  redacted
+- the probe found no private source or answer sentinels in the default snapshot
+
+Private outbound question redaction is incomplete:
+
+- `delivery_records` are returned unchanged by `status_snapshot()`
+- direct-message `sponsor.ask_question` delivery payloads include the full
+  question and reason text
+- the default snapshot exposed private question and reason sentinels through
+  `delivery_records[*].payload.body`
+
+Recommended minimum rework:
+
+- redact private direct-message delivery payload bodies in default
+  `status_snapshot()` output or omit the payload from the default operator view
+- add a whole-snapshot sentinel regression for private source, answer,
+  question, and reason text
+- preserve raw database delivery payloads only for a future
+  authorization-aware debug path
+
+## Required Engineering Rework
+
+Engineering rework is required before starting Story 5.
+
+Minimum required rework:
+
+- when an inbound reply has `thread_ref`, resolve the existing
+  `human_question` binding for that connector/conversation/thread and bind the
+  reply to the original target without requiring fixture-supplied
+  `bound_target_ref`
+- create a connector attention item when a reply thread is ambiguous, missing a
+  binding, or would otherwise bind only to a bot target
+- add regression tests for same-thread sponsor replies without
+  `bound_target_ref`
+- redact or omit private direct-message delivery payload bodies from default
+  status output and add whole-snapshot sentinel tests
+
+Recommended additional rework or explicit deferral:
+
+- document the `sponsor.ask_question` payload contract for `work_item_id`,
+  `target_ref`, `conversation_id`, `destination_ref`, `destination_type`, and
+  `thread_ref`
+- add a minimal human loop-in audit test or explicitly defer loop-in to a later
+  story with sponsor-visible risk
+- add negative assertions that sponsor answer ingestion does not create queue
+  items, work items, approvals, risks, documents, releases, or handoffs from
+  free text
+
+## Gaps And Risks
+
+- Real Teams cards, mentions, Graph/Bot Framework reply payloads, Entra
+  identity, consent, installation, tenant permissions, and real thread ids are
+  not covered yet.
+- Delivery retry, duplicate outbound suppression, transient failure, permanent
+  failure, and unknown outcome handling remain Story 5 scope.
+- Authority validation for who may answer a question remains Story 10/12 scope.
+- The current local adapter can accept `destination_type` values such as
+  channel or group chat, but Story 4 does not prove Teams-compatible channel or
+  group-chat question routing, human mentions, or broader decision threads.
+- The Story 4 test does not protect against the exact binding failure found by
+  the probe because it supplies the desired target as fixture input.
+
+## Rework Decision
+
+Engineering rework is required before Story 5.
+
+Story 5 should not begin until Story 4 is re-tested with:
+
+- focused Story 1-4 connector tests
+- full `pytest -q`
+- a same-thread sponsor-reply test without `bound_target_ref`
+- an ambiguous-thread attention test
+- a whole-snapshot private outbound question/reason redaction test
+
+## Review Log
+
+- RL-005 | qa-engineer | Story 4 QA | Happy-path agent-initiated human
+  questions pass automated tests, but the story fails the release gate because
+  reply binding does not resolve the existing human-question thread binding and
+  default status exposes private outbound question text in delivery payloads. |
+  rework required 2026-06-12
+
+# V2 Teams Connector Story 4 Current Working Tree QA Check
+
+Status: QA checked current tree - rework still required
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Story reviewed: Story 4 only - `sponsor.ask_question` delivery from a role to
+a human, question thread binding, human reply binding back to the work/question
+context, and private conversation redaction.
+
+Files inspected:
+
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_human_questions.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; current tree has modified `docs/engineering/v2-teams-connector-implementation-log.md`, modified `src/agentic_mesh_v2/connectors.py`, and untracked `tests/test_v2_teams_connector_human_questions.py`. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py` | Passed: 8 passed in 0.54s. |
+| In-memory Story 4 binding/redaction probe through `LocalTeamsTestAdapter`, `RoleService`, `ConnectorSafeOutputService`, and `status_snapshot()` | Failed Story 4 expectations: same-thread reply without `bound_target_ref` produced `human_question -> work-teams-connector` but `teams_thread -> bot-product-manager`; `connector_attention_items=0`; private inbound source/answer text was redacted, but private outbound question/reason text remained visible in `delivery_records[*].payload.body`. |
+
+## Coverage Assessment
+
+The new focused test covers the happy path for a role using
+`sponsor.ask_question`, a sent delivery record, a `human_question` thread
+binding, fixture-assisted human reply binding, and private inbound
+conversation-event redaction.
+
+Coverage is not yet sufficient for Story 4 because it does not prove reply
+binding from the stored thread binding itself, ambiguous-thread attention,
+human loop-in participant audit, channel/group-chat question routes, or
+whole-snapshot redaction of private outbound question content.
+
+## Gaps
+
+- Human replies depend on fixture-supplied `bound_target_ref`; the adapter does
+  not resolve the existing `human_question` binding from `thread_ref`.
+- Ambiguous or unbound replies do not create connector attention items.
+- Default status snapshots still expose private direct-message outbound
+  question and reason text through delivery record payloads.
+- Human loop-in recording is not implemented or covered in the Story 4 test.
+
+## Rework Decision
+
+Rework is required before Story 5.
+
+Minimum retest should include focused Story 1-4 connector tests, a same-thread
+reply test without `bound_target_ref`, an ambiguous-thread attention test, and
+a whole-snapshot sentinel test proving private source, answer, question, and
+reason text are not exposed by default status output.
+
+## Review Log
+
+- RL-006 | qa-engineer | Story 4 current-tree QA | Focused tests pass, but
+  current-tree inspection and probe confirm Story 4 still needs rework for
+  stored thread-binding resolution, ambiguous reply attention, and private
+  outbound delivery redaction before Story 5. | rework required 2026-06-12
+
+# V2 Teams Connector Story 4 Rework QA Retest
+
+Status: QA retested current tree - requested Story 4 rework mechanics pass,
+with one default-status privacy gap still open
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Story 4 rework only:
+
+- `sponsor.ask_question` delivery from a role to a human
+- stored `human_question` thread binding resolution when a sponsor reply lacks
+  `bound_target_ref`
+- connector attention for unbound private threaded replies
+- redaction of private outbound direct-message delivery payloads in default
+  status output
+
+Files inspected:
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_teams_connector_human_questions.py`
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed current branch `codex/v2-runtime-reset` with existing uncommitted Story 4 changes and no source/test edits by QA. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py` | Passed: 9 passed in 0.59s. |
+| In-memory Story 4 binding/attention/redaction probe through `LocalTeamsTestAdapter`, `RoleService`, `ConnectorSafeOutputService`, and `status_snapshot()` | Passed for requested mechanics: same-thread reply without `bound_target_ref` resolved `teams_thread -> work-teams-connector`, unbound private thread created one `unbound_thread_reply` attention item, and `delivery_records[*].payload.body` was `[redacted private conversation]` with no private question/reason sentinel in delivery records. |
+
+## Retest Result
+
+Pass for the explicit rework mechanics:
+
+- `sponsor.ask_question` creates the safe-output call, sent delivery record,
+  and `human_question` thread binding.
+- sponsor replies in the same thread no longer require fixture-supplied
+  `bound_target_ref`; the adapter resolves the stored `human_question` binding.
+- unbound private threaded replies create connector attention instead of being
+  silently trusted.
+- private direct-message outbound delivery payload bodies are redacted from
+  `delivery_records` in `status_snapshot()`.
+
+## Residual Gaps
+
+- The default status snapshot still exposes private `sponsor.ask_question`
+  question and reason text through `safe_output_calls[*].payload`. Delivery
+  payload redaction is fixed, but whole-snapshot private outbound redaction is
+  not complete unless `safe_output_calls` is intentionally outside the default
+  privacy contract.
+- Story 4 remains local-adapter coverage only. Real Teams cards, Graph/Bot
+  Framework thread ids, mentions, tenant permissions, and channel/group-chat
+  delivery semantics are not exercised.
+- Human loop-in participant audit and authority validation for who may answer a
+  question remain uncovered or deferred.
+
+## Story 5 Gate
+
+Story 5 should not begin yet if the Story 4 privacy gate means no private
+question/reason text appears anywhere in default `status-json` output.
+
+If the sponsor explicitly accepts `safe_output_calls` as an internal,
+unredacted status surface, then Story 5 may begin for the four requested rework
+mechanics tested here.
+
+## Review Log
+
+- RL-007 | qa-engineer | Story 4 rework retest | Focused connector tests and
+  probe pass for `sponsor.ask_question` delivery, stored thread binding
+  resolution without `bound_target_ref`, unbound private thread attention, and
+  delivery-record redaction. Default status still exposes private question and
+  reason text via `safe_output_calls`, so Story 5 should wait unless that
+  status surface is explicitly accepted as out of scope. | conditional pass
+  2026-06-12
+
+# V2 Teams Connector Story 4 Final Privacy QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Final Story 4 privacy retest for the local Teams connector slice:
+
+- `sponsor.ask_question` delivery and stored human-question thread binding
+- sponsor reply binding without fixture-supplied `bound_target_ref`
+- unbound private threaded reply attention behavior
+- default status redaction for private `status.reply` and
+  `sponsor.ask_question` text through `delivery_records` and
+  `safe_output_calls`
+
+Files inspected:
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_teams_connector_direct_messages.py`
+- `tests/test_v2_teams_connector_human_questions.py`
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed current branch `codex/v2-runtime-reset` and existing uncommitted Engineering changes. QA only edited this results file. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py` | Passed: 9 passed in 0.61s. |
+| `pytest -q` | Passed: 25 passed in 1.38s. |
+| Whole-snapshot privacy probe covering private DM source text, `status.reply` message text, `sponsor.ask_question` question/reason text, and sponsor answer text | Passed: `leaked_sentinels=[]`; `delivery_records[*].payload.body` was `[redacted private conversation]` for both `status.reply` and `sponsor.ask_question`; `safe_output_calls[*].payload.message/question/reason` were redacted with redaction flags; `human_question` and `teams_thread` bindings both targeted `work-story4-final-privacy`. |
+
+## Retest Result
+
+Pass. Story 4 mechanics still pass in the current working tree, and the prior
+default-status privacy gap is closed for the tested local-adapter paths.
+
+Default `status_snapshot()` no longer exposes private `status.reply` message
+text or private `sponsor.ask_question` question/reason text through
+`delivery_records` or `safe_output_calls`. The focused tests also continue to
+prove stored `human_question` binding resolution and unbound private-thread
+attention behavior.
+
+## Residual Gaps
+
+- Coverage remains local-adapter only; no real Teams tenant, Bot Framework,
+  Graph, Entra consent, installation, permission, card, mention, or production
+  thread-id evidence exists yet.
+- Human loop-in participant audit, authority validation for who may answer, and
+  channel/group-chat question semantics remain uncovered or deferred.
+- Raw audit tables may still retain private payloads for future authorized
+  debug paths; this retest covers the default status read model.
+
+## Story 5 Gate
+
+Story 5 may begin for the local Teams connector progression.
+
+## Review Log
+
+- RL-008 | qa-engineer | Story 4 final privacy retest | Focused Story 1-4
+  connector tests, full test suite, and a whole-snapshot sentinel probe pass.
+  Default status no longer leaks private `status.reply` or
+  `sponsor.ask_question` text through `delivery_records` or
+  `safe_output_calls`. Story 5 may begin for the local connector scope. |
+  accepted 2026-06-12

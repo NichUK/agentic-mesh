@@ -161,13 +161,38 @@ class LocalTeamsTestAdapter:
         )
         thread_ref = event.get("thread_ref")
         if thread_ref:
+            existing_thread_binding = self.db.find_thread_binding(
+                connector_id=connector_id,
+                external_thread_ref=str(thread_ref),
+            )
+            if (
+                source_type == "dm"
+                and existing_thread_binding is None
+                and not event.get("bound_target_ref")
+            ):
+                self.db.create_connector_attention_item(
+                    attention_id=f"attention-{_stable_digest(f'{receipt.receipt_id}:unbound-thread')}",
+                    connector_id=connector_id,
+                    owner="operator",
+                    reason_class="unbound_thread_reply",
+                    next_action=(
+                        "Inspect the private threaded reply and bind it to the correct "
+                        "work item or conversation context before relying on it for flow decisions."
+                    ),
+                    retryable=True,
+                    source_ref=receipt.receipt_id,
+                )
             self.db.bind_thread(
                 thread_binding_id=f"thread-{_stable_digest(f'{connector_id}:{thread_ref}')}",
                 connector_id=connector_id,
                 conversation_id=conversation_id,
                 external_thread_ref=str(thread_ref),
                 binding_type="teams_thread",
-                target_ref=event.get("target_ref"),
+                target_ref=(
+                    event.get("bound_target_ref")
+                    or (existing_thread_binding or {}).get("target_ref")
+                    or event.get("target_ref")
+                ),
             )
         self.db.record_conversation_event(
             conversation_event_id=f"conversation-event-{_stable_digest(f'{receipt.receipt_id}:event')}",
@@ -300,6 +325,30 @@ class LocalTeamsTestAdapter:
             role_id=role_id,
         )
 
+    def deliver_human_question(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
+        question = _required_string(payload, "question")
+        conversation_id = _required_string(payload, "conversation_id")
+        destination_ref = _required_string(payload, "destination_ref")
+        destination_type = str(payload.get("destination_type") or "dm")
+        thread_ref = str(payload.get("thread_ref") or f"thread-{call_id}")
+        self.db.bind_thread(
+            thread_binding_id=f"thread-{_stable_digest(f'{self.config.connector_id}:{thread_ref}:human-question')}",
+            connector_id=self.config.connector_id,
+            conversation_id=conversation_id,
+            external_thread_ref=thread_ref,
+            binding_type="human_question",
+            target_ref=payload.get("work_item_id") or payload.get("target_ref") or call_id,
+        )
+        body = f"{question}\n\nReason: {payload.get('reason', '')}".strip()
+        return self.send_message(
+            source_ref=call_id,
+            destination_ref=destination_ref,
+            destination_type=destination_type,
+            purpose="sponsor.ask_question",
+            body=body,
+            role_id=role_id,
+        )
+
     def _route_type(self, *, source_type: str, mentioned_roles: tuple[str, ...], body: str) -> str:
         if source_type == "dm":
             return "role_direct_message"
@@ -352,6 +401,12 @@ class ConnectorSafeOutputService(SafeOutputService):
         call_id = super().record(run_id=run_id, call=call)
         if call.tool_name == "status.reply" and "conversation_id" in call.payload:
             self.adapter.deliver_status_reply(
+                call_id=call_id,
+                role_id=call.role_id,
+                payload=call.payload,
+            )
+        if call.tool_name == "sponsor.ask_question" and "conversation_id" in call.payload:
+            self.adapter.deliver_human_question(
                 call_id=call_id,
                 role_id=call.role_id,
                 payload=call.payload,

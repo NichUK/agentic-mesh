@@ -14,7 +14,7 @@ Source documents:
 
 ## Story 1 - Connector Foundation And Local Test Adapter
 
-Status: engineering implemented; awaiting QA review
+Status: engineering rework implemented; awaiting QA retest
 
 ### Objective
 
@@ -280,6 +280,89 @@ Story 4 - Agent-Initiated Human Questions And Thread Binding.
 Do not begin Story 4 until QA has reviewed Story 3 and any required rework has
 passed retest.
 
+## Story 4 - Agent-Initiated Human Questions And Thread Binding
+
+Status: engineering implemented; awaiting QA review
+
+### Objective
+
+Allow a role to ask a human for clarification or a decision through
+`sponsor.ask_question`, deliver the question through the connector, and bind the
+resulting Teams thread back to the originating work/question context.
+
+### Files Changed
+
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_human_questions.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+### Implementation Notes
+
+- Added local adapter delivery support for `sponsor.ask_question`.
+- `ConnectorSafeOutputService` now routes `sponsor.ask_question` payloads with
+  connector conversation fields to the local adapter.
+- Agent-initiated questions create sent delivery records with purpose
+  `sponsor.ask_question`.
+- Agent-initiated questions create `human_question` thread bindings to the
+  originating work/question target.
+- Human replies in the same Teams thread create `teams_thread` bindings that
+  prefer explicit `bound_target_ref`, then an existing stored thread binding,
+  over the Teams bot target ref.
+- Direct-message human replies remain private and redacted in default status
+  snapshots.
+- Private outbound `sponsor.ask_question` delivery payload bodies are redacted
+  in default status snapshots while remaining available in the raw audit
+  records.
+- Private `status.reply` and `sponsor.ask_question` safe-output payload text is
+  redacted in default status snapshots while raw audit records remain available
+  through repository access.
+- Private threaded replies without an explicit or existing question/work
+  binding create operator attention instead of silently relying on ambiguous
+  thread context.
+
+### Tests Run
+
+Commands:
+
+```powershell
+pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py
+pytest -q
+```
+
+Results:
+
+```text
+9 passed
+25 passed
+```
+
+Focused coverage added:
+
+- `sponsor.ask_question` creates a safe-output call and sent delivery record
+- human question delivery creates a `human_question` thread binding
+- human reply in the bound thread creates a `teams_thread` binding to the same
+  work/question target
+- human reply binding works without fixture-supplied `bound_target_ref`
+- private question/reply conversation events and private outbound delivery
+  payloads remain redacted in default status output
+- private safe-output message/question/reason fields remain redacted in default
+  status output
+- unbound private threaded replies create connector attention
+
+### Known Limitations
+
+- Real Teams cards, mentions, and Graph/Bot Framework reply handling remain
+  later-story scope.
+- Authority validation for who may answer the question is Story 10/12 scope.
+- Delivery retry and unknown outcome handling remain Story 5 scope.
+
+### Next Engineering Story
+
+Story 5 - Delivery, Retry, Failure Attention, And Idempotency.
+
+Do not begin Story 5 until QA has reviewed Story 4 and any required rework has
+passed retest.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
@@ -294,3 +377,14 @@ passed retest.
 - RL-004 | engineering | implementation | Story 3 | Implemented project-channel
   context capture and configured role-mention assignments with focused tests. |
   awaiting QA review 2026-06-12
+- RL-005 | engineering | implementation | Story 4 | Implemented
+  agent-initiated human questions and bound Teams thread replies through the
+  local connector adapter. | awaiting QA review 2026-06-12
+- RL-006 | engineering | QA rework | Story 4 | Fixed same-thread reply binding
+  to use stored human-question thread context, redacted private outbound
+  question payloads from default status, and added attention for unbound
+  private threaded replies. | awaiting QA retest 2026-06-12
+- RL-007 | engineering | QA rework | Story 4 | Redacted private
+  `status.reply` and `sponsor.ask_question` safe-output payload text from
+  default status snapshots after QA found the remaining privacy surface. |
+  awaiting QA retest 2026-06-12
