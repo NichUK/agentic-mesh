@@ -99,6 +99,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     {self._count_tile("Permission checks", counts["connector_permission_checks"])}
     {self._count_tile("Connector attention", counts["connector_attention_items"])}
     {self._count_tile("Runtime attention", counts.get("runtime_attention_items", 0))}
+    {self._count_tile("Runtime attention open", counts.get("runtime_attention_open", 0))}
+    {self._count_tile("Runtime attention closed", counts.get("runtime_attention_closed", 0))}
   </div>
   <h2>Connector Metrics</h2>
   <div class="tiles">

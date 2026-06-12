@@ -1381,6 +1381,54 @@ Results:
 - Commands include the dashboard process database path and assume the operator
   is running from an environment where `agentic_mesh_v2.cli` is available.
 
+## PB-005 Story 10 - Runtime Attention Open/Closed Counts
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Split runtime attention totals into open and closed counts so resolved
+container lifecycle failures remain available as evidence without continuing to
+look like active operational work.
+
+### Implementation Notes
+
+- Added `runtime_attention_statuses` to the status snapshot.
+- Added `runtime_attention_open` and `runtime_attention_closed` count fields.
+- Added dashboard tiles for open and closed runtime attention.
+- Kept the total runtime attention count unchanged as the evidence total.
+
+### Tests Added
+
+- failed lifecycle action reports one open runtime attention item and zero
+  closed items
+- successful retry reports one closed runtime attention item and leaves an
+  unrelated failed action as one open runtime attention item
+- dashboard HTML includes the runtime attention open tile
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+21 passed
+80 passed
+```
+
+### Known Limitations
+
+- This story adds count visibility only; it does not add filtering controls to
+  the dashboard tables.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1462,3 +1510,6 @@ Results:
 - RL-024 | engineering | implementation | PB-005 Story 9 | Added dashboard
   retry guidance for open retryable lifecycle failure attention without adding
   HTTP-side lifecycle execution. | QA accepted 2026-06-12
+- RL-025 | engineering | implementation | PB-005 Story 10 | Added
+  open/closed runtime attention counts so resolved lifecycle failures remain
+  evidence without inflating active operator work. | QA accepted 2026-06-12

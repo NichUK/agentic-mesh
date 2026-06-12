@@ -1414,3 +1414,54 @@ operations scope:
   uses quoted source failed action ids, omits retry commands for closed
   attention, keeps unrelated open attention actionable, remains HTTP read-only,
   and passes focused tests. | accepted 2026-06-12
+
+## PB-005 Story 10 - Runtime Attention Open/Closed Counts
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_container_lifecycle.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+44 passed
+```
+
+### Acceptance Assessment
+
+- `status_snapshot()` keeps `runtime_attention_items` as the total evidence
+  count and now exposes `runtime_attention_open`,
+  `runtime_attention_closed`, and `runtime_attention_statuses`.
+- Failed role-container lifecycle execution is covered as one open runtime
+  attention item with zero closed items.
+- Successful retry closure is covered as one closed matching attention item
+  while an unrelated failed lifecycle action remains open.
+- The status dashboard shows separate runtime attention open and closed tiles
+  without removing the existing total runtime attention tile.
+
+### Residual Gaps
+
+None blocking for PB-005 Story 10. Dashboard filtering remains outside this
+story's metric-only scope.
+
+### Review Log
+
+- QA-RL-023 | qa-engineer | acceptance | PB-005 Story 10 | Verified runtime
+  attention total/open/closed/status metrics, dashboard open/closed tiles,
+  failed-action open counts, retry-closed matching attention, preservation of
+  unrelated open failures, and focused tests. | accepted 2026-06-12

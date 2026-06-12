@@ -280,6 +280,9 @@ def test_container_lifecycle_executor_records_failed_stop_without_changing_insta
     assert snapshot["role_container_lifecycle_actions"][0]["stderr"] == "compose failed"
     assert snapshot["role_instance_statuses"][0]["status"] == "hibernated"
     assert snapshot["counts"]["runtime_attention_items"] == 1
+    assert snapshot["counts"]["runtime_attention_open"] == 1
+    assert snapshot["counts"]["runtime_attention_closed"] == 0
+    assert snapshot["runtime_attention_statuses"] == {"open": 1}
     attention = snapshot["runtime_attention_items"][0]
     assert attention["source_type"] == "role_container_lifecycle"
     assert attention["source_ref"] == snapshot["role_container_lifecycle_actions"][0]["action_id"]
@@ -290,6 +293,7 @@ def test_container_lifecycle_executor_records_failed_stop_without_changing_insta
     html = _render(snapshot)
     assert "Runtime Attention" in html
     assert "container_lifecycle_failed" in html
+    assert "Runtime attention open" in html
     assert "Operator Action" in html
     assert "retry-container-lifecycle-action --action-id" in html
     assert attention["source_ref"] in html
@@ -404,6 +408,10 @@ def test_successful_retry_closes_matching_lifecycle_attention(tmp_path: Path) ->
         second_id: "succeeded",
     }
     attention_by_source = {item["source_ref"]: item for item in snapshot["runtime_attention_items"]}
+    assert snapshot["counts"]["runtime_attention_items"] == 2
+    assert snapshot["counts"]["runtime_attention_open"] == 1
+    assert snapshot["counts"]["runtime_attention_closed"] == 1
+    assert snapshot["runtime_attention_statuses"] == {"closed": 1, "open": 1}
     assert attention_by_source[first_id]["status"] == "closed"
     assert second_id in attention_by_source[first_id]["next_action"]
     assert attention_by_source[unrelated_id]["status"] == "open"

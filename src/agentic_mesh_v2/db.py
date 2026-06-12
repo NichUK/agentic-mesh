@@ -3042,6 +3042,10 @@ class V2Database:
         for assignment in role_assignments:
             status = str(assignment["status"])
             role_assignment_statuses[status] = role_assignment_statuses.get(status, 0) + 1
+        runtime_attention_statuses: dict[str, int] = {}
+        for item in runtime_attention_items:
+            status = str(item["status"])
+            runtime_attention_statuses[status] = runtime_attention_statuses.get(status, 0) + 1
         relevance_decisions: dict[str, int] = {}
         for record in relevance_checks:
             decision = str(record["decision"])
@@ -3107,6 +3111,8 @@ class V2Database:
                 "delivery_attempts": len(delivery_attempts),
                 "connector_attention_items": len(connector_attention_items),
                 "runtime_attention_items": len(runtime_attention_items),
+                "runtime_attention_open": runtime_attention_statuses.get("open", 0),
+                "runtime_attention_closed": runtime_attention_statuses.get("closed", 0),
                 "connector_permission_checks": len(connector_permission_checks),
                 "role_assignments": len(role_assignments),
                 "role_instance_statuses": len(role_instance_statuses),
@@ -3122,6 +3128,7 @@ class V2Database:
             "queue_statuses": queue_statuses,
             "delivery_statuses": delivery_statuses,
             "role_assignment_statuses": role_assignment_statuses,
+            "runtime_attention_statuses": runtime_attention_statuses,
             "connector_metrics": connector_metrics,
             "queue_items": queue_items,
             "work_items": work_items,
