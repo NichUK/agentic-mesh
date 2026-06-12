@@ -2251,3 +2251,210 @@ compileall passed
   side effects for CLI-recorded safe outputs, direct-call non-duplication,
   Teams DM delivery evidence, and scoped implementation claims. | accepted
   2026-06-12
+
+## PB-005 Story 23 - MCP-Compatible Safe-Output Transport
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_output_transport.py`
+- `src/agentic_mesh_v2/safe_output_mcp.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_safe_output_mcp.py`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_output_mcp.py tests\test_v2_cli_server.py::test_v2_cli_record_safe_output_records_tool_call_for_running_role_run tests\test_v2_cli_server.py::test_v2_cli_record_safe_output_rejects_wrong_role_for_run tests\test_v2_cli_server.py::test_v2_cli_record_safe_output_rejects_unknown_run tests\test_v2_cli_server.py::test_v2_cli_record_safe_output_rejects_non_running_run tests\test_v2_cli_server.py::test_v2_cli_record_safe_output_rejects_unauthorized_tool_without_recording tests\test_v2_cli_server.py::test_v2_cli_record_safe_output_rejects_invalid_payload_json tests\test_v2_cli_server.py::test_v2_cli_record_safe_output_rejects_non_object_payload_json tests\test_v2_cli_server.py::test_v2_cli_record_safe_output_rejects_fake_durable_claim
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_output_mcp.py tests\test_v2_cli_server.py -k "record_safe_output or safe_output_mcp"
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py -k "safe_output_transport or recorded_by_worker_cli_transport"
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+14 passed initial focused suite
+18 passed focused MCP/CLI suite after rework
+1 passed role-service transport regression
+214 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation shared CLI/MCP safe-output validation and rejected
+  unsafe run, role, payload, tool, and fake-claim inputs.
+- QA found MCP lifecycle incompatibility: compliant clients send
+  `notifications/initialized` after `initialize`. Engineering accepted that
+  notification without returning an error.
+- QA found `tools/call` without a JSON-RPC id could mutate state without a
+  receipt. Engineering rejected id-less `tools/call` before recording.
+- QA found terminal typing could treat truthy strings as booleans. Engineering
+  required `terminal` to be a boolean.
+
+### Acceptance Assessment
+
+- MCP `safe_output.record` now uses the same runtime validation as the CLI
+  transport.
+- Safe-output mutation calls require observable request/receipt semantics.
+- Stdio transport reports parse errors and handles JSON-lines requests.
+- No MCP call bypasses safe-output role/tool policy.
+
+### Residual Risks
+
+- The implementation is MCP-compatible JSON-RPC/stdio, not a full external MCP
+  framework integration.
+
+### Review Log
+
+- QA-RL-037 | qa-engineer | acceptance | PB-005 Story 23 | Verified
+  MCP-compatible safe-output recording, initialized notification handling,
+  mutation request-id enforcement, terminal type validation, and shared
+  CLI/MCP policy path. | accepted after rework 2026-06-12
+
+## PB-005 Story 24 - Project-Local Role Memory Loading
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/project_config.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/prompt_builder.py`
+- `tests/test_v2_project_config.py`
+- `tests/test_v2_cli_server.py`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_prompt_builder.py tests\test_v2_cli_server.py::test_v2_cli_run_role_service_tick_loads_worker_from_project_file
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_cli_server.py::test_v2_cli_run_role_service_tick_loads_worker_from_project_file tests\test_v2_cli_server.py::test_v2_cli_runs_project_role_services_once_for_configured_instances
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+13 passed initial focused suite
+17 passed focused suite after containment rework
+220 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation loaded project-local role memory into prompt context
+  and prompt audit manifests.
+- QA found absolute and relative traversal paths could escape the project repo
+  boundary and be read into persisted prompts. Engineering added project-root
+  containment checks for `role_memory.config_root`, `role_id`, and per-role
+  `memory.file`.
+- QA requested more coverage for enabled-but-missing memory and project-wide
+  role-service memory loading. Engineering added those regressions.
+
+### Acceptance Assessment
+
+- Role memory is loaded from a visible project-local file, not hidden process
+  state.
+- Prompt audit records include the memory context itself and the memory context
+  count.
+- Missing or disabled role memory fails safe with empty context.
+- Project-root containment prevents out-of-project file reads into prompts.
+
+### Residual Risks
+
+- Role memory updates and document-library refresh from `memory.propose_update`
+  remain future stories.
+
+### Review Log
+
+- QA-RL-038 | qa-engineer | acceptance | PB-005 Story 24 | Verified
+  project-local role memory loading, prompt injection, prompt manifest evidence,
+  disabled/missing memory behavior, project-wide runner coverage, and
+  project-root containment. | accepted after rework 2026-06-12
+
+## PB-005 Story 25 - Release Manager Safe-Output Authority
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/safe_output_transport.py`
+- `tests/test_v2_release_safe_outputs.py`
+- Existing release service tests
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py -k "safe_output or release or recorded_by_worker_cli_transport"
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py tests\test_v2_safe_output_mcp.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+5 passed release safe-output focused suite after rework
+24 passed focused release/safe-output suite
+17 passed release/MCP focused suite after final coverage additions
+227 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation connected Release Manager safe-output calls to
+  `ReleaseService`, but QA found CLI-recorded release calls could be processed
+  twice when RoleService replayed recorded calls. Engineering changed CLI/MCP
+  transport to record intent only and let RoleService own effect processing.
+- QA found `release.deploy` could override the configured deployment command
+  with arbitrary payload command/cwd values. Engineering rejected command/cwd
+  overrides and allowed only configured deployment target execution.
+- QA found no-deployment disposition evidence was too weak. Engineering
+  required `commit_ref` and `approval_ref` for both deployment and
+  no-deployment releases.
+- QA requested direct MCP transport regression and missing-provenance coverage
+  for `release.deploy`; engineering added both.
+
+### Acceptance Assessment
+
+- Release Manager safe-output calls now perform real release service actions.
+- `release.close` cannot close work without a release record accepted by
+  `ReleaseService`.
+- Deployed releases require successful deployment-run evidence and required
+  release evidence links before closure.
+- CLI/MCP transport records release intent without immediate side effects.
+- `release.deploy` cannot bypass configured deployment targets.
+
+### Residual Risks
+
+- The story is Compose-target based. Additional deployment adapters remain
+  future stories.
+
+### Review Log
+
+- QA-RL-039 | qa-engineer | acceptance | PB-005 Story 25 | Verified
+  Release Manager safe-output authority for no-deployment, deployment, closure,
+  CLI/MCP transport single-effect processing, command override rejection,
+  provenance enforcement, and release evidence closure rules. | accepted after
+  rework 2026-06-12

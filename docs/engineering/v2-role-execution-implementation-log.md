@@ -2220,6 +2220,243 @@ compileall passed
   connector side effects outside role-service execution remains a later slice.
 - MCP exposure remains a later slice.
 
+## PB-005 Story 23 - MCP-Compatible Safe-Output Transport
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Expose the same safe-output recording contract through an MCP-compatible
+JSON-RPC surface so native/tool-aware agents can record durable tool calls
+without depending on final JSON result blobs or the CLI command shape.
+
+### Changes
+
+- Extracted run ownership, running-state, payload-object, and safe-output policy
+  validation into `safe_output_transport.record_safe_output_for_run`.
+- Kept `record-safe-output` CLI on the shared validation path.
+- Added `safe_output_mcp.py` with:
+  - `initialize`
+  - `notifications/initialized`
+  - `tools/list`
+  - `tools/call` for `safe_output.record`
+  - JSON-lines stdio loop for MCP-compatible hosting.
+- Required `tools/call` requests to carry a JSON-RPC id before any mutation is
+  recorded.
+- Required `terminal` to be a boolean when supplied.
+- Returned parse errors for malformed stdio JSON requests.
+
+### QA Rework
+
+QA found that compliant MCP clients send `notifications/initialized` after
+`initialize`, and the first implementation returned an unsupported-method
+error with `id: null`. Engineering changed the handler to accept the
+notification silently.
+
+QA also found that a mutation-bearing `tools/call` with no request id could
+record a safe-output call without returning a receipt. Engineering changed
+`tools/call` to reject missing request ids before recording.
+
+### Tests Added
+
+- MCP tool listing exposes `safe_output.record` with run, role, tool, payload,
+  and terminal schema fields.
+- MCP `tools/call` records a `status.reply` for a running role-owned run.
+- MCP rejects unknown MCP tool names, wrong role ownership, fake durable claims,
+  non-boolean terminal values, and `tools/call` without a request id.
+- MCP initialized notifications are accepted without response or mutation.
+- Stdio loop handles valid JSON-lines calls and malformed JSON parse errors.
+- CLI safe-output tests continue to pass through the shared helper.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_output_mcp.py tests\test_v2_cli_server.py -k "record_safe_output or safe_output_mcp"
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py -k "safe_output_transport or recorded_by_worker_cli_transport"
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+18 passed focused MCP/CLI suite
+1 passed focused role-service transport regression
+214 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- This is an MCP-compatible JSON-RPC surface, not a dependency on a full MCP
+  framework package. The shared handler can be wrapped by a formal MCP server
+  library later without changing safe-output policy.
+
+## PB-005 Story 24 - Project-Local Role Memory Loading
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Load project-local role memory into long-running role service runs so fresh
+worker processes regain role context from a visible, source-linked project
+file rather than hidden process memory.
+
+### Changes
+
+- Added `RoleMemoryConfig`, `load_role_memory_config`, and
+  `load_role_memory_context`.
+- Resolved `role_memory.config_root` relative to the project repo root, not the
+  system source repo or the `agentic-mesh/` config subfolder.
+- Allowed per-role `role.yaml` to point to a single local memory filename.
+- Injected loaded role memory into `RoleAssignment.memory_context` before prompt
+  assembly and worker execution.
+- Added `memory_context_count` to prompt audit manifests so operators can see
+  whether memory was loaded without reading the entire prompt.
+- Wired both `run-role-service-tick --project-file` and
+  `run-project-role-services-once` through the memory loader.
+
+### QA Rework
+
+QA found that the initial path resolver accepted absolute paths and `../`
+escapes in `role_memory.config_root`, `role_id`, and per-role `memory.file`,
+allowing out-of-project files to be read into prompt audit records. Engineering
+added containment checks that resolve all role memory paths inside the project
+root and require memory filenames to be single relative filenames.
+
+### Tests Added
+
+- Project-local `MEMORY.md` is loaded from
+  `{project}/agentic-mesh/roles/{role}/MEMORY.md`.
+- Disabled role memory returns empty context.
+- Enabled but missing memory files return empty context without failing.
+- Escaping `config_root`, escaping `role_id`, and escaping `memory.file` are
+  rejected.
+- Single role-service tick prompt audit includes role memory content and a
+  nonzero `memory_context_count`.
+- Project-wide role-service runner loads memory for roles that have a memory
+  file and records zero memory context for roles without one.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_prompt_builder.py tests\test_v2_cli_server.py::test_v2_cli_run_role_service_tick_loads_worker_from_project_file
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_cli_server.py::test_v2_cli_run_role_service_tick_loads_worker_from_project_file tests\test_v2_cli_server.py::test_v2_cli_runs_project_role_services_once_for_configured_instances
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+13 passed initial focused suite
+17 passed focused suite after containment rework
+220 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- This story loads filesystem-backed role memory only. Updating role memory
+  from `memory.propose_update` and refreshing it from canonical documents remain
+  later stories.
+
+## PB-005 Story 25 - Release Manager Safe-Output Authority
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Allow Release Manager safe-output calls to perform real release actions through
+the release service instead of only recording status-like claims.
+
+### Changes
+
+- Base `SafeOutputService.process_recorded_call` now handles:
+  - `release.record_no_deployment`
+  - `release.deploy`
+  - `release.close`
+- `release.record_no_deployment` writes a release record through
+  `ReleaseService.record_no_deployment`.
+- `release.deploy` executes the configured Compose deployment target through
+  `ReleaseService.deploy_compose_release`.
+- `release.close` closes released or no-deployment work through
+  `ReleaseService.close_released_work`.
+- `release.deploy` and `release.record_no_deployment` require `commit_ref`,
+  `approval_ref`, `scope`, `rollback_plan`, and `residual_risks`.
+- `release.deploy` rejects payload-supplied `command` and `cwd` so agents cannot
+  bypass configured deployment targets with arbitrary no-op commands.
+- CLI/MCP safe-output transport now records intent only; RoleService applies
+  effects once while finalizing recorded tool calls.
+- Release deployment and close effects are idempotency-tolerant for run replay.
+
+### QA Rework
+
+QA found that CLI-recorded release calls could be applied twice: once when the
+transport recorded them and again when RoleService replayed recorded calls. The
+transport now records only; RoleService owns effect processing.
+
+QA found that `release.deploy` allowed payload-provided command/cwd overrides.
+Engineering removed those overrides and added rejection coverage.
+
+QA found no-deployment evidence was under-specified. Engineering required
+`approval_ref` and `commit_ref` for both deployment and no-deployment release
+safe-output payloads.
+
+QA then requested direct MCP regression coverage and a negative deploy
+provenance test. Engineering added both.
+
+### Tests Added
+
+- Release Manager safe outputs can record a no-deployment disposition and close
+  the work item.
+- Release Manager safe outputs can execute a configured Compose deployment
+  target, record deployment evidence, link release evidence, and close the work
+  item.
+- CLI-transport-recorded release safe outputs are applied once by RoleService.
+- MCP-transport-recorded release safe outputs record intent without immediate
+  release effects.
+- `release.deploy` rejects command overrides before recording.
+- `release.deploy` and `release.record_no_deployment` reject missing
+  `approval_ref` and `commit_ref`.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py -k "safe_output or release or recorded_by_worker_cli_transport"
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py tests\test_v2_safe_output_mcp.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+5 passed release safe-output focused suite after rework
+24 passed focused release/safe-output suite
+17 passed release/MCP focused suite after final coverage additions
+227 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- This story uses the existing Compose deployment target release service. Other
+  deployment adapters remain future stories.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -2332,3 +2569,37 @@ compileall passed
   timeout defaults for direct CLI worker overrides so `codex-cli` keeps its
   four-hour default unless an operator explicitly supplies a timeout. |
   QA accepted 2026-06-12
+- RL-034 | engineering | implementation | PB-005 Story 18 | Wired the dogfood
+  Compose deployment to run one long-running role-agent service per configured
+  role instance. | QA accepted 2026-06-12
+- RL-035 | engineering | implementation | PB-005 Story 19 | Added XML prompt
+  assembly, component prompt loading, full prompt audit, and worker prompt
+  injection. | QA accepted 2026-06-12
+- RL-036 | engineering | implementation | PB-005 Story 20 | Added the
+  run-bound safe-output CLI recording command with shared policy validation and
+  structured receipts. | QA accepted 2026-06-12
+- RL-037 | engineering | implementation | PB-005 Story 21 | Collected
+  CLI-recorded safe-output calls from role runs and used DB-recorded calls for
+  terminal validation. | QA accepted 2026-06-12
+- RL-038 | engineering | implementation | PB-005 Story 22 | Added connector
+  side effects for CLI-recorded safe outputs through `process_recorded_call`. |
+  QA accepted 2026-06-12
+- RL-039 | engineering | implementation | PB-005 Story 23 | Added an
+  MCP-compatible safe-output JSON-RPC/stdio transport sharing the CLI
+  validation path. | QA requested rework 2026-06-12
+- RL-040 | engineering | QA rework | PB-005 Story 23 | Accepted MCP initialized
+  notifications, required request ids for mutation-bearing `tools/call`, and
+  tightened terminal typing. | QA accepted 2026-06-12
+- RL-041 | engineering | implementation | PB-005 Story 24 | Loaded
+  project-local role `MEMORY.md` into role-service prompt context and prompt
+  audit manifests. | QA requested rework 2026-06-12
+- RL-042 | engineering | QA rework | PB-005 Story 24 | Added project-root
+  containment checks for role memory config roots, role ids, and per-role
+  memory filenames. | QA accepted 2026-06-12
+- RL-043 | engineering | implementation | PB-005 Story 25 | Wired Release
+  Manager safe outputs to real release/no-deployment/deploy/close actions
+  through `ReleaseService`. | QA requested rework 2026-06-12
+- RL-044 | engineering | QA rework | PB-005 Story 25 | Made CLI/MCP transport
+  record release intent without immediate effects, rejected deployment command
+  overrides, required release provenance, and added MCP/provenance regression
+  coverage. | QA accepted 2026-06-12
