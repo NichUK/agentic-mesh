@@ -181,6 +181,22 @@ def _reject_fake_claims(tool_name: str, payload: dict[str, Any]) -> None:
             raise SafeOutputError(
                 "status messages must not claim durable mutations; use the matching tool"
             )
+        delivery_claims = [
+            "delivered the teams reply successfully",
+            "delivered successfully",
+            "delivery succeeded",
+            "human delivery succeeded",
+            "teams delivery succeeded",
+            "message was delivered",
+            "sent successfully",
+            "successfully sent",
+            "sent the teams reply",
+            "delivered to the human",
+        ]
+        if any(marker in text for marker in delivery_claims):
+            raise SafeOutputError(
+                "status messages must not claim connector delivery success; runtime delivery records own that fact"
+            )
     for key in payload:
         if key in {"created_work_item_id", "created_queue_item_id"}:
             raise SafeOutputError("safe-output payloads must not invent created ids")

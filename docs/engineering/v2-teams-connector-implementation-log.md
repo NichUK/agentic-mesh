@@ -363,6 +363,106 @@ Story 5 - Delivery, Retry, Failure Attention, And Idempotency.
 Do not begin Story 5 until QA has reviewed Story 4 and any required rework has
 passed retest.
 
+## Story 5 - Delivery, Retry, Failure Attention, And Idempotency
+
+Status: engineering implemented; awaiting QA review
+
+### Objective
+
+Make outbound Teams delivery auditable and recoverable so status replies and
+sponsor questions cannot falsely claim success when the connector failed,
+returned an unknown outcome, or retried.
+
+### Files Changed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_delivery_retry.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+### Implementation Notes
+
+- Added `delivery_attempts` as first-class audit records linked to delivery
+  records.
+- Delivery records now support idempotent creation by `idempotency_key`; a
+  duplicate outbound send returns the existing delivery without creating a new
+  attempt.
+- Local Teams delivery now records `sending` transitions and final attempt
+  outcomes for `sent`, `failed_transient`, `failed_permanent`, and `unknown`.
+- Added explicit retry scheduling via `retry_scheduled`.
+- Added `retry_delivery()` for retryable delivery states:
+  `failed_transient`, `unknown`, and `retry_scheduled`.
+- Sent deliveries are terminal for retry purposes; retrying an already sent
+  delivery returns the existing delivery without another human-visible send.
+- Permanent failures create non-retryable operator attention.
+- Transient failures and unknown outcomes create retryable operator attention,
+  with unknown outcomes warning the operator to check Teams before retrying to
+  avoid duplicate human-visible messages.
+- Default status snapshots now include delivery attempts and delivery status
+  counts.
+- `status.reply` and `status.complete` validation now rejects agent-authored
+  claims that connector delivery succeeded; runtime delivery records own that
+  fact.
+- Added a connector-path regression using a failing local adapter to prove a
+  truthful `status.reply` can record a failed delivery while a delivery-success
+  claim is rejected before becoming safe-output state.
+
+### Tests Run
+
+Commands:
+
+```powershell
+pytest -q tests\test_v2_safe_outputs.py
+pytest -q tests\test_v2_teams_connector_delivery_retry.py
+pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py
+pytest -q
+```
+
+Results:
+
+```text
+3 passed
+4 passed
+13 passed
+30 passed
+```
+
+Initial implementation results before QA rework:
+
+```text
+3 passed
+12 passed
+28 passed
+```
+
+Focused coverage added:
+
+- duplicate outbound sends reuse the existing delivery record without a new
+  attempt
+- transient failure creates retryable attention and can retry to sent
+- retrying an already sent delivery does not create a duplicate successful send
+- permanent failure creates non-retryable operator attention
+- unknown outcome remains visible and retryable, with duplicate-send warning
+- retry scheduling is represented in delivery status counts
+- connector delivery-success claims are rejected from `status.reply` text
+- failed connector delivery through `ConnectorSafeOutputService` leaves
+  delivery/attention evidence without accepting a false human-delivery claim
+
+### Known Limitations
+
+- This is still the deterministic local Teams adapter; real Microsoft
+  Graph/Bot Framework retry policies, rate limits, and unknown outcome
+  classification remain real-connector scope.
+- Attention item closure and retry action buttons remain dashboard/operator UX
+  scope.
+
+### Next Engineering Story
+
+Story 6 - Separate Visible Role Identities.
+
+Do not begin Story 6 until QA has reviewed Story 5 and any required rework has
+passed retest.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
@@ -388,3 +488,11 @@ passed retest.
   `status.reply` and `sponsor.ask_question` safe-output payload text from
   default status snapshots after QA found the remaining privacy surface. |
   awaiting QA retest 2026-06-12
+- RL-008 | engineering | implementation | Story 5 | Implemented delivery
+  attempt audit records, idempotent outbound send suppression, retry scheduling,
+  retryable transient/unknown attention, permanent-failure attention, and
+  delivery retry tests. | awaiting QA review 2026-06-12
+- RL-009 | engineering | QA rework | Story 5 | Added safe-output validation
+  that rejects connector delivery-success claims in status messages, plus a
+  connector-path failing-delivery regression test. | awaiting QA retest
+  2026-06-12

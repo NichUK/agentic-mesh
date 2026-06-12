@@ -18,6 +18,9 @@ VALID_RETENTION_KEYS = {
     "idempotency_receipt_days",
 }
 
+DELIVERY_OUTCOMES = {"sent", "failed_transient", "failed_permanent", "unknown"}
+RETRYABLE_DELIVERY_STATUSES = {"failed_transient", "unknown", "retry_scheduled"}
+
 
 @dataclass(frozen=True)
 class ConnectorConfig:
@@ -272,8 +275,15 @@ class LocalTeamsTestAdapter:
         body: str,
         role_id: str | None = None,
         fail: bool = False,
+        outcome: str | None = None,
     ) -> str:
+        requested_outcome = "failed_transient" if fail else outcome or "sent"
+        if requested_outcome not in DELIVERY_OUTCOMES:
+            raise ValueError(f"unknown delivery outcome `{requested_outcome}`")
         idempotency_key = f"{self.config.connector_id}:{source_ref}:{destination_ref}:{purpose}"
+        existing = self.db.get_delivery_record_by_idempotency_key(idempotency_key)
+        if existing is not None:
+            return str(existing["delivery_id"])
         delivery_id = f"delivery-{_stable_digest(idempotency_key)}"
         self.db.create_delivery_record(
             delivery_id=delivery_id,
@@ -287,29 +297,87 @@ class LocalTeamsTestAdapter:
             payload={"body": body},
             status="pending",
         )
-        if fail:
-            self.db.update_delivery_record(
-                delivery_id,
-                status="failed_transient",
-                error_class="simulated_send_failure",
-                error_detail="Local test adapter was instructed to fail delivery.",
-            )
+        self._apply_delivery_outcome(delivery_id=delivery_id, outcome=requested_outcome)
+        return delivery_id
+
+    def schedule_delivery_retry(self, delivery_id: str) -> None:
+        delivery = self.db.get_delivery_record(delivery_id)
+        if delivery is None:
+            raise ValueError(f"unknown delivery `{delivery_id}`")
+        if delivery["status"] == "sent":
+            return
+        if delivery["status"] not in RETRYABLE_DELIVERY_STATUSES:
+            raise ValueError(f"delivery `{delivery_id}` is not retryable from status `{delivery['status']}`")
+        self.db.update_delivery_record(delivery_id, status="retry_scheduled")
+
+    def retry_delivery(self, delivery_id: str, *, outcome: str = "sent") -> str:
+        if outcome not in DELIVERY_OUTCOMES:
+            raise ValueError(f"unknown delivery outcome `{outcome}`")
+        delivery = self.db.get_delivery_record(delivery_id)
+        if delivery is None:
+            raise ValueError(f"unknown delivery `{delivery_id}`")
+        if delivery["status"] == "sent":
+            return delivery_id
+        if delivery["status"] not in RETRYABLE_DELIVERY_STATUSES:
+            raise ValueError(f"delivery `{delivery_id}` is not retryable from status `{delivery['status']}`")
+        self.schedule_delivery_retry(delivery_id)
+        self._apply_delivery_outcome(delivery_id=delivery_id, outcome=outcome)
+        return delivery_id
+
+    def _apply_delivery_outcome(self, *, delivery_id: str, outcome: str) -> None:
+        delivery = self.db.get_delivery_record(delivery_id)
+        if delivery is None:
+            raise ValueError(f"unknown delivery `{delivery_id}`")
+        self.db.update_delivery_record(delivery_id, status="sending")
+        attempt_number = self.db.count_delivery_attempts(delivery_id) + 1
+        external_message_id = None
+        error_class = None
+        error_detail = None
+        if outcome == "sent":
+            external_message_id = f"local-teams-message-{_stable_digest(f'{delivery_id}:{attempt_number}')}"
+        elif outcome == "failed_transient":
+            error_class = "simulated_transient_send_failure"
+            error_detail = "Local test adapter simulated a transient Teams delivery failure."
+        elif outcome == "failed_permanent":
+            error_class = "simulated_permanent_send_failure"
+            error_detail = "Local test adapter simulated a permanent Teams delivery failure."
+        elif outcome == "unknown":
+            error_class = "simulated_unknown_send_outcome"
+            error_detail = "Local test adapter simulated an unknown Teams delivery outcome."
+        self.db.record_delivery_attempt(
+            attempt_id=f"delivery-attempt-{_stable_digest(f'{delivery_id}:{attempt_number}')}",
+            delivery_id=delivery_id,
+            connector_id=self.config.connector_id,
+            attempt_number=attempt_number,
+            status=outcome,
+            external_message_id=external_message_id,
+            error_class=error_class,
+            error_detail=error_detail,
+        )
+        self.db.update_delivery_record(
+            delivery_id,
+            status=outcome,
+            external_message_id=external_message_id,
+            error_class=error_class,
+            error_detail=error_detail,
+        )
+        if outcome in {"failed_transient", "failed_permanent", "unknown"}:
+            retryable = outcome != "failed_permanent"
+            reason_class = f"delivery_{outcome}"
+            next_action = {
+                "failed_transient": "Inspect connector delivery failure and retry when safe.",
+                "failed_permanent": "Correct connector configuration or destination before retrying with a new delivery.",
+                "unknown": "Check Teams for the message before retrying to avoid duplicate human-visible sends.",
+            }[outcome]
             self.db.create_connector_attention_item(
-                attention_id=f"attention-{_stable_digest(f'{delivery_id}:failure')}",
+                attention_id=f"attention-{_stable_digest(f'{delivery_id}:{attempt_number}:{outcome}')}",
                 connector_id=self.config.connector_id,
                 owner="operator",
-                reason_class="delivery_failed_transient",
-                next_action="Inspect connector delivery failure and retry when safe.",
-                retryable=True,
+                reason_class=reason_class,
+                next_action=next_action,
+                retryable=retryable,
                 source_ref=delivery_id,
             )
-        else:
-            self.db.update_delivery_record(
-                delivery_id,
-                status="sent",
-                external_message_id=f"local-teams-message-{_stable_digest(delivery_id)}",
-            )
-        return delivery_id
 
     def deliver_status_reply(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
         message = str(payload.get("message") or "")

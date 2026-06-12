@@ -807,3 +807,196 @@ Story 5 may begin for the local Teams connector progression.
   `sponsor.ask_question` text through `delivery_records` or
   `safe_output_calls`. Story 5 may begin for the local connector scope. |
   accepted 2026-06-12
+
+# V2 Teams Connector Story 5 QA Results
+
+Status: QA reviewed - rework required
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Story reviewed: Story 5 - Delivery, Retry, Failure Attention, And Idempotency.
+
+Files inspected:
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_teams_connector_delivery_retry.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; current tree has modified Engineering files and untracked Story 5 test work. QA only edited this results file. |
+| `pytest -q tests\test_v2_teams_connector_delivery_retry.py` | Passed: 3 passed in 0.25s. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py` | Passed: 12 passed in 0.83s. |
+| `pytest -q` | Passed: 28 passed in 1.72s. |
+| Forced failed `status.reply` safe-output probe using a subclassed local adapter | Failed Story 5 fake-claim expectation: a `status.reply` payload saying `I delivered the Teams reply successfully to the human.` was accepted while the delivery record ended in `failed_transient`; status output showed `delivery_statuses={"failed_transient": 1}` and one `delivery_failed_transient` attention item. |
+
+## QA Decision
+
+Story 5 does not pass the QA gate yet.
+
+The delivery record, delivery attempt, duplicate outbound suppression,
+transient retry, unknown outcome attention, permanent failure attention, retry
+scheduling, and status visibility mechanics pass for the deterministic local
+adapter scope. However, the safe-output delivery path still does not prevent a
+role/status reply from claiming human Teams delivery succeeded when the
+delivery attempt fails. Rework is required before Story 6.
+
+## Acceptance Assessment
+
+| Story 5 expectation | QA result |
+| --- | --- |
+| Delivery records and attempts are audited | Pass. New `delivery_attempts` records are created per send attempt and exposed in `status_snapshot()` counts/read model. |
+| Duplicate outbound sends are suppressed idempotently | Pass. Duplicate `send_message()` with the same source, destination, and purpose returns the existing delivery id and does not add another attempt. |
+| Transient failure can retry under policy | Pass. `failed_transient` creates retryable attention and can retry to `sent` without duplicating a successful send. |
+| Unknown outcome is visible for operator review | Pass. Unknown outcome creates retryable attention with a warning to check Teams before retrying. |
+| Permanent failure creates non-retryable attention | Pass. `failed_permanent` creates non-retryable operator attention and retry raises `ValueError`. |
+| Retry scheduling is visible | Pass. `schedule_delivery_retry()` moves retryable records to `retry_scheduled`, and the status count reflects it. |
+| Status/proof replies cannot claim human delivery succeeded when delivery failed | Fail. A forced failed `status.reply` safe-output call accepted message text claiming successful human delivery while the delivery record was `failed_transient`. |
+
+## Coverage Assessment
+
+Automated coverage is strong for local delivery-state mechanics:
+
+- delivery record creation and attempt recording
+- idempotent duplicate outbound suppression
+- transient failure attention and retry to sent
+- terminal behavior for already sent deliveries
+- permanent failure non-retryability
+- unknown outcome operator attention and retry scheduling visibility
+
+Coverage is insufficient for the proof/status fake-claim gate. Current tests
+exercise failed outcomes through `LocalTeamsTestAdapter.send_message()`
+directly, but not through `ConnectorSafeOutputService.record()` with a
+connector delivery failure. The generic safe-output fake-claim guard still
+focuses on invented durable mutations such as work creation or deployment, not
+human-visible Teams delivery-success claims.
+
+## Required Rework
+
+Minimum rework before Story 6:
+
+- add validation or delivery-result wording control so `status.reply` and proof
+  status messages cannot claim Teams/human delivery success unless the matching
+  delivery record is actually `sent`
+- add a regression test that forces `ConnectorSafeOutputService.record()` to
+  experience a failed or unknown delivery and proves the role/status reply does
+  not claim successful human delivery
+- keep failed and unknown deliveries visible through delivery records,
+  delivery attempts, and connector attention items
+
+## Residual Gaps
+
+- Story 5 remains local-adapter only; no real Teams tenant, Bot Framework,
+  Graph, throttling, permission, timeout, or ambiguous network outcome evidence
+  exists yet.
+- `superseded` and `canceled` delivery states remain unimplemented or
+  unexercised in this slice.
+- Retry policy timing/backoff fields are represented only as state transitions;
+  no `next_retry_at`, max-attempt, or scheduler worker behavior is covered yet.
+- Attention resolution/closure after a successful retry remains future
+  operator UX or dashboard scope.
+
+## Review Log
+
+- RL-009 | qa-engineer | Story 5 QA | Delivery attempts, duplicate outbound
+  suppression, transient retry, unknown/permanent failure attention, retry
+  scheduling, and status visibility pass local-adapter tests, but Story 5
+  fails the fake-claim gate because a `status.reply` can still claim human
+  Teams delivery succeeded when the connector delivery actually failed. |
+  rework required 2026-06-12
+
+# V2 Teams Connector Story 5 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 5 rework for the prior fake-claim blocker:
+
+- `status.reply` and `status.complete` must not claim connector, Teams, or
+  human delivery success.
+- a failed `ConnectorSafeOutputService` `status.reply` delivery path must keep
+  failed delivery evidence without accepting a false delivery-success claim.
+- delivery retry and idempotency mechanics must remain green.
+
+Files inspected:
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_safe_outputs.py`
+- `tests/test_v2_teams_connector_delivery_retry.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed current branch and existing uncommitted Engineering/QA changes. QA edited only this results file. |
+| `pytest -q tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_delivery_retry.py` | Passed: 7 passed in 0.47s. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py` | Passed: 13 passed in 0.90s. |
+| `pytest -q` | Passed: 30 passed in 1.64s. |
+| Failed-delivery safe-output probe covering `status.reply` and `status.complete` delivery-success claims | Passed: one truthful `status.reply` was recorded, connector delivery ended `failed_transient`, one failed delivery attempt and one `delivery_failed_transient` attention item remained visible, the false `status.reply` delivery-success claim was rejected, the false `status.complete` delivery-success claim was rejected, and `safe_output_calls` stayed at 1. |
+
+## Retest Decision
+
+Story 5 now passes QA for the implemented local Teams connector scope.
+
+The prior fake-claim blocker is fixed. Safe-output validation rejects
+agent-authored delivery-success claims in both `status.reply` and
+`status.complete`, and the failed connector delivery path preserves the real
+runtime evidence instead of allowing a false human-visible success claim into
+safe-output state.
+
+## Acceptance Retest
+
+| Story 5 expectation | Retest result |
+| --- | --- |
+| Delivery records and attempts are audited | Pass. Focused tests and probe show delivery records and delivery attempts are counted and visible. |
+| Duplicate outbound sends are suppressed idempotently | Pass. Duplicate local adapter sends reuse the existing delivery record without adding another attempt. |
+| Transient failure can retry under policy | Pass. `failed_transient` remains retryable and can transition to `sent` without duplicate successful sends. |
+| Unknown outcome is visible for operator review | Pass. Unknown outcome remains retryable and warns operators to check Teams before retry. |
+| Permanent failure creates non-retryable attention | Pass. Permanent failure attention is non-retryable and retry raises `ValueError`. |
+| Retry scheduling is visible | Pass. `retry_scheduled` remains represented in delivery status counts. |
+| `status.reply` cannot claim human/Teams delivery success | Pass. Regression test and probe reject the prior false success wording before a safe-output call is recorded. |
+| `status.complete` cannot claim human/Teams delivery success | Pass. Probe confirmed the same delivery-success guard applies to `status.complete`. |
+| Failed `ConnectorSafeOutputService` delivery keeps failure evidence | Pass. Probe left `delivery_statuses={"failed_transient": 1}`, one delivery attempt, and one `delivery_failed_transient` attention item while rejecting the false success claim. |
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, throttling, permission, timeout, or ambiguous
+  network outcome evidence exists yet.
+- The fake-claim guard is phrase-based validation, not a semantic proof system;
+  future role prompt contracts and broader negative examples should keep
+  tightening agent wording.
+- `superseded` and `canceled` delivery states, retry backoff fields,
+  max-attempt scheduling, and attention closure after successful retry remain
+  future delivery/operator UX scope.
+
+## Story 6 Gate
+
+Story 6 may begin for the local Teams connector progression.
+
+## Review Log
+
+- RL-010 | qa-engineer | Story 5 QA retest | Focused safe-output and delivery
+  retry tests, the Story 1-5 connector slice, full pytest, and a failed
+  connector-delivery probe all pass. The prior false human/Teams delivery
+  success claim is rejected for `status.reply` and `status.complete`, while
+  failed delivery evidence remains visible. Story 6 may begin for the local
+  connector scope. | accepted 2026-06-12

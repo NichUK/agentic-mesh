@@ -258,6 +258,19 @@ class V2Database:
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS delivery_attempts (
+                  attempt_id TEXT PRIMARY KEY,
+                  delivery_id TEXT NOT NULL REFERENCES delivery_records(delivery_id),
+                  connector_id TEXT NOT NULL REFERENCES connectors(connector_id),
+                  attempt_number INTEGER NOT NULL,
+                  status TEXT NOT NULL,
+                  external_message_id TEXT,
+                  error_class TEXT,
+                  error_detail TEXT,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(delivery_id, attempt_number)
+                );
+
                 CREATE TABLE IF NOT EXISTS connector_attention_items (
                   attention_id TEXT PRIMARY KEY,
                   connector_id TEXT NOT NULL REFERENCES connectors(connector_id),
@@ -565,11 +578,11 @@ class V2Database:
         payload: dict[str, Any],
         status: str = "pending",
         role_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         with self.connection:
-            self.connection.execute(
+            cursor = self.connection.execute(
                 """
-                INSERT INTO delivery_records(
+                INSERT OR IGNORE INTO delivery_records(
                   delivery_id, connector_id, source_ref, destination_ref, destination_type,
                   purpose, status, role_id, idempotency_key, payload_json
                 )
@@ -588,12 +601,29 @@ class V2Database:
                     json.dumps(payload, sort_keys=True),
                 ),
             )
-            self.append_event(
-                "connector.delivery_created",
-                "connector",
-                connector_id,
-                {"delivery_id": delivery_id, "status": status, "purpose": purpose},
-            )
+            created = cursor.rowcount > 0
+            if created:
+                self.append_event(
+                    "connector.delivery_created",
+                    "connector",
+                    connector_id,
+                    {"delivery_id": delivery_id, "status": status, "purpose": purpose},
+                )
+            return created
+
+    def get_delivery_record(self, delivery_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM delivery_records WHERE delivery_id = ?",
+            (delivery_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
+    def get_delivery_record_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM delivery_records WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
 
     def update_delivery_record(
         self,
@@ -628,6 +658,58 @@ class V2Database:
                     str(row["connector_id"]),
                     {"delivery_id": delivery_id, "status": status, "error_class": error_class},
                 )
+
+    def record_delivery_attempt(
+        self,
+        *,
+        attempt_id: str,
+        delivery_id: str,
+        connector_id: str,
+        attempt_number: int,
+        status: str,
+        external_message_id: str | None = None,
+        error_class: str | None = None,
+        error_detail: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO delivery_attempts(
+                  attempt_id, delivery_id, connector_id, attempt_number, status,
+                  external_message_id, error_class, error_detail
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attempt_id,
+                    delivery_id,
+                    connector_id,
+                    attempt_number,
+                    status,
+                    external_message_id,
+                    error_class,
+                    error_detail,
+                ),
+            )
+            self.append_event(
+                "connector.delivery_attempt_recorded",
+                "connector",
+                connector_id,
+                {
+                    "attempt_id": attempt_id,
+                    "delivery_id": delivery_id,
+                    "attempt_number": attempt_number,
+                    "status": status,
+                    "error_class": error_class,
+                },
+            )
+
+    def count_delivery_attempts(self, delivery_id: str) -> int:
+        row = self.connection.execute(
+            "SELECT COUNT(*) AS count FROM delivery_attempts WHERE delivery_id = ?",
+            (delivery_id,),
+        ).fetchone()
+        return int(row["count"]) if row is not None else 0
 
     def create_connector_attention_item(
         self,
@@ -1185,6 +1267,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_delivery_attempts(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM delivery_attempts
+            ORDER BY created_at DESC, attempt_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_connector_attention_items(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -1216,6 +1308,7 @@ class V2Database:
         redacted_external_event_receipts = _redact_private_external_event_receipts(external_event_receipts)
         delivery_records = self.list_delivery_records()
         redacted_delivery_records = _redact_private_delivery_records(delivery_records)
+        delivery_attempts = self.list_delivery_attempts()
         connector_attention_items = self.list_connector_attention_items()
         role_assignments = self.list_role_assignments()
         safe_output_calls = self.list_safe_output_calls()
@@ -1248,6 +1341,7 @@ class V2Database:
                 "external_event_receipts": len(external_event_receipts),
                 "thread_bindings": len(self.list_thread_bindings()),
                 "delivery_records": len(delivery_records),
+                "delivery_attempts": len(delivery_attempts),
                 "connector_attention_items": len(connector_attention_items),
                 "role_assignments": len(role_assignments),
             },
@@ -1267,6 +1361,7 @@ class V2Database:
             "external_event_receipts": redacted_external_event_receipts,
             "thread_bindings": self.list_thread_bindings(),
             "delivery_records": redacted_delivery_records,
+            "delivery_attempts": delivery_attempts,
             "connector_attention_items": connector_attention_items,
             "role_assignments": role_assignments,
             "recent_events": self.list_events()[-50:],

@@ -63,3 +63,19 @@ def test_status_reply_cannot_claim_fake_work_creation(tmp_path: Path) -> None:
                 terminal=True,
             ),
         )
+
+
+def test_status_reply_cannot_claim_connector_delivery_success(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    service = SafeOutputService(db)
+
+    with pytest.raises(SafeOutputError, match="connector delivery success"):
+        service.record(
+            run_id="run-1",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="status.reply",
+                payload={"message": "I delivered the Teams reply successfully to the human."},
+                terminal=True,
+            ),
+        )
