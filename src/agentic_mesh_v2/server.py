@@ -86,6 +86,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     {self._count_tile("Safe outputs", counts["safe_output_calls"])}
     {self._count_tile("Artifacts", counts["artifacts"])}
     {self._count_tile("Releases", counts["releases"])}
+    {self._count_tile("Deployment targets", counts.get("deployment_targets", 0))}
+    {self._count_tile("Deployment runs", counts.get("deployment_runs", 0))}
     {self._count_tile("Connectors", counts["connectors"])}
     {self._count_tile("Role identities", counts["connector_participants"])}
     {self._count_tile("Conversation events", counts["conversation_events"])}
@@ -142,6 +144,12 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   {self._queue_table(snapshot["queue_items"])}
   <h2>Releases</h2>
   {self._release_table(snapshot["releases"])}
+  <h2>Deployment Targets</h2>
+  {self._deployment_target_table(snapshot["deployment_targets"])}
+  <h2>Deployment Runs</h2>
+  {self._deployment_run_table(snapshot["deployment_runs"])}
+  <h2>Release Evidence Links</h2>
+  {self._release_evidence_table(snapshot["release_evidence_links"])}
   <h2>Recent Events</h2>
   {self._events_table(snapshot["recent_events"])}
 </body>
@@ -421,6 +429,54 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 "</tr>"
             )
         return "<table><tr><th>Release</th><th>Status</th><th>Deployment / Smoke</th><th>Rollback</th></tr>" + "".join(body) + "</table>"
+
+    def _deployment_target_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 deployment targets.</p>'
+        body = []
+        for row in items:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['target_id'])}</code><br>{_e(row['target_type'])}</td>"
+                f"<td>{_e(row['project_id'])}<br>{_e(row.get('connector_id') or '')}</td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row.get('disable_reason') or '')}</td>"
+                f"<td>{_e(row['service_name'])}<br>{_e(row.get('external_base_url') or '')}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Target</th><th>Project / Connector</th><th>Status / Disable Reason</th><th>Service / URL</th></tr>" + "".join(body) + "</table>"
+
+    def _deployment_run_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 deployment runs.</p>'
+        body = []
+        for row in items:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['run_id'])}</code><br>{_e(row['target_id'])}</td>"
+                f"<td>{_e(row['work_item_id'])}<br>{_e(row['release_id'])}</td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row['smoke_result'])}</td>"
+                f"<td>{_e(row['rollback_plan'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Run / Target</th><th>Work / Release</th><th>Status / Smoke</th><th>Rollback</th></tr>" + "".join(body) + "</table>"
+
+    def _release_evidence_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 release evidence links.</p>'
+        body = []
+        for row in items:
+            body.append(
+                "<tr>"
+                f"<td>{_e(row['artifact_type'])}<br>{_e(row['role_id'])}</td>"
+                f"<td><code>{_e(row['artifact_ref'])}</code></td>"
+                f"<td>{_e(row['status'])}</td>"
+                f"<td>{_e(row['release_id'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Type / Role</th><th>Artifact</th><th>Status</th><th>Release</th></tr>" + "".join(body) + "</table>"
 
     def _events_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []

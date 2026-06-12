@@ -89,3 +89,31 @@ def test_release_close_requires_deployment_or_no_deployment_disposition(tmp_path
     )
 
     assert db.get_work_item("work-1").state == "closed"
+
+
+def test_deployed_release_cannot_close_without_deployment_run_and_evidence_links(tmp_path: Path) -> None:
+    db = _releasedb(tmp_path)
+    service = ReleaseService(db)
+    service.record_deployment(
+        ReleaseEvidence(
+            work_item_id="work-1",
+            release_id="rel-shortcut",
+            scope="Tiny feature.",
+            commit_ref="abc123",
+            approval_ref="approval-1",
+            deployment_result="manual claim",
+            smoke_result="passed",
+            rollback_plan="Revert commit abc123.",
+            residual_risks="None known.",
+        )
+    )
+
+    with pytest.raises(ReleaseError, match="successful deployment run"):
+        service.close_released_work(
+            work_item_id="work-1",
+            from_state="release_review",
+            actor_role="release-manager",
+            reason="Sponsor approved release.",
+        )
+
+    assert db.get_work_item("work-1").state == "release_review"

@@ -1,7 +1,10 @@
 from pathlib import Path
 
+from agentic_mesh_v2.release import ComposeCommandResult
+from agentic_mesh_v2.release import ComposeDeploymentTarget
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.release import ReleaseEvidence
+from agentic_mesh_v2.release import ReleaseEvidenceLink
 from agentic_mesh_v2.release import ReleaseService
 from agentic_mesh_v2.role_service import RoleAssignment
 from agentic_mesh_v2.role_service import RoleService
@@ -157,8 +160,35 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
         )
     )
 
-    release = ReleaseService(db)
-    release.record_deployment(
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text(
+        """
+services:
+  v2-runtime:
+    image: agentic-mesh:local
+    command: python -m agentic_mesh_v2.cli --db /mesh/project/state/v2.sqlite3 serve
+    environment:
+      AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project.yaml
+    volumes:
+      - ./project:/mesh/project
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def compose_runner(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ComposeCommandResult:
+        return ComposeCommandResult(exit_code=0, stdout="started")
+
+    release = ReleaseService(db, compose_runner=compose_runner)
+    release.register_compose_target(
+        ComposeDeploymentTarget(
+            target_id="target-compose-local",
+            project_id="agentic-mesh-dev",
+            compose_files=(compose_file,),
+            service_name="v2-runtime",
+            external_base_url="http://linuxch:8100",
+        )
+    )
+    release.deploy_compose_release(
         ReleaseEvidence(
             work_item_id="work-1",
             release_id="rel-1",
@@ -169,7 +199,25 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
             smoke_result="passed",
             rollback_plan="Revert abc123 and redeploy previous image.",
             residual_risks="None known.",
-        )
+        ),
+        target_id="target-compose-local",
+        smoke_checks={
+            "healthz": "passed",
+            "status_json": "passed",
+            "inbound_dm": "passed",
+            "outbound_reply": "passed",
+            "approval_response": "passed",
+            "permission_failure": "passed",
+        },
+        evidence_links=(
+            ReleaseEvidenceLink("work-items/work-1/020-product-definition.md", "product", "product-manager"),
+            ReleaseEvidenceLink("work-items/work-1/040-architecture.md", "architecture", "solution-architect"),
+            ReleaseEvidenceLink("work-items/work-1/050-security.md", "security", "security-architect"),
+            ReleaseEvidenceLink("work-items/work-1/060-prompt-contract.md", "prompt", "prompt-engineer"),
+            ReleaseEvidenceLink("work-items/work-1/100-implementation-log.md", "engineering", "engineering"),
+            ReleaseEvidenceLink("work-items/work-1/110-quality-evidence.md", "qa", "qa-engineer"),
+            ReleaseEvidenceLink("work-items/work-1/140-release-record.md", "release", "release-manager"),
+        ),
     )
     release.close_released_work(
         work_item_id="work-1",
@@ -183,4 +231,6 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
     assert "queue_item.created" in event_types
     assert "safe_output.recorded" in event_types
     assert "release.recorded" in event_types
+    assert "deployment_run.recorded" in event_types
+    assert "release_evidence.linked" in event_types
     assert event_types.count("work_item.transitioned") >= 4

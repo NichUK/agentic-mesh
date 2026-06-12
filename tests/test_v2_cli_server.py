@@ -20,7 +20,7 @@ def test_v2_cli_demo_slice_creates_closed_release(tmp_path: Path, capsys) -> Non
     assert snapshot["counts"]["work_items"] == 1
     assert snapshot["counts"]["releases"] == 1
     assert snapshot["work_items"][0]["state"] == "closed"
-    assert snapshot["releases"][0]["status"] == "deployed"
+    assert snapshot["releases"][0]["status"] == "no_deployment_disposition"
 
 
 def test_v2_cli_status_json_reports_runtime_state(tmp_path: Path, capsys) -> None:

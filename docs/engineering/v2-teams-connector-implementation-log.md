@@ -1148,6 +1148,141 @@ Story 14 - Release, Deployment, Rollback, And Dogfood Validation.
 Do not begin Story 14 until QA has reviewed Story 13 and any required rework has
 passed retest.
 
+## Story 14 - Release, Deployment, Rollback, And Dogfood Validation
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Story 14 adds the local release/deployment validation spine for the v2 Teams
+connector. Release Manager can now register a project-scoped Compose deployment
+target, validate that the service runs from a project boundary, record a release
+deployment with smoke evidence, link required cross-discipline release evidence,
+and disable the target for rollback without deleting runtime audit state.
+
+### Implementation Notes
+
+- Added deployment target, deployment run, and release evidence link tables to
+  the v2 runtime schema.
+- Added repository methods for deployment target registration, disablement,
+  deployment-run recording, release-evidence recording, and status read-model
+  listing.
+- Added `ReleaseService.register_compose_target()` for Compose-backed connector
+  release targets.
+- Compose validation checks that:
+  - at least one Compose file is supplied
+  - the named service exists
+  - the service command starts the v2 runtime/CLI rather than an unrelated
+    process
+  - the service has an explicit project boundary through
+    `AGENTIC_MESH_PROJECT_FILE` or a `/mesh/project` mount
+- Added `ReleaseService.deploy_compose_release()` to execute the configured
+  Compose command through an injectable runner before recording deployment.
+- Added `ReleaseService.record_compose_deployment()` to record deployment only
+  when all smoke checks pass and required evidence links are present for
+  product, architecture, security, prompt, engineering, QA, and release.
+- Failed Compose command execution records a failed deployment run with command
+  output and leaves the work item in release review rather than creating a
+  deployed release record.
+- Release closure now rejects deployed releases that do not have both a
+  successful deployment run and the complete required release evidence links.
+- Release deployment now requires a non-empty rollback plan.
+- Added `ReleaseService.disable_deployment_target()` so rollback can disable
+  the connector target while preserving connectors, conversations, deliveries,
+  receipts, permission checks, deployment runs, releases, and events.
+- Expanded status snapshots and `/status` HTML with deployment targets,
+  deployment runs, and release evidence links.
+- Added `docs/operations/v2-teams-connector-release-profile.md` as the dogfood
+  release profile covering app registration, consent, installation, bindings,
+  credential URL, retention, smoke checks, rollback, and release evidence.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_deployment.py tests\test_v2_end_to_end.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+9 passed
+73 passed
+```
+
+Focused coverage added:
+
+- Compose deployment target registration validates service, command, and
+  project boundary.
+- Release deployment records a release, deployment run, release evidence links,
+  smoke evidence, rollback plan, and closes the work item as released.
+- Missing release evidence or failing smoke checks reject deployment claims
+  before recording a release.
+- Rollback disablement preserves connector runtime state and audit records.
+- Disabled deployment targets cannot be released again.
+- Status JSON and HTML expose deployment target, deployment run, and evidence
+  link data.
+
+### QA Rework
+
+QA found that the older lower-level `record_deployment()` API could still
+create a `deployed` release row, and `close_released_work()` would then close
+the item without deployment-run rows or complete release evidence links.
+
+Rework completed:
+
+- `close_released_work()` now allows deployed closure only when the release has
+  a successful deployment run and complete required evidence links.
+- Explicit `no_deployment_disposition` remains closable for honest
+  documentation/demo/no-activation outcomes.
+- Added regression coverage proving direct `record_deployment()` cannot close a
+  work item without deployment-run evidence.
+- Updated the end-to-end slice to use `deploy_compose_release()` with complete
+  release evidence links.
+- Updated the CLI demo slice to close through a no-deployment disposition
+  instead of claiming a deployment.
+- Added failed Compose-command coverage proving a failed deployment run is
+  recorded without creating a release or closing the work.
+
+Retest commands:
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_cli_server.py tests\test_v2_end_to_end.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Retest results:
+
+```text
+15 passed
+75 passed
+```
+
+### Known Limitations
+
+- This is local Compose/profile validation. A real Microsoft Teams tenant smoke
+  package is still required before declaring an enterprise Teams release.
+- The release service records deployment evidence but does not run Docker
+  Compose commands itself yet; command execution belongs to the configured
+  deployment adapter/operator path.
+- Release execution is currently proven through an injectable command runner in
+  automated tests; real Docker/Teams tenant execution remains release-operator
+  evidence for the target environment.
+- Release evidence links are structured runtime records; richer document
+  library publication and artifact rendering remain follow-on control-plane UI
+  work.
+
+### Next Step
+
+QA should review Story 14 against the full Teams connector release gate. If QA
+accepts, the v2 Teams connector local MVP has completed Stories 1 through 14
+and can move to a release/no-release decision that explicitly records real
+tenant smoke status and any residual risks.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
@@ -1243,3 +1378,12 @@ passed retest.
   events as private visibility, redacted private-channel receipt payloads, and
   added status JSON/HTML redaction regression coverage. | awaiting QA retest
   2026-06-12
+- RL-025 | engineering | implementation | Story 14 | Implemented
+  project-scoped Compose release target validation, Compose command execution,
+  deployment-run recording, release evidence links, rollback disablement,
+  status visibility, and the dogfood release profile. | awaiting QA review
+  2026-06-12
+- RL-026 | engineering | QA rework | Story 14 | Closed the false-release
+  bypass by requiring deployed release closure to have successful deployment-run
+  evidence and complete release evidence links; moved the CLI demo to explicit
+  no-deployment closure. | awaiting QA retest 2026-06-12

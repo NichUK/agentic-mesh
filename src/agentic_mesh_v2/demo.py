@@ -153,18 +153,17 @@ def run_demo_slice(db: V2Database) -> str:
         )
     )
 
-    ReleaseService(db).record_deployment(
+    ReleaseService(db).record_no_deployment(
         ReleaseEvidence(
             work_item_id=work_id,
             release_id="release-v2-demo-slice",
             scope="V2 runtime cut-over smoke deployment.",
             commit_ref="runtime-image:agentic-mesh:local",
             approval_ref="operator-cutover",
-            deployment_result="linuxch compose v2 runtime service started",
-            smoke_result="status and health endpoints passed",
             rollback_plan="Switch compose back to the previous branch and rebuild agentic-mesh:local.",
             residual_risks="This is the v2 spine MVP, not the final long-running worker implementation.",
-        )
+        ),
+        reason="CLI demo creates an auditable closed slice without executing a deployment target.",
     )
     db.add_artifact(
         artifact_id="artifact-v2-demo-release",

@@ -2314,3 +2314,77 @@ the private-channel sentinel. External receipt payload bodies for
   and redacted from both status JSON and rendered HTML while preserving role
   assignment behavior. Story 13 is accepted for the local connector scope. |
   accepted 2026-06-12
+
+# V2 Teams Connector Story 14 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 14 rework for the prior false-release finding:
+
+- deployed closure must require a successful deployment run
+- deployed closure must require complete release evidence links
+- explicit no-deployment disposition can close honestly
+- failed Compose command records a failed deployment run and no release
+- CLI demo must not claim deployment
+- dashboard/status must expose deployment targets, deployment runs, and release evidence links
+
+QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 14 engineering changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_cli_server.py tests\test_v2_end_to_end.py tests\test_v2_status_dashboard.py` | Passed: 15 passed in 1.94s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 75 passed in 8.12s. |
+
+## Retest Decision
+
+Story 14 passes QA for the implemented local Compose release/deployment
+validation scope.
+
+The prior blocking false-release path is closed. A lower-level
+`record_deployment()` call can still create a deployed release row, but
+`close_released_work()` now refuses to close that work as released unless the
+release also has a successful deployment run and complete required release
+evidence links. Explicit no-deployment dispositions remain valid for honest
+documentation/demo/no-activation outcomes.
+
+## Acceptance Retest
+
+| Story 14 expectation | Retest result |
+| --- | --- |
+| Deployed closure requires successful deployment run evidence | Pass. `test_deployed_release_cannot_close_without_deployment_run_and_evidence_links` keeps shortcut deployments in `release_review`. |
+| Deployed closure requires complete evidence links | Pass. Compose deployment requires product, architecture, security, prompt, engineering, QA, and release evidence before release closure. |
+| No-deployment disposition can close honestly | Pass. Release tests and CLI demo close through `no_deployment_disposition`, not a fake deployment. |
+| Failed Compose command records failed deployment run and no release | Pass. Focused release-deployment test records `status=failed`, keeps releases empty, and leaves the work in `release_review`. |
+| CLI demo does not claim deployed | Pass. CLI demo test verifies release status `no_deployment_disposition`. |
+| Dashboard exposes deployment data | Pass. Status dashboard tests and full suite remain green with deployment target/run/evidence read-model sections present. |
+
+## Residual Gaps
+
+- Coverage remains deterministic local Compose/profile validation with an
+  injectable command runner; no real Docker Compose deployment was executed in
+  QA.
+- No real Microsoft Teams tenant, Bot Framework, Graph, Entra consent, tenant
+  installation, or live connector smoke evidence has been validated.
+- Release evidence links are structured runtime records; richer document
+  library publication and artifact rendering remain follow-on control-plane
+  work.
+
+## Review Log
+
+- RL-026 | qa-engineer | Story 14 QA retest | Focused release, deployment,
+  CLI, end-to-end, and status tests plus the full suite all pass. Prior
+  false-release P1 is closed: deployed closure requires successful deployment
+  run evidence and complete release evidence links, while no-deployment
+  dispositions remain explicitly closable. Story 14 is accepted for the local
+  Compose connector release scope. | accepted 2026-06-12

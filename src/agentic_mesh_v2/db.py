@@ -169,6 +169,46 @@ class V2Database:
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS deployment_targets (
+                  target_id TEXT PRIMARY KEY,
+                  connector_id TEXT,
+                  project_id TEXT NOT NULL,
+                  target_type TEXT NOT NULL,
+                  service_name TEXT NOT NULL,
+                  compose_files_json TEXT NOT NULL DEFAULT '[]',
+                  external_base_url TEXT,
+                  status TEXT NOT NULL,
+                  disable_reason TEXT,
+                  metadata_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS deployment_runs (
+                  run_id TEXT PRIMARY KEY,
+                  target_id TEXT NOT NULL REFERENCES deployment_targets(target_id),
+                  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id),
+                  release_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  command_json TEXT NOT NULL DEFAULT '[]',
+                  smoke_result TEXT NOT NULL,
+                  rollback_plan TEXT NOT NULL,
+                  evidence_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS release_evidence_links (
+                  link_id TEXT PRIMARY KEY,
+                  release_id TEXT NOT NULL REFERENCES releases(release_id),
+                  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id),
+                  artifact_ref TEXT NOT NULL,
+                  artifact_type TEXT NOT NULL,
+                  role_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS role_memory (
                   memory_id TEXT PRIMARY KEY,
                   role_id TEXT NOT NULL,
@@ -1758,6 +1798,168 @@ class V2Database:
                 {"release_id": release_id, "status": status},
             )
 
+    def upsert_deployment_target(
+        self,
+        *,
+        target_id: str,
+        project_id: str,
+        target_type: str,
+        service_name: str,
+        status: str,
+        connector_id: str | None = None,
+        compose_files: list[str] | None = None,
+        external_base_url: str | None = None,
+        disable_reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO deployment_targets(
+                  target_id, connector_id, project_id, target_type, service_name,
+                  compose_files_json, external_base_url, status, disable_reason, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(target_id) DO UPDATE SET
+                  connector_id = excluded.connector_id,
+                  project_id = excluded.project_id,
+                  target_type = excluded.target_type,
+                  service_name = excluded.service_name,
+                  compose_files_json = excluded.compose_files_json,
+                  external_base_url = excluded.external_base_url,
+                  status = excluded.status,
+                  disable_reason = excluded.disable_reason,
+                  metadata_json = excluded.metadata_json,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    target_id,
+                    connector_id,
+                    project_id,
+                    target_type,
+                    service_name,
+                    json.dumps(compose_files or [], sort_keys=True),
+                    external_base_url,
+                    status,
+                    disable_reason,
+                    json.dumps(metadata or {}, sort_keys=True),
+                ),
+            )
+            self.append_event(
+                "deployment_target.recorded",
+                "deployment_target",
+                target_id,
+                {"project_id": project_id, "target_type": target_type, "status": status},
+            )
+
+    def get_deployment_target(self, target_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM deployment_targets WHERE target_id = ?",
+            (target_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
+    def disable_deployment_target(self, *, target_id: str, reason: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE deployment_targets
+                SET status = 'disabled',
+                    disable_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE target_id = ?
+                """,
+                (reason, target_id),
+            )
+            self.append_event(
+                "deployment_target.disabled",
+                "deployment_target",
+                target_id,
+                {"reason": reason},
+            )
+
+    def record_deployment_run(
+        self,
+        *,
+        run_id: str,
+        target_id: str,
+        work_item_id: str,
+        release_id: str,
+        status: str,
+        smoke_result: str,
+        rollback_plan: str,
+        command: list[str] | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO deployment_runs(
+                  run_id, target_id, work_item_id, release_id, status, command_json,
+                  smoke_result, rollback_plan, evidence_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  status = excluded.status,
+                  command_json = excluded.command_json,
+                  smoke_result = excluded.smoke_result,
+                  rollback_plan = excluded.rollback_plan,
+                  evidence_json = excluded.evidence_json,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    run_id,
+                    target_id,
+                    work_item_id,
+                    release_id,
+                    status,
+                    json.dumps(command or [], sort_keys=True),
+                    smoke_result,
+                    rollback_plan,
+                    json.dumps(evidence or {}, sort_keys=True),
+                ),
+            )
+            self.append_event(
+                "deployment_run.recorded",
+                "work_item",
+                work_item_id,
+                {"run_id": run_id, "target_id": target_id, "status": status},
+            )
+
+    def record_release_evidence_link(
+        self,
+        *,
+        link_id: str,
+        release_id: str,
+        work_item_id: str,
+        artifact_ref: str,
+        artifact_type: str,
+        role_id: str,
+        status: str,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO release_evidence_links(
+                  link_id, release_id, work_item_id, artifact_ref, artifact_type, role_id, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(link_id) DO NOTHING
+                """,
+                (link_id, release_id, work_item_id, artifact_ref, artifact_type, role_id, status),
+            )
+            self.append_event(
+                "release_evidence.linked",
+                "work_item",
+                work_item_id,
+                {
+                    "release_id": release_id,
+                    "artifact_ref": artifact_ref,
+                    "artifact_type": artifact_type,
+                    "role_id": role_id,
+                },
+            )
+
     def get_work_item(self, work_item_id: str) -> WorkItem:
         row = self.connection.execute(
             "SELECT * FROM work_items WHERE work_item_id = ?",
@@ -1926,6 +2128,36 @@ class V2Database:
             SELECT *
             FROM releases
             ORDER BY updated_at DESC, release_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_deployment_targets(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM deployment_targets
+            ORDER BY updated_at DESC, target_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_deployment_runs(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM deployment_runs
+            ORDER BY updated_at DESC, run_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_release_evidence_links(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM release_evidence_links
+            ORDER BY created_at DESC, link_id
             """
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
@@ -2126,6 +2358,9 @@ class V2Database:
         work_items = self.list_work_items()
         queue_items = self.list_queue_items()
         releases = self.list_releases()
+        deployment_targets = self.list_deployment_targets()
+        deployment_runs = self.list_deployment_runs()
+        release_evidence_links = self.list_release_evidence_links()
         connectors = self.list_connectors()
         connector_events = self.list_conversation_events()
         redacted_connector_events = _redact_private_conversation_events(connector_events)
@@ -2211,6 +2446,9 @@ class V2Database:
                 "safe_output_calls": len(safe_output_calls),
                 "artifacts": len(self.list_artifacts()),
                 "releases": len(releases),
+                "deployment_targets": len(deployment_targets),
+                "deployment_runs": len(deployment_runs),
+                "release_evidence_links": len(release_evidence_links),
                 "connectors": len(connectors),
                 "connector_participants": len(self.list_connector_participants()),
                 "conversations": len(self.list_conversations()),
@@ -2239,6 +2477,9 @@ class V2Database:
             "safe_output_calls": redacted_safe_output_calls,
             "artifacts": self.list_artifacts(),
             "releases": releases,
+            "deployment_targets": deployment_targets,
+            "deployment_runs": deployment_runs,
+            "release_evidence_links": release_evidence_links,
             "connectors": connectors,
             "connector_participants": self.list_connector_participants(),
             "conversations": self.list_conversations(),
@@ -2269,6 +2510,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "metadata_json",
         "source_refs_json",
         "durable_refs_json",
+        "compose_files_json",
+        "command_json",
+        "evidence_json",
     ):
         if isinstance(result.get(key), str):
             result[key.removesuffix("_json")] = json.loads(result[key])
