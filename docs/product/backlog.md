@@ -97,7 +97,7 @@ Acceptance criteria:
 
 ### PB-003 V2 Teams Connector Downstream Design And Build
 
-Status: downstream drafts produced
+Status: engineering plan and QA review produced
 
 Type: feature
 
@@ -136,6 +136,7 @@ Source artifacts:
 - `docs/security/v2-teams-connector-security.md`
 - `docs/prompt-engineering/v2-teams-connector-behaviour-guidance.md`
 - `docs/qa/v2-teams-connector-test-plan.md`
+- `docs/engineering/v2-teams-connector-implementation-plan.md`
 
 Acceptance criteria:
 
@@ -153,8 +154,13 @@ Acceptance criteria:
   `docs/prompt-engineering/v2-teams-connector-behaviour-guidance.md`.
 - QA defines BDD and failure-mode coverage before implementation. Initial draft
   produced in `docs/qa/v2-teams-connector-test-plan.md`.
-- Engineering implements the smallest useful MVP after the shaping work is
-  clear.
+- Engineering defines the full implementation roadmap as ordered feature
+  stories, not a partial MVP-only target. Initial plan produced in
+  `docs/engineering/v2-teams-connector-implementation-plan.md`.
+- QA maps the engineering feature stories to BDD, regression, failure-mode
+  evidence, and release gates.
+- Engineering implements the feature stories one slice at a time, preserving
+  the complete target design.
 - Release Manager deploys, smoke tests, records release evidence, and closes the
   work only when deployment or no-deployment disposition is explicit.
 
@@ -264,4 +270,8 @@ Acceptance criteria:
 - RL-004 | product-manager | backlog-update | PB-005 | Added long-running
   containerised role-agent hibernation and hydration feature from sponsor
   question about saving resources while preserving role state. | incorporated
+  2026-06-12
+- RL-005 | product-manager | backlog-update | PB-003 | Recorded Engineering
+  implementation plan and QA feature-story coverage review for the full Teams
+  connector roadmap, correcting earlier MVP-only framing. | incorporated
   2026-06-12

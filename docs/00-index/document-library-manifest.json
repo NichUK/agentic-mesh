@@ -272,6 +272,35 @@
       "contributing_roles": [
         "product-manager",
         "ux-designer",
+        "solution-architect",
+        "security-architect",
+        "prompt-engineer",
+        "qa-engineer",
+        "release-manager"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "engineering",
+      "path": "docs/engineering/v2-teams-connector-implementation-plan.md",
+      "required_sections": [
+        "purpose",
+        "complete_target_scope",
+        "module_and_service_boundaries",
+        "database_and_schema_changes",
+        "safe-output_integration",
+        "feature_story_breakdown",
+        "tests_to_add",
+        "qa_handoff",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "engineering_plan"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "ux-designer",
         "security-architect",
         "prompt-engineer",
         "engineering",
@@ -369,6 +398,8 @@
         "purpose",
         "quality_goals",
         "bdd_scenarios",
+        "feature_story_coverage_and_release_gates",
+        "coverage_gaps_and_engineering_review_requests",
         "regression_and_failure-mode_coverage",
         "release_evidence_requirements",
         "exit_criteria",

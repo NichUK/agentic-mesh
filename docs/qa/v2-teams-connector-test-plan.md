@@ -10,6 +10,11 @@ Source documents:
 
 - `docs/product/v2-teams-connector-product-definition.md`
 - `docs/product/v2-teams-connector-downstream-handoff.md`
+- `docs/ux/v2-teams-connector-interaction-design.md`
+- `docs/architecture/v2-teams-connector-architecture.md`
+- `docs/security/v2-teams-connector-security.md`
+- `docs/prompt-engineering/v2-teams-connector-behaviour-guidance.md`
+- `docs/engineering/v2-teams-connector-implementation-plan.md`
 
 ## Purpose
 
@@ -268,6 +273,155 @@ When a role cannot justify necessity and value
 Then it does not create or propose tracked work
 And it may reply conversationally or stay quiet according to context.
 
+### Approval And Human-Response Cards
+
+Scenario: Approval card captures a privileged decision
+
+Given a role sends an approval or human-response request through safe-output
+And the request is bound to a work item, approval gate, risk, or release
+  decision
+When an authorized sponsor or approver submits the Teams response
+Then the response is normalized and stored against the originating runtime
+  object
+And the Teams card or structured message updates visibly where supported
+And the audit record includes actor, authority, source Teams reference,
+  correlation id, decision, timestamp, and resulting artifact link.
+
+Scenario: Unauthorized approval response fails closed
+
+Given an untrusted or unauthorized Teams user submits an approval, release, or
+  risk-acceptance response
+When the connector processes the response
+Then the privileged runtime state is not changed
+And the rejected response is recorded with the authorization reason
+And an operator-visible attention item or human clarification is created
+  according to policy.
+
+Scenario: Stale or failed card submission is recoverable
+
+Given an approval card is stale, superseded, or cannot be updated in Teams
+When a human submits or views the card
+Then the connector does not apply an ambiguous decision
+And the runtime records a delivery or submission attention item with the next
+  action
+And the human receives a clear status or recovery link where policy allows.
+
+### Dashboard And Observability
+
+Scenario: Status surfaces show connector state without leaking private text
+
+Given the connector has active conversations, role identities, channels,
+  deliveries, relevance checks, context summaries, promotions, permission
+  checks, and attention items
+When status JSON and HTML views are rendered
+Then connector health and counts are visible
+And private direct-message body text is redacted unless an
+  authorization-aware view explicitly permits it
+And each attention item includes owner, reason, retryability, and next action.
+
+Scenario: Telemetry records connector flow with redacted identifiers
+
+Given inbound Teams events, routing, safe-output delivery, retries, response
+  binding, compaction, and permission validation occur
+When telemetry is emitted
+Then required spans, metrics, and logs include project id, connector id,
+  conversation id, role id where applicable, correlation id, and redacted
+  external message ids
+And credentials, tokens, private message bodies, and restricted content are not
+  emitted.
+
+### Release And Rollback
+
+Scenario: Project-scoped deployment runs without mixing system and project
+  state
+
+Given a project-scoped connector deployment profile is configured
+When the connector service starts with the v2 runtime and configured database
+Then Compose or deployment validation succeeds
+And source repo artifacts, project deployment outputs, secrets, and local
+  runtime state remain in their configured boundaries.
+
+Scenario: Connector rollback preserves audit state
+
+Given the Teams connector is enabled and has conversation, delivery, attention,
+  and audit records
+When rollback or emergency disablement is executed
+Then connector ingress and outbound delivery are disabled according to the
+  documented procedure
+And runtime state, conversation records, delivery records, idempotency
+  receipts, and audit events are preserved for review.
+
+## Feature Story Coverage And Release Gates
+
+QA will track the Engineering feature-story breakdown as the release spine.
+Story 1 may ship only as an internal foundation slice. The Teams connector is
+not release-complete until Stories 1 through 14 pass or a sponsor-approved
+scope reduction records residual risks, owners, and follow-up story numbers.
+
+| Engineering story | BDD and regression coverage | Required evidence | Story release gate |
+| --- | --- | --- | --- |
+| Story 1 - Connector Foundation And Local Test Adapter | Repository, migration, config, fixture replay, duplicate receipt, thread reply, send-failure fixture, and status JSON foundation tests. | Schema migration output, connector config fixture, replay fixture logs for DM/channel/mention/duplicate/thread/send failure, event log samples, status JSON table/count sample. | Internal foundation only; no real Teams tenant dependency; all connector-neutral tables, repositories, fixtures, and health/status counts pass automated tests. |
+| Story 2 - Role Direct Messages And `status.reply` | DM conversational reply, DM promotion negative baseline, no-work-by-default, duplicate DM idempotency, Markdown completeness, private preview redaction. | Automated tests proving one delivery record and one reply, unchanged queue/work tables for ordinary DMs, duplicate event suppression, redacted status output. | Release only if ordinary DMs are private, reply through `status.reply`, create no durable work by inference, and cannot leak private body text in default status views. |
+| Story 3 - Project Channel Capture And Role Mentions | Unmentioned channel context capture, focused role mention, multiple mentions, unknown mention failure, no low-value acknowledgements, thread binding. | Fixture replay evidence, role assignment records, no-wake/no-reply evidence for unmentioned context, attention item for unknown mention, event log route records. | Release only if channel messages never wake all roles by default and role routing depends on configured identities or aliases, not guesses. |
+| Story 4 - Agent-Initiated Human Questions And Thread Binding | `sponsor.ask_question` by DM/channel/group/thread, sponsor answer binding, human loop-in, ambiguous reply attention, no mutation on ambiguous binding. | Safe-output request and delivery records, thread binding records, normalized human response event, loop-in participant audit, ambiguous-binding attention item. | Release only if every outbound human question has a source runtime binding and replies continue the correct flow without free-text state mutation. |
+| Story 5 - Delivery, Retry, Failure Attention, And Idempotency | Delivery state transitions, transient retry, permanent failure, unknown outcome, duplicate safe-output delivery, failed-delivery fake-claim prevention. | Delivery record transition history, retry policy evidence, external message id or failure metadata, connector attention item, event log send attempts. | Release only if failed or unknown delivery is visible and no role/status reply can claim a human received a Teams message unless delivery status supports it. |
+| Story 6 - Separate Visible Role Identities | Config validation for identity model, role display names, aliases, mention handles, external app/bot ids, per-role disablement, authorization not based on display name. | Emulator identity fixtures, selected identity-model record, real tenant smoke evidence when consent is approved, limitations and emergency disablement evidence. | Release only after Security approves the identity model and QA proves runtime authorization uses configured bindings rather than Teams display names. |
+| Story 7 - Feature, Epic, Incident, And Focused-Work Channels | Focus channel binding, scoped context capture, focus-channel role mentions, thread behavior parity, private-channel explicit binding and permission validation. | Config fixture with focus channel, scoped conversation records, dashboard/status source channel scope, private-channel permission check evidence. | Release only if focus channels preserve project identity, narrow context correctly, and private channel capture fails closed without explicit binding and permission. |
+| Story 8 - Team-Wide Relevance Checks | Team-wide trigger, per-role relevance/no-op records, non-relevant silence, below-threshold justified response, no Teams bot-to-bot consult. | `team_wide_prompt` record, relevance scores/thresholds/reasons, no-op records, selected deliveries, consult/handoff runtime records where applicable. | Release only if channel-noise regressions pass and every configured role has auditable relevance disposition without forcing every role to post. |
+| Story 9 - Proactive Work Proposals And Conversation Promotion | Value-rationale proposal, low-value no-proposal, DM promotion privacy, source refs/classification/redaction, fake work-item claim prevention. | Safe-output proposal record, source Teams refs, promotion record, queue/work artifact link when created, negative evidence for free-text messages. | Release only if durable work or promotion happens solely through safe-output/runtime APIs and Teams replies report only artifacts that actually exist. |
+| Story 10 - Approval And Human-Response Cards | Approval card delivery, authorized submission, unauthorized submission, stale/superseded card, submission failure, visible card update where supported. | Card/message payload fixture, normalized response record, authority check evidence, audit event, failure attention item, Teams client limitation note. | Release only if privileged responses enforce configured authority and ambiguous, stale, or failed submissions do not mutate approval, risk, or release state. |
+| Story 11 - Context Compaction, Retention, And Durable Knowledge | Retention policy config, raw history expiry, source-linked compaction, private compaction privacy, durable decision survival, audit metadata/hash retention. | Retention config sample, compaction output with source refs, durable artifact or memory link, deletion/expiry evidence, privacy redaction evidence. | Release only if important decisions, requirements, risks, approvals, blockers, and release facts survive raw history expiry without laundering private DMs into shared context. |
+| Story 12 - Permission, Consent, Installation, And Authority Hardening | Startup validation, missing/revoked consent, unauthorized sponsor/operator, broad Graph permission approval, credential redaction, outside-boundary event rejection. | Permission check records, tenant consent package, app installation evidence, authority mapping fixture, redacted logs/traces/status, failure attention item. | Release only if missing or revoked permissions fail closed and real tenant release has documented consent, permission, owner, rotation, and disablement evidence. |
+| Story 13 - Dashboard And Observability Completion | Status JSON contract, HTML smoke, connector attention visibility, private body redaction, OpenTelemetry spans, metrics, redacted logs. | Status JSON/HTML samples, telemetry trace and metric samples, redaction proof, attention item examples for delivery, permission, compaction, and ambiguity. | Release only if operators can inspect health, failures, duplicates, relevance, promotions, compaction, and permissions without exposing private or restricted content. |
+| Story 14 - Release, Deployment, Rollback, And Dogfood Validation | Project-scoped Compose/deployment validation, real Teams smoke, inbound/outbound scenario set, failure smoke, rollback/disablement, release evidence linking. | Compose or deployment validation output, real Teams tenant smoke package when approved, rollback record, known residual risks, release record links. | Complete connector release only if the full smoke set passes, rollback preserves audit state, and release evidence links product, UX, architecture, security, prompt, engineering, QA, and release artifacts. |
+
+## Coverage Gaps And Engineering Review Requests
+
+- CG-001 | Story 1 | Testability gap | Engineering should specify exact
+  table names, migration versioning, repository contracts, and status JSON
+  fields before QA can write stable contract tests. If table names remain
+  provisional, QA will gate only on documented logical records and fixture
+  behavior.
+- CG-002 | Stories 4, 9, and 10 | Safe-output schema gap | The implementation
+  plan names required payload fields but leaves exact schemas open. Engineering
+  should provide versioned payload contracts for `status.reply`,
+  `sponsor.ask_question`, queue/work proposal, approvals, human responses,
+  context promotion, decision/risk/document updates, and release/status
+  deliveries before story release.
+- CG-003 | Stories 5 and 14 | Retry policy gap | QA cannot assert unknown
+  outcome behavior without a concrete retry policy, operator resolution path,
+  retry limits, and resend/supersede rules. Engineering should document these
+  before delivery/retry release.
+- CG-004 | Stories 6 and 12 | Identity and permission dependency | Separate
+  visible role identity release is blocked until Security and Engineering
+  select the first Teams substrate, identity model, permission set, consent
+  path, app owner model, credential rotation path, and emergency disablement
+  procedure.
+- CG-005 | Story 7 | Focus channel scope gap | Engineering should define how
+  focus channel bindings identify feature, epic, incident, or work scope, and
+  how private Teams channel membership and permission validation are surfaced
+  in status.
+- CG-006 | Story 8 | Relevance evaluator contract gap | QA needs a deterministic
+  fixture contract for relevance score, threshold, decision, reason, no-op, and
+  exception fields. Prompt-only guidance is not sufficient for regression
+  gating.
+- CG-007 | Story 10 | Adaptive Card feasibility gap | Engineering should record
+  which Teams clients and tenant policies support card update behavior. If card
+  updates are not uniformly supported, the story needs an approved structured
+  message fallback with equivalent audit evidence.
+- CG-008 | Story 11 | Retention deletion mechanism gap | Security recommends
+  deletion or cryptographic shredding after retention expiry, but Engineering
+  has not selected the storage-adapter mechanism. QA will require manual
+  evidence for the chosen backend before release.
+- CG-009 | Story 13 | Dashboard authorization gap | Default redaction is
+  required until authorization-aware status views exist. Engineering should
+  define whether Story 13 includes authorization-aware drilldowns or keeps all
+  private bodies redacted.
+- CG-010 | Story 14 | Real tenant smoke dependency | Emulator evidence is
+  enough for early slices, but the complete connector release requires real
+  tenant smoke evidence after consent is approved. Deferring real tenant smoke
+  must be a sponsor-approved release risk, not a QA pass.
+
 ## Regression And Failure-Mode Coverage
 
 ### Idempotency
@@ -366,7 +520,8 @@ And it may reply conversationally or stay quiet according to context.
 
 ## Release Evidence Requirements
 
-Before release, capture evidence for:
+Before a story release, capture the evidence listed in the story matrix above.
+Before the complete connector release, capture evidence for:
 
 - Connector configuration for Project Team, `project` channel, optional focus
   channel, role aliases, team-wide trigger, allowed users or groups, and
@@ -392,12 +547,25 @@ Before release, capture evidence for:
   expiry with provenance.
 - Regression test results for runtime safe-output validation and connector
   status read models.
+- Approval and human-response card or structured-message evidence, including
+  unauthorized, stale, and failed submission behavior.
+- Dashboard, status JSON, HTML smoke, OpenTelemetry, metrics, and redaction
+  evidence.
+- Project-scoped deployment validation, real Teams tenant smoke evidence when
+  permissions are approved, rollback or disablement evidence, and known
+  residual risks.
 
 ## Exit Criteria
 
-- All MVP BDD scenarios pass in automated or documented manual form.
+- All BDD scenarios and story-level regression gates pass in automated or
+  documented manual form for the stories included in the release.
 - All idempotency, delivery failure, permission failure, privacy, and retention
   tests have recorded evidence.
+- Story 1 is treated as foundation-only and is not marketed or declared as a
+  complete Teams connector.
+- The complete Teams connector is not declared release-ready until Stories 1
+  through 14 are complete or explicit sponsor scope reduction records residual
+  risks, owners, mitigations, and target follow-up stories.
 - Any unresolved defect has a severity, owner, release decision, and rollback or
   mitigation note.
 - Release Manager has a smoke-test checklist and rollback or connector-disable
@@ -412,3 +580,10 @@ Before release, capture evidence for:
   handoff. Coverage includes BDD scenarios, regression and failure modes,
   privacy, retention, idempotency, delivery and permission failures, and release
   evidence. | incorporated 2026-06-12
+- RL-002 | qa-engineer | engineering-story-alignment | feature story coverage
+  and release gates | Expanded QA coverage to track the full Engineering
+  feature-story breakdown rather than the initial MVP surface. Added
+  story-to-BDD/regression evidence mapping, story release gates, approval/card,
+  dashboard/observability, release/rollback scenarios, coverage gaps, and
+  Engineering review requests for testability blockers. | incorporated
+  2026-06-12
