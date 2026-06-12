@@ -1526,12 +1526,13 @@ class V2Database:
         role_instance_id: str | None = None,
         run_id: str | None = None,
         terminal_tool: str | None = None,
+        status: str = "completed",
     ) -> None:
         with self.connection:
             self.connection.execute(
                 """
                 UPDATE role_assignments
-                SET status = 'completed',
+                SET status = ?,
                     role_instance_id = COALESCE(?, role_instance_id),
                     run_id = COALESCE(?, run_id),
                     terminal_tool = COALESCE(?, terminal_tool),
@@ -1539,13 +1540,14 @@ class V2Database:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE assignment_id = ?
                 """,
-                (role_instance_id, run_id, terminal_tool, assignment_id),
+                (status, role_instance_id, run_id, terminal_tool, assignment_id),
             )
             self.append_event(
-                "role_assignment.completed",
+                f"role_assignment.{status}",
                 "role_assignment",
                 assignment_id,
                 {
+                    "status": status,
                     "role_instance_id": role_instance_id,
                     "run_id": run_id,
                     "terminal_tool": terminal_tool,

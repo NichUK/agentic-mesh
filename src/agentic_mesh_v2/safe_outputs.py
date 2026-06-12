@@ -18,6 +18,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "queue.propose_item",
         "release.request_approval",
         "release.close",
+        "noop",
         "report.blocked",
         "report.incomplete",
     }
@@ -39,6 +40,7 @@ COMMON_TOOLS: frozenset[str] = frozenset(
         "risk.register",
         "decision.record",
         "relevance.record",
+        "noop",
         "report.blocked",
         "report.incomplete",
     }
@@ -107,6 +109,7 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "risk.register": ("risk", "impact"),
     "decision.record": ("decision", "rationale"),
     "relevance.record": ("conversation_event_id", "score", "threshold", "decision", "reason"),
+    "noop": ("reason",),
     "report.blocked": ("reason", "owner", "next_action"),
     "report.incomplete": ("reason",),
     "product.mark_sponsor_ready": ("work_item_id", "summary"),

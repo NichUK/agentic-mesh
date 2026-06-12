@@ -119,3 +119,64 @@ These are not blockers for PB-004 Story 2 because they are outside this story an
 ### Review Log
 
 - QA-RL-002 | qa-engineer | acceptance | PB-004 Story 2 | Verified safe-output-driven handoff/consult assignment materialization, inherited work item context, target role tool/context payload, source assignment completion, and absence of Teams delivery side effects. | accepted 2026-06-12
+
+## PB-004 Story 3 - Terminal Assignment Outcome States
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `tests/test_v2_role_assignment_execution.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+- Prior QA record in `docs/qa/v2-role-execution-test-results.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_end_to_end.py
+```
+
+Result:
+
+```text
+14 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+85 passed
+```
+
+### Acceptance Assessment
+
+- `noop` is a first-class terminal safe-output tool available to common role tooling and requires a non-empty `reason`.
+- `report.blocked` maps a claimed assignment to the visible `blocked` state.
+- `sponsor.ask_question`, `human_response.request`, and `release.request_approval` map claimed assignments to `waiting_human`.
+- `report.incomplete` maps a claimed assignment to `incomplete`.
+- Completed terminal outcomes still complete claimed assignments and preserve the terminal tool/run id.
+- `role_assignment_statuses` exposes terminal assignment status counts in the status snapshot.
+- The implementation log accurately limits this story to visible terminal state mapping and does not claim scheduler, recovery, hibernation, or human-response processing behavior.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 3 because they are outside this story and remain explicit later PB-004/PB-005 scope:
+
+- No automatic retry/recovery loop for `blocked` or `incomplete` assignments yet.
+- No scheduler processing for `waiting_human` assignments yet.
+- No long-running role service loop, lease recovery, or hibernation/hydration behavior yet.
+
+### Review Log
+
+- QA-RL-003 | qa-engineer | acceptance | PB-004 Story 3 | Verified terminal safe-output validation and assignment state mapping for completed, waiting-human, blocked, incomplete, and no-op outcomes with status snapshot visibility. | accepted 2026-06-12

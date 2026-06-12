@@ -338,6 +338,86 @@ def test_consult_safe_output_creates_consult_assignment_with_context_visibility(
     assert db.status_snapshot()["counts"]["delivery_records"] == 0
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "payload", "expected_status"),
+    [
+        (
+            "report.blocked",
+            {
+                "reason": "Required architecture decision is missing.",
+                "owner": "solution-architect",
+                "next_action": "Provide the missing decision record.",
+            },
+            "blocked",
+        ),
+        (
+            "sponsor.ask_question",
+            {
+                "question": "Should this slice continue with the smaller scope?",
+                "reason": "Scope decision is needed before implementation.",
+            },
+            "waiting_human",
+        ),
+        (
+            "report.incomplete",
+            {
+                "reason": "The requested evidence could not be completed in this run.",
+            },
+            "incomplete",
+        ),
+        (
+            "noop",
+            {
+                "reason": "No material specialist input is needed for this assignment.",
+            },
+            "completed",
+        ),
+    ],
+)
+def test_terminal_safe_outputs_map_to_visible_assignment_outcomes(
+    tmp_path: Path,
+    tool_name: str,
+    payload: dict[str, str],
+    expected_status: str,
+) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-terminal-outcome",
+        role_id="product-manager",
+        source_ref="msg-terminal",
+        title="Terminal outcome",
+        summary="Exercise terminal outcome mapping.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name=tool_name,
+                    payload=payload,
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    receipt = service.run_next_assignment()
+
+    assert receipt is not None
+    assignment = db.status_snapshot()["role_assignments"][0]
+    assert assignment["status"] == expected_status
+    assert assignment["terminal_tool"] == tool_name
+    assert assignment["run_id"] == receipt.run_id
+    assert db.status_snapshot()["role_assignment_statuses"] == {expected_status: 1}
+
+
 def test_status_dashboard_shows_role_assignment_terminal_state(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()

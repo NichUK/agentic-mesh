@@ -129,6 +129,7 @@ class RoleService:
             role_instance_id=self.role_instance_id,
             run_id=receipt.run_id,
             terminal_tool=receipt.terminal_tool,
+            status=_assignment_status_for_terminal_tool(receipt.terminal_tool),
         )
         return receipt
 
@@ -150,3 +151,13 @@ def _assignment_from_row(row: dict[str, Any], *, role_instance_id: str) -> RoleA
         payload=payload,
         conversation_context=conversation_context,
     )
+
+
+def _assignment_status_for_terminal_tool(terminal_tool: str) -> str:
+    if terminal_tool in {"sponsor.ask_question", "human_response.request", "release.request_approval"}:
+        return "waiting_human"
+    if terminal_tool == "report.blocked":
+        return "blocked"
+    if terminal_tool == "report.incomplete":
+        return "incomplete"
+    return "completed"

@@ -151,6 +151,66 @@ Results:
 - Assignment recovery, leases, continuous role-service loops, and hibernation
   remain later PB-004/PB-005 slices.
 
+## PB-004 Story 3 - Terminal Assignment Outcome States
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Map terminal safe-output tools to visible role-assignment outcomes instead of
+treating every terminal call as completed. This prevents blocked work, human
+waits, incomplete runs, and no-op outcomes from being hidden behind a generic
+completed state.
+
+### Implementation Notes
+
+- Added `noop` as a first-class common terminal safe-output tool with required
+  `reason`.
+- Extended role assignment completion so callers can set the terminal status.
+- Added role-service terminal mapping:
+  - `status.reply`, `status.complete`, `handoff.request`, `consult.request`,
+    `queue.propose_item`, `release.close`, and `noop` -> `completed`
+  - `sponsor.ask_question`, `human_response.request`, and
+    `release.request_approval` -> `waiting_human`
+  - `report.blocked` -> `blocked`
+  - `report.incomplete` -> `incomplete`
+- Status snapshots already expose `role_assignment_statuses`, so these outcomes
+  are visible without reading safe-output records manually.
+
+### Tests Added
+
+- `report.blocked` marks a role assignment `blocked`.
+- `sponsor.ask_question` marks a role assignment `waiting_human`.
+- `report.incomplete` marks a role assignment `incomplete`.
+- `noop` marks a role assignment `completed` with terminal tool `noop`.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+13 passed
+85 passed
+```
+
+### Known Limitations
+
+- Waiting-human assignments are visible in runtime state but are not yet linked
+  to an automatic scheduler/retry loop.
+- Blocked and incomplete assignments are not yet automatically recovered or
+  escalated beyond their recorded terminal state.
+- Continuous role-service loops, leases, heartbeat refresh, and hibernation
+  remain later PB-004/PB-005 slices.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -158,5 +218,8 @@ Results:
   dashboard visibility. | QA accepted 2026-06-12
 - RL-002 | engineering | implementation | PB-004 Story 2 | Added
   safe-output-driven handoff/consult assignment materialization with inherited
-  work item context and no Teams delivery side effects. | awaiting QA review
+  work item context and no Teams delivery side effects. | QA accepted
   2026-06-12
+- RL-003 | engineering | implementation | PB-004 Story 3 | Added terminal
+  assignment outcome states for human waits, blockers, incomplete runs, and
+  explicit no-op outcomes. | awaiting QA review 2026-06-12
