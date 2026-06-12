@@ -652,9 +652,14 @@ class ConnectorSafeOutputService(SafeOutputService):
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:
         if call.tool_name == "status.reply":
             self._reject_noop_relevance_reply(run_id=run_id, role_id=call.role_id)
+            self._validate_reply_references(call.payload)
+        if call.tool_name == "queue.propose_item":
+            self._validate_work_proposal_source(call.payload)
         call_id = super().record(run_id=run_id, call=call)
         if call.tool_name == "relevance.record":
             self.adapter.record_relevance(call_id=call_id, role_id=call.role_id, payload=call.payload)
+        if call.tool_name == "queue.propose_item":
+            self._record_work_proposal(call_id=call_id, role_id=call.role_id, payload=call.payload)
         if call.tool_name == "status.reply" and "conversation_id" in call.payload:
             self.adapter.deliver_status_reply(
                 call_id=call_id,
@@ -675,6 +680,77 @@ class ConnectorSafeOutputService(SafeOutputService):
                 raise ValueError(
                     "role recorded a no-op relevance decision in this run; it must not post a Teams reply"
                 )
+
+    def _validate_reply_references(self, payload: dict[str, Any]) -> None:
+        queue_item_id = payload.get("queue_item_id")
+        if queue_item_id is not None and self.db.get_queue_item(str(queue_item_id)) is None:
+            raise ValueError(f"status.reply referenced unknown queue item `{queue_item_id}`")
+        work_item_id = payload.get("work_item_id")
+        if work_item_id is not None:
+            try:
+                self.db.get_work_item(str(work_item_id))
+            except ValueError as exc:
+                raise ValueError(f"status.reply referenced unknown work item `{work_item_id}`") from exc
+
+    def _validate_work_proposal_source(self, payload: dict[str, Any]) -> None:
+        conversation_event_id = payload.get("source_conversation_event_id")
+        if isinstance(conversation_event_id, str) and conversation_event_id.strip():
+            if self.db.get_conversation_event(conversation_event_id) is None:
+                raise ValueError(f"unknown source conversation event `{conversation_event_id}`")
+
+    def _record_work_proposal(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> None:
+        source_ref = _required_string(payload, "source_ref")
+        conversation_event_id = payload.get("source_conversation_event_id")
+        event = None
+        if isinstance(conversation_event_id, str) and conversation_event_id.strip():
+            event = self.db.get_conversation_event(conversation_event_id)
+            if event is None:
+                raise ValueError(f"unknown source conversation event `{conversation_event_id}`")
+        source_conversation_id = (
+            str(payload["source_conversation_id"])
+            if isinstance(payload.get("source_conversation_id"), str) and payload.get("source_conversation_id")
+            else (str(event["conversation_id"]) if event else None)
+        )
+        source_receipt_id = (
+            str(payload["source_receipt_id"])
+            if isinstance(payload.get("source_receipt_id"), str) and payload.get("source_receipt_id")
+            else (str(event["receipt_id"]) if event and event.get("receipt_id") else None)
+        )
+        redaction = str(payload.get("redaction") or "").strip()
+        if not redaction:
+            redaction = (
+                "private_source_redacted"
+                if event and event.get("visibility_scope") == "private"
+                else "project_context"
+            )
+        queue_item_id = f"queue-{_stable_digest(f'{call_id}:queue')}"
+        owner_role = _required_string(payload, "suggested_owner")
+        self.db.create_queue_item(
+            queue_item_id=queue_item_id,
+            title=_required_string(payload, "title"),
+            summary=_required_string(payload, "summary"),
+            owner_role=owner_role,
+            source_kind="conversation",
+            source_ref=source_ref,
+        )
+        self.db.record_work_proposal(
+            proposal_id=f"proposal-{_stable_digest(f'{queue_item_id}:{call_id}')}",
+            queue_item_id=queue_item_id,
+            source_conversation_id=source_conversation_id,
+            source_conversation_event_id=str(conversation_event_id) if conversation_event_id else None,
+            source_receipt_id=source_receipt_id,
+            source_ref=source_ref,
+            proposed_by_role=role_id,
+            initiated_by=_required_string(payload, "initiated_by"),
+            classification=_required_string(payload, "classification"),
+            redaction=redaction,
+            target_artifact=str(payload["target_artifact"]) if payload.get("target_artifact") else None,
+            rationale=_required_string(payload, "rationale"),
+            urgency=_required_string(payload, "urgency"),
+            suggested_owner=owner_role,
+            work_type=_required_string(payload, "work_type"),
+            safe_output_ref=call_id,
+        )
 
 
 def _required_string(raw: dict[str, Any], key: str) -> str:

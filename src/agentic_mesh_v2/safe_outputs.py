@@ -14,6 +14,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "sponsor.ask_question",
         "handoff.request",
         "consult.request",
+        "queue.propose_item",
         "release.request_approval",
         "release.close",
         "report.blocked",
@@ -80,7 +81,17 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "sponsor.ask_question": ("question", "reason"),
     "handoff.request": ("target_role", "reason"),
     "consult.request": ("target_role", "reason"),
-    "queue.propose_item": ("title", "summary"),
+    "queue.propose_item": (
+        "title",
+        "summary",
+        "source_ref",
+        "rationale",
+        "urgency",
+        "suggested_owner",
+        "work_type",
+        "classification",
+        "initiated_by",
+    ),
     "document.propose_update": ("path", "document_type", "content"),
     "document.add_review_comment": ("path", "comment"),
     "memory.propose_update": ("summary", "provenance_ref"),
@@ -212,3 +223,9 @@ def _reject_fake_claims(tool_name: str, payload: dict[str, Any]) -> None:
     for key in payload:
         if key in {"created_work_item_id", "created_queue_item_id"}:
             raise SafeOutputError("safe-output payloads must not invent created ids")
+    if tool_name == "queue.propose_item":
+        private_source_keys = {"body", "message", "raw_text", "raw_message"}
+        if private_source_keys.intersection(payload):
+            raise SafeOutputError(
+                "queue proposals must store source references and rationale, not raw conversation text"
+            )

@@ -1411,3 +1411,175 @@ Story 9 may begin for the local Teams connector progression.
   relevance decisions cannot post Teams `status.reply` or create delivery
   records. Story 9 may begin for the local connector scope. | accepted
   2026-06-12
+
+# V2 Teams Connector Story 9 QA Review
+
+Status: QA reviewed current tree - changes requested
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Review Scope
+
+Story 9 - Proactive Work Proposals And Conversation Promotion:
+
+- durable queue proposals must be created only through `queue.propose_item`
+- ordinary Teams channel and DM free text must not infer work
+- private DM promotion must preserve source references, classification, and
+  redaction without raw body leakage
+- `status.reply` may reference only proposal/work that actually exists
+- fake/raw conversation claims must be rejected
+
+QA did not edit source. QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 9 source/test changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_work_proposals.py` | Passed: 4 passed in 0.40s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_work_proposals.py` | Passed: 7 passed in 0.59s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py` | Passed: 31 passed in 2.29s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 48 passed in 3.23s. |
+| In-memory fake source probe: `queue.propose_item` with `source_conversation_event_id='conversation-event-fake'` | Rejected with `ValueError`, but left `safe_output_calls=1`, `queue_items=0`, `work_proposals=0`. |
+| In-memory fake work reference probe: `status.reply` with `work_item_id='work-not-real'` | Accepted and created `safe_output_calls=1`, `delivery_records=1`. |
+
+## Decision
+
+Changes requested for Story 9 before QA acceptance.
+
+The core happy path is present and the regression suite passes: `queue.propose_item`
+creates a durable queued proposal, ordinary project-channel free text remains
+context only, checked-in tests prove private source body text is absent from
+default status output, and raw `body`/`message`/`raw_text`/`raw_message`
+proposal payloads are rejected.
+
+Two acceptance guardrails are still incomplete.
+
+## Findings
+
+- P1 - `status.reply` accepts fake work references. The Story 9 acceptance
+  rule says `status.reply` can reference only proposal/work that actually
+  exists, but `ConnectorSafeOutputService._validate_reply_references()` checks
+  only `queue_item_id`. A `status.reply` payload with
+  `work_item_id='work-not-real'` was accepted and delivered. Relevant code:
+  `src/agentic_mesh_v2/connectors.py` lines 682-685. `V2Database.get_work_item()`
+  already raises for unknown work IDs and can support this guard.
+
+- P1 - rejected fake conversation sources leave durable safe-output evidence.
+  `ConnectorSafeOutputService.record()` records the safe-output call before
+  validating and recording the proposal-specific conversation source. A
+  `queue.propose_item` with unknown `source_conversation_event_id` raises
+  `ValueError`, but the rejected call remains in `safe_output_calls`. That
+  leaves audit state implying the role emitted a terminal queue proposal even
+  though the source claim was fake and no proposal exists. Relevant code:
+  `src/agentic_mesh_v2/connectors.py` lines 656-660 and 687-694.
+
+## Passing Evidence
+
+| Story 9 expectation | QA result |
+| --- | --- |
+| Role can create durable queue proposal only via `queue.propose_item` | Pass for the implemented path. Focused tests show one queued item and one work proposal only after `queue.propose_item`. |
+| Ordinary Teams/channel/DM free text does not infer work | Pass for checked project-channel regression; prior Story 2 DM regression still proves ordinary DM reply creates no queue/work item. |
+| Private DM promotion stores source references, classification, redaction, and no raw body in default status | Pass for the checked-in sentinel test: proposal stores source conversation/event/receipt refs, classification, `private_source_redacted`, and no `PRIVATE_SENTINEL` in `status_snapshot()`. |
+| Raw conversation payload fields are rejected from queue proposals | Pass for `body`/`message`/`raw_text`/`raw_message` guard coverage in `safe_outputs.py`. |
+| `status.reply` unknown queue reference is rejected | Pass for `queue_item_id='queue-not-real'`. |
+
+## Residual Gaps
+
+- Real Teams tenant, Bot Framework, Graph, Entra, permissions, throttling, and
+  real private DM promotion evidence remain outside this local-adapter story.
+- The checked-in raw-text rejection guard is field-name based. It does not
+  classify arbitrary copied private content placed into allowed fields such as
+  `summary` or `rationale`; this may be acceptable as prompt/policy territory,
+  but it remains a privacy residual until a stronger content-redaction policy
+  exists.
+- The safe-output front door still returns only a call id; direct returned
+  proposal/queue refs are deferred per Engineering notes.
+
+## Story 10 Gate
+
+Story 10 should not begin until the two P1 Story 9 findings above are fixed
+or explicitly waived by the sponsor.
+
+## Review Log
+
+- RL-016 | qa-engineer | Story 9 QA | Focused Story 9 tests, safe-output
+  regressions, Story 1-9 local connector regressions, full pytest, and two
+  extra fake-reference probes were run. Tests pass, but QA requests changes:
+  `status.reply` accepts fake work item references, and rejected
+  `queue.propose_item` fake source claims leave durable safe-output records. |
+  changes requested 2026-06-12
+
+# V2 Teams Connector Story 9 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 9 rework for the prior QA findings:
+
+- `status.reply` must reject unknown `work_item_id` references before
+  safe-output recording or Teams delivery
+- `queue.propose_item` must reject unknown `source_conversation_event_id`
+  before safe-output persistence
+- focused regressions must continue proving no work inference from ordinary
+  Teams text, private promotion redaction/source refs, queue proposal creation,
+  and raw conversation text rejection
+
+QA did not edit source. QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 9 rework changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_work_proposals.py` | Passed: 5 passed in 0.47s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_work_proposals.py` | Passed: 8 passed in 0.66s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py` | Passed: 32 passed in 2.30s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 49 passed in 3.11s. |
+
+## Retest Decision
+
+Story 9 passes QA for the implemented local Teams connector scope.
+
+The prior P1 findings are closed. The focused rework proves that an unknown
+`work_item_id` on `status.reply` is rejected before delivery, and an unknown
+`source_conversation_event_id` on `queue.propose_item` is rejected before any
+safe-output call, queue item, or work proposal is persisted. The full Story
+1-9 local connector regression pack and full test suite also pass.
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra, permission, throttling, or live private
+  DM promotion evidence exists yet.
+- Raw conversation rejection is still field-name based. It blocks explicit raw
+  payload fields such as `body`, `message`, `raw_text`, and `raw_message`, but
+  does not classify arbitrary copied private text placed into allowed fields
+  such as `summary` or `rationale`.
+- The safe-output front door still returns a call id rather than direct
+  queue/proposal refs; Engineering has already noted CLI/MCP wrappers should
+  expose those refs when those front doors are implemented.
+
+## Story 10 Gate
+
+Story 10 may begin for the local Teams connector progression.
+
+## Review Log
+
+- RL-017 | qa-engineer | Story 9 QA retest | Focused Story 9 tests,
+  safe-output pairing, Story 1-9 local connector regressions, and full pytest
+  pass. Prior P1 findings are closed: `status.reply` now rejects unknown work
+  references before recording/delivery, and `queue.propose_item` rejects fake
+  source conversation events before safe-output persistence. Story 10 may
+  begin for the local connector scope. | accepted 2026-06-12

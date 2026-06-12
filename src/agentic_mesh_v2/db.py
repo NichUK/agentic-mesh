@@ -318,6 +318,26 @@ class V2Database:
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   UNIQUE(conversation_event_id, role_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS work_proposals (
+                  proposal_id TEXT PRIMARY KEY,
+                  queue_item_id TEXT NOT NULL REFERENCES queue_items(queue_item_id),
+                  source_conversation_id TEXT,
+                  source_conversation_event_id TEXT,
+                  source_receipt_id TEXT,
+                  source_ref TEXT NOT NULL,
+                  proposed_by_role TEXT NOT NULL,
+                  initiated_by TEXT NOT NULL,
+                  classification TEXT NOT NULL,
+                  redaction TEXT NOT NULL,
+                  target_artifact TEXT,
+                  rationale TEXT NOT NULL,
+                  urgency TEXT NOT NULL,
+                  suggested_owner TEXT NOT NULL,
+                  work_type TEXT NOT NULL,
+                  safe_output_ref TEXT NOT NULL REFERENCES safe_output_calls(call_id),
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
             self.connection.execute(
@@ -374,6 +394,76 @@ class V2Database:
                 {"title": title, "owner_role": owner_role, "source_kind": source_kind},
             )
         return QueueItem(queue_item_id, title, summary, "queued", owner_role)
+
+    def get_queue_item(self, queue_item_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM queue_items WHERE queue_item_id = ?",
+            (queue_item_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
+    def record_work_proposal(
+        self,
+        *,
+        proposal_id: str,
+        queue_item_id: str,
+        source_ref: str,
+        proposed_by_role: str,
+        initiated_by: str,
+        classification: str,
+        redaction: str,
+        rationale: str,
+        urgency: str,
+        suggested_owner: str,
+        work_type: str,
+        safe_output_ref: str,
+        source_conversation_id: str | None = None,
+        source_conversation_event_id: str | None = None,
+        source_receipt_id: str | None = None,
+        target_artifact: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO work_proposals(
+                  proposal_id, queue_item_id, source_conversation_id, source_conversation_event_id,
+                  source_receipt_id, source_ref, proposed_by_role, initiated_by, classification,
+                  redaction, target_artifact, rationale, urgency, suggested_owner, work_type,
+                  safe_output_ref
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    proposal_id,
+                    queue_item_id,
+                    source_conversation_id,
+                    source_conversation_event_id,
+                    source_receipt_id,
+                    source_ref,
+                    proposed_by_role,
+                    initiated_by,
+                    classification,
+                    redaction,
+                    target_artifact,
+                    rationale,
+                    urgency,
+                    suggested_owner,
+                    work_type,
+                    safe_output_ref,
+                ),
+            )
+            self.append_event(
+                "work_proposal.recorded",
+                "queue_item",
+                queue_item_id,
+                {
+                    "proposal_id": proposal_id,
+                    "proposed_by_role": proposed_by_role,
+                    "source_ref": source_ref,
+                    "classification": classification,
+                    "work_type": work_type,
+                },
+            )
 
     def upsert_connector(
         self,
@@ -571,6 +661,13 @@ class V2Database:
                 conversation_id,
                 {"event_type": event_type, "connector_id": connector_id, "visibility_scope": visibility_scope},
             )
+
+    def get_conversation_event(self, conversation_event_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM conversation_events WHERE conversation_event_id = ?",
+            (conversation_event_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
 
     def bind_thread(
         self,
@@ -1201,6 +1298,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_work_proposals(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM work_proposals
+            ORDER BY created_at DESC, proposal_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_work_items(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -1431,6 +1538,7 @@ class V2Database:
         connector_attention_items = self.list_connector_attention_items()
         role_assignments = self.list_role_assignments()
         relevance_checks = self.list_relevance_checks()
+        work_proposals = self.list_work_proposals()
         safe_output_calls = self.list_safe_output_calls()
         redacted_safe_output_calls = _redact_private_safe_output_calls(safe_output_calls)
         states: dict[str, int] = {}
@@ -1465,6 +1573,7 @@ class V2Database:
                 "connector_attention_items": len(connector_attention_items),
                 "role_assignments": len(role_assignments),
                 "relevance_checks": len(relevance_checks),
+                "work_proposals": len(work_proposals),
             },
             "work_item_states": states,
             "queue_statuses": queue_statuses,
@@ -1486,6 +1595,7 @@ class V2Database:
             "connector_attention_items": connector_attention_items,
             "role_assignments": role_assignments,
             "relevance_checks": relevance_checks,
+            "work_proposals": work_proposals,
             "recent_events": self.list_events()[-50:],
         }
 

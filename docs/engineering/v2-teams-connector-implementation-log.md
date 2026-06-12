@@ -714,11 +714,93 @@ Focused coverage added:
 - Real Teams tenant behavior for team-wide messages remains real-connector
   scope.
 
+## Story 9 - Proactive Work Proposals And Conversation Promotion
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Story 9 implements the explicit bridge from Teams conversation into durable
+work capture. The connector still treats messaging input as conversational by
+default; durable work is created only when a role emits the
+`queue.propose_item` safe-output tool.
+
+### Implementation Notes
+
+- Added a first-class `work_proposals` table and status snapshot surface.
+- Added `V2Database.get_queue_item()`, `get_conversation_event()`,
+  `record_work_proposal()`, and `list_work_proposals()`.
+- Strengthened `queue.propose_item` validation so proposals must include:
+  title, summary, source ref, rationale, urgency, suggested owner, work type,
+  classification, and initiator.
+- Made `queue.propose_item` terminal by default for conversation-promotion
+  runs.
+- `ConnectorSafeOutputService` now converts a valid `queue.propose_item` call
+  into a real queued item plus a source-linked work-proposal audit record.
+- Private DM promotions infer `private_source_redacted` from the source
+  conversation event and persist references/classification instead of raw
+  message text.
+- `queue.propose_item` rejects raw conversation text fields such as `body`,
+  `message`, `raw_text`, and `raw_message`.
+- `status.reply` may carry a `queue_item_id` reference only when that queue
+  item already exists; unknown queue references are rejected before recording
+  the safe-output call.
+- Project-channel free text remains context only and creates no queue item,
+  work item, or role assignment by inference.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_work_proposals.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_work_proposals.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+5 passed
+8 passed
+32 passed
+49 passed
+```
+
+### QA Rework
+
+QA found two Story 9 guardrail gaps:
+
+- `status.reply` validated `queue_item_id` references but not `work_item_id`
+  references.
+- `queue.propose_item` with an unknown `source_conversation_event_id` was
+  rejected only after the safe-output call had already been persisted.
+
+Rework completed:
+
+- Added `work_item_id` reference validation for `status.reply` before the
+  safe-output call is recorded or delivered.
+- Added pre-record validation for `queue.propose_item` source conversation
+  events so fake source references fail without durable safe-output evidence.
+- Added focused regression tests for both findings.
+
+### Known Limitations
+
+- Queue proposal creation is local-runtime only in this story; queue promotion
+  policy and lifecycle start remain later runtime stories.
+- Real Teams tenant behavior remains outside local adapter coverage.
+- The safe-output front door currently returns a call id in-process; CLI/MCP
+  wrappers should expose the created queue/proposal refs directly when those
+  front doors are implemented.
+
 ### Next Engineering Story
 
-Story 9 - Proactive Work Proposals And Conversation Promotion.
+Story 10 - Approval And Human-Response Cards.
 
-Do not begin Story 9 until QA has reviewed Story 8 and any required rework has
+Do not begin Story 10 until QA has reviewed Story 9 and any required rework has
 passed retest.
 
 ## Review Log
@@ -774,3 +856,12 @@ passed retest.
   same-run no-op relevance decision cannot later post a Teams `status.reply`,
   closing the residual channel-noise gap found by QA. | awaiting QA retest
   2026-06-12
+- RL-015 | engineering | implementation | Story 9 | Implemented explicit
+  conversation-to-queue proposal capture through `queue.propose_item`, work
+  proposal audit records, private DM redaction, no-inference regression tests,
+  and queue-reference validation for `status.reply`. | awaiting QA review
+  2026-06-12
+- RL-016 | engineering | QA rework | Story 9 | Added `status.reply`
+  work-item reference validation and moved `queue.propose_item` source-event
+  validation ahead of safe-output persistence, with focused regression tests. |
+  awaiting QA retest 2026-06-12
