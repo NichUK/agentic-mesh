@@ -673,7 +673,10 @@ class LocalTeamsTestAdapter:
         payload: dict[str, Any],
         request_type: str,
     ) -> str:
-        title = str(payload.get("title") or "Human response requested").strip()
+        title = str(
+            payload.get("title")
+            or ("Release approval requested" if request_type == "release_approval" else "Human response requested")
+        ).strip()
         question = _required_string(payload, "question")
         conversation_id = _required_string(payload, "conversation_id")
         destination_ref = _required_string(payload, "destination_ref")
@@ -710,24 +713,25 @@ class LocalTeamsTestAdapter:
             binding_type="human_response",
             target_ref=request_id,
         )
-        self.db.create_human_response_request(
-            request_id=request_id,
-            connector_id=self.config.connector_id,
-            source_ref=call_id,
-            request_type=request_type,
-            title=title,
-            question=question,
-            required_authority=required_authority,
-            response_contract_id=response_contract_id,
-            created_by_role=role_id,
-            destination_ref=destination_ref,
-            destination_type=destination_type,
-            work_item_id=str(payload["work_item_id"]) if payload.get("work_item_id") else None,
-            gate_id=str(payload["gate_id"]) if payload.get("gate_id") else None,
-            target_ref=str(payload["target_ref"]) if payload.get("target_ref") else None,
-            thread_ref=thread_ref,
-            payload={"card": card},
-        )
+        if self.db.get_human_response_request(request_id) is None:
+            self.db.create_human_response_request(
+                request_id=request_id,
+                connector_id=self.config.connector_id,
+                source_ref=call_id,
+                request_type=request_type,
+                title=title,
+                question=question,
+                required_authority=required_authority,
+                response_contract_id=response_contract_id,
+                created_by_role=role_id,
+                destination_ref=destination_ref,
+                destination_type=destination_type,
+                work_item_id=str(payload["work_item_id"]) if payload.get("work_item_id") else None,
+                gate_id=str(payload["gate_id"]) if payload.get("gate_id") else None,
+                target_ref=str(payload["target_ref"]) if payload.get("target_ref") else None,
+                thread_ref=thread_ref,
+                payload={"card": card},
+            )
         delivery_id = self.send_card(
             source_ref=call_id,
             destination_ref=destination_ref,
@@ -1125,6 +1129,7 @@ class ConnectorSafeOutputService(SafeOutputService):
             self._validate_work_proposal_source(call.payload)
         if call.tool_name in {"human_response.request", "release.request_approval"}:
             self._validate_response_card_payload(call.payload)
+            call.payload.setdefault("connector_id", self.adapter.config.connector_id)
         return super().record(run_id=run_id, call=call)
 
     def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:

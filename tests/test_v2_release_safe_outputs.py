@@ -74,6 +74,66 @@ def test_release_manager_safe_outputs_record_no_deployment_and_close_work(tmp_pa
     assert releases[0]["deployment_result"].startswith("not_required:")
 
 
+def test_release_request_approval_safe_output_records_human_response_request(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-approval-request",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+
+        call_id = service.record(
+            run_id="run-release-approval-request",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.request_approval",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "question": "Approve release of work-release-safe-output?",
+                    "gate_id": "release_decision_response",
+                    "required_authority": "release_approver",
+                },
+                terminal=True,
+            ),
+        )
+        service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-release-approval-request",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.request_approval",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "question": "Approve release of work-release-safe-output?",
+                    "gate_id": "release_decision_response",
+                    "required_authority": "release_approver",
+                },
+                terminal=True,
+            ),
+        )
+
+        requests = db.list_human_response_requests()
+        work = db.get_work_item("work-release-safe-output")
+    finally:
+        db.close()
+
+    assert work.state == "release_review"
+    assert len(requests) == 1
+    assert requests[0]["source_ref"] == call_id
+    assert requests[0]["request_type"] == "release_approval"
+    assert requests[0]["status"] == "awaiting_response"
+    assert requests[0]["work_item_id"] == "work-release-safe-output"
+    assert requests[0]["gate_id"] == "release_decision_response"
+    assert requests[0]["required_authority"] == "release_approver"
+    assert requests[0]["response_contract_id"] == "release-decision-v1"
+    assert requests[0]["payload"]["card"]["request_id"] == requests[0]["request_id"]
+
+
 def test_release_manager_safe_output_executes_compose_deployment(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     executed: list[list[str]] = []

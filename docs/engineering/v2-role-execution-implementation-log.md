@@ -2895,6 +2895,76 @@ compileall passed
   service to request approval, deploy/no-deploy, record release evidence, and
   close the work.
 
+## PB-005 Story 32 - Canonical Human Response Requests
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Make `human_response.request` and `release.request_approval` safe outputs
+create durable runtime-owned human response request records, rather than
+depending on a connector side effect to make approval waits visible.
+
+### Changes
+
+- Base safe-output processing now records `human_response_requests` for
+  `human_response.request` and `release.request_approval`.
+- Connector-neutral requests use a fallback `runtime` connector row so the
+  existing schema foreign-key boundary remains intact.
+- Connector-backed card delivery reuses the base-created request record instead
+  of inserting a duplicate.
+- Connector-backed request processing injects the configured connector id before
+  base safe-output effects run.
+- Release approval defaults now use `Release approval requested` consistently
+  in both the canonical request row and delivered card.
+
+### QA Rework
+
+QA found that base processing could overwrite installed Teams connector metadata
+by upserting the connector id as a generic runtime connector. Engineering now
+only creates the fallback runtime connector when the connector id is actually
+`runtime`.
+
+QA also found that release approval without an explicit title could store
+`Release approval requested` in the canonical row while sending a Teams card
+titled `Human response requested`. Engineering aligned the connector default
+title with the base safe-output default and added regression coverage.
+
+### Tests Added
+
+- Connector-neutral `release.request_approval` records one durable
+  `release_approval` human response request and is replay-idempotent.
+- Connector-backed release approval preserves Teams connector metadata.
+- Connector-backed release approval without a title uses the same default title
+  in the request row, request card payload, and delivered card.
+
+### Tests Run
+
+```text
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py tests\test_v2_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_permissions.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_role_assignment_execution.py tests\test_v2_end_to_end.py
+```
+
+Results:
+
+```text
+44 passed before QA rework
+45 passed focused suite after QA rework
+56 passed broader release/connector suite after QA rework
+254 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- Human response submissions still need a later runtime story to resume or
+  advance lifecycle state without connector-specific handling.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -3076,3 +3146,11 @@ compileall passed
   replay by creating the missing release-review assignment when the work item is
   already in `release_review`, with idempotent assignment creation by call id.
   | QA accepted 2026-06-12
+- RL-056 | engineering | implementation | PB-005 Story 32 | Added base
+  safe-output recording of `human_response_requests` for human response and
+  release approval requests. | QA requested connector metadata/title rework
+  2026-06-12
+- RL-057 | engineering | QA rework | PB-005 Story 32 | Preserved installed
+  connector metadata for connector-backed requests and aligned release approval
+  default titles between canonical rows and delivered cards. | QA accepted
+  2026-06-12

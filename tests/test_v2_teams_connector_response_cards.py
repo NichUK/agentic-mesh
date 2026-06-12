@@ -89,6 +89,7 @@ def _request_release_approval(
     *,
     conversation_id: str,
     delivery_outcome: str = "sent",
+    include_title: bool = True,
 ) -> str:
     service = ConnectorSafeOutputService(db, adapter=adapter)
     db.create_run(
@@ -97,24 +98,26 @@ def _request_release_approval(
         role_instance_id="release-manager-1",
         work_item_id="work-release-card",
     )
+    payload = {
+        "work_item_id": "work-release-card",
+        "question": "Approve release of work-release-card?",
+        "conversation_id": conversation_id,
+        "destination_ref": "channel-project",
+        "destination_type": "channel",
+        "thread_ref": "thread-release",
+        "gate_id": "release_decision_response",
+        "response_contract_id": "release-decision-v1",
+        "required_authority": "release_approver",
+        "delivery_outcome": delivery_outcome,
+    }
+    if include_title:
+        payload["title"] = "Approve release of release card slice"
     service.record(
         run_id="run-release-card",
         call=SafeOutputCall(
             role_id="release-manager",
             tool_name="release.request_approval",
-            payload={
-                "work_item_id": "work-release-card",
-                "title": "Approve release of release card slice",
-                "question": "Approve release of work-release-card?",
-                "conversation_id": conversation_id,
-                "destination_ref": "channel-project",
-                "destination_type": "channel",
-                "thread_ref": "thread-release",
-                "gate_id": "release_decision_response",
-                "response_contract_id": "release-decision-v1",
-                "required_authority": "release_approver",
-                "delivery_outcome": delivery_outcome,
-            },
+            payload=payload,
             terminal=True,
         ),
     )
@@ -136,6 +139,8 @@ def test_release_approval_card_delivery_and_authorized_submission(tmp_path: Path
     request = snapshot["human_response_requests"][0]
     submissions = snapshot["human_response_submissions"]
     deliveries = {record["purpose"]: record for record in snapshot["delivery_records"]}
+    assert len(snapshot["human_response_requests"]) == 1
+    assert request["connector_id"] == "teams-agentic-mesh-dev"
     assert request["status"] == "responded"
     assert request["response_value"] == "approve"
     assert request["responder_ref"] == "nicholas"
@@ -150,6 +155,27 @@ def test_release_approval_card_delivery_and_authorized_submission(tmp_path: Path
     assert deliveries["card.update"]["status"] == "sent"
     assert any(binding["binding_type"] == "human_response" for binding in snapshot["thread_bindings"])
     assert snapshot["counts"]["connector_attention_items"] == 0
+
+
+def test_release_approval_request_preserves_connector_metadata_and_default_title(tmp_path: Path) -> None:
+    db, adapter, conversation_id = _db_with_work_item(tmp_path)
+
+    _request_release_approval(
+        db,
+        adapter,
+        conversation_id=conversation_id,
+        include_title=False,
+    )
+
+    snapshot = db.status_snapshot()
+    request = snapshot["human_response_requests"][0]
+    delivery = snapshot["delivery_records"][0]
+    connector = next(item for item in snapshot["connectors"] if item["connector_id"] == "teams-agentic-mesh-dev")
+    assert connector["connector_type"] == "teams"
+    assert connector["display_name"] == "Agentic Mesh Dev Teams"
+    assert request["title"] == "Release approval requested"
+    assert request["payload"]["card"]["title"] == "Release approval requested"
+    assert delivery["payload"]["card"]["title"] == "Release approval requested"
 
 
 def test_unauthorized_approval_submission_fails_closed(tmp_path: Path) -> None:

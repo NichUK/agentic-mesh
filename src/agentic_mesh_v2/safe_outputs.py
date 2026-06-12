@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -254,6 +255,10 @@ class SafeOutputService:
             self._approve_quality(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "quality.request_changes":
             self._request_quality_changes(call)
+        if call.tool_name == "human_response.request":
+            self._record_human_response_request(call_id=call_id, call=call, request_type="human_response")
+        if call.tool_name == "release.request_approval":
+            self._record_human_response_request(call_id=call_id, call=call, request_type="release_approval")
         if call.tool_name == "release.record_no_deployment":
             self._record_no_deployment(call)
         if call.tool_name == "release.deploy":
@@ -440,6 +445,76 @@ class SafeOutputService:
                 next_action=reason,
                 retryable=True,
             )
+        )
+
+    def _record_human_response_request(
+        self,
+        *,
+        call_id: str,
+        call: SafeOutputCall,
+        request_type: str,
+    ) -> None:
+        request_id = _human_response_request_id(call_id)
+        if self.db.get_human_response_request(request_id) is not None:
+            return
+        work_item_id = _optional_text(call.payload.get("work_item_id"))
+        title = _optional_text(call.payload.get("title")) or (
+            "Release approval requested"
+            if request_type == "release_approval"
+            else "Human response requested"
+        )
+        question = _required_text(call.payload, "question")
+        response_contract_id = _optional_text(call.payload.get("response_contract_id")) or (
+            "release-decision-v1" if request_type == "release_approval" else "human-response-v1"
+        )
+        required_authority = _optional_text(call.payload.get("required_authority")) or "sponsor"
+        destination_ref = _optional_text(call.payload.get("destination_ref")) or "sponsor"
+        destination_type = _optional_text(call.payload.get("destination_type")) or "runtime"
+        thread_ref = _optional_text(call.payload.get("thread_ref")) or f"thread-{call_id}"
+        card = {
+            "type": "AdaptiveCard",
+            "version": "1.5",
+            "title": title,
+            "question": question,
+            "request_id": request_id,
+            "request_type": request_type,
+            "response_contract_id": response_contract_id,
+            "required_authority": required_authority,
+            "work_item_id": work_item_id,
+            "gate_id": _optional_text(call.payload.get("gate_id")),
+            "actions": [
+                {"type": "Action.Submit", "title": "Approve", "data": {"value": "approve"}},
+                {"type": "Action.Submit", "title": "Reject", "data": {"value": "reject"}},
+                {"type": "Action.Submit", "title": "Request changes", "data": {"value": "request_changes"}},
+            ],
+        }
+        connector_id = _optional_text(call.payload.get("connector_id")) or "runtime"
+        if connector_id == "runtime" and not _connector_exists(self.db, connector_id=connector_id):
+            self.db.upsert_connector(
+                connector_id=connector_id,
+                project_id=self.project_id or "runtime",
+                connector_type="runtime",
+                display_name="Runtime",
+                status="active",
+                health={},
+            )
+        self.db.create_human_response_request(
+            request_id=request_id,
+            connector_id=connector_id,
+            source_ref=call_id,
+            request_type=request_type,
+            title=title,
+            question=question,
+            required_authority=required_authority,
+            response_contract_id=response_contract_id,
+            created_by_role=call.role_id,
+            destination_ref=destination_ref,
+            destination_type=destination_type,
+            work_item_id=work_item_id,
+            gate_id=_optional_text(call.payload.get("gate_id")),
+            target_ref=_optional_text(call.payload.get("target_ref")),
+            thread_ref=thread_ref,
+            payload={"card": card},
         )
 
     def _record_no_deployment(self, call: SafeOutputCall) -> None:
@@ -711,6 +786,14 @@ def _has_test_evidence(db: V2Database, *, work_item_id: str) -> bool:
         and evidence.get("evidence_type") == "test_evidence"
         for evidence in db.list_work_item_evidence()
     )
+
+
+def _connector_exists(db: V2Database, *, connector_id: str) -> bool:
+    return any(connector.get("connector_id") == connector_id for connector in db.list_connectors())
+
+
+def _human_response_request_id(call_id: str) -> str:
+    return f"human-response-{hashlib.sha256(call_id.encode('utf-8')).hexdigest()[:16]}"
 
 
 def _contained_document_path(root: Path, relative_path: str) -> Path:

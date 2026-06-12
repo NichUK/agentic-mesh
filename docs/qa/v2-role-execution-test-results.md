@@ -2852,3 +2852,70 @@ compileall passed
   approval queues Release Manager release-review work, connector-backed approval
   preserves the behavior, and replay repairs missing assignments without
   duplication. | accepted after rework 2026-06-12
+
+## PB-005 Story 32 - Canonical Human Response Requests
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_release_safe_outputs.py`
+- `tests/test_v2_teams_connector_response_cards.py`
+- Related release, connector, role-service, status dashboard, and end-to-end
+  regression tests
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py tests\test_v2_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_permissions.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_role_assignment_execution.py tests\test_v2_end_to_end.py
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+44 passed initial focused suite
+45 passed focused suite after rework
+56 passed broader release/connector suite after rework
+254 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation created canonical human response requests, but could
+  overwrite Teams connector metadata by upserting the same connector id as a
+  generic runtime connector. Engineering limited fallback connector creation to
+  the actual `runtime` connector id.
+- Initial implementation could diverge between the canonical release approval
+  title and the delivered Teams card title when no explicit title was provided.
+  Engineering aligned the default title and added regression coverage.
+
+### Acceptance Assessment
+
+- `human_response.request` and `release.request_approval` now create durable
+  human response request rows through base safe-output processing.
+- Connector-backed release approval reuses the canonical request row, avoids
+  duplicate inserts, preserves connector metadata, and still delivers the
+  response card.
+- Connector-neutral release approval requests remain visible in runtime status
+  through a schema-valid fallback runtime connector.
+
+### Residual Risks
+
+- Runtime-level lifecycle advancement after human response submission remains a
+  later story.
+
+### Review Log
+
+- QA-RL-046 | qa-engineer | acceptance | PB-005 Story 32 | Verified
+  canonical human response request recording, connector duplicate prevention,
+  Teams connector metadata preservation, release title consistency, and focused
+  release/connector regression coverage. | accepted after rework 2026-06-12
