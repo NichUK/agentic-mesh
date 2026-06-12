@@ -28,6 +28,9 @@ The sponsor provided product direction on 2026-06-12:
 - Teams conversations inform, consult, and keep humans and agents updated. The
   document library remains the primary source of truth for important decisions,
   architecture, requirements, risks, and release records.
+- Agents must be able to initiate human conversations when they need
+  clarification, decisions, approvals, risk acceptance, or specialist input from
+  people.
 
 ## Product Intent
 
@@ -62,6 +65,9 @@ The design must preserve these product qualities:
   the document library.
 - Sponsor questions and approvals are visible, actionable, and routed back to
   the correct conversation.
+- Agent-initiated questions use the most appropriate Teams communication style:
+  direct messages for focused clarification, and channels or group chats for
+  decisions that need broader human or agent discussion.
 - Agent replies are concise, role-authored, Markdown-formatted, and complete.
 
 ## Target Users
@@ -174,6 +180,31 @@ queue item, work item, sponsor question, or approval request where applicable.
 Thread replies must be processed as part of the same conversational context
 unless the human explicitly starts new work.
 
+### Agent-Initiated Human Questions
+
+Any role agent may need to ask a human for clarification, a product decision,
+approval, risk acceptance, missing context, or specialist judgement. The Teams
+connector must support this as a first-class conversation pattern.
+
+The communication style should be role guidance rather than hard enforcement by
+the connector:
+
+- Use direct messages for focused questions that need one accountable human to
+  answer and might be missed in a busy channel.
+- Use a suitable channel, group chat, or thread when the question needs visible
+  discussion between multiple humans, multiple agents, or a project group.
+- Mention the specific humans or agents whose input is needed when using a
+  channel or group discussion.
+- Allow the human to loop in another human or agent, turning a direct
+  clarification into a broader discussion when that is the natural way to reach
+  the decision.
+- Preserve the conversation link and final decision back to the originating
+  work item, queue item, approval, risk, or document update.
+
+The runtime should record the agent's intended audience, reason, source work
+context, and delivery channel, but it should not prevent a role from choosing an
+unusual communication route when the role can justify it.
+
 ## Scope
 
 V2 Teams connector MVP scope:
@@ -186,6 +217,8 @@ V2 Teams connector MVP scope:
 - Conversation records in the v2 database.
 - Role reply routing through `status.reply`.
 - Sponsor question routing from `sponsor.ask_question`.
+- Agent-initiated human question routing from any role to a sponsor, named
+  human, configured human group, role, channel, or thread.
 - Queue/work proposal from conversation through safe-output tools.
 - Teams delivery records and visible delivery failures.
 - Markdown rendering for full agent replies.
@@ -229,6 +262,8 @@ V2 Teams connector MVP scope:
 - Send explicit progress messages only when work is long-running, blocked,
   waiting for human input, or crossing a lifecycle gate.
 - Bind sponsor replies to the original question, approval, or work item.
+- Bind agent-initiated human questions and replies to the original work item,
+  queue item, approval, risk, or document context.
 - Record connector delivery status, failures, retries, and final message ids.
 - Ensure every durable state change comes from safe-output calls, not inferred
   connector text.
@@ -262,6 +297,16 @@ V2 Teams connector MVP scope:
 - Given a sponsor replies in a Teams thread to a question or approval, when the
   connector processes the reply, then the runtime binds it to the original
   conversation/work item and continues the correct flow.
+- Given an agent needs focused clarification from the sponsor, when the role
+  chooses direct-message routing, then the sponsor receives a DM with the
+  question, context, requested decision, and link back to the originating work.
+- Given an agent needs a broader decision discussion, when the role chooses a
+  channel or group route, then the message mentions the required people or roles
+  and the resulting thread remains bound to the originating work.
+- Given a human loops another person or agent into an agent-initiated
+  conversation, when the connector processes the added discussion, then the
+  conversation remains auditable and can still produce the final decision or
+  work update.
 - Given a connector send fails, when the runtime records the failure, then the
   dashboard shows the failed delivery and next action.
 - Given the same Teams message is received twice, when the connector ingests it,
@@ -278,6 +323,8 @@ V2 Teams connector MVP scope:
 - Important decisions are found in the document library rather than only in
   Teams history.
 - Sponsor questions and approvals are answerable from Teams threads.
+- Agent questions reach the right humans with enough context to answer without
+  hunting through raw artifacts.
 - Connector failures are visible in the dashboard and recoverable.
 - The same conversation model can be reused by Slack and other connectors.
 
@@ -308,8 +355,9 @@ For the MVP, prioritize:
 1. Direct messages to configured role agents.
 2. Project-channel role mentions.
 3. Team-wide relevance-checked discussion.
-4. Sponsor questions and approval replies bound to the originating thread.
-5. Complete Markdown replies and delivery status.
+4. Agent-initiated human questions by DM, channel, group chat, or thread.
+5. Sponsor questions and approval replies bound to the originating thread.
+6. Complete Markdown replies and delivery status.
 
 ## Sponsor Review Questions And Disposition
 
@@ -351,3 +399,9 @@ Likely downstream roles:
   privacy, channel capture, relevance, project channel, proactive work proposal,
   and document-library truth decisions incorporated. Retention duration remains
   an architecture/security defaulting question.
+- RL-002 | product-manager | sponsor-review | agent-initiated human questions |
+  Sponsor clarified that agents must be able to message humans for
+  clarification or decisions, preferring DM for focused questions and suitable
+  channels/group chats with mentions for broader discussion. The system should
+  guide rather than rigidly enforce this communication style. | incorporated
+  2026-06-12
