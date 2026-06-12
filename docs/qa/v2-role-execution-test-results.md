@@ -798,3 +798,78 @@ scope:
 ### Review Log
 
 - QA-RL-013 | qa-engineer | acceptance | PB-004 Story 13 | Verified bounded project role-service loop execution, cycle/poll validation, aggregate and per-cycle JSON receipts, idle second-cycle behavior, and factual scope limits. | accepted 2026-06-12
+
+## PB-005 Story 1 - Hibernation Policy And Safe-Point State
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/hibernation.py`
+- `src/agentic_mesh_v2/project_config.py`
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_hibernation.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+57 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+134 passed
+```
+
+### Acceptance Assessment
+
+- Hibernation policy supports `enabled`, `idle_after_seconds`, and
+  `min_warm_instances`, with invalid scalar values rejected.
+- Project hibernation defaults and role overrides load as expected.
+- Safe-point evaluation refuses hibernation unless the instance is idle, has no
+  current assignment, has no queued role assignment, has no claimed instance
+  assignment, satisfies the idle grace period, and stays above the warm-instance
+  floor.
+- Durable role-instance state records `hibernating`, `hibernated`, and
+  `hydrating` transitions with hibernation reason, hibernated timestamp, and
+  wake reason.
+- Status JSON and the dashboard role-instance table expose the hibernation
+  fields.
+- The engineering log is factual and explicitly does not claim container
+  stop/start, event wake scheduling, process checkpointing, or full
+  hibernation/hydration implementation.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 1 because they remain later PB-005
+scope:
+
+- This story records logical hibernation readiness and status only; it does not
+  stop or start containers.
+- Event-driven wake scheduling, cooperative suspend, and full hydration remain
+  future work.
+
+### Review Log
+
+- QA-RL-014 | qa-engineer | acceptance | PB-005 Story 1 | Verified
+  hibernation policy loading and validation, safe-point refusal/approval
+  behavior, durable hibernation and hydration state fields, dashboard/status
+  visibility, focused regression tests, full pytest, and factual scope limits.
+  | accepted 2026-06-12

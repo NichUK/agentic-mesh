@@ -21,6 +21,19 @@ def load_role_worker_config(project_file: Path, *, role_id: str) -> dict[str, An
     return _worker_config(project_file, role_id=role_id, role=role)
 
 
+def load_role_hibernation_config(project_file: Path, *, role_id: str) -> dict[str, Any]:
+    raw = _load_project_mapping(project_file)
+    role = _role_mapping(raw, role_id=role_id)
+    config: dict[str, Any] = {}
+    project_hibernation = raw.get("hibernation")
+    if isinstance(project_hibernation, dict):
+        config.update(project_hibernation)
+    role_hibernation = role.get("hibernation")
+    if isinstance(role_hibernation, dict):
+        config.update(role_hibernation)
+    return config
+
+
 def list_project_role_service_configs(project_file: Path) -> list[ProjectRoleServiceConfig]:
     raw = _load_project_mapping(project_file)
     project_id = raw.get("project_id")

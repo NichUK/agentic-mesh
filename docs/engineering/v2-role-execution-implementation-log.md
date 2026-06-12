@@ -87,7 +87,7 @@ Results:
 
 ## PB-004 Story 2 - Materialize Handoff And Consult Assignments
 
-Status: implemented, awaiting QA review.
+Status: implemented, QA accepted.
 
 Owner role: Engineering
 
@@ -761,7 +761,7 @@ Results:
 
 ## PB-004 Story 13 - Bounded Project Role-Service Loop
 
-Status: implemented, awaiting QA review.
+Status: implemented, QA accepted.
 
 Owner role: Engineering
 
@@ -817,6 +817,80 @@ Results:
 - The command sleeps between cycles but does not yet wake from external events,
   connector notifications, or scheduled retry timers.
 
+## PB-005 Story 1 - Hibernation Policy And Safe-Point State
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add the first durable hibernation readiness slice for v2 role instances. This
+story defines configurable hibernation policy, safe-point evaluation, durable
+hibernation/hydration status recording, and dashboard visibility. It does not
+stop or start containers.
+
+### Implementation Notes
+
+- Added `HibernationPolicy` with:
+  - `enabled`
+  - `idle_after_seconds`
+  - `min_warm_instances`
+- Added project-level and role-level hibernation config loading. Role config
+  overrides project defaults.
+- Added `HibernationService.evaluate()` to allow hibernation only when:
+  - the policy is enabled
+  - the role instance exists and belongs to the requested role
+  - the role instance is `idle`
+  - there is no current assignment
+  - there is no queued work for the role
+  - there is no claimed work for the instance
+  - hibernating would not violate the configured warm-instance floor
+  - the idle grace period has elapsed
+- Added durable role-instance fields:
+  - `hibernation_reason`
+  - `hibernated_at`
+  - `wake_reason`
+- Added durable hibernation state updates for `hibernating`, `hibernated`, and
+  `hydrating`.
+- Updated the status dashboard role-instance table to show hibernation and wake
+  evidence.
+
+### Tests Added
+
+- project hibernation defaults and role overrides
+- invalid hibernation policy values
+- idle safe-point hibernation after the grace period
+- refusal while active
+- refusal when queued work exists for the role
+- warm-instance floor protection
+- hydration records wake reason while preserving hibernation reason
+- dashboard renders hibernation evidence
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_hibernation.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+8 passed
+57 passed
+```
+
+### Known Limitations
+
+- This story records logical hibernation readiness only. It does not stop,
+  start, pause, or resume containers.
+- There is no event-driven wake scheduler yet.
+- Worker subprocess checkpointing and cooperative suspend remain later PB-005
+  work.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -862,3 +936,6 @@ Results:
 - RL-013 | engineering | implementation | PB-004 Story 13 | Added a bounded
   project role-service loop command with cycle/poll validation and per-cycle
   JSON receipts. | QA accepted 2026-06-12
+- RL-014 | engineering | implementation | PB-005 Story 1 | Added hibernation
+  policy loading, safe-point evaluation, durable hibernation/hydration state,
+  and dashboard evidence. | QA accepted 2026-06-12

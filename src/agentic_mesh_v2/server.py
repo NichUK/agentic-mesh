@@ -270,10 +270,11 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row.get('detail') or '')}</td>"
                 f"<td>{_e(row.get('current_assignment_id') or '')}<br>{_e(row.get('last_run_id') or '')}</td>"
                 f"<td>{_e(row.get('processed_count') or 0)}</td>"
-                f"<td>{_e(row['heartbeat_at'])}</td>"
+                f"<td>{_e(row['heartbeat_at'])}<br>{_e(row.get('hibernated_at') or '')}</td>"
+                f"<td>{_e(row.get('hibernation_reason') or '')}<br>{_e(row.get('wake_reason') or '')}</td>"
                 "</tr>"
             )
-        return "<table><tr><th>Instance / Role</th><th>Status / Detail</th><th>Assignment / Run</th><th>Processed</th><th>Heartbeat</th></tr>" + "".join(body) + "</table>"
+        return "<table><tr><th>Instance / Role</th><th>Status / Detail</th><th>Assignment / Run</th><th>Processed</th><th>Heartbeat / Hibernated</th><th>Hibernate / Wake Reason</th></tr>" + "".join(body) + "</table>"
 
     def _channel_binding_table(self, rows: object) -> str:
         connectors = list(rows) if isinstance(rows, list) else []

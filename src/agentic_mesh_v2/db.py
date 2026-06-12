@@ -377,6 +377,9 @@ class V2Database:
                   last_run_id TEXT,
                   processed_count INTEGER NOT NULL DEFAULT 0,
                   detail TEXT,
+                  hibernation_reason TEXT,
+                  hibernated_at TEXT,
+                  wake_reason TEXT,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -497,6 +500,9 @@ class V2Database:
             self._ensure_column("role_assignments", "terminal_tool", "TEXT")
             self._ensure_column("role_assignments", "failure_reason", "TEXT")
             self._ensure_column("role_assignments", "recovery_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column("role_instance_status", "hibernation_reason", "TEXT")
+            self._ensure_column("role_instance_status", "hibernated_at", "TEXT")
+            self._ensure_column("role_instance_status", "wake_reason", "TEXT")
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
@@ -1774,6 +1780,62 @@ class V2Database:
                     "status": status,
                     "current_assignment_id": current_assignment_id,
                     "last_run_id": last_run_id,
+                },
+            )
+
+    def update_role_instance_hibernation(
+        self,
+        *,
+        role_id: str,
+        role_instance_id: str,
+        status: str,
+        reason: str,
+    ) -> None:
+        if status not in {"hibernating", "hibernated", "hydrating"}:
+            raise ValueError("hibernation status must be hibernating, hibernated, or hydrating")
+        if not reason.strip():
+            raise ValueError("hibernation reason is required")
+        hibernation_reason = reason if status in {"hibernating", "hibernated"} else None
+        wake_reason = reason if status == "hydrating" else None
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO role_instance_status(
+                  role_instance_id, role_id, status, current_assignment_id,
+                  detail, hibernation_reason, hibernated_at, wake_reason
+                )
+                VALUES (?, ?, ?, NULL, ?, ?, CASE WHEN ? = 'hibernated' THEN CURRENT_TIMESTAMP ELSE NULL END, ?)
+                ON CONFLICT(role_instance_id) DO UPDATE SET
+                  role_id = excluded.role_id,
+                  status = excluded.status,
+                  heartbeat_at = CURRENT_TIMESTAMP,
+                  current_assignment_id = NULL,
+                  detail = excluded.detail,
+                  hibernation_reason = COALESCE(excluded.hibernation_reason, role_instance_status.hibernation_reason),
+                  hibernated_at = CASE
+                    WHEN excluded.status = 'hibernated' THEN COALESCE(role_instance_status.hibernated_at, CURRENT_TIMESTAMP)
+                    ELSE role_instance_status.hibernated_at
+                  END,
+                  wake_reason = COALESCE(excluded.wake_reason, role_instance_status.wake_reason),
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    role_instance_id,
+                    role_id,
+                    status,
+                    reason,
+                    hibernation_reason,
+                    status,
+                    wake_reason,
+                ),
+            )
+            self.append_event(
+                f"role_instance.{status}",
+                "role_instance",
+                role_instance_id,
+                {
+                    "role_id": role_id,
+                    "reason": reason,
                 },
             )
 
