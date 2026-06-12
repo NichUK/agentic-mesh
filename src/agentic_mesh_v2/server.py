@@ -543,6 +543,10 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 "Execute bounded supervisor loop",
                 f"{base} run-project-supervisor-loop {project_arg} --cycles 10 --poll-seconds 5 --execute",
             ),
+            (
+                "Run continuous supervisor service",
+                f"{base} run-project-supervisor-service {project_arg} --continuous --poll-seconds 5 --execute",
+            ),
         ]
         body = []
         for label, command in commands:

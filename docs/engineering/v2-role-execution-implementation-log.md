@@ -1594,6 +1594,70 @@ Results:
 - This story exposes command guidance only. It does not add HTTP-side action
   buttons, a background daemon, or automatic supervisor scheduling.
 
+## PB-005 Story 14 - Project Supervisor Service Entrypoint
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add an explicit project supervisor service command suitable for container
+entrypoints and operator-managed long-running execution. The command reuses
+the existing project supervisor tick so hibernation maintenance and container
+lifecycle planning/execution stay on the same path as bounded operator runs.
+
+### Implementation Notes
+
+- Added `run-project-supervisor-service`.
+- Service mode must be explicit:
+  - `--cycles N` runs a bounded service session and exits.
+  - `--continuous` runs until interrupted by the host/container supervisor.
+- Preserved existing `--execute`, `--poll-seconds`, `--timeout-seconds`,
+  `--hibernate-reason`, and `--hydrate-reason` behavior.
+- JSON receipts include `service_mode`, `cycles_requested`,
+  `cycles_completed`, aggregate hibernation totals, aggregate container
+  lifecycle totals, and per-cycle receipts.
+- `KeyboardInterrupt` is handled as a clean `interrupted` service receipt.
+- `cycles_completed` counts completed cycles only, not an interrupted in-flight
+  attempt.
+- The dashboard supervisor command guidance now includes a continuous
+  supervisor service command.
+
+### Tests Added
+
+- bounded supervisor service runs two cycles and aggregates hibernation and
+  lifecycle totals
+- repeated service cycles reuse planned lifecycle actions via existing
+  idempotency
+- invalid service cycle and poll bounds are rejected
+- service mode is required so continuous execution is deliberate
+- continuous service interruption reports `interrupted` and completed-cycle
+  count accurately
+- status dashboard includes the continuous supervisor service command only when
+  a project file is configured
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+36 passed
+```
+
+### Known Limitations
+
+- This story adds the service entrypoint, not the Docker Compose/systemd/K8s
+  deployment wiring that will keep the command running in a deployed runtime.
+- Continuous mode remains host-supervisor controlled and writes its summary
+  only when interrupted.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1688,3 +1752,7 @@ Results:
 - RL-028 | engineering | implementation | PB-005 Story 13 | Added v2 status
   dashboard guidance for copyable project supervisor tick/loop commands when a
   project file is configured. | QA accepted 2026-06-12
+- RL-029 | engineering | implementation | PB-005 Story 14 | Added an explicit
+  project supervisor service command with bounded and continuous modes,
+  interrupt receipts, and dashboard command guidance. | QA accepted
+  2026-06-12

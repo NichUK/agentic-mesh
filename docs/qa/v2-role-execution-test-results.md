@@ -1628,3 +1628,58 @@ None blocking for PB-005 Story 13.
   dashboard guidance, plan-only and execute tick/loop command rendering with
   DB/project paths, no fake commands without a project file, and no regression
   to status privacy/redaction tests. | accepted 2026-06-12
+
+## PB-005 Story 14 - Project Supervisor Service Entrypoint
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_cli_server.py`
+- `tests/test_v2_status_dashboard.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+36 passed
+```
+
+### Acceptance Assessment
+
+- `run-project-supervisor-service` is registered in the v2 CLI.
+- The service command requires an explicit mode through mutually exclusive
+  `--cycles N` or `--continuous`.
+- Bounded service execution delegates to the existing supervisor tick path,
+  aggregates hibernation and container lifecycle totals, and preserves
+  plan-only lifecycle idempotency across repeated cycles.
+- Continuous service interruption returns an `interrupted` receipt, with
+  `cycles_completed` counting only completed cycles.
+- The status dashboard includes the continuous service command only when the
+  status server has a configured project file.
+- The engineering log limits the claim to the service entrypoint and does not
+  claim host deployment wiring, Compose/systemd/K8s supervisor wiring, or
+  automatic scheduling.
+
+### Residual Gaps
+
+None blocking for PB-005 Story 14.
+
+### Review Log
+
+- QA-RL-027 | qa-engineer | acceptance | PB-005 Story 14 | Verified explicit
+  supervisor service CLI mode selection, bounded cycle aggregation,
+  lifecycle idempotency, clean interrupt receipts, dashboard command scoping,
+  and factual engineering-log boundaries. | accepted 2026-06-12

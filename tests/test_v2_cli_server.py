@@ -1,9 +1,11 @@
 import json
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
+import agentic_mesh_v2.cli as cli_module
 from agentic_mesh_v2.cli import main
 from agentic_mesh_v2.container_lifecycle import ComposeRoleLifecycleConfig
 from agentic_mesh_v2.container_lifecycle import ContainerCommandResult
@@ -1446,6 +1448,85 @@ roles:
     assert snapshot["role_container_lifecycle_actions"][0]["status"] == "planned"
 
 
+def test_v2_cli_project_supervisor_service_runs_bounded_cycles(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+container_lifecycle:
+  adapter: docker-compose
+  compose_files:
+    - docker-compose.yml
+  service_name_template: "{project_id}-{role_id}-{index}"
+roles:
+  product-manager:
+    instances: 1
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+    hibernation:
+      idle_after_seconds: 1
+      min_warm_instances: 0
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.update_role_instance_status(
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            status="idle",
+            detail="Idle before supervisor service.",
+        )
+        db.connection.execute(
+            """
+            UPDATE role_instance_status
+            SET heartbeat_at = datetime('now', '-120 seconds')
+            WHERE role_id = 'product-manager'
+            """
+        )
+        db.connection.commit()
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-supervisor-service",
+                "--project-file",
+                str(project_file),
+                "--cycles",
+                "2",
+                "--poll-seconds",
+                "0",
+                "--hibernate-reason",
+                "Service idle hibernation.",
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "ok"
+    assert output["service_mode"] == "bounded"
+    assert output["cycles_requested"] == 2
+    assert output["cycles_completed"] == 2
+    assert output["hibernation_totals"]["hibernated_count"] == 1
+    assert output["container_lifecycle_totals"]["planned_count"] == 1
+    assert output["container_lifecycle_totals"]["existing_planned_count"] == 1
+    assert output["cycles"][0]["container_lifecycle"]["actions"][0]["status"] == "planned"
+    assert output["cycles"][1]["container_lifecycle"]["actions"][0]["status"] == "already_planned"
+
+
 @pytest.mark.parametrize(
     ("extra_args", "message"),
     [
@@ -1522,6 +1603,120 @@ roles:
                 *extra_args,
             ]
         )
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "message"),
+    [
+        (["--cycles", "0"], "--cycles must be at least 1"),
+        (["--cycles", "1", "--poll-seconds", "-0.1"], "--poll-seconds must be zero or greater"),
+    ],
+)
+def test_v2_cli_project_supervisor_service_rejects_invalid_bounds(
+    tmp_path: Path,
+    extra_args: list[str],
+    message: str,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-supervisor-service",
+                "--project-file",
+                str(project_file),
+                *extra_args,
+            ]
+        )
+
+
+def test_v2_cli_project_supervisor_service_requires_explicit_mode(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-supervisor-service",
+                "--project-file",
+                str(project_file),
+            ]
+        )
+
+
+def test_v2_cli_project_supervisor_service_reports_interrupt(monkeypatch, tmp_path: Path) -> None:
+    calls = 0
+
+    def fake_tick(db: object, args: Namespace) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise KeyboardInterrupt
+        return {
+            "status": "ok",
+            "project_file": str(args.project_file),
+            "execute": False,
+            "hibernation": {
+                "hibernated_count": 0,
+                "hydrating_count": 0,
+                "kept_awake_count": 1,
+            },
+            "container_lifecycle": {
+                "action_count": 0,
+                "planned_count": 0,
+                "existing_planned_count": 0,
+                "executed_count": 0,
+                "failed_count": 0,
+                "skipped_count": 0,
+            },
+        }
+
+    monkeypatch.setattr(cli_module, "_run_project_supervisor_tick", fake_tick)
+
+    result = cli_module._run_project_supervisor_service(
+        object(),  # type: ignore[arg-type]
+        Namespace(
+            project_file=tmp_path / "project.yaml",
+            cycles=None,
+            continuous=True,
+            poll_seconds=0,
+            execute=False,
+        ),
+    )
+
+    assert result["status"] == "interrupted"
+    assert result["service_mode"] == "continuous"
+    assert result["cycles_requested"] is None
+    assert result["cycles_completed"] == 1
+    assert len(result["cycles"]) == 1
+    assert result["hibernation_totals"]["kept_awake_count"] == 1
 
 
 def test_v2_cli_validate_topology_accepts_distinct_roots(tmp_path: Path, capsys) -> None:

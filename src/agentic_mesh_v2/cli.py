@@ -206,6 +206,38 @@ def main(argv: list[str] | None = None) -> int:
     )
     supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
 
+    supervisor_service_parser = subparsers.add_parser(
+        "run-project-supervisor-service",
+        help="Run the project supervisor as an explicit service loop.",
+    )
+    supervisor_service_parser.add_argument("--project-file", type=Path, required=True)
+    supervisor_service_mode = supervisor_service_parser.add_mutually_exclusive_group(required=True)
+    supervisor_service_mode.add_argument(
+        "--cycles",
+        type=int,
+        help="Run a bounded number of service cycles and exit.",
+    )
+    supervisor_service_mode.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Run continuously until interrupted by the host/container supervisor.",
+    )
+    supervisor_service_parser.add_argument("--poll-seconds", type=float, default=5.0)
+    supervisor_service_parser.add_argument(
+        "--hibernate-reason",
+        default="Project supervisor service found an idle safe role instance.",
+    )
+    supervisor_service_parser.add_argument(
+        "--hydrate-reason",
+        default="Project supervisor service found queued role work.",
+    )
+    supervisor_service_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually run planned container lifecycle commands. Without this flag, actions are recorded as planned only.",
+    )
+    supervisor_service_parser.add_argument("--timeout-seconds", type=int, default=300)
+
     topology_parser = subparsers.add_parser(
         "validate-topology",
         help="Validate v2 source/runtime/project repository boundaries.",
@@ -364,6 +396,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.command == "run-project-supervisor-loop":
                 result = _run_project_supervisor_loop(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            if args.command == "run-project-supervisor-service":
+                result = _run_project_supervisor_service(db, args)
                 print(json.dumps(result, sort_keys=True))
                 return 0
         finally:
@@ -720,6 +756,58 @@ def _run_project_supervisor_loop(db: V2Database, args: argparse.Namespace) -> di
         "status": "ok",
         "project_file": str(args.project_file),
         "cycles_requested": args.cycles,
+        "execute": bool(args.execute),
+        "hibernation_totals": hibernation_totals,
+        "container_lifecycle_totals": lifecycle_totals,
+        "cycles": cycles,
+    }
+
+
+def _run_project_supervisor_service(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    if args.cycles is not None and args.cycles < 1:
+        raise ValueError("--cycles must be at least 1")
+    if args.poll_seconds < 0:
+        raise ValueError("--poll-seconds must be zero or greater")
+
+    continuous = bool(args.continuous)
+    cycles_requested = None if continuous else int(args.cycles)
+    cycles: list[dict[str, object]] = []
+    hibernation_totals = {"hibernated_count": 0, "hydrating_count": 0, "kept_awake_count": 0}
+    lifecycle_totals = {
+        "action_count": 0,
+        "planned_count": 0,
+        "existing_planned_count": 0,
+        "executed_count": 0,
+        "failed_count": 0,
+        "skipped_count": 0,
+    }
+    status = "ok"
+    index = 0
+    try:
+        while cycles_requested is None or index < cycles_requested:
+            index += 1
+            cycle = _run_project_supervisor_tick(db, args)
+            cycle["cycle"] = index
+            cycles.append(cycle)
+            hibernation = cycle["hibernation"]
+            lifecycle = cycle["container_lifecycle"]
+            if isinstance(hibernation, dict):
+                for key in hibernation_totals:
+                    hibernation_totals[key] += int(hibernation.get(key, 0))
+            if isinstance(lifecycle, dict):
+                for key in lifecycle_totals:
+                    lifecycle_totals[key] += int(lifecycle.get(key, 0))
+            if (cycles_requested is None or index < cycles_requested) and args.poll_seconds:
+                time.sleep(args.poll_seconds)
+    except KeyboardInterrupt:
+        status = "interrupted"
+
+    return {
+        "status": status,
+        "service_mode": "continuous" if continuous else "bounded",
+        "project_file": str(args.project_file),
+        "cycles_requested": cycles_requested,
+        "cycles_completed": len(cycles),
         "execute": bool(args.execute),
         "hibernation_totals": hibernation_totals,
         "container_lifecycle_totals": lifecycle_totals,

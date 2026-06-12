@@ -284,7 +284,9 @@ def test_status_html_shows_project_supervisor_commands_when_project_file_configu
     assert f'--project-file &quot;{project_file}&quot;' in rendered
     assert "run-project-supervisor-tick" in rendered
     assert "run-project-supervisor-loop" in rendered
+    assert "run-project-supervisor-service" in rendered
     assert "--cycles 10 --poll-seconds 5" in rendered
+    assert "--continuous --poll-seconds 5 --execute" in rendered
     assert "--execute" in rendered
     assert "dashboard remains read-only" in rendered
 
@@ -295,6 +297,7 @@ def test_status_html_without_project_file_does_not_fake_supervisor_commands(tmp_
     assert "Supervisor Commands" in rendered
     assert "Start the status server with --project-file" in rendered
     assert "run-project-supervisor-loop" not in rendered
+    assert "run-project-supervisor-service" not in rendered
     assert "Project file:" not in rendered
 
 
