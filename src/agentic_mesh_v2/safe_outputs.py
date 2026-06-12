@@ -16,6 +16,7 @@ from agentic_mesh_v2.documents import validate_document_content
 from agentic_mesh_v2.release import ReleaseEvidence
 from agentic_mesh_v2.release import ReleaseEvidenceLink
 from agentic_mesh_v2.release import ReleaseService
+from agentic_mesh_v2.state_machine import ALLOWED_TRANSITIONS
 from agentic_mesh_v2.state_machine import TransitionRequest
 
 
@@ -224,6 +225,8 @@ class SafeOutputService:
             self._validate_release_decision_target(call)
         if self.process_effects and call.tool_name in {"release.deploy", "release.record_no_deployment"}:
             self._validate_release_activation_approval(call)
+        if self.process_effects and call.tool_name == "report.blocked":
+            self._validate_optional_work_item_target(run_id=run_id, call=call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -271,6 +274,8 @@ class SafeOutputService:
             self._deploy_release(call)
         if call.tool_name == "release.close":
             self._close_released_work(call)
+        if call.tool_name == "report.blocked":
+            self._block_linked_work_item(call_id=call_id, run_id=run_id, call=call)
         return None
 
     def _publish_document_update(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
@@ -377,6 +382,17 @@ class SafeOutputService:
         work_item_id = _required_text(call.payload, "work_item_id")
         self.db.get_work_item(work_item_id)
 
+    def _validate_optional_work_item_target(self, *, run_id: str, call: SafeOutputCall) -> None:
+        work_item_id = _work_item_id_from_payload_or_run(self.db, run_id=run_id, call=call)
+        if work_item_id is None:
+            return
+        work_item = self.db.get_work_item(work_item_id)
+        if call.tool_name == "report.blocked" and work_item.state != "blocked":
+            if "blocked" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
+                raise SafeOutputError(
+                    f"`report.blocked` cannot block work item state `{work_item.state}`"
+                )
+
     def _record_work_item_evidence(
         self,
         *,
@@ -451,6 +467,48 @@ class SafeOutputService:
                 next_action=reason,
                 retryable=True,
             )
+        )
+
+    def _block_linked_work_item(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        work_item_id = _work_item_id_from_payload_or_run(self.db, run_id=run_id, call=call)
+        if work_item_id is None:
+            return
+        if _has_work_item_evidence_ref(self.db, safe_output_ref=call_id):
+            return
+        work_item = self.db.get_work_item(work_item_id)
+        reason = _required_text(call.payload, "reason")
+        if "blocked" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
+            if work_item.state != "blocked":
+                raise SafeOutputError(f"`report.blocked` cannot block work item state `{work_item.state}`")
+            self.db.add_work_item_evidence(
+                evidence_id=f"evidence-{call_id}",
+                work_item_id=work_item_id,
+                evidence_type="blocker_report",
+                summary=_single_line_text(reason),
+                role_id=call.role_id,
+                safe_output_ref=call_id,
+            )
+            return
+        owner = _required_text(call.payload, "owner")
+        next_action = _required_text(call.payload, "next_action")
+        request = TransitionRequest(
+            work_item_id=work_item_id,
+            from_state=work_item.state,
+            to_state="blocked",
+            actor_role=call.role_id,
+            reason=reason,
+            owner=owner,
+            reason_class=_optional_text(call.payload.get("reason_class")) or "role_reported_blocker",
+            next_action=next_action,
+            retryable=_optional_bool(call.payload.get("retryable"), default=True),
+        )
+        self.db.block_work_item_with_evidence(
+            request=request,
+            evidence_id=f"evidence-{call_id}",
+            evidence_type="blocker_report",
+            evidence_summary=_single_line_text(reason),
+            evidence_role_id=call.role_id,
+            safe_output_ref=call_id,
         )
 
     def _validate_release_decision_target(self, call: SafeOutputCall) -> None:
@@ -933,6 +991,35 @@ def _optional_int(value: object, *, default: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise SafeOutputError("timeout_seconds must be a positive integer when provided")
     return value
+
+
+def _optional_bool(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"true", "yes", "1"}:
+            return True
+        if normalized in {"false", "no", "0"}:
+            return False
+    raise SafeOutputError("retryable must be a boolean when provided")
+
+
+def _work_item_id_from_payload_or_run(
+    db: V2Database,
+    *,
+    run_id: str,
+    call: SafeOutputCall,
+) -> str | None:
+    work_item_id = _optional_text(call.payload.get("work_item_id"))
+    if work_item_id is not None:
+        return work_item_id
+    source_run = db.get_agent_run(run_id)
+    if source_run is None:
+        return None
+    return _optional_text(source_run.get("work_item_id"))
 
 
 def _has_successful_deployment(db: V2Database, *, release_id: str, work_item_id: str) -> bool:

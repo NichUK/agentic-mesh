@@ -3257,6 +3257,16 @@ compileall passed
 - RL-065 | engineering | QA rework | PB-005 Story 36 | Guarded stale
   request-changes replay before state transition and added normal-history
   release-review coverage. | QA accepted 2026-06-12
+- RL-066 | engineering | implementation | PB-005 Story 37 | Propagated
+  `report.blocked` safe outputs from work-item-backed runs into blocked
+  work-item state with attention metadata. | QA requested replay rework
+  2026-06-12
+- RL-067 | engineering | QA rework | PB-005 Story 37 | Added blocker-effect
+  evidence markers, explicit target validation, disallowed-state rejection, and
+  stale replay coverage. | QA requested atomicity rework 2026-06-12
+- RL-068 | engineering | QA rework | PB-005 Story 37 | Made blocker
+  transition, attention update, evidence marker, and audit events atomic in one
+  database transaction. | QA accepted 2026-06-12
 
 ## PB-005 Story 34 - Release Decision Evidence
 
@@ -3399,3 +3409,52 @@ Results:
 - QA found stale replay could reroute a later release review back to active.
   Engineering now returns before any state transition when the deterministic
   rework assignment already exists and added normal-history regression coverage.
+
+## PB-005 Story 37 - Work-Item Blocker Propagation
+
+Date: 2026-06-12
+
+### Goal
+
+Prevent assignment-level blockers from leaving the linked work item looking
+active or healthy. When a role reports a blocker while handling a work item,
+the work item should move into blocked state with actionable owner and next
+action metadata.
+
+### Changes
+
+- Added `report.blocked` runtime effects for work-item-backed runs.
+- Resolved the target work item from explicit `work_item_id` payload first,
+  then from the source agent run.
+- Transitioned eligible work items to `blocked` with `owner`,
+  `reason_class`, `next_action`, and `retryable` attention metadata.
+- Left conversation-only blockers as assignment-level outcomes without
+  creating or mutating work items.
+- Made replay idempotent when the work item is already blocked.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_role_assignment_execution.py -q
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py -q
+```
+
+Results:
+
+```text
+25 passed before QA rework
+36 passed before QA rework
+29 passed after QA rework
+40 passed after QA rework
+```
+
+### Notes
+
+- This story does not implement Release Manager override/reopen actions yet;
+  it makes blockers visible at the work-item state level so those future powers
+  have a consistent state to operate on.
+- QA found stale replay could re-block resolved work and that disallowed states
+  could silently become assignment-only blockers. Engineering added durable
+  blocker markers, explicit target/disallowed-state tests, and then moved the
+  transition plus marker into one DB transaction after QA identified an
+  atomicity gap.

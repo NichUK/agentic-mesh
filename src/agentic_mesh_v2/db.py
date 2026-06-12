@@ -2328,6 +2328,91 @@ class V2Database:
             )
         return self.get_work_item(request.work_item_id)
 
+    def block_work_item_with_evidence(
+        self,
+        *,
+        request: TransitionRequest,
+        evidence_id: str,
+        evidence_type: str,
+        evidence_summary: str,
+        evidence_role_id: str,
+        safe_output_ref: str,
+    ) -> WorkItem:
+        validate_transition(request)
+        current = self.get_work_item(request.work_item_id)
+        if current.state != request.from_state:
+            raise ValueError(
+                f"work item `{request.work_item_id}` is in `{current.state}`, not `{request.from_state}`"
+            )
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE work_items
+                SET state = ?, current_role = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE work_item_id = ?
+                """,
+                (request.to_state, request.owner or current.owner_role, request.work_item_id),
+            )
+            self.connection.execute(
+                "DELETE FROM work_item_attention WHERE work_item_id = ?",
+                (request.work_item_id,),
+            )
+            if request.owner and request.reason_class and request.next_action and request.retryable is not None:
+                self.connection.execute(
+                    """
+                    INSERT INTO work_item_attention(work_item_id, owner, reason_class, next_action, retryable)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        request.work_item_id,
+                        request.owner,
+                        request.reason_class,
+                        request.next_action,
+                        1 if request.retryable else 0,
+                    ),
+                )
+            cursor = self.connection.execute(
+                """
+                INSERT INTO work_item_evidence(
+                  evidence_id, work_item_id, evidence_type, summary, role_id, safe_output_ref
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(safe_output_ref) DO NOTHING
+                """,
+                (
+                    evidence_id,
+                    request.work_item_id,
+                    evidence_type,
+                    evidence_summary,
+                    evidence_role_id,
+                    safe_output_ref,
+                ),
+            )
+            self.append_event(
+                "work_item.transitioned",
+                "work_item",
+                request.work_item_id,
+                {
+                    "from_state": request.from_state,
+                    "to_state": request.to_state,
+                    "actor_role": request.actor_role,
+                    "reason": request.reason,
+                },
+            )
+            if cursor.rowcount != 0:
+                self.append_event(
+                    "work_item_evidence.recorded",
+                    "work_item",
+                    request.work_item_id,
+                    {
+                        "evidence_type": evidence_type,
+                        "summary": evidence_summary,
+                        "role_id": evidence_role_id,
+                        "safe_output_ref": safe_output_ref,
+                    },
+                )
+        return self.get_work_item(request.work_item_id)
+
     def create_run(
         self,
         *,

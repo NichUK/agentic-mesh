@@ -3200,3 +3200,80 @@ Results:
   request-changes rework routing, stale replay guard, normal release-review
   assignment history, replay repair, and approve/reject non-routing.
   | accepted after rework 2026-06-12
+
+## PB-005 Story 37 - Work-Item Blocker Propagation
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_role_assignment_execution.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_role_assignment_execution.py -q
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py -q
+```
+
+Results:
+
+```text
+25 passed before QA rework
+36 passed before QA rework
+29 passed after QA rework
+40 passed after QA rework
+```
+
+### Findings And Rework
+
+- Initial implementation treated replay as idempotent only while the work item
+  was still blocked. Engineering added a durable `blocker_report` evidence
+  marker keyed by safe-output call id and covered replay after blocker
+  resolution.
+- Initial implementation could silently leave a linked blocker as assignment
+  only when the work item state could not transition to `blocked`. Engineering
+  now rejects those states before recording when effects are enabled.
+- QA found transition and marker writes were separate commits. Engineering
+  added `V2Database.block_work_item_with_evidence()` so blocker transition,
+  attention metadata, evidence marker, and audit events are written atomically.
+
+### Acceptance Assessment
+
+- `report.blocked` on a work-item-backed run transitions the linked work item
+  to `blocked`.
+- Blocked work items include attention owner, reason class, next action, and
+  retryable metadata.
+- Conversation-only blockers remain assignment-level and do not create work
+  items.
+- Replaying the same blocker safe-output does not duplicate blocked transitions
+  or re-block a resolved item.
+- Explicit `work_item_id` targets work and invalid explicit targets are
+  rejected before recording.
+- States that cannot transition to `blocked` fail visibly instead of splitting
+  assignment and work-item status.
+
+### Residual Risks
+
+- Work-item blocker override and reopen tools remain separate follow-up
+  stories.
+
+### Review Log
+
+- QA-RL-056 | qa-engineer | review-pending | PB-005 Story 37 | Focused
+  work-item blocker propagation implemented and engineering tests passed.
+  | pending QA review 2026-06-12
+- QA-RL-057 | qa-engineer | rework-request | PB-005 Story 37 | Found stale
+  replay could re-block resolved work and disallowed states could split
+  assignment/work-item status. | rework requested 2026-06-12
+- QA-RL-058 | qa-engineer | rework-request | PB-005 Story 37 | Found blocker
+  transition and evidence marker were not atomic. | rework requested 2026-06-12
+- QA-RL-059 | qa-engineer | acceptance | PB-005 Story 37 | Verified linked
+  blocker propagation, conversation-only behavior, explicit target handling,
+  disallowed-state rejection, stale replay guard, and atomic transition plus
+  marker recording. | accepted after rework 2026-06-12

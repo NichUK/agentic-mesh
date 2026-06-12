@@ -11,8 +11,10 @@ from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.role_service import RoleAssignment
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
+from agentic_mesh_v2.safe_outputs import SafeOutputError
 from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.server import V2StatusHandler
+from agentic_mesh_v2.state_machine import TransitionRequest
 from agentic_mesh_v2.worker_adapters import SafeOutputSubprocessWorker
 
 
@@ -568,6 +570,301 @@ def test_terminal_safe_outputs_map_to_visible_assignment_outcomes(
     assert assignment["terminal_tool"] == tool_name
     assert assignment["run_id"] == receipt.run_id
     assert db.status_snapshot()["role_assignment_statuses"] == {expected_status: 1}
+
+
+def test_report_blocked_marks_linked_work_item_blocked(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.create_role_assignment(
+        assignment_id="assignment-work-blocked",
+        role_id="product-manager",
+        work_item_id="work-runtime-execution",
+        source_ref="msg-work-blocked",
+        title="Work blocker",
+        summary="Exercise work item blocker propagation.",
+        assignment_type="lifecycle_work",
+        visibility_scope="project",
+        payload={},
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="report.blocked",
+                    payload={
+                        "reason": "Architecture decision is missing.",
+                        "owner": "solution-architect",
+                        "next_action": "Provide ADR for the runtime boundary.",
+                    },
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    receipt = service.run_next_assignment()
+
+    snapshot = db.status_snapshot()
+    assignment = snapshot["role_assignments"][0]
+    work_item = snapshot["work_items"][0]
+    assert receipt is not None
+    assert assignment["status"] == "blocked"
+    assert work_item["state"] == "blocked"
+    assert work_item["current_role"] == "solution-architect"
+    assert work_item["attention_owner"] == "solution-architect"
+    assert work_item["reason_class"] == "role_reported_blocker"
+    assert work_item["next_action"] == "Provide ADR for the runtime boundary."
+    assert work_item["retryable"] is True
+
+
+def test_report_blocked_without_work_item_stays_assignment_level(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-conversation-blocked",
+        role_id="product-manager",
+        source_ref="msg-conversation-blocked",
+        title="Conversation blocker",
+        summary="Exercise conversation-only blocker.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="report.blocked",
+                    payload={
+                        "reason": "Sponsor context is missing.",
+                        "owner": "sponsor",
+                        "next_action": "Clarify the requested outcome.",
+                    },
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    service.run_next_assignment()
+
+    snapshot = db.status_snapshot()
+    assert snapshot["role_assignments"][0]["status"] == "blocked"
+    assert snapshot["counts"]["work_items"] == 0
+
+
+def test_report_blocked_work_item_effect_is_replay_idempotent(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-blocker-replay",
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+    call = SafeOutputCall(
+        role_id="product-manager",
+        tool_name="report.blocked",
+        payload={
+            "reason": "Architecture decision is missing.",
+            "owner": "solution-architect",
+            "next_action": "Provide ADR for the runtime boundary.",
+        },
+        terminal=True,
+    )
+
+    call_id = service.record(run_id="run-work-blocker-replay", call=call)
+    service.process_recorded_call(call_id=call_id, run_id="run-work-blocker-replay", call=call)
+
+    snapshot = db.status_snapshot()
+    transition_events = [
+        event
+        for event in db.list_events("work-runtime-execution")
+        if event["event_type"] == "work_item.transitioned"
+        and event["payload"]["to_state"] == "blocked"
+    ]
+    assert snapshot["work_items"][0]["state"] == "blocked"
+    assert len(transition_events) == 1
+
+
+def test_report_blocked_replay_does_not_reblock_resolved_work_item(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-blocker-resolved-replay",
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+    call = SafeOutputCall(
+        role_id="product-manager",
+        tool_name="report.blocked",
+        payload={
+            "reason": "Architecture decision is missing.",
+            "owner": "solution-architect",
+            "next_action": "Provide ADR for the runtime boundary.",
+        },
+        terminal=True,
+    )
+    call_id = service.record(run_id="run-work-blocker-resolved-replay", call=call)
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="blocked",
+            to_state="active",
+            actor_role="solution-architect",
+            reason="Blocker resolved.",
+            owner="product-manager",
+        )
+    )
+
+    service.process_recorded_call(call_id=call_id, run_id="run-work-blocker-resolved-replay", call=call)
+
+    snapshot = db.status_snapshot()
+    blocked_events = [
+        event
+        for event in db.list_events("work-runtime-execution")
+        if event["event_type"] == "work_item.transitioned"
+        and event["payload"]["to_state"] == "blocked"
+    ]
+    evidence = [
+        row
+        for row in db.list_work_item_evidence()
+        if row["evidence_type"] == "blocker_report"
+    ]
+    assert snapshot["work_items"][0]["state"] == "active"
+    assert len(blocked_events) == 1
+    assert len(evidence) == 1
+    assert evidence[0]["safe_output_ref"] == call_id
+
+
+def test_report_blocked_accepts_explicit_work_item_target(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-blocker-explicit-target",
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        work_item_id=None,
+    )
+
+    SafeOutputService(db).record(
+        run_id="run-work-blocker-explicit-target",
+        call=SafeOutputCall(
+            role_id="product-manager",
+            tool_name="report.blocked",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "reason": "Architecture decision is missing.",
+                "owner": "solution-architect",
+                "next_action": "Provide ADR for the runtime boundary.",
+            },
+            terminal=True,
+        ),
+    )
+
+    snapshot = db.status_snapshot()
+    assert snapshot["work_items"][0]["state"] == "blocked"
+    assert snapshot["work_items"][0]["attention_owner"] == "solution-architect"
+
+
+def test_report_blocked_rejects_invalid_explicit_work_item_before_recording(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_run(
+        run_id="run-work-blocker-invalid-target",
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        work_item_id=None,
+    )
+
+    with pytest.raises(ValueError, match="unknown work item"):
+        SafeOutputService(db).record(
+            run_id="run-work-blocker-invalid-target",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="report.blocked",
+                payload={
+                    "work_item_id": "work-missing",
+                    "reason": "Architecture decision is missing.",
+                    "owner": "solution-architect",
+                    "next_action": "Provide ADR for the runtime boundary.",
+                },
+                terminal=True,
+            ),
+        )
+
+    assert db.list_safe_output_calls_for_run("run-work-blocker-invalid-target") == []
+
+
+def test_report_blocked_rejects_disallowed_work_item_state_before_recording(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="shaping",
+            to_state="ready",
+            actor_role="product-manager",
+            reason="Ready.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="ready",
+            to_state="active",
+            actor_role="engineering",
+            reason="Engineering complete.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="active",
+            to_state="release_review",
+            actor_role="qa-engineer",
+            reason="QA passed.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="release_review",
+            to_state="released",
+            actor_role="release-manager",
+            reason="Release accepted.",
+        )
+    )
+    db.create_run(
+        run_id="run-work-blocker-released",
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+
+    with pytest.raises(SafeOutputError, match="cannot block work item state `released`"):
+        SafeOutputService(db).record(
+            run_id="run-work-blocker-released",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="report.blocked",
+                payload={
+                    "reason": "This should not split assignment and work item state.",
+                    "owner": "solution-architect",
+                    "next_action": "No action.",
+                },
+                terminal=True,
+            ),
+        )
+
+    assert db.list_safe_output_calls_for_run("run-work-blocker-released") == []
+    assert db.status_snapshot()["work_items"][0]["state"] == "released"
 
 
 def test_role_service_drains_available_assignments_and_records_idle_heartbeat(tmp_path: Path) -> None:
