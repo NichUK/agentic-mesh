@@ -5,6 +5,9 @@ from typing import Any
 from uuid import uuid4
 
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.release import ReleaseEvidence
+from agentic_mesh_v2.release import ReleaseEvidenceLink
+from agentic_mesh_v2.release import ReleaseService
 
 
 TERMINAL_TOOLS: frozenset[str] = frozenset(
@@ -120,8 +123,25 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "quality.request_changes": ("work_item_id", "reason"),
     "release.request_approval": ("work_item_id", "question"),
     "release.record_decision": ("work_item_id", "decision"),
-    "release.deploy": ("work_item_id", "target_id", "reason"),
-    "release.record_no_deployment": ("work_item_id", "reason"),
+    "release.deploy": (
+        "work_item_id",
+        "target_id",
+        "reason",
+        "scope",
+        "rollback_plan",
+        "residual_risks",
+        "approval_ref",
+        "commit_ref",
+    ),
+    "release.record_no_deployment": (
+        "work_item_id",
+        "reason",
+        "scope",
+        "rollback_plan",
+        "residual_risks",
+        "approval_ref",
+        "commit_ref",
+    ),
     "release.rollback_plan": ("work_item_id", "plan"),
     "release.close": ("work_item_id", "reason"),
     "work_item.close": ("work_item_id", "reason"),
@@ -160,9 +180,17 @@ class SafeOutputCall:
 
 
 class SafeOutputService:
-    def __init__(self, db: V2Database, policy: ToolPolicy | None = None) -> None:
+    def __init__(
+        self,
+        db: V2Database,
+        policy: ToolPolicy | None = None,
+        release_service: ReleaseService | None = None,
+        process_effects: bool = True,
+    ) -> None:
         self.db = db
         self.policy = policy or ToolPolicy()
+        self.release_service = release_service or ReleaseService(db)
+        self.process_effects = process_effects
 
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:
         self.policy.authorize(role_id=call.role_id, tool_name=call.tool_name)
@@ -183,11 +211,48 @@ class SafeOutputService:
                 run_id=run_id,
                 call=call,
             )
-        self.process_recorded_call(call_id=call_id, run_id=run_id, call=call)
+        if self.process_effects:
+            self.process_recorded_call(call_id=call_id, run_id=run_id, call=call)
         return call_id
 
     def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        if call.tool_name == "release.record_no_deployment":
+            self._record_no_deployment(call)
+        if call.tool_name == "release.deploy":
+            self._deploy_release(call)
+        if call.tool_name == "release.close":
+            self._close_released_work(call)
         return None
+
+    def _record_no_deployment(self, call: SafeOutputCall) -> None:
+        self.release_service.record_no_deployment(
+            _release_evidence_from_payload(call.payload),
+            reason=_required_text(call.payload, "reason"),
+        )
+
+    def _deploy_release(self, call: SafeOutputCall) -> None:
+        evidence = _release_evidence_from_payload(call.payload)
+        if _has_successful_deployment(self.db, release_id=evidence.release_id, work_item_id=evidence.work_item_id):
+            return
+        self.release_service.deploy_compose_release(
+            evidence,
+            target_id=_required_text(call.payload, "target_id"),
+            smoke_checks=_smoke_checks(call.payload.get("smoke_checks")),
+            evidence_links=_release_evidence_links(call.payload.get("evidence_links")),
+            timeout_seconds=_optional_int(call.payload.get("timeout_seconds"), default=300),
+        )
+
+    def _close_released_work(self, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state == "closed":
+            return
+        self.release_service.close_released_work(
+            work_item_id=work_item_id,
+            from_state=_optional_text(call.payload.get("from_state")) or work_item.state,
+            actor_role=call.role_id,
+            reason=_required_text(call.payload, "reason"),
+        )
 
     def _record_role_assignment_from_route(
         self,
@@ -300,6 +365,11 @@ def _reject_fake_claims(tool_name: str, payload: dict[str, Any]) -> None:
             raise SafeOutputError(
                 "queue proposals must store source references and rationale, not raw conversation text"
             )
+    if tool_name == "release.deploy":
+        if {"command", "cwd"}.intersection(payload):
+            raise SafeOutputError(
+                "release.deploy must use the configured deployment target command; command and cwd overrides are not allowed"
+            )
 
 
 def _required_text(payload: dict[str, Any], key: str) -> str:
@@ -307,6 +377,76 @@ def _required_text(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise SafeOutputError(f"`{key}` must be a non-empty string")
     return value.strip()
+
+
+def _release_evidence_from_payload(payload: dict[str, Any]) -> ReleaseEvidence:
+    work_item_id = _required_text(payload, "work_item_id")
+    return ReleaseEvidence(
+        work_item_id=work_item_id,
+        release_id=_optional_text(payload.get("release_id")) or f"release-{work_item_id}",
+        scope=_required_text(payload, "scope"),
+        commit_ref=_optional_text(payload.get("commit_ref")),
+        approval_ref=_optional_text(payload.get("approval_ref")),
+        rollback_plan=_required_text(payload, "rollback_plan"),
+        residual_risks=_required_text(payload, "residual_risks"),
+        deployment_result=_optional_text(payload.get("deployment_result")),
+        smoke_result=_optional_text(payload.get("smoke_result")),
+    )
+
+
+def _smoke_checks(value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or not value:
+        raise SafeOutputError("release.deploy requires non-empty smoke_checks")
+    checks: dict[str, str] = {}
+    for key, result in value.items():
+        if not isinstance(key, str) or not key.strip():
+            raise SafeOutputError("release.deploy smoke_checks keys must be non-empty strings")
+        if not isinstance(result, str) or not result.strip():
+            raise SafeOutputError("release.deploy smoke_checks results must be non-empty strings")
+        checks[key.strip()] = result.strip()
+    return checks
+
+
+def _release_evidence_links(value: object) -> tuple[ReleaseEvidenceLink, ...]:
+    if not isinstance(value, list) or not value:
+        raise SafeOutputError("release.deploy requires evidence_links")
+    links: list[ReleaseEvidenceLink] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise SafeOutputError(f"release.deploy evidence_links item {index} must be an object")
+        artifact_ref = _optional_text(item.get("artifact_ref")) or _optional_text(item.get("path"))
+        artifact_type = _optional_text(item.get("artifact_type")) or _optional_text(item.get("type"))
+        role_id = _optional_text(item.get("role_id"))
+        if artifact_ref is None or artifact_type is None or role_id is None:
+            raise SafeOutputError(
+                f"release.deploy evidence_links item {index} requires artifact_ref, artifact_type, and role_id"
+            )
+        links.append(
+            ReleaseEvidenceLink(
+                artifact_ref=artifact_ref,
+                artifact_type=artifact_type,
+                role_id=role_id,
+                status=_optional_text(item.get("status")) or "accepted",
+            )
+        )
+    return tuple(links)
+
+
+def _optional_int(value: object, *, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise SafeOutputError("timeout_seconds must be a positive integer when provided")
+    return value
+
+
+def _has_successful_deployment(db: V2Database, *, release_id: str, work_item_id: str) -> bool:
+    return any(
+        run.get("release_id") == release_id
+        and run.get("work_item_id") == work_item_id
+        and run.get("status") == "succeeded"
+        for run in db.list_deployment_runs()
+    )
 
 
 def _optional_text(value: object) -> str | None:
