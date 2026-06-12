@@ -12,8 +12,7 @@ from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.topology import ProjectRepo
 from agentic_mesh_v2.topology import RuntimeTopology
-from agentic_mesh_v2.worker_adapters import SafeOutputFileWorker
-from agentic_mesh_v2.worker_adapters import SafeOutputSubprocessWorker
+from agentic_mesh_v2.worker_adapters import build_worker_adapter
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -164,17 +163,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
             if args.command == "run-role-service-tick":
-                if args.worker == "safe-output-file":
-                    if args.safe_output_file is None:
-                        raise ValueError("--safe-output-file is required for safe-output-file worker")
-                    worker = SafeOutputFileWorker(args.safe_output_file)
-                elif args.worker == "safe-output-subprocess":
-                    worker = SafeOutputSubprocessWorker(
-                        _parse_worker_command(args.worker_command_json),
-                        timeout_seconds=args.worker_timeout_seconds,
-                    )
-                else:
-                    raise AssertionError(f"unhandled worker adapter: {args.worker}")
+                worker = build_worker_adapter(_worker_config_from_args(args))
                 service = RoleService(
                     db=db,
                     role_id=args.role_id,
@@ -245,6 +234,20 @@ def _parse_worker_command(value: str | None) -> tuple[str, ...]:
             raise ValueError(f"--worker-command-json item {index} must be a non-empty string")
         command.append(item)
     return tuple(command)
+
+
+def _worker_config_from_args(args: argparse.Namespace) -> dict[str, object]:
+    if args.worker == "safe-output-file":
+        if args.safe_output_file is None:
+            raise ValueError("--safe-output-file is required for safe-output-file worker")
+        return {"adapter": "safe-output-file", "path": str(args.safe_output_file)}
+    if args.worker == "safe-output-subprocess":
+        return {
+            "adapter": "safe-output-subprocess",
+            "command": list(_parse_worker_command(args.worker_command_json)),
+            "timeout_seconds": args.worker_timeout_seconds,
+        }
+    raise AssertionError(f"unhandled worker adapter: {args.worker}")
 
 
 if __name__ == "__main__":

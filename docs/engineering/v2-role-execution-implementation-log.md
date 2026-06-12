@@ -578,6 +578,61 @@ Results:
 - The CLI runner still runs one bounded tick and exits rather than acting as a
   daemonized role-service container.
 
+## PB-004 Story 10 - Worker Adapter Config Factory
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add a small worker-adapter construction boundary so CLI, future project config,
+and future supervisor code can build worker adapters from validated structured
+configuration instead of duplicating adapter-specific construction logic.
+
+### Implementation Notes
+
+- Added `build_worker_adapter()`.
+- The factory supports:
+  - `safe-output-file` with a non-empty path
+  - `safe-output-subprocess` with a non-empty command list and integer timeout
+- `run-role-service-tick` now converts CLI arguments into a config dictionary
+  and delegates adapter construction to the shared factory.
+- Invalid adapter config fails before a role service is started.
+
+### Tests Added
+
+- worker adapter factory creates and runs a configured `safe-output-file`
+  adapter
+- worker adapter factory creates a configured `safe-output-subprocess` adapter
+- invalid adapter names, missing paths, missing commands, blank command items,
+  non-integer timeouts, and boolean timeouts are rejected
+- existing CLI role-service tick tests continue to prove CLI wiring through the
+  factory path
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+41 passed
+110 passed
+```
+
+### Known Limitations
+
+- The factory is an in-process config boundary; it does not yet load project
+  YAML role worker settings.
+- Codex/OpenAI-specific adapter config, credentials, and prompt assembly remain
+  later worker-adapter stories.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -609,5 +664,8 @@ Results:
   2026-06-12
 - RL-009 | engineering | implementation | PB-004 Story 9 | Added a subprocess
   safe-output worker adapter and CLI wiring for external command execution with
-  assignment stdin, safe-output stdout parsing, and failure capture. | awaiting
-  QA review 2026-06-12
+  assignment stdin, safe-output stdout parsing, and failure capture. | QA
+  accepted 2026-06-12
+- RL-010 | engineering | implementation | PB-004 Story 10 | Added a shared
+  worker-adapter config factory and moved CLI role-service tick construction
+  through it. | awaiting QA review 2026-06-12

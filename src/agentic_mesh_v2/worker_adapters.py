@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import subprocess
-from pathlib import Path
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from agentic_mesh_v2.role_service import RoleAssignment
+from agentic_mesh_v2.role_service import Worker
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 
 
@@ -99,3 +100,26 @@ def _assignment_payload(assignment: RoleAssignment) -> dict[str, Any]:
 
 def safe_output_file_payload(calls: list[dict[str, Any]]) -> str:
     return json.dumps({"calls": calls}, indent=2, sort_keys=True)
+
+
+def build_worker_adapter(config: dict[str, Any]) -> Worker:
+    adapter = config.get("adapter")
+    if adapter == "safe-output-file":
+        path = config.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("safe-output-file worker config requires non-empty path")
+        return SafeOutputFileWorker(Path(path))
+    if adapter == "safe-output-subprocess":
+        command = config.get("command")
+        if not isinstance(command, list) or not command:
+            raise ValueError("safe-output-subprocess worker config requires non-empty command list")
+        parsed_command: list[str] = []
+        for index, item in enumerate(command):
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"safe-output-subprocess command item {index} must be a non-empty string")
+            parsed_command.append(item)
+        timeout_seconds = config.get("timeout_seconds", 300)
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int):
+            raise ValueError("safe-output-subprocess timeout_seconds must be an integer")
+        return SafeOutputSubprocessWorker(tuple(parsed_command), timeout_seconds=timeout_seconds)
+    raise ValueError(f"unsupported worker adapter `{adapter}`")

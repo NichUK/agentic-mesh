@@ -540,3 +540,62 @@ These are not blockers for PB-004 Story 9 because they remain later v2 runtime s
 ### Review Log
 
 - QA-RL-009 | qa-engineer | acceptance | PB-004 Story 9 | Verified subprocess worker command boundary, assignment stdin, shared safe-output parsing, normal role-service/safe-output recording, subprocess failure capture, CLI wiring, and factual scope limits. | accepted 2026-06-12
+
+## PB-004 Story 10 - Worker Adapter Config Factory
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/worker_adapters.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_worker_adapters.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+41 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+110 passed
+```
+
+### Acceptance Assessment
+
+- `build_worker_adapter()` creates `safe-output-file` workers from structured config with a non-empty path.
+- `build_worker_adapter()` creates `safe-output-subprocess` workers from structured config with a non-empty command list and integer timeout.
+- Invalid adapter names, missing file paths, missing commands, blank command items,
+  non-integer timeout values, and boolean `timeout_seconds` values are rejected
+  before role-service execution starts.
+- `run-role-service-tick` delegates worker construction through the shared factory instead of constructing concrete worker adapters directly in the CLI command handler.
+- The engineering log is factual and does not claim project YAML loading, Codex/OpenAI credential handling, prompt assembly, or daemonized supervisor behavior.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 10 because they remain later v2 runtime scope:
+
+- The factory is currently an in-process construction boundary; project YAML role-worker loading remains future work.
+- Codex/OpenAI-specific worker config, credential selection, prompt assembly, and daemon supervision remain future stories.
+
+### Review Log
+
+- QA-RL-010 | qa-engineer | acceptance | PB-004 Story 10 | Verified shared worker-adapter config factory behavior, invalid-config rejection including boolean timeout rejection, CLI delegation through the factory, and factual scope limits. | accepted 2026-06-12
