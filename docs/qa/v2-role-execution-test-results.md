@@ -599,3 +599,63 @@ These are not blockers for PB-004 Story 10 because they remain later v2 runtime 
 ### Review Log
 
 - QA-RL-010 | qa-engineer | acceptance | PB-004 Story 10 | Verified shared worker-adapter config factory behavior, invalid-config rejection including boolean timeout rejection, CLI delegation through the factory, and factual scope limits. | accepted 2026-06-12
+
+## PB-004 Story 11 - Project Worker Config Loading
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/project_config.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_project_config.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+50 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+119 passed
+```
+
+### Acceptance Assessment
+
+- `load_role_worker_config()` reads `roles.<role>.worker` from project YAML.
+- Invalid project config shapes, missing roles, missing requested role, missing worker config, and missing/blank adapter values are rejected.
+- Relative `safe-output-file` worker paths resolve relative to the `project.yaml` directory.
+- Future adapter config such as `codex-cli` is preserved by the loader.
+- `run-role-service-tick --project-file` can process an assignment using project-owned `safe-output-file` worker config.
+- `run-role-service-tick --project-file` with a project `codex-cli` worker config explicitly fails as unsupported, proving the runtime does not fake an adapter that has not been implemented.
+- The engineering log is factual and does not claim full project schema validation, organization-default merging, or Codex/OpenAI adapter support.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 11 because they remain later v2 runtime scope:
+
+- The loader only resolves role worker config and does not validate the whole project schema.
+- Organization-default and project-override merging are not implemented yet.
+- `codex-cli` and other real provider adapters remain future worker-adapter stories.
+
+### Review Log
+
+- QA-RL-011 | qa-engineer | acceptance | PB-004 Story 11 | Verified project YAML role worker loading, invalid-shape rejection, relative path resolution, future adapter preservation with explicit unsupported-runtime rejection, CLI project-file execution, and factual scope limits. | accepted 2026-06-12

@@ -529,6 +529,118 @@ def test_v2_cli_run_role_service_tick_records_subprocess_invalid_json(
     assert "invalid JSON" in assignment["failure_reason"]
 
 
+def test_v2_cli_run_role_service_tick_loads_worker_from_project_file(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    calls_path = project_dir / "calls.json"
+    calls_path.write_text(
+        """
+        {
+          "calls": [
+            {
+              "tool_name": "status.complete",
+              "payload": {"message": "Project-configured worker complete."},
+              "terminal": true
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-cli-project-worker",
+            role_id="product-manager",
+            source_ref="msg-cli-project-worker",
+            title="CLI project worker",
+            summary="Run a role-service tick using project worker config.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-role-service-tick",
+                "--role-id",
+                "product-manager",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--project-file",
+                str(project_file),
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert '"processed_count": 1' in output
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-cli-project-worker")
+        safe_outputs = db.list_safe_output_calls()
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "completed"
+    assert safe_outputs[0]["payload"]["message"] == "Project-configured worker complete."
+
+
+def test_v2_cli_project_file_does_not_fake_unsupported_codex_adapter(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  product-manager:
+    worker:
+      adapter: codex-cli
+      model: codex
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported worker adapter `codex-cli`"):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-role-service-tick",
+                "--role-id",
+                "product-manager",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--project-file",
+                str(project_file),
+            ]
+        )
+
+
 def test_v2_cli_validate_topology_accepts_distinct_roots(tmp_path: Path, capsys) -> None:
     source = tmp_path / "source"
     deployed = tmp_path / "deployed"

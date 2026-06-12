@@ -8,6 +8,7 @@ from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
+from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.topology import ProjectRepo
@@ -55,9 +56,13 @@ def main(argv: list[str] | None = None) -> int:
     tick_parser.add_argument("--role-id", required=True)
     tick_parser.add_argument("--role-instance-id", required=True)
     tick_parser.add_argument(
+        "--project-file",
+        type=Path,
+        help="Optional project.yaml to load roles.<role>.worker when --worker is omitted.",
+    )
+    tick_parser.add_argument(
         "--worker",
         choices=["safe-output-file", "safe-output-subprocess"],
-        required=True,
         help="Worker adapter to use for claimed assignments.",
     )
     tick_parser.add_argument("--safe-output-file", type=Path)
@@ -237,6 +242,10 @@ def _parse_worker_command(value: str | None) -> tuple[str, ...]:
 
 
 def _worker_config_from_args(args: argparse.Namespace) -> dict[str, object]:
+    if args.worker is None:
+        if args.project_file is None:
+            raise ValueError("--worker or --project-file is required for run-role-service-tick")
+        return load_role_worker_config(args.project_file, role_id=args.role_id)
     if args.worker == "safe-output-file":
         if args.safe_output_file is None:
             raise ValueError("--safe-output-file is required for safe-output-file worker")

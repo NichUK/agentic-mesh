@@ -633,6 +633,69 @@ Results:
 - Codex/OpenAI-specific adapter config, credentials, and prompt assembly remain
   later worker-adapter stories.
 
+## PB-004 Story 11 - Project Worker Config Loading
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Load `roles.<role>.worker` from project YAML so role-service ticks can use
+project-owned worker configuration instead of relying only on CLI adapter flags.
+This keeps the runtime moving toward project-scoped role services while leaving
+unsupported future adapters, such as `codex-cli`, explicit rather than faked.
+
+### Implementation Notes
+
+- Added `load_role_worker_config()`.
+- The loader validates:
+  - project config is a mapping
+  - `roles` is present
+  - requested role exists
+  - requested role has a worker config
+  - worker config has a non-empty adapter
+- `safe-output-file` worker paths are resolved relative to the project YAML
+  directory when they are not absolute.
+- Future adapter config, such as `codex-cli`, is preserved by the loader but
+  remains unsupported by `build_worker_adapter()` until the adapter exists.
+- `run-role-service-tick` now accepts `--project-file`; when `--worker` is
+  omitted it loads the worker config for `--role-id` from that project file.
+
+### Tests Added
+
+- project worker config loader resolves relative `safe-output-file` paths
+- project worker config loader preserves future `codex-cli` worker settings
+- invalid project config shapes and missing role/worker/adapter data are
+  rejected
+- CLI role-service tick can process an assignment using worker config loaded
+  from project YAML
+- CLI role-service tick rejects project `codex-cli` config until that adapter
+  is implemented
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+50 passed
+119 passed
+```
+
+### Known Limitations
+
+- The loader only reads role worker config; it does not yet validate the entire
+  project schema or merge organization defaults.
+- Unsupported adapters such as `codex-cli` are preserved but still rejected by
+  the worker factory until their concrete adapter is implemented.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -668,4 +731,7 @@ Results:
   accepted 2026-06-12
 - RL-010 | engineering | implementation | PB-004 Story 10 | Added a shared
   worker-adapter config factory and moved CLI role-service tick construction
-  through it. | awaiting QA review 2026-06-12
+  through it. | QA accepted 2026-06-12
+- RL-011 | engineering | implementation | PB-004 Story 11 | Added project YAML
+  role worker config loading and wired `run-role-service-tick --project-file`
+  into the shared worker factory path. | awaiting QA review 2026-06-12
