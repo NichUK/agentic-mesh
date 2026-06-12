@@ -85,8 +85,78 @@ Results:
 - Prompt/context assembly from source documents, role memory, and flow state is
   still represented by assignment payload fields and remains a later slice.
 
+## PB-004 Story 2 - Materialize Handoff And Consult Assignments
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Convert internal `handoff.request` and `consult.request` safe-output calls into
+queued downstream role assignments. This keeps role-to-role coordination inside
+runtime state instead of using Teams as agent-to-agent transport.
+
+### Implementation Notes
+
+- Added `V2Database.get_agent_run()` so route materialization can inherit the
+  source work item from the running role.
+- Extended shared `SafeOutputService.record()` so `handoff.request` and
+  `consult.request` create queued role assignments after the safe-output call
+  is validated and recorded.
+- Handoff/consult assignments preserve:
+  - source safe-output call id
+  - source run id
+  - source role
+  - target role
+  - inherited work item id
+  - reason
+  - route tool
+  - current flow state
+  - source document refs
+  - target outputs
+  - target role safe-output tool list
+  - context visibility
+- Internal route assignment creation does not create Teams delivery records.
+
+### Tests Added
+
+- `handoff.request` from Product Manager creates one queued Engineering
+  assignment while completing the source Product Manager assignment.
+- `consult.request` from Engineering creates one queued QA Engineer consult
+  assignment with inherited work item and target output context.
+- Handoff/consult routing creates no Teams delivery records.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_end_to_end.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+10 passed
+81 passed
+```
+
+### Known Limitations
+
+- Handoff and consult assignments are created from explicit safe-output calls;
+  this story does not infer handoffs from prose.
+- This story does not yet drive lifecycle state transitions automatically.
+- Assignment recovery, leases, continuous role-service loops, and hibernation
+  remain later PB-004/PB-005 slices.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
   claim-and-run role assignment execution with terminal assignment state and
-  dashboard visibility. | awaiting QA review 2026-06-12
+  dashboard visibility. | QA accepted 2026-06-12
+- RL-002 | engineering | implementation | PB-004 Story 2 | Added
+  safe-output-driven handoff/consult assignment materialization with inherited
+  work item context and no Teams delivery side effects. | awaiting QA review
+  2026-06-12

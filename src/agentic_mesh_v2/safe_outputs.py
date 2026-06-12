@@ -174,7 +174,59 @@ class SafeOutputService:
             payload=call.payload,
             terminal=terminal,
         )
+        if call.tool_name in {"handoff.request", "consult.request"}:
+            self._record_role_assignment_from_route(
+                call_id=call_id,
+                run_id=run_id,
+                call=call,
+            )
         return call_id
+
+    def _record_role_assignment_from_route(
+        self,
+        *,
+        call_id: str,
+        run_id: str,
+        call: SafeOutputCall,
+    ) -> None:
+        source_run = self.db.get_agent_run(run_id)
+        target_role = _required_text(call.payload, "target_role")
+        reason = _required_text(call.payload, "reason")
+        work_item_id = _optional_text(call.payload.get("work_item_id"))
+        if work_item_id is None and source_run is not None:
+            work_item_id = _optional_text(source_run.get("work_item_id"))
+        visibility_scope = _optional_text(call.payload.get("context_visibility")) or "project"
+        assignment_type = "role_handoff" if call.tool_name == "handoff.request" else "role_consult"
+        title = _optional_text(call.payload.get("title")) or (
+            f"Handoff to {target_role}"
+            if call.tool_name == "handoff.request"
+            else f"Consult {target_role}"
+        )
+        payload = {
+            "safe_output_ref": call_id,
+            "source_run_id": run_id,
+            "source_role": call.role_id,
+            "target_role": target_role,
+            "reason": reason,
+            "route_tool": call.tool_name,
+            "work_item_id": work_item_id,
+            "current_flow_state": call.payload.get("current_flow_state"),
+            "source_documents": _string_list(call.payload.get("source_documents")),
+            "target_outputs": _string_list(call.payload.get("target_outputs")),
+            "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
+            "context_visibility": visibility_scope,
+        }
+        self.db.create_role_assignment(
+            assignment_id=f"assignment-{call_id}",
+            role_id=target_role,
+            work_item_id=work_item_id,
+            source_ref=call_id,
+            title=title,
+            summary=reason,
+            assignment_type=assignment_type,
+            visibility_scope=visibility_scope,
+            payload=payload,
+        )
 
 
 def validate_payload(tool_name: str, payload: dict[str, Any]) -> None:
@@ -241,3 +293,22 @@ def _reject_fake_claims(tool_name: str, payload: dict[str, Any]) -> None:
             raise SafeOutputError(
                 "queue proposals must store source references and rationale, not raw conversation text"
             )
+
+
+def _required_text(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise SafeOutputError(f"`{key}` must be a non-empty string")
+    return value.strip()
+
+
+def _optional_text(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]

@@ -1823,6 +1823,13 @@ class V2Database:
                 {"status": status, "terminal_tool": terminal_tool},
             )
 
+    def get_agent_run(self, run_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM agent_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def add_artifact(
         self,
         *,

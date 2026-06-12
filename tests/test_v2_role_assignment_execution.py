@@ -9,6 +9,7 @@ from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.role_service import RoleAssignment
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
+from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.server import V2StatusHandler
 
 
@@ -72,6 +73,24 @@ def _render(snapshot: dict[str, object]) -> str:
     handler = object.__new__(V2StatusHandler)
     handler._snapshot = lambda: snapshot  # type: ignore[method-assign]
     return handler._render_status()
+
+
+def _work_db(tmp_path: Path) -> V2Database:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_queue_item(
+        queue_item_id="queue-runtime-execution",
+        title="Runtime execution",
+        summary="Exercise downstream role execution.",
+        owner_role="product-manager",
+    )
+    db.mark_queue_ready("queue-runtime-execution", actor_role="product-manager", reason="Ready.")
+    db.promote_queue_item(
+        queue_item_id="queue-runtime-execution",
+        work_item_id="work-runtime-execution",
+        owner_role="product-manager",
+    )
+    return db
 
 
 def test_role_service_claims_connector_assignment_and_completes_with_safe_output(tmp_path: Path) -> None:
@@ -205,6 +224,118 @@ def test_role_service_marks_claimed_assignment_failed_when_worker_emits_no_termi
     event_types = [event["event_type"] for event in db.list_events()]
     assert "role_assignment.claimed" in event_types
     assert "role_assignment.failed" in event_types
+
+
+def test_handoff_safe_output_creates_downstream_role_assignment_without_teams_delivery(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.create_role_assignment(
+        assignment_id="assignment-product-handoff",
+        role_id="product-manager",
+        work_item_id="work-runtime-execution",
+        source_ref="queue-runtime-execution",
+        title="Shape runtime execution",
+        summary="Product Manager should hand off implementation.",
+        assignment_type="work_item_handoff",
+        visibility_scope="project",
+        payload={
+            "source_documents": ["work-items/work-runtime-execution/020-product-definition.md"],
+            "current_flow_state": "shaping",
+        },
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="handoff.request",
+                    payload={
+                        "target_role": "engineering",
+                        "reason": "Product definition accepted; implement the runtime execution slice.",
+                        "current_flow_state": "ready",
+                        "source_documents": [
+                            "work-items/work-runtime-execution/020-product-definition.md",
+                            "docs/engineering/v2-role-execution-implementation-log.md",
+                        ],
+                        "target_outputs": [
+                            "implementation log",
+                            "focused tests",
+                        ],
+                    },
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    receipt = service.run_next_assignment()
+
+    assert receipt is not None
+    snapshot = db.status_snapshot()
+    assignments = {item["assignment_id"]: item for item in snapshot["role_assignments"]}
+    product_assignment = assignments["assignment-product-handoff"]
+    engineering_assignments = [
+        item
+        for item in snapshot["role_assignments"]
+        if item["role_id"] == "engineering" and item["assignment_type"] == "role_handoff"
+    ]
+    assert product_assignment["status"] == "completed"
+    assert len(engineering_assignments) == 1
+    engineering_assignment = engineering_assignments[0]
+    assert engineering_assignment["status"] == "queued"
+    assert engineering_assignment["work_item_id"] == "work-runtime-execution"
+    assert engineering_assignment["visibility_scope"] == "project"
+    assert engineering_assignment["source_ref"].startswith("call-")
+    assert engineering_assignment["payload"]["source_role"] == "product-manager"
+    assert engineering_assignment["payload"]["route_tool"] == "handoff.request"
+    assert engineering_assignment["payload"]["work_item_id"] == "work-runtime-execution"
+    assert engineering_assignment["payload"]["current_flow_state"] == "ready"
+    assert "implementation.record_change" in engineering_assignment["payload"]["allowed_tools"]
+    assert "focused tests" in engineering_assignment["payload"]["target_outputs"]
+    assert snapshot["counts"]["delivery_records"] == 0
+    event_types = [event["event_type"] for event in db.list_events()]
+    assert event_types.count("role_assignment.created") == 2
+
+
+def test_consult_safe_output_creates_consult_assignment_with_context_visibility(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.create_run(
+        run_id="run-engineering-consult",
+        role_id="engineering",
+        role_instance_id="agentic-mesh-dev.engineering.1",
+        work_item_id="work-runtime-execution",
+    )
+
+    call_id = SafeOutputService(db).record(
+        run_id="run-engineering-consult",
+        call=SafeOutputCall(
+            role_id="engineering",
+            tool_name="consult.request",
+            payload={
+                "target_role": "qa-engineer",
+                "reason": "Review the failure-mode coverage before implementation continues.",
+                "context_visibility": "project",
+                "target_outputs": ["QA review comments"],
+            },
+            terminal=True,
+        ),
+    )
+
+    assignment = db.list_role_assignments()[0]
+    assert assignment["assignment_id"] == f"assignment-{call_id}"
+    assert assignment["role_id"] == "qa-engineer"
+    assert assignment["assignment_type"] == "role_consult"
+    assert assignment["status"] == "queued"
+    assert assignment["work_item_id"] == "work-runtime-execution"
+    assert assignment["source_ref"] == call_id
+    assert assignment["payload"]["source_run_id"] == "run-engineering-consult"
+    assert assignment["payload"]["source_role"] == "engineering"
+    assert assignment["payload"]["route_tool"] == "consult.request"
+    assert assignment["payload"]["target_outputs"] == ["QA review comments"]
+    assert "test_evidence.record" in assignment["payload"]["allowed_tools"]
+    assert db.status_snapshot()["counts"]["delivery_records"] == 0
 
 
 def test_status_dashboard_shows_role_assignment_terminal_state(tmp_path: Path) -> None:
