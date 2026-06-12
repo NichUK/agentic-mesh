@@ -12,6 +12,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "status.reply",
         "status.complete",
         "sponsor.ask_question",
+        "human_response.request",
         "handoff.request",
         "consult.request",
         "queue.propose_item",
@@ -28,6 +29,7 @@ COMMON_TOOLS: frozenset[str] = frozenset(
         "status.progress",
         "status.complete",
         "sponsor.ask_question",
+        "human_response.request",
         "handoff.request",
         "consult.request",
         "queue.propose_item",
@@ -79,6 +81,13 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "status.progress": ("message",),
     "status.complete": ("message",),
     "sponsor.ask_question": ("question", "reason"),
+    "human_response.request": (
+        "title",
+        "question",
+        "response_contract_id",
+        "required_authority",
+        "destination_ref",
+    ),
     "handoff.request": ("target_role", "reason"),
     "consult.request": ("target_role", "reason"),
     "queue.propose_item": (
@@ -199,6 +208,9 @@ def _reject_fake_claims(tool_name: str, payload: dict[str, Any]) -> None:
             "deployed",
             "released",
             "closed work-",
+            "approval received",
+            "approved by sponsor",
+            "sponsor approved",
         ]
         if any(marker in text for marker in risky):
             raise SafeOutputError(

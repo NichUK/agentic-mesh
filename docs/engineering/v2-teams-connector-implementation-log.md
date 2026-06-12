@@ -796,11 +796,91 @@ Rework completed:
   wrappers should expose the created queue/proposal refs directly when those
   front doors are implemented.
 
+## Story 10 - Approval And Human-Response Cards
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Story 10 adds local Teams structured response-card support for approval and
+human-response requests. It keeps privileged decisions in runtime state:
+agents request the response through safe-output, the connector records a bound
+request and delivery, and card submissions are normalized and authorized before
+the request can move to responded.
+
+### Implementation Notes
+
+- Added `human_response_requests` and `human_response_submissions` runtime
+  tables and status snapshot counts/lists.
+- Added `human_response.request` as a common terminal safe-output tool for
+  non-release human response contracts.
+- Routed `release.request_approval` and `human_response.request` through local
+  structured Adaptive Card payload delivery when connector conversation fields
+  are present.
+- Added card request thread binding with `binding_type=human_response`.
+- Added card submission handling with response normalization for approve,
+  reject, and request-changes responses.
+- Enforced configured human authority before accepting privileged responses.
+- Rejected unauthorized submissions without mutating the request.
+- Rejected stale/superseded card submissions without mutating the recorded
+  accepted response.
+- Recorded visible card-update attempts after accepted submissions where the
+  local Teams adapter supports it.
+- Reused delivery failure attention behavior for card delivery and card update
+  failures.
+- Added pre-record validation that response-card safe-output payloads cannot
+  reference unknown work items.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_response_cards.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_response_cards.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+6 passed
+9 passed
+38 passed
+55 passed
+```
+
+### QA Rework
+
+QA found that malformed card submissions such as `response_value=maybe` failed
+closed but left no rejected submission record and no attention item.
+
+Rework completed:
+
+- Invalid card submissions now record a `rejected_invalid`
+  `human_response_submission` with normalized value `invalid`.
+- Invalid card submissions create a retryable `invalid_card_submission`
+  connector attention item.
+- Added a focused regression proving invalid submissions do not mutate the
+  request and do not create update deliveries.
+
+### Known Limitations
+
+- Adaptive Card payloads are local deterministic fixtures; real Bot Framework
+  and Teams client rendering/update behavior still require tenant validation.
+- Accepted card submissions update local runtime state but do not yet drive the
+  broader v2 lifecycle state machine.
+- Authority is checked against configured local human authorities; Entra-backed
+  identity/authority hardening remains a later story.
+
 ### Next Engineering Story
 
-Story 10 - Approval And Human-Response Cards.
+Story 11 - Context Compaction, Retention, And Durable Knowledge.
 
-Do not begin Story 10 until QA has reviewed Story 9 and any required rework has
+Do not begin Story 11 until QA has reviewed Story 10 and any required rework has
 passed retest.
 
 ## Review Log
@@ -865,3 +945,11 @@ passed retest.
   work-item reference validation and moved `queue.propose_item` source-event
   validation ahead of safe-output persistence, with focused regression tests. |
   awaiting QA retest 2026-06-12
+- RL-017 | engineering | implementation | Story 10 | Implemented
+  human-response request/submission persistence, structured approval card
+  delivery for `release.request_approval` and `human_response.request`,
+  authority-checked submissions, stale-card rejection, card-update delivery
+  evidence, and focused tests. | awaiting QA review 2026-06-12
+- RL-018 | engineering | QA rework | Story 10 | Added rejected-invalid
+  submission audit records and retryable attention for malformed card
+  responses, with focused regression coverage. | awaiting QA retest 2026-06-12

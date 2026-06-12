@@ -519,6 +519,258 @@ class LocalTeamsTestAdapter:
             role_id=role_id,
         )
 
+    def deliver_response_card(
+        self,
+        *,
+        call_id: str,
+        role_id: str,
+        payload: dict[str, Any],
+        request_type: str,
+    ) -> str:
+        title = str(payload.get("title") or "Human response requested").strip()
+        question = _required_string(payload, "question")
+        conversation_id = _required_string(payload, "conversation_id")
+        destination_ref = _required_string(payload, "destination_ref")
+        destination_type = str(payload.get("destination_type") or "dm")
+        thread_ref = str(payload.get("thread_ref") or f"thread-{call_id}")
+        request_id = f"human-response-{_stable_digest(call_id)}"
+        response_contract_id = str(
+            payload.get("response_contract_id")
+            or ("release-decision-v1" if request_type == "release_approval" else "human-response-v1")
+        )
+        required_authority = str(payload.get("required_authority") or "sponsor")
+        card = {
+            "type": "AdaptiveCard",
+            "version": "1.5",
+            "title": title,
+            "question": question,
+            "request_id": request_id,
+            "request_type": request_type,
+            "response_contract_id": response_contract_id,
+            "required_authority": required_authority,
+            "work_item_id": payload.get("work_item_id"),
+            "gate_id": payload.get("gate_id"),
+            "actions": [
+                {"type": "Action.Submit", "title": "Approve", "data": {"value": "approve"}},
+                {"type": "Action.Submit", "title": "Reject", "data": {"value": "reject"}},
+                {"type": "Action.Submit", "title": "Request changes", "data": {"value": "request_changes"}},
+            ],
+        }
+        self.db.bind_thread(
+            thread_binding_id=f"thread-{_stable_digest(f'{self.config.connector_id}:{thread_ref}:human-response')}",
+            connector_id=self.config.connector_id,
+            conversation_id=conversation_id,
+            external_thread_ref=thread_ref,
+            binding_type="human_response",
+            target_ref=request_id,
+        )
+        self.db.create_human_response_request(
+            request_id=request_id,
+            connector_id=self.config.connector_id,
+            source_ref=call_id,
+            request_type=request_type,
+            title=title,
+            question=question,
+            required_authority=required_authority,
+            response_contract_id=response_contract_id,
+            created_by_role=role_id,
+            destination_ref=destination_ref,
+            destination_type=destination_type,
+            work_item_id=str(payload["work_item_id"]) if payload.get("work_item_id") else None,
+            gate_id=str(payload["gate_id"]) if payload.get("gate_id") else None,
+            target_ref=str(payload["target_ref"]) if payload.get("target_ref") else None,
+            thread_ref=thread_ref,
+            payload={"card": card},
+        )
+        delivery_id = self.send_card(
+            source_ref=call_id,
+            destination_ref=destination_ref,
+            destination_type=destination_type,
+            purpose=f"{request_type}.card",
+            card=card,
+            role_id=role_id,
+            outcome=str(payload.get("delivery_outcome") or "sent"),
+        )
+        self.db.update_human_response_request_delivery(
+            request_id=request_id,
+            delivery_ref=delivery_id,
+        )
+        return request_id
+
+    def send_card(
+        self,
+        *,
+        source_ref: str,
+        destination_ref: str,
+        destination_type: str,
+        purpose: str,
+        card: dict[str, Any],
+        role_id: str | None = None,
+        outcome: str = "sent",
+    ) -> str:
+        if role_id is not None and not self._role_enabled(role_id):
+            self.db.create_connector_attention_item(
+                attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{source_ref}:{role_id}:disabled-card-send')}",
+                connector_id=self.config.connector_id,
+                owner="operator",
+                reason_class="disabled_role_identity_delivery",
+                next_action="Enable the role identity or route outbound card delivery through an active configured role.",
+                retryable=True,
+                source_ref=source_ref,
+            )
+            raise ValueError(f"role identity `{role_id}` is disabled or not configured")
+        if outcome not in DELIVERY_OUTCOMES:
+            raise ValueError(f"unknown delivery outcome `{outcome}`")
+        idempotency_key = f"{self.config.connector_id}:{source_ref}:{destination_ref}:{purpose}"
+        existing = self.db.get_delivery_record_by_idempotency_key(idempotency_key)
+        if existing is not None:
+            return str(existing["delivery_id"])
+        delivery_id = f"delivery-{_stable_digest(idempotency_key)}"
+        self.db.create_delivery_record(
+            delivery_id=delivery_id,
+            connector_id=self.config.connector_id,
+            source_ref=source_ref,
+            destination_ref=destination_ref,
+            destination_type=destination_type,
+            purpose=purpose,
+            role_id=role_id,
+            idempotency_key=idempotency_key,
+            payload={"card": card, "role_identity": self._delivery_role_identity(role_id)},
+            status="pending",
+        )
+        self._apply_delivery_outcome(delivery_id=delivery_id, outcome=outcome)
+        return delivery_id
+
+    def submit_card_response(
+        self,
+        *,
+        request_id: str,
+        responder_ref: str,
+        response_value: str,
+        comment: str | None = None,
+        submission_id: str | None = None,
+        update_outcome: str = "sent",
+    ) -> str:
+        request = self.db.get_human_response_request(request_id)
+        if request is None:
+            self.db.create_connector_attention_item(
+                attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{request_id}:unknown-response-request')}",
+                connector_id=self.config.connector_id,
+                owner="operator",
+                reason_class="unknown_response_request",
+                next_action="Inspect the submitted Teams response and bind it to an active response request if appropriate.",
+                retryable=False,
+                source_ref=request_id,
+            )
+            raise ValueError(f"unknown human response request `{request_id}`")
+        authority = self.config.human_authorities.get(responder_ref, [])
+        normalized_seed = str(response_value or "").strip().casefold().replace("-", "_").replace(" ", "_")
+        resolved_submission_id = submission_id or f"human-response-submission-{_stable_digest(f'{request_id}:{responder_ref}:{normalized_seed}')}"
+        try:
+            normalized_value = _normalize_response_value(response_value)
+        except ValueError:
+            self.db.record_human_response_submission(
+                submission_id=resolved_submission_id,
+                request_id=request_id,
+                responder_ref=responder_ref,
+                response_value=response_value,
+                normalized_value="invalid",
+                status="rejected_invalid",
+                authority=authority,
+                comment=comment,
+            )
+            self.db.create_connector_attention_item(
+                attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{resolved_submission_id}:invalid-card')}",
+                connector_id=self.config.connector_id,
+                owner="operator",
+                reason_class="invalid_card_submission",
+                next_action="Ask the responder to use one of the configured response actions or inspect the card payload.",
+                retryable=True,
+                source_ref=resolved_submission_id,
+            )
+            return resolved_submission_id
+        required_authority = str(request["required_authority"])
+        if request["status"] != "awaiting_response":
+            self.db.record_human_response_submission(
+                submission_id=resolved_submission_id,
+                request_id=request_id,
+                responder_ref=responder_ref,
+                response_value=response_value,
+                normalized_value=normalized_value,
+                status="rejected_stale",
+                authority=authority,
+                comment=comment,
+            )
+            self.db.create_connector_attention_item(
+                attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{resolved_submission_id}:stale-card')}",
+                connector_id=self.config.connector_id,
+                owner="operator",
+                reason_class="stale_card_submission",
+                next_action="Tell the responder the card has already been answered or superseded and point them to the current request.",
+                retryable=False,
+                source_ref=resolved_submission_id,
+            )
+            return resolved_submission_id
+        if required_authority not in authority:
+            self.db.record_human_response_submission(
+                submission_id=resolved_submission_id,
+                request_id=request_id,
+                responder_ref=responder_ref,
+                response_value=response_value,
+                normalized_value=normalized_value,
+                status="rejected_unauthorized",
+                authority=authority,
+                comment=comment,
+            )
+            self.db.create_connector_attention_item(
+                attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{resolved_submission_id}:unauthorized-card')}",
+                connector_id=self.config.connector_id,
+                owner="operator",
+                reason_class="unauthorized_card_submission",
+                next_action="Review the submitted response and update human authority mapping if the responder should be allowed to decide.",
+                retryable=False,
+                source_ref=resolved_submission_id,
+            )
+            return resolved_submission_id
+        self.db.record_human_response_submission(
+            submission_id=resolved_submission_id,
+            request_id=request_id,
+            responder_ref=responder_ref,
+            response_value=response_value,
+            normalized_value=normalized_value,
+            status="accepted",
+            authority=authority,
+            comment=comment,
+        )
+        self.db.complete_human_response_request(
+            request_id=request_id,
+            response_value=normalized_value,
+            responder_ref=responder_ref,
+        )
+        card = {
+            "type": "AdaptiveCard",
+            "version": "1.5",
+            "title": f"{request['title']} - response recorded",
+            "request_id": request_id,
+            "status": "responded",
+            "response": normalized_value,
+            "responder_ref": responder_ref,
+        }
+        update_ref = self.send_card(
+            source_ref=resolved_submission_id,
+            destination_ref=str(request["destination_ref"]),
+            destination_type=str(request["destination_type"]),
+            purpose="card.update",
+            card=card,
+            role_id=str(request["created_by_role"]),
+            outcome=update_outcome,
+        )
+        self.db.update_human_response_request_delivery(
+            request_id=request_id,
+            card_update_ref=update_ref,
+        )
+        return resolved_submission_id
+
     def record_relevance(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> None:
         conversation_event_id = _required_string(payload, "conversation_event_id")
         decision = _required_string(payload, "decision")
@@ -655,6 +907,8 @@ class ConnectorSafeOutputService(SafeOutputService):
             self._validate_reply_references(call.payload)
         if call.tool_name == "queue.propose_item":
             self._validate_work_proposal_source(call.payload)
+        if call.tool_name in {"human_response.request", "release.request_approval"}:
+            self._validate_response_card_payload(call.payload)
         call_id = super().record(run_id=run_id, call=call)
         if call.tool_name == "relevance.record":
             self.adapter.record_relevance(call_id=call_id, role_id=call.role_id, payload=call.payload)
@@ -671,6 +925,20 @@ class ConnectorSafeOutputService(SafeOutputService):
                 call_id=call_id,
                 role_id=call.role_id,
                 payload=call.payload,
+            )
+        if call.tool_name == "human_response.request" and "conversation_id" in call.payload:
+            self.adapter.deliver_response_card(
+                call_id=call_id,
+                role_id=call.role_id,
+                payload=call.payload,
+                request_type="human_response",
+            )
+        if call.tool_name == "release.request_approval" and "conversation_id" in call.payload:
+            self.adapter.deliver_response_card(
+                call_id=call_id,
+                role_id=call.role_id,
+                payload=call.payload,
+                request_type="release_approval",
             )
         return call_id
 
@@ -697,6 +965,16 @@ class ConnectorSafeOutputService(SafeOutputService):
         if isinstance(conversation_event_id, str) and conversation_event_id.strip():
             if self.db.get_conversation_event(conversation_event_id) is None:
                 raise ValueError(f"unknown source conversation event `{conversation_event_id}`")
+
+    def _validate_response_card_payload(self, payload: dict[str, Any]) -> None:
+        work_item_id = payload.get("work_item_id")
+        if work_item_id is not None:
+            try:
+                self.db.get_work_item(str(work_item_id))
+            except ValueError as exc:
+                raise ValueError(f"response request referenced unknown work item `{work_item_id}`") from exc
+        if "conversation_id" in payload:
+            _required_string(payload, "destination_ref")
 
     def _record_work_proposal(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> None:
         source_ref = _required_string(payload, "source_ref")
@@ -776,6 +1054,24 @@ def _bool_field(raw: dict[str, Any], key: str, *, default: bool) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"`{key}` must be a boolean")
     return value
+
+
+def _normalize_response_value(value: str) -> str:
+    normalized = str(value or "").strip().casefold().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "approved": "approve",
+        "approval": "approve",
+        "yes": "approve",
+        "rejected": "reject",
+        "no": "reject",
+        "changes": "request_changes",
+        "change_request": "request_changes",
+        "request_change": "request_changes",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"approve", "reject", "request_changes"}:
+        raise ValueError(f"unknown response value `{value}`")
+    return normalized
 
 
 def _role_identity_map(value: object) -> dict[str, RoleIdentity]:

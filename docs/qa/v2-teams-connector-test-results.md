@@ -1583,3 +1583,180 @@ Story 10 may begin for the local Teams connector progression.
   references before recording/delivery, and `queue.propose_item` rejects fake
   source conversation events before safe-output persistence. Story 10 may
   begin for the local connector scope. | accepted 2026-06-12
+
+# V2 Teams Connector Story 10 QA Review
+
+Status: QA reviewed current tree - changes requested
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Review Scope
+
+Story 10 approval and human-response cards:
+
+- `release.request_approval` and `human_response.request` structured Teams-card
+  delivery records
+- card submissions normalized and bound to originating request, gate, and work
+  item
+- sponsor and release approver authority enforcement
+- unauthorized and stale submissions fail closed
+- delivery and card-update failure attention
+- status/audit evidence, including private-DM response-card redaction for
+  `human_response_requests`, `safe_output_calls`, and `delivery_records`
+
+QA did not edit source. QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with Story 10 workspace changes only in connector/runtime docs and tests. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_response_cards.py` | Passed: 5 passed in 0.63s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_response_cards.py` | Passed: 8 passed in 0.79s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py` | Passed: 37 passed in 3.05s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 54 passed in 3.99s. |
+| `agentic-mesh status-json --db .tmp/v2-check.sqlite3` | Blocked in this shell because `agentic-mesh` is not installed on PATH. |
+| `python -m agentic_mesh_v2.cli --db .tmp/v2-check.sqlite3 status-json` | Passed; emitted an empty v2 status JSON including `human_response_requests` and `human_response_submissions` counts. |
+| In-memory card update failure probe: authorized release approval submission with `update_outcome='failed_transient'` | Passed for visibility: request remained `responded`, `card_update_ref` pointed at a `failed_transient` `card.update` delivery, and a retryable `delivery_failed_transient` attention item was created. |
+| In-memory malformed submission probe: authorized responder submitted `response_value='maybe'` | Failed Story 10 submission-failure attention expectation: raised `ValueError`, left request `awaiting_response`, and created `human_response_submissions=0`, `connector_attention_items=0`. |
+
+## Decision
+
+Changes requested before Story 10 QA acceptance.
+
+The implemented local adapter path covers the core happy path and most guardrails:
+release approval requests render structured card delivery records, authorized
+release approver submissions normalize `approved` to `approve`, requests retain
+gate/work-item binding, unauthorized responders are rejected without mutating
+accepted state, stale submissions are rejected without changing the accepted
+response, initial delivery failures create attention, card-update delivery
+failures create attention, and status snapshots now redact private-DM
+response-card sentinel text from request, safe-output, and delivery surfaces.
+
+One submission-failure path still lacks visible audit/attention evidence.
+
+## Finding
+
+- P1 - malformed card submissions fail silently from the operator/audit view.
+  `LocalTeamsTestAdapter.submit_card_response()` normalizes `response_value`
+  before it has a submission id, before it records a rejected submission, and
+  before it creates connector attention. An invalid Teams card payload such as
+  `response_value='maybe'` raises `ValueError` and leaves the request
+  `awaiting_response`, which is fail-closed for accepted state, but no
+  `human_response_submissions` row or `connector_attention_items` row is
+  created. Story 10 release/test notes require submission failure tests and the
+  acceptance criteria require card delivery or submission failure to create
+  attention items. Relevant code:
+  `src/agentic_mesh_v2/connectors.py` lines 654-668 and 1036-1050.
+
+## Passing Evidence
+
+| Story 10 expectation | QA result |
+| --- | --- |
+| `release.request_approval` renders a structured Teams-card delivery record | Pass. Focused tests show one `release_approval.card` delivery with an Adaptive Card payload. |
+| `human_response.request` renders a structured Teams-card delivery record | Pass. Focused tests show one `human_response.card` delivery with the requested response contract id. |
+| Card submissions normalize accepted responses | Pass. `approved` normalizes to `approve` and is recorded on the request and submission. |
+| Submission binds to originating request/gate/work item | Pass for local read model. The request records `request_id`, `source_ref`, `gate_id`, `work_item_id`, `thread_ref`, and delivery refs; submissions link by `request_id`. |
+| Sponsor/release approver authority is enforced | Pass for configured local authority map. `observer` cannot satisfy a `release_approver` request and `nicholas` can. |
+| Unauthorized submissions fail closed | Pass. Unauthorized submission leaves request `awaiting_response`, records `rejected_unauthorized`, and creates `unauthorized_card_submission` attention. |
+| Stale submissions fail closed | Pass. Second submission after an accepted response records `rejected_stale`, creates `stale_card_submission` attention, and preserves the first accepted response. |
+| Initial card delivery failure creates attention | Pass. `failed_transient` card delivery records failed delivery evidence and `delivery_failed_transient` attention. |
+| Card update failure creates attention | Pass in QA probe. `card.update` can end `failed_transient` with retryable delivery attention and a visible `card_update_ref`. |
+| Private-DM response-card status redaction | Pass. The `PRIVATE_RESPONSE_SENTINEL` regression confirms default `status_snapshot()` redacts private response-card text from `human_response_requests`, `safe_output_calls`, and `delivery_records`. |
+| Status/audit evidence is visible | Pass for implemented records. Counts/lists expose requests, submissions, delivery records, delivery attempts, thread bindings, attention items, and recent human-response events. |
+
+## Residual Gaps
+
+- Real Teams tenant, Bot Framework, Graph, Entra identity resolution, tenant
+  policy, throttling, Adaptive Card rendering, and actual card update behavior
+  remain outside local-adapter coverage. This is still tracked by CG-007 and
+  later real-connector/security stories.
+- Accepted card submissions update local runtime state but do not yet advance
+  broader lifecycle state machine gates; Engineering already noted this as a
+  Story 10 limitation.
+- Authority enforcement is based on configured local `human_authorities`.
+  Entra-backed person identity, group membership, consent, and permission
+  hardening remain Story 12 scope.
+
+## Review Log
+
+- RL-018 | qa-engineer | Story 10 QA | Focused Story 10 tests,
+  safe-output pairing, Story 1-10 connector regressions, full pytest, CLI
+  status smoke fallback, and extra card-update/invalid-submission probes were
+  run. Tests pass and private-DM response-card redaction is verified, but QA
+  requests changes because malformed card submissions raise without rejected
+  submission evidence or connector attention. | changes requested 2026-06-12
+
+# V2 Teams Connector Story 10 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 10 rework for the prior QA finding:
+
+- malformed card submissions must record a `rejected_invalid`
+  `human_response_submissions` row
+- malformed card submissions must create retryable
+  `invalid_card_submission` connector attention
+- malformed card submissions must not mutate the original request, accept a
+  response, or create a card-update delivery
+- focused Story 10 behavior, safe-output pairing, Story 1-10 connector
+  regressions, and full pytest must continue to pass
+
+QA did not edit source. QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` and existing Story 10 workspace changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_response_cards.py` | Passed: 6 passed in 0.70s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_response_cards.py` | Passed: 9 passed in 0.89s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py` | Passed: 38 passed in 3.21s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 55 passed in 4.19s. |
+
+## Retest Decision
+
+Story 10 passes QA for the implemented local Teams connector scope.
+
+The prior P1 finding is closed. The focused regression
+`test_invalid_card_submission_records_rejection_and_attention` proves that an
+invalid card value leaves the request `awaiting_response`, records a
+`rejected_invalid` submission with `normalized_value="invalid"`, creates
+retryable `invalid_card_submission` attention, and does not create a card
+update delivery. Existing Story 10 coverage still verifies structured
+approval/human-response card delivery, authorized response normalization,
+unauthorized and stale fail-closed paths, delivery failure attention,
+card-update failure visibility, and private-DM response-card redaction.
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra identity resolution, tenant policy,
+  throttling, Adaptive Card rendering, or live card-update behavior has been
+  validated yet.
+- Accepted card submissions update local runtime state but do not yet advance
+  broader lifecycle state machine gates.
+- Authority enforcement is based on configured local `human_authorities`.
+  Entra-backed person identity, group membership, consent, and permission
+  hardening remain Story 12 scope.
+
+## Review Log
+
+- RL-019 | qa-engineer | Story 10 QA retest | Focused Story 10 tests,
+  safe-output pairing, Story 1-10 connector regressions, and full pytest pass.
+  Prior P1 is closed: malformed card submissions now record
+  `rejected_invalid`, create retryable `invalid_card_submission` attention, and
+  leave the original request and delivery/update state unmutated. Story 10 is
+  accepted for the local connector scope. | accepted 2026-06-12

@@ -338,6 +338,45 @@ class V2Database:
                   safe_output_ref TEXT NOT NULL REFERENCES safe_output_calls(call_id),
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS human_response_requests (
+                  request_id TEXT PRIMARY KEY,
+                  connector_id TEXT NOT NULL REFERENCES connectors(connector_id),
+                  source_ref TEXT NOT NULL,
+                  request_type TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  question TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  required_authority TEXT NOT NULL,
+                  response_contract_id TEXT NOT NULL,
+                  created_by_role TEXT NOT NULL,
+                  destination_ref TEXT NOT NULL,
+                  destination_type TEXT NOT NULL,
+                  work_item_id TEXT,
+                  gate_id TEXT,
+                  target_ref TEXT,
+                  thread_ref TEXT,
+                  delivery_ref TEXT,
+                  response_value TEXT,
+                  responder_ref TEXT,
+                  card_update_ref TEXT,
+                  payload_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS human_response_submissions (
+                  submission_id TEXT PRIMARY KEY,
+                  request_id TEXT NOT NULL REFERENCES human_response_requests(request_id),
+                  responder_ref TEXT NOT NULL,
+                  response_value TEXT NOT NULL,
+                  normalized_value TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  comment TEXT,
+                  authority_json TEXT NOT NULL DEFAULT '[]',
+                  payload_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
             self.connection.execute(
@@ -463,6 +502,160 @@ class V2Database:
                     "classification": classification,
                     "work_type": work_type,
                 },
+            )
+
+    def create_human_response_request(
+        self,
+        *,
+        request_id: str,
+        connector_id: str,
+        source_ref: str,
+        request_type: str,
+        title: str,
+        question: str,
+        required_authority: str,
+        response_contract_id: str,
+        created_by_role: str,
+        destination_ref: str,
+        destination_type: str,
+        work_item_id: str | None = None,
+        gate_id: str | None = None,
+        target_ref: str | None = None,
+        thread_ref: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO human_response_requests(
+                  request_id, connector_id, source_ref, request_type, title, question, status,
+                  required_authority, response_contract_id, created_by_role, destination_ref,
+                  destination_type, work_item_id, gate_id, target_ref, thread_ref, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'awaiting_response', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request_id,
+                    connector_id,
+                    source_ref,
+                    request_type,
+                    title,
+                    question,
+                    required_authority,
+                    response_contract_id,
+                    created_by_role,
+                    destination_ref,
+                    destination_type,
+                    work_item_id,
+                    gate_id,
+                    target_ref,
+                    thread_ref,
+                    json.dumps(payload or {}, sort_keys=True),
+                ),
+            )
+            self.append_event(
+                "human_response.requested",
+                "human_response_request",
+                request_id,
+                {
+                    "request_type": request_type,
+                    "required_authority": required_authority,
+                    "work_item_id": work_item_id,
+                    "gate_id": gate_id,
+                },
+            )
+
+    def get_human_response_request(self, request_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM human_response_requests WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
+    def update_human_response_request_delivery(
+        self,
+        *,
+        request_id: str,
+        delivery_ref: str | None = None,
+        card_update_ref: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE human_response_requests
+                SET delivery_ref = COALESCE(?, delivery_ref),
+                    card_update_ref = COALESCE(?, card_update_ref),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE request_id = ?
+                """,
+                (delivery_ref, card_update_ref, request_id),
+            )
+
+    def complete_human_response_request(
+        self,
+        *,
+        request_id: str,
+        response_value: str,
+        responder_ref: str,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE human_response_requests
+                SET status = 'responded',
+                    response_value = ?,
+                    responder_ref = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE request_id = ?
+                """,
+                (response_value, responder_ref, request_id),
+            )
+            self.append_event(
+                "human_response.responded",
+                "human_response_request",
+                request_id,
+                {"response_value": response_value, "responder_ref": responder_ref},
+            )
+
+    def record_human_response_submission(
+        self,
+        *,
+        submission_id: str,
+        request_id: str,
+        responder_ref: str,
+        response_value: str,
+        normalized_value: str,
+        status: str,
+        authority: list[str],
+        comment: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO human_response_submissions(
+                  submission_id, request_id, responder_ref, response_value, normalized_value,
+                  status, comment, authority_json, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    submission_id,
+                    request_id,
+                    responder_ref,
+                    response_value,
+                    normalized_value,
+                    status,
+                    comment,
+                    json.dumps(authority, sort_keys=True),
+                    json.dumps(payload or {}, sort_keys=True),
+                ),
+            )
+            self.append_event(
+                "human_response.submission_recorded",
+                "human_response_request",
+                request_id,
+                {"submission_id": submission_id, "status": status, "normalized_value": normalized_value},
             )
 
     def upsert_connector(
@@ -1308,6 +1501,26 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_human_response_requests(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM human_response_requests
+            ORDER BY updated_at DESC, request_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_human_response_submissions(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM human_response_submissions
+            ORDER BY created_at DESC, submission_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_work_items(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -1539,6 +1752,9 @@ class V2Database:
         role_assignments = self.list_role_assignments()
         relevance_checks = self.list_relevance_checks()
         work_proposals = self.list_work_proposals()
+        human_response_requests = self.list_human_response_requests()
+        redacted_human_response_requests = _redact_private_human_response_requests(human_response_requests)
+        human_response_submissions = self.list_human_response_submissions()
         safe_output_calls = self.list_safe_output_calls()
         redacted_safe_output_calls = _redact_private_safe_output_calls(safe_output_calls)
         states: dict[str, int] = {}
@@ -1574,6 +1790,8 @@ class V2Database:
                 "role_assignments": len(role_assignments),
                 "relevance_checks": len(relevance_checks),
                 "work_proposals": len(work_proposals),
+                "human_response_requests": len(human_response_requests),
+                "human_response_submissions": len(human_response_submissions),
             },
             "work_item_states": states,
             "queue_statuses": queue_statuses,
@@ -1596,6 +1814,8 @@ class V2Database:
             "role_assignments": role_assignments,
             "relevance_checks": relevance_checks,
             "work_proposals": work_proposals,
+            "human_response_requests": redacted_human_response_requests,
+            "human_response_submissions": human_response_submissions,
             "recent_events": self.list_events()[-50:],
         }
 
@@ -1643,12 +1863,14 @@ def _redact_private_delivery_records(rows: list[dict[str, Any]]) -> list[dict[st
         payload = item.get("payload")
         if item.get("destination_type") == "dm" and isinstance(payload, dict):
             item["payload"] = _redact_payload_body(payload)
+            item["payload"] = _redact_payload_card(item["payload"])
         redacted.append(item)
     return redacted
 
 
 def _redact_private_safe_output_calls(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     private_tools = {"status.reply", "sponsor.ask_question"}
+    private_response_tools = {"human_response.request", "release.request_approval"}
     redacted: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
@@ -1660,6 +1882,33 @@ def _redact_private_safe_output_calls(rows: list[dict[str, Any]]) -> list[dict[s
                     scrubbed[key] = "[redacted private conversation]"
                     scrubbed[f"{key}_redacted"] = True
             item["payload"] = scrubbed
+        if (
+            item.get("tool_name") in private_response_tools
+            and isinstance(payload, dict)
+            and payload.get("destination_type") == "dm"
+        ):
+            scrubbed = dict(payload)
+            for key in ("title", "question"):
+                if key in scrubbed:
+                    scrubbed[key] = "[redacted private conversation]"
+                    scrubbed[f"{key}_redacted"] = True
+            item["payload"] = scrubbed
+        redacted.append(item)
+    return redacted
+
+
+def _redact_private_human_response_requests(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    redacted: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        if item.get("destination_type") == "dm":
+            item["title"] = "[redacted private conversation]"
+            item["title_redacted"] = True
+            item["question"] = "[redacted private conversation]"
+            item["question_redacted"] = True
+            payload = item.get("payload")
+            if isinstance(payload, dict):
+                item["payload"] = _redact_payload_card(payload)
         redacted.append(item)
     return redacted
 
@@ -1669,4 +1918,17 @@ def _redact_payload_body(payload: dict[str, Any]) -> dict[str, Any]:
     if "body" in redacted:
         redacted["body"] = "[redacted private conversation]"
         redacted["body_redacted"] = True
+    return redacted
+
+
+def _redact_payload_card(payload: dict[str, Any]) -> dict[str, Any]:
+    redacted = dict(payload)
+    card = redacted.get("card")
+    if isinstance(card, dict):
+        redacted_card = dict(card)
+        for key in ("title", "question"):
+            if key in redacted_card:
+                redacted_card[key] = "[redacted private conversation]"
+                redacted_card[f"{key}_redacted"] = True
+        redacted["card"] = redacted_card
     return redacted
