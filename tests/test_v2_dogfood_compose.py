@@ -2,6 +2,13 @@ from pathlib import Path
 
 import yaml
 
+from agentic_mesh_v2.container_lifecycle import ComposeRoleLifecycleConfig
+from agentic_mesh_v2.project_config import list_project_role_service_configs
+from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
+
+
+PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml")
+
 
 def test_dogfood_compose_runs_status_server_with_project_file() -> None:
     compose = _load_dogfood_compose()
@@ -38,6 +45,68 @@ def test_linuxch_overlay_restarts_project_supervisor_service() -> None:
 
     assert "v2-supervisor:" in overlay
     assert "restart: unless-stopped" in overlay
+
+
+def test_dogfood_project_config_defines_role_container_lifecycle() -> None:
+    config = load_role_container_lifecycle_config(PROJECT_FILE, role_id="product-manager")
+    lifecycle = ComposeRoleLifecycleConfig.from_mapping(config)
+
+    service_name = lifecycle.service_name(
+        project_id="agentic-mesh-dev",
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+    )
+
+    assert service_name == "agentic-mesh-dev-product-manager-1"
+    assert lifecycle.working_directory == PROJECT_FILE.parent / "../deploy/compose"
+    assert [path.name for path in lifecycle.compose_files] == [
+        "docker-compose.yml",
+        "docker-compose.linuxch.yml",
+    ]
+
+
+def test_dogfood_compose_runs_one_role_service_per_project_role_instance() -> None:
+    compose = _load_dogfood_compose()
+    runtime_service = compose["services"]["v2-runtime"]
+
+    for role_config in list_project_role_service_configs(PROJECT_FILE):
+        lifecycle = ComposeRoleLifecycleConfig.from_mapping(
+            load_role_container_lifecycle_config(PROJECT_FILE, role_id=role_config.role_id)
+        )
+        service_name = lifecycle.service_name(
+            project_id=role_config.project_id,
+            role_id=role_config.role_id,
+            role_instance_id=role_config.role_instance_id,
+        )
+        service = compose["services"][service_name]
+        command = service["command"]
+
+        assert service["image"] == runtime_service["image"]
+        assert service["environment"] == runtime_service["environment"]
+        assert service["volumes"] == runtime_service["volumes"]
+        assert service["working_dir"] == runtime_service["working_dir"]
+        assert service["depends_on"] == ["v2-runtime"]
+        assert "run-role-service-loop" in command
+        assert f"--role-id {role_config.role_id}" in command
+        assert f"--role-instance-id {role_config.role_instance_id}" in command
+        assert "--continuous" in command
+        assert "--poll-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}" in command
+        assert "--worker-timeout-seconds" not in command
+
+
+def test_linuxch_overlay_restarts_every_role_service() -> None:
+    overlay = _linuxch_overlay_text()
+
+    for role_config in list_project_role_service_configs(PROJECT_FILE):
+        lifecycle = ComposeRoleLifecycleConfig.from_mapping(
+            load_role_container_lifecycle_config(PROJECT_FILE, role_id=role_config.role_id)
+        )
+        service_name = lifecycle.service_name(
+            project_id=role_config.project_id,
+            role_id=role_config.role_id,
+            role_instance_id=role_config.role_instance_id,
+        )
+        assert f"  {service_name}:\n    restart: unless-stopped" in overlay
 
 
 def _load_dogfood_compose() -> dict[str, object]:

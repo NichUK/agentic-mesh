@@ -22,6 +22,12 @@ def test_project_schema_allows_command_backed_codex_worker() -> None:
         "flow": {
             "template": "sdlc",
         },
+        "container_lifecycle": {
+            "adapter": "docker-compose",
+            "compose_files": ["deploy/compose/docker-compose.yml"],
+            "service_name_template": "{project_id}-{role_id}-{index}",
+            "working_directory": "deploy/compose",
+        },
         "roles": {
             "engineering": {
                 "template": "engineering",
@@ -41,6 +47,11 @@ def test_project_schema_allows_command_backed_codex_worker() -> None:
                 "write_paths": ["src/**", "tests/**"],
                 "channels": {
                     "primary": "engineering",
+                },
+                "container_lifecycle": {
+                    "adapter": "docker-compose",
+                    "compose_files": ["deploy/compose/docker-compose.yml"],
+                    "service_name_template": "engineering-{index}",
                 },
             }
         },

@@ -1864,6 +1864,87 @@ Rework:
   default and still accepts an explicit timeout override.
 - Preserved adapter defaults for `safe-output-subprocess` in the same way.
 
+## PB-005 Story 18 - Dogfood Role-Agent Service Deployment Wiring
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; awaiting QA
+
+### Intent
+
+Deploy the v2 dogfood runtime with one long-running role-agent container per
+configured role instance, so the project supervisor has real Compose services
+to hydrate, hibernate, and monitor instead of only planning against abstract
+role-instance names.
+
+### Changes
+
+- Added dogfood project `container_lifecycle` configuration using the
+  `docker-compose` adapter.
+- Aligned the lifecycle `service_name_template` to
+  `{project_id}-{role_id}-{index}`.
+- Added one role-agent service to the dogfood Compose deployment for every
+  configured role instance:
+  - business-analyst
+  - product-manager
+  - prompt-engineer
+  - ux-designer
+  - enterprise-architect
+  - solution-architect
+  - security-architect
+  - platform-engineer
+  - engineering.1
+  - engineering.2
+  - qa-engineer
+  - technical-writer
+  - delivery-manager
+  - research-analyst
+  - release-manager
+- Each role-agent service runs `run-role-service-loop` in continuous mode with
+  explicit `--role-id` and `--role-instance-id`.
+- Added linuxch restart policy entries for every role-agent service.
+- Extended the project schema with reusable `container_lifecycle` validation at
+  project and role override scope.
+- Added dogfood Compose tests that compare configured role instances with
+  concrete Compose service names.
+
+### Tests Added
+
+- dogfood project config resolves lifecycle service names from the configured
+  template
+- dogfood Compose includes one long-running role service per configured role
+  instance
+- linuxch overlay restarts every role service
+- project schema accepts project-level and role-level container lifecycle
+  configuration
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_dogfood_compose.py tests\test_v2_project_schema.py
+docker compose -f examples\projects\agentic-mesh-dev\deploy\compose\docker-compose.yml -f examples\projects\agentic-mesh-dev\deploy\compose\docker-compose.linuxch.yml config --quiet
+python -m json.tool config\schemas\project.schema.json > $null
+```
+
+Results:
+
+```text
+7 passed
+Compose config validation passed
+Schema JSON validation passed
+```
+
+### Known Limitations
+
+- This story wires long-running role-agent containers into the dogfood
+  deployment, but it does not implement XML prompt assembly or native
+  safe-output tool transport.
+- Role-agent containers with no assignments should idle normally. Assignments
+  that require real Codex output remain dependent on the later prompt/tool
+  transport slice.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added

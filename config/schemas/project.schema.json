@@ -76,6 +76,9 @@
     "role_memory": {
       "$ref": "#/$defs/roleMemory"
     },
+    "container_lifecycle": {
+      "$ref": "#/$defs/containerLifecycle"
+    },
     "meshes": {
       "type": "object",
       "additionalProperties": {
@@ -376,6 +379,9 @@
         },
         "capabilities": {
           "$ref": "#/$defs/capabilityProfile"
+        },
+        "container_lifecycle": {
+          "$ref": "#/$defs/containerLifecycle"
         }
       }
     },
@@ -739,6 +745,34 @@
         },
         "auth": {
           "$ref": "#/$defs/authBinding"
+        }
+      }
+    },
+    "containerLifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "compose_files", "service_name_template"],
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "const": "docker-compose"
+        },
+        "compose_files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "service_name_template": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Template using project_id, role_id, role_instance_id, and index."
+        },
+        "working_directory": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

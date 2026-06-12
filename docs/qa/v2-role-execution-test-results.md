@@ -1935,3 +1935,66 @@ None blocking for PB-005 Story 17.
 - QA-RL-031 | qa-engineer | retest | PB-005 Story 17 | Verified the CLI
   timeout default regression is closed for Codex CLI and preserved for
   safe-output subprocess, with focused tests passing. | accepted 2026-06-12
+
+## PB-005 Story 18 - Dogfood Role-Agent Service Deployment Wiring
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`
+- `examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml`
+- `examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml`
+- `config/schemas/project.schema.json`
+- `tests/test_v2_dogfood_compose.py`
+- `tests/test_v2_project_schema.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+git status --short --branch
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_dogfood_compose.py tests\test_v2_project_schema.py
+docker compose -f examples\projects\agentic-mesh-dev\deploy\compose\docker-compose.yml -f examples\projects\agentic-mesh-dev\deploy\compose\docker-compose.linuxch.yml config --quiet
+```
+
+Results:
+
+```text
+7 passed
+Compose config validation passed
+Read-only YAML comparison found 15 expected role instances, 15 role services,
+no missing role services, no extra role-loop services, and no missing linuxch
+restart entries.
+```
+
+### Acceptance Assessment
+
+- Dogfood project lifecycle config uses
+  `{project_id}-{role_id}-{index}`.
+- Dogfood Compose defines one `run-role-service-loop` service for every
+  configured role instance, including both engineering instances.
+- Role services run continuous mode with explicit role and instance identity.
+- Linuxch overlay restarts every role service.
+- Tests expand the project role config and lifecycle template rather than only
+  asserting fixed service text.
+- Engineering evidence correctly does not claim XML prompt assembly or native
+  safe-output transport is complete.
+
+### Residual Risks
+
+- Linuxch overlay restart coverage includes a formatting-sensitive text
+  assertion. The Compose semantic validation and project-expanded service tests
+  are sufficient for this story, but future Compose-generation work should move
+  more of this into structured validation.
+
+### Review Log
+
+- QA-RL-032 | qa-engineer | acceptance | PB-005 Story 18 | Verified dogfood
+  role-agent service deployment wiring, lifecycle service-name alignment,
+  continuous role-service commands, linuxch restart policy, and scoped
+  implementation claims. | accepted 2026-06-12
