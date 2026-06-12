@@ -245,6 +245,142 @@
       "accountability": "accountable_owner",
       "contributing_roles": [
         "product-manager",
+        "solution-architect",
+        "security-architect",
+        "prompt-engineer",
+        "qa-engineer",
+        "engineering"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "ux-designer",
+      "path": "docs/ux/v2-teams-connector-interaction-design.md",
+      "required_sections": [
+        "purpose",
+        "design_principles",
+        "teams_surfaces",
+        "role_identity_ux",
+        "message_patterns",
+        "acceptance_scenarios",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "draft_downstream_design"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "ux-designer",
+        "security-architect",
+        "prompt-engineer",
+        "engineering",
+        "qa-engineer"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "solution-architect",
+      "path": "docs/architecture/v2-teams-connector-architecture.md",
+      "required_sections": [
+        "purpose",
+        "core_position",
+        "service_boundary",
+        "role_identity_model",
+        "conversation_model",
+        "database_and_read-model_needs",
+        "safe-output_integration",
+        "open_decisions",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "draft_downstream_design"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "ux-designer",
+        "solution-architect",
+        "prompt-engineer",
+        "engineering",
+        "qa-engineer"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "security-architect",
+      "path": "docs/security/v2-teams-connector-security.md",
+      "required_sections": [
+        "purpose",
+        "security_outcomes",
+        "identity_model",
+        "teams_and_entra_permissions",
+        "authorization_model",
+        "direct_message_privacy",
+        "retention_and_compaction",
+        "risks_and_mitigations",
+        "security_acceptance_criteria",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "draft_downstream_design"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "ux-designer",
+        "solution-architect",
+        "security-architect",
+        "engineering",
+        "qa-engineer"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "prompt-engineer",
+      "path": "docs/prompt-engineering/v2-teams-connector-behaviour-guidance.md",
+      "required_sections": [
+        "purpose",
+        "prompt_contract_goals",
+        "conversational_replies",
+        "agent-initiated_human_questions",
+        "relevance_checks_for_team-wide_prompts",
+        "runtime_consult_and_handoff_versus_teams",
+        "regression_scenarios",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "draft_downstream_design"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
+        "ux-designer",
+        "solution-architect",
+        "security-architect",
+        "prompt-engineer",
+        "engineering"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "qa-engineer",
+      "path": "docs/qa/v2-teams-connector-test-plan.md",
+      "required_sections": [
+        "purpose",
+        "quality_goals",
+        "bdd_scenarios",
+        "regression_and_failure-mode_coverage",
+        "release_evidence_requirements",
+        "exit_criteria",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "draft_downstream_design"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
+        "product-manager",
         "ux-designer",
         "solution-architect",
         "engineering",

@@ -97,6 +97,40 @@ V2 role agents are long-running role services. Each role service:
 Provider-specific execution may still spawn a subprocess, but that is an
 implementation detail behind the role-service boundary.
 
+## Hibernation And Hydration
+
+V2 should support long-running containerised role agents with idle hibernation,
+but the product definition of "same state" must be logical state, not arbitrary
+process memory.
+
+The runtime should be able to stop or scale down idle role-service containers
+after a configured idle period and later hydrate them back into the same logical
+role-instance state by reloading:
+
+- role instance identity
+- active and pending assignments
+- leases and heartbeat status
+- role memory and team overlays
+- conversation context and connector cursors
+- work-item state and safe-output history
+- prompt traces, journals, and recovery markers
+- worker adapter configuration and credential references
+
+The durable database, event log, document library, role memory, and connector
+state are therefore the state of record. Containers are execution vessels.
+
+The default hibernation policy should only hibernate at safe points: no active
+tool call, no unflushed safe-output record, no uncommitted file operation, and
+no worker subprocess whose result cannot be recovered. For active long-running
+work, the role service should either continue running or enter a cooperative
+suspend state after recording enough checkpoint data for retry or resume.
+
+Full process checkpoint/restore, for example with CRIU, may be researched as an
+advanced optimisation, but it should not be the open-source v2 baseline because
+it is platform-sensitive and difficult to make reliable across worker providers.
+The baseline should be deterministic logical hydration from durable runtime
+state.
+
 ## Safe Outputs And Authority
 
 Safe-output tools are the only durable mutation surface for agents.
