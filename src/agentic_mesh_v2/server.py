@@ -253,9 +253,10 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 f"<td>{_e(row['title'])}<br><span class=\"muted\">{_e(row['summary'])}</span></td>"
                 f"<td>{_e(row.get('work_item_id') or '')}<br>{_e(row.get('source_ref') or '')}</td>"
                 f"<td>{_e(row.get('run_id') or '')}<br>{_e(row.get('failure_reason') or '')}</td>"
+                f"<td>{_e(row.get('claim_expires_at') or '')}<br>{_e(row.get('recovery_count') or 0)}</td>"
                 "</tr>"
             )
-        return "<table><tr><th>Assignment</th><th>Role / Instance</th><th>Status / Terminal</th><th>Summary</th><th>Work / Source</th><th>Run / Failure</th></tr>" + "".join(body) + "</table>"
+        return "<table><tr><th>Assignment</th><th>Role / Instance</th><th>Status / Terminal</th><th>Summary</th><th>Work / Source</th><th>Run / Failure</th><th>Lease / Recoveries</th></tr>" + "".join(body) + "</table>"
 
     def _role_instance_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []

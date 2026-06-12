@@ -56,12 +56,14 @@ class RoleService:
         role_instance_id: str,
         worker: Worker,
         safe_outputs: SafeOutputService | None = None,
+        assignment_lease_seconds: int = 300,
     ) -> None:
         self.db = db
         self.role_id = role_id
         self.role_instance_id = role_instance_id
         self.worker = worker
         self.safe_outputs = safe_outputs or SafeOutputService(db)
+        self.assignment_lease_seconds = assignment_lease_seconds
         self.db.update_role_instance_status(
             role_id=self.role_id,
             role_instance_id=self.role_instance_id,
@@ -117,6 +119,7 @@ class RoleService:
         row = self.db.claim_role_assignment(
             role_id=self.role_id,
             role_instance_id=self.role_instance_id,
+            lease_seconds=self.assignment_lease_seconds,
         )
         if row is None:
             return None
@@ -175,6 +178,13 @@ class RoleService:
             detail="Assignment completed.",
         )
         return receipt
+
+    def refresh_assignment_lease(self, assignment_id: str) -> bool:
+        return self.db.refresh_role_assignment_lease(
+            assignment_id=assignment_id,
+            role_instance_id=self.role_instance_id,
+            lease_seconds=self.assignment_lease_seconds,
+        )
 
     def drain_available_assignments(self, *, max_assignments: int = 10) -> RoleDrainReceipt:
         if max_assignments < 1:

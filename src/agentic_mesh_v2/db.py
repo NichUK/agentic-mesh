@@ -358,10 +358,12 @@ class V2Database:
                   visibility_scope TEXT NOT NULL,
                   payload_json TEXT NOT NULL,
                   claimed_at TEXT,
+                  claim_expires_at TEXT,
                   completed_at TEXT,
                   run_id TEXT,
                   terminal_tool TEXT,
                   failure_reason TEXT,
+                  recovery_count INTEGER NOT NULL DEFAULT 0,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -489,10 +491,12 @@ class V2Database:
             )
             self._ensure_column("connector_participants", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column("role_assignments", "claimed_at", "TEXT")
+            self._ensure_column("role_assignments", "claim_expires_at", "TEXT")
             self._ensure_column("role_assignments", "completed_at", "TEXT")
             self._ensure_column("role_assignments", "run_id", "TEXT")
             self._ensure_column("role_assignments", "terminal_tool", "TEXT")
             self._ensure_column("role_assignments", "failure_reason", "TEXT")
+            self._ensure_column("role_assignments", "recovery_count", "INTEGER NOT NULL DEFAULT 0")
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
@@ -1487,7 +1491,15 @@ class V2Database:
                 },
             )
 
-    def claim_role_assignment(self, *, role_id: str, role_instance_id: str) -> dict[str, Any] | None:
+    def claim_role_assignment(
+        self,
+        *,
+        role_id: str,
+        role_instance_id: str,
+        lease_seconds: int = 300,
+    ) -> dict[str, Any] | None:
+        if lease_seconds < 1:
+            raise ValueError("lease_seconds must be at least 1")
         with self.connection:
             row = self.connection.execute(
                 """
@@ -1509,11 +1521,16 @@ class V2Database:
                 SET status = 'claimed',
                     role_instance_id = ?,
                     claimed_at = CURRENT_TIMESTAMP,
+                    claim_expires_at = datetime('now', ?),
+                    completed_at = NULL,
+                    run_id = NULL,
+                    terminal_tool = NULL,
+                    failure_reason = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE assignment_id = ?
                   AND status = 'queued'
                 """,
-                (role_instance_id, assignment_id),
+                (role_instance_id, f"+{lease_seconds} seconds", assignment_id),
             )
             if result.rowcount != 1:
                 return None
@@ -1521,9 +1538,95 @@ class V2Database:
                 "role_assignment.claimed",
                 "role_assignment",
                 assignment_id,
-                {"role_id": role_id, "role_instance_id": role_instance_id},
+                {
+                    "role_id": role_id,
+                    "role_instance_id": role_instance_id,
+                    "lease_seconds": lease_seconds,
+                },
             )
         return self.get_role_assignment(assignment_id)
+
+    def refresh_role_assignment_lease(
+        self,
+        *,
+        assignment_id: str,
+        role_instance_id: str,
+        lease_seconds: int = 300,
+    ) -> bool:
+        if lease_seconds < 1:
+            raise ValueError("lease_seconds must be at least 1")
+        with self.connection:
+            result = self.connection.execute(
+                """
+                UPDATE role_assignments
+                SET claim_expires_at = datetime('now', ?),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE assignment_id = ?
+                  AND role_instance_id = ?
+                  AND status = 'claimed'
+                """,
+                (f"+{lease_seconds} seconds", assignment_id, role_instance_id),
+            )
+            refreshed = result.rowcount == 1
+            if refreshed:
+                self.append_event(
+                    "role_assignment.lease_refreshed",
+                    "role_assignment",
+                    assignment_id,
+                    {"role_instance_id": role_instance_id, "lease_seconds": lease_seconds},
+                )
+            return refreshed
+
+    def recover_stale_role_assignments(self, *, reason: str, limit: int = 50) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        if not reason.strip():
+            raise ValueError("recovery reason is required")
+        recovered: list[dict[str, Any]] = []
+        with self.connection:
+            rows = self.connection.execute(
+                """
+                SELECT assignment_id
+                FROM role_assignments
+                WHERE status = 'claimed'
+                  AND claim_expires_at IS NOT NULL
+                  AND claim_expires_at <= CURRENT_TIMESTAMP
+                ORDER BY claim_expires_at, assignment_id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            for row in rows:
+                assignment_id = str(row["assignment_id"])
+                result = self.connection.execute(
+                    """
+                    UPDATE role_assignments
+                    SET status = 'queued',
+                        role_instance_id = NULL,
+                        claimed_at = NULL,
+                        claim_expires_at = NULL,
+                        failure_reason = ?,
+                        recovery_count = recovery_count + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE assignment_id = ?
+                      AND status = 'claimed'
+                      AND claim_expires_at IS NOT NULL
+                      AND claim_expires_at <= CURRENT_TIMESTAMP
+                    """,
+                    (reason, assignment_id),
+                )
+                if result.rowcount != 1:
+                    continue
+                self.append_event(
+                    "role_assignment.recovered",
+                    "role_assignment",
+                    assignment_id,
+                    {"reason": reason},
+                )
+                recovered_row = self.get_role_assignment(assignment_id)
+                if recovered_row is not None:
+                    recovered.append(recovered_row)
+        return recovered
 
     def get_role_assignment(self, assignment_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(
@@ -1549,6 +1652,7 @@ class V2Database:
                     role_instance_id = COALESCE(?, role_instance_id),
                     run_id = COALESCE(?, run_id),
                     terminal_tool = COALESCE(?, terminal_tool),
+                    claim_expires_at = NULL,
                     completed_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE assignment_id = ?
@@ -1583,6 +1687,7 @@ class V2Database:
                     role_instance_id = COALESCE(?, role_instance_id),
                     run_id = COALESCE(?, run_id),
                     failure_reason = ?,
+                    claim_expires_at = NULL,
                     completed_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE assignment_id = ?

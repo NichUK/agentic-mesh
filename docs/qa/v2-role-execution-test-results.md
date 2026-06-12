@@ -241,3 +241,65 @@ These are not blockers for PB-004 Story 4 because they remain explicit later v2 
 ### Review Log
 
 - QA-RL-004 | qa-engineer | acceptance | PB-004 Story 4 | Verified bounded role-service draining, role-instance heartbeat/status records, processed-count visibility, failure-state handling, and dashboard/status exposure. | accepted 2026-06-12
+
+## PB-004 Story 5 - Assignment Lease And Stale Claim Recovery
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_role_assignment_execution.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+20 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+92 passed
+```
+
+### Acceptance Assessment
+
+- Claimed role assignments now receive `claim_expires_at` and retain a `recovery_count`.
+- Lease refresh is scoped to the claiming role instance and fails for a different role instance.
+- Assignment completion and failure both clear `claim_expires_at`.
+- Stale claimed assignments can be explicitly recovered to `queued`, clear ownership and claim timestamps, record the recovery reason/count, and append a `role_assignment.recovered` event.
+- Stale recovery rechecks lease conditions during the update before recording the recovery event.
+- Reclaiming recovered queued work clears stale `completed_at`, `run_id`, `terminal_tool`, and `failure_reason` while preserving `recovery_count`.
+- Unexpired claims are not recovered by the explicit recovery operation.
+- Status snapshots and the dashboard expose lease expiry and recovery count for role assignments.
+- The implementation remains explicit operation support only; it does not claim automatic scheduler polling, container hibernation, or hydration behavior.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 5 because they remain later v2 runtime scope:
+
+- No automatic stale-claim recovery scheduler yet.
+- No distributed lease coordination beyond the SQLite-backed update checks.
+- No container hibernation/hydration behavior yet.
+
+### Review Log
+
+- QA-RL-005 | qa-engineer | acceptance | PB-004 Story 5 | Verified assignment lease creation/refresh, terminal lease clearing, stale-claim recovery, recovered-work reclaim cleanup, event/audit evidence, dashboard visibility, and explicit non-claim of scheduler or hibernation support. | accepted 2026-06-12

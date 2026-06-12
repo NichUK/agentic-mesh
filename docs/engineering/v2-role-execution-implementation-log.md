@@ -271,6 +271,72 @@ Results:
 - `processed_count` records the latest drain batch size rather than a lifetime
   metric.
 
+## PB-004 Story 5 - Assignment Lease And Stale Claim Recovery
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add lease metadata and stale-claim recovery for role assignments so claimed work
+does not remain invisible forever if a role service exits, loses credits, or
+otherwise stops before recording a terminal safe-output result.
+
+### Implementation Notes
+
+- Added role-assignment lease/recovery metadata:
+  - `claim_expires_at`
+  - `recovery_count`
+- `claim_role_assignment()` now sets a configurable lease expiry when a queued
+  assignment is claimed.
+- Added `refresh_role_assignment_lease()` and
+  `RoleService.refresh_assignment_lease()` for cooperative long-running role
+  services.
+- `complete_role_assignment()` and `fail_role_assignment()` clear the active
+  claim lease when an assignment reaches a terminal state.
+- Added `recover_stale_role_assignments()` to return expired claimed
+  assignments to `queued`, clear role-instance ownership, preserve a recovery
+  reason, increment `recovery_count`, and append a recovery event.
+- Reclaiming recovered queued work clears stale terminal/failure fields while
+  preserving the recovery count and event audit trail.
+- The status dashboard now renders lease expiry and recovery count for role
+  assignments.
+
+### Tests Added
+
+- claiming an assignment sets lease metadata and terminal completion clears it
+- stale claimed assignments recover back to `queued` with recovery reason,
+  count, and event
+- recovered assignments clear stale terminal/failure fields when reclaimed
+- unexpired claimed assignments are not recovered
+- dashboard output includes lease/recovery visibility
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+20 passed
+92 passed
+```
+
+### Known Limitations
+
+- This story adds the recovery operation but not an automatic scheduler or
+  periodic recovery poller.
+- Lease refresh is explicit; continuous heartbeat-driven refresh remains a
+  later service-loop/supervisor slice.
+- This is assignment recovery only. Container hibernation/hydration remains
+  PB-005.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -285,4 +351,7 @@ Results:
   explicit no-op outcomes. | QA accepted 2026-06-12
 - RL-004 | engineering | implementation | PB-004 Story 4 | Added bounded
   role-service draining, role-instance heartbeat/status records, and dashboard
-  visibility. | awaiting QA review 2026-06-12
+  visibility. | QA accepted 2026-06-12
+- RL-005 | engineering | implementation | PB-004 Story 5 | Added role
+  assignment claim leases, explicit lease refresh, stale-claim recovery, and
+  dashboard lease/recovery visibility. | awaiting QA review 2026-06-12

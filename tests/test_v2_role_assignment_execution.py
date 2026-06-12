@@ -499,6 +499,181 @@ def test_role_service_drain_respects_max_assignments(tmp_path: Path) -> None:
     assert db.status_snapshot()["role_assignment_statuses"] == {"completed": 1, "queued": 1}
 
 
+def test_claim_sets_lease_and_terminal_completion_clears_it(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-lease-complete",
+        role_id="product-manager",
+        source_ref="msg-lease",
+        title="Lease completion",
+        summary="Lease should clear after terminal outcome.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        assignment_lease_seconds=120,
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="status.complete",
+                    payload={"message": "Lease-clearing assignment complete."},
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    claimed = service.claim_next_assignment()
+    assert claimed is not None
+    claimed_row = db.get_role_assignment("assignment-lease-complete")
+    assert claimed_row is not None
+    assert claimed_row["status"] == "claimed"
+    assert claimed_row["claimed_at"] is not None
+    assert claimed_row["claim_expires_at"] is not None
+    assert service.refresh_assignment_lease("assignment-lease-complete") is True
+
+    receipt = service.run_assignment(claimed)
+    db.complete_role_assignment(
+        "assignment-lease-complete",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        run_id=receipt.run_id,
+        terminal_tool=receipt.terminal_tool,
+        status="completed",
+    )
+
+    completed = db.get_role_assignment("assignment-lease-complete")
+    assert completed is not None
+    assert completed["status"] == "completed"
+    assert completed["claim_expires_at"] is None
+
+
+def test_lease_refresh_requires_claiming_instance_and_failure_clears_it(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-lease-fail",
+        role_id="product-manager",
+        source_ref="msg-lease-fail",
+        title="Lease failure",
+        summary="Lease should be scoped and clear after failure.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    assert db.claim_role_assignment(
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        lease_seconds=120,
+    )
+
+    assert not db.refresh_role_assignment_lease(
+        assignment_id="assignment-lease-fail",
+        role_instance_id="agentic-mesh-dev.product-manager.2",
+        lease_seconds=120,
+    )
+    db.fail_role_assignment(
+        "assignment-lease-fail",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        run_id="run-failed",
+        reason="Worker failed.",
+    )
+
+    failed = db.get_role_assignment("assignment-lease-fail")
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["claim_expires_at"] is None
+
+
+def test_recover_stale_claimed_assignment_returns_it_to_queue(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-stale",
+        role_id="product-manager",
+        source_ref="msg-stale",
+        title="Stale assignment",
+        summary="Recover stale claimed work.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    assert db.claim_role_assignment(
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        lease_seconds=60,
+    )
+    with db.connection:
+        db.connection.execute(
+            """
+            UPDATE role_assignments
+            SET claim_expires_at = '2000-01-01 00:00:00'
+            WHERE assignment_id = 'assignment-stale'
+            """
+        )
+
+    recovered = db.recover_stale_role_assignments(reason="Role instance heartbeat expired.")
+
+    assert len(recovered) == 1
+    recovered_row = db.get_role_assignment("assignment-stale")
+    assert recovered_row is not None
+    assert recovered_row["status"] == "queued"
+    assert recovered_row["role_instance_id"] is None
+    assert recovered_row["claimed_at"] is None
+    assert recovered_row["claim_expires_at"] is None
+    assert recovered_row["recovery_count"] == 1
+    assert recovered_row["failure_reason"] == "Role instance heartbeat expired."
+    event_types = [event["event_type"] for event in db.list_events()]
+    assert "role_assignment.recovered" in event_types
+
+    reclaimed = db.claim_role_assignment(
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.2",
+        lease_seconds=60,
+    )
+    assert reclaimed is not None
+    assert reclaimed["status"] == "claimed"
+    assert reclaimed["failure_reason"] is None
+    assert reclaimed["recovery_count"] == 1
+
+
+def test_recovery_ignores_unexpired_claims_and_dashboard_shows_lease(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-fresh",
+        role_id="product-manager",
+        source_ref="msg-fresh",
+        title="Fresh lease assignment",
+        summary="Fresh leases should not recover.",
+        assignment_type="direct_conversation",
+        visibility_scope="project",
+        payload={},
+    )
+    assert db.claim_role_assignment(
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        lease_seconds=3600,
+    )
+
+    recovered = db.recover_stale_role_assignments(reason="Recovery scan.")
+    snapshot = db.status_snapshot()
+    html = _render(snapshot)
+
+    assert recovered == []
+    row = snapshot["role_assignments"][0]
+    assert row["status"] == "claimed"
+    assert row["claim_expires_at"] is not None
+    assert row["recovery_count"] == 0
+    assert "Lease / Recoveries" in html
+    assert "Fresh lease assignment" in html
+
+
 def test_status_dashboard_shows_role_assignment_terminal_state(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()
