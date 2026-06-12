@@ -2590,6 +2590,139 @@ class V2Database:
             )
         return self.get_work_item(request.work_item_id)
 
+    def override_blocker_with_assignment_and_evidence(
+        self,
+        *,
+        request: TransitionRequest,
+        assignment_id: str,
+        role_id: str,
+        source_ref: str,
+        title: str,
+        summary: str,
+        assignment_type: str,
+        visibility_scope: str,
+        payload: dict[str, Any],
+        evidence_id: str,
+        evidence_type: str,
+        evidence_summary: str,
+        evidence_role_id: str,
+        safe_output_ref: str,
+        conversation_id: str | None = None,
+        role_instance_id: str | None = None,
+    ) -> WorkItem:
+        validate_transition(request)
+        current = self.get_work_item(request.work_item_id)
+        if current.state != request.from_state:
+            raise ValueError(
+                f"work item `{request.work_item_id}` is in `{current.state}`, not `{request.from_state}`"
+            )
+        with self.connection:
+            existing_evidence = self.connection.execute(
+                "SELECT 1 FROM work_item_evidence WHERE safe_output_ref = ?",
+                (safe_output_ref,),
+            ).fetchone()
+            existing_assignment = self.connection.execute(
+                "SELECT 1 FROM role_assignments WHERE assignment_id = ?",
+                (assignment_id,),
+            ).fetchone()
+            if existing_evidence is not None or existing_assignment is not None:
+                return self.get_work_item(request.work_item_id)
+            self.connection.execute(
+                """
+                INSERT INTO work_item_evidence(
+                  evidence_id, work_item_id, evidence_type, summary, role_id, safe_output_ref
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evidence_id,
+                    request.work_item_id,
+                    evidence_type,
+                    evidence_summary,
+                    evidence_role_id,
+                    safe_output_ref,
+                ),
+            )
+            self.connection.execute(
+                """
+                INSERT INTO role_assignments(
+                  assignment_id, role_id, role_instance_id, work_item_id, conversation_id,
+                  source_ref, title, summary, status, assignment_type, visibility_scope, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+                """,
+                (
+                    assignment_id,
+                    role_id,
+                    role_instance_id,
+                    request.work_item_id,
+                    conversation_id,
+                    source_ref,
+                    title,
+                    summary,
+                    assignment_type,
+                    visibility_scope,
+                    json.dumps(payload, sort_keys=True),
+                ),
+            )
+            transition_cursor = self.connection.execute(
+                """
+                UPDATE work_items
+                SET state = ?, current_role = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE work_item_id = ?
+                  AND state = ?
+                """,
+                (
+                    request.to_state,
+                    request.owner or current.owner_role,
+                    request.work_item_id,
+                    request.from_state,
+                ),
+            )
+            if transition_cursor.rowcount != 1:
+                fresh = self.get_work_item(request.work_item_id)
+                raise ValueError(
+                    f"work item `{request.work_item_id}` is in `{fresh.state}`, not `{request.from_state}`"
+                )
+            self.connection.execute(
+                "DELETE FROM work_item_attention WHERE work_item_id = ?",
+                (request.work_item_id,),
+            )
+            self.append_event(
+                "work_item.transitioned",
+                "work_item",
+                request.work_item_id,
+                {
+                    "from_state": request.from_state,
+                    "to_state": request.to_state,
+                    "actor_role": request.actor_role,
+                    "reason": request.reason,
+                },
+            )
+            self.append_event(
+                "work_item_evidence.recorded",
+                "work_item",
+                request.work_item_id,
+                {
+                    "evidence_type": evidence_type,
+                    "summary": evidence_summary,
+                    "role_id": evidence_role_id,
+                    "safe_output_ref": safe_output_ref,
+                },
+            )
+            self.append_event(
+                "role_assignment.created",
+                "role_assignment",
+                assignment_id,
+                {
+                    "role_id": role_id,
+                    "assignment_type": assignment_type,
+                    "conversation_id": conversation_id,
+                    "visibility_scope": visibility_scope,
+                },
+            )
+        return self.get_work_item(request.work_item_id)
+
     def create_run(
         self,
         *,

@@ -3401,3 +3401,64 @@ Results:
   supersede state-machine scope, release safety, evidence recording,
   attention clearing, fake-claim guard, and deferred replay coverage.
   | accepted after QA review 2026-06-12
+
+## PB-005 Story 40 - Release Manager Blocker Override
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after QA review
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_safe_outputs.py`
+- `tests/test_v2_role_assignment_execution.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+```
+
+Results:
+
+```text
+45 passed before QA review
+84 passed before QA review
+85 passed after DB-helper guard coverage
+85 passed after QA fake-claim wording hardening
+```
+
+### Findings And Rework
+
+- QA found no blocking issues.
+- QA noted fake-claim detection remained heuristic. Engineering added the
+  natural-language `overrode the blocker` variant to the status-message
+  rejection list and regression test.
+
+### Acceptance Assessment
+
+- `work_item.override_blocker` is terminal and Release Manager scoped.
+- Override requires a blocked work item and an explicit `target_role`.
+- Override records durable blocker-override evidence, clears attention, moves
+  the work item to active, and queues the target role.
+- Replay and deferred effect processing do not unblock a later blocker.
+- The database helper owns idempotency beneath the safe-output service layer.
+- Status messages cannot claim blocker override without using the durable
+  safe-output tool for the tested language variants.
+
+### Review Log
+
+- QA-RL-065 | qa-engineer | review-pending | PB-005 Story 40 | Focused
+  release-manager blocker override implementation completed and engineering
+  tests passed. | pending QA review 2026-06-12
+- QA-RL-066 | qa-engineer | acceptance | PB-005 Story 40 | Verified
+  blocked-state validation, target-role requirement, atomic evidence and
+  assignment effect, attention clearing, replay/deferred replay behavior, and
+  fake-claim hardening. | accepted after QA review 2026-06-12

@@ -3564,3 +3564,62 @@ Results:
   Those states need release-specific rollback or closure handling.
 - `work_item.close` and `work_item.override_blocker` remain follow-up
   release-manager authority stories.
+
+## PB-005 Story 40 - Release Manager Blocker Override
+
+Date: 2026-06-12
+
+### Goal
+
+Make the existing Release Manager `work_item.override_blocker` safe-output tool
+perform real runtime work. This is distinct from reopening: override means the
+blocker is being bypassed under explicit Release Manager authority, so the
+runtime must keep an evidence trail and route work to a named continuation
+role.
+
+### Changes
+
+- Marked `work_item.override_blocker` as a terminal safe-output tool.
+- Tightened the tool contract so `target_role` is required with
+  `work_item_id` and `reason`.
+- Added blocked-state validation before recording an override.
+- Added `SafeOutputService` processing for `work_item.override_blocker`.
+- Added an atomic database helper that records blocker-override evidence,
+  queues the target role assignment, transitions the work item from `blocked`
+  to `active`, and clears attention metadata in one transaction.
+- Queued deterministic `work_item_blocker_override` assignments containing the
+  source safe-output ref, target role, override reason, source documents,
+  target outputs, flow state, and target role safe-output tools.
+- Added replay and deferred-replay coverage so old override calls cannot
+  unblock later blockers.
+- Added direct database-helper guard coverage so idempotency is owned beneath
+  the safe-output service layer.
+- Extended fake-claim validation so status messages cannot claim blocker
+  override without using the durable safe-output tool.
+- Added the natural-language `overrode the blocker` variant after QA noted the
+  fake-claim detection remained heuristic.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+```
+
+Results:
+
+```text
+45 passed before QA review
+84 passed before QA review
+85 passed after DB-helper guard coverage
+85 passed after QA fake-claim wording hardening
+```
+
+### Notes
+
+- `work_item.override_blocker` requires a target role so override cannot create
+  an active work item with no continuation owner.
+- `work_item.close` remains the final follow-up release-manager authority story
+  and still needs product semantics before implementation.

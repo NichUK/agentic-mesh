@@ -1124,6 +1124,275 @@ def test_deferred_work_item_supersede_can_be_replayed(tmp_path: Path) -> None:
     assert len(evidence) == 1
 
 
+def test_release_manager_override_blocker_routes_to_target_role_with_evidence(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-override-blocker",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+
+    call_id = service.record(
+        run_id="run-work-item-override-blocker",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="work_item.override_blocker",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "target_role": "engineering",
+                "reason": "Sponsor accepted the risk and authorized continuation.",
+                "source_documents": ["work-items/work-runtime-execution/120-release-record.md"],
+                "target_outputs": ["implementation update", "risk note"],
+            },
+        ),
+    )
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    assignments = [
+        row
+        for row in db.list_role_assignments()
+        if row["source_ref"] == call_id and row["assignment_type"] == "work_item_blocker_override"
+    ]
+    evidence = [
+        row
+        for row in db.list_work_item_evidence()
+        if row["safe_output_ref"] == call_id and row["evidence_type"] == "blocker_override"
+    ]
+    calls = db.list_safe_output_calls_for_run("run-work-item-override-blocker")
+
+    assert work_item["state"] == "active"
+    assert work_item["current_role"] == "engineering"
+    assert work_item["attention_owner"] is None
+    assert len(assignments) == 1
+    assert assignments[0]["role_id"] == "engineering"
+    assert assignments[0]["status"] == "queued"
+    assert assignments[0]["payload"]["route_tool"] == "work_item.override_blocker"
+    assert "implementation.record_change" in assignments[0]["payload"]["allowed_tools"]
+    assert len(evidence) == 1
+    assert evidence[0]["summary"].startswith("Blocker override to engineering:")
+    assert calls[0]["terminal"] is True
+
+
+def test_work_item_override_blocker_requires_target_role(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-override-missing-target",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+
+    with pytest.raises(SafeOutputError, match="missing required fields: target_role"):
+        SafeOutputService(db).record(
+            run_id="run-work-item-override-missing-target",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="work_item.override_blocker",
+                payload={
+                    "work_item_id": "work-runtime-execution",
+                    "reason": "Override without an owner should be rejected.",
+                },
+            ),
+        )
+
+    assert db.list_safe_output_calls_for_run("run-work-item-override-missing-target") == []
+
+
+def test_work_item_override_blocker_requires_blocked_state(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-override-not-blocked",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+
+    with pytest.raises(SafeOutputError, match="requires work item state `blocked`"):
+        SafeOutputService(db).record(
+            run_id="run-work-item-override-not-blocked",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="work_item.override_blocker",
+                payload={
+                    "work_item_id": "work-runtime-execution",
+                    "target_role": "engineering",
+                    "reason": "Try to override a non-blocked item.",
+                },
+            ),
+        )
+
+    assert db.list_safe_output_calls_for_run("run-work-item-override-not-blocked") == []
+
+
+def test_work_item_override_blocker_replay_does_not_unblock_later_blocker(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-override-replay",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+    call = SafeOutputCall(
+        role_id="release-manager",
+        tool_name="work_item.override_blocker",
+        payload={
+            "work_item_id": "work-runtime-execution",
+            "target_role": "engineering",
+            "reason": "Sponsor accepted the risk and authorized continuation.",
+        },
+    )
+    call_id = service.record(run_id="run-work-item-override-replay", call=call)
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="active",
+            to_state="blocked",
+            actor_role="engineering",
+            reason="A later security blocker was found.",
+            owner="security-architect",
+            reason_class="security_blocker",
+            next_action="Security Architect must assess the new blocker.",
+            retryable=True,
+        )
+    )
+
+    service.process_recorded_call(call_id=call_id, run_id="run-work-item-override-replay", call=call)
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    assignments = [
+        row
+        for row in db.list_role_assignments()
+        if row["source_ref"] == call_id and row["assignment_type"] == "work_item_blocker_override"
+    ]
+    override_events = [
+        event
+        for event in db.list_events("work-runtime-execution")
+        if event["event_type"] == "work_item.transitioned"
+        and event["payload"]["to_state"] == "active"
+        and event["payload"]["actor_role"] == "release-manager"
+    ]
+
+    assert work_item["state"] == "blocked"
+    assert work_item["attention_owner"] == "security-architect"
+    assert len(assignments) == 1
+    assert len(override_events) == 1
+
+
+def test_override_blocker_db_helper_is_guarded_by_existing_records(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-override-db-guard",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    call_id = SafeOutputService(db).record(
+        run_id="run-work-item-override-db-guard",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="work_item.override_blocker",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "target_role": "engineering",
+                "reason": "Sponsor accepted the risk and authorized continuation.",
+            },
+        ),
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="active",
+            to_state="blocked",
+            actor_role="engineering",
+            reason="A later blocker should remain active.",
+            owner="security-architect",
+            reason_class="security_blocker",
+            next_action="Security Architect must assess the new blocker.",
+            retryable=True,
+        )
+    )
+
+    db.override_blocker_with_assignment_and_evidence(
+        request=TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="blocked",
+            to_state="active",
+            actor_role="release-manager",
+            reason="Replay old override.",
+            owner="engineering",
+        ),
+        assignment_id=f"assignment-{call_id}-blocker-override",
+        role_id="engineering",
+        source_ref=call_id,
+        title="Replay old override",
+        summary="Replay old override.",
+        assignment_type="work_item_blocker_override",
+        visibility_scope="project",
+        payload={"safe_output_ref": call_id},
+        evidence_id=f"evidence-{call_id}",
+        evidence_type="blocker_override",
+        evidence_summary="Replay old override.",
+        evidence_role_id="release-manager",
+        safe_output_ref=call_id,
+    )
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    override_events = [
+        event
+        for event in db.list_events("work-runtime-execution")
+        if event["event_type"] == "work_item.transitioned"
+        and event["payload"]["to_state"] == "active"
+        and event["payload"]["actor_role"] == "release-manager"
+    ]
+
+    assert work_item["state"] == "blocked"
+    assert work_item["attention_owner"] == "security-architect"
+    assert len(override_events) == 1
+
+
+def test_deferred_work_item_override_blocker_can_be_replayed(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-override-deferred",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    call = SafeOutputCall(
+        role_id="release-manager",
+        tool_name="work_item.override_blocker",
+        payload={
+            "work_item_id": "work-runtime-execution",
+            "target_role": "engineering",
+            "reason": "Sponsor accepted the risk and authorized continuation.",
+        },
+    )
+    call_id = SafeOutputService(db, process_effects=False).record(
+        run_id="run-work-item-override-deferred",
+        call=call,
+    )
+
+    assert db.get_work_item("work-runtime-execution").state == "blocked"
+
+    SafeOutputService(db).process_recorded_call(
+        call_id=call_id,
+        run_id="run-work-item-override-deferred",
+        call=call,
+    )
+
+    evidence = [
+        row
+        for row in db.list_work_item_evidence()
+        if row["safe_output_ref"] == call_id and row["evidence_type"] == "blocker_override"
+    ]
+    assert db.get_work_item("work-runtime-execution").state == "active"
+    assert db.get_role_assignment(f"assignment-{call_id}-blocker-override") is not None
+    assert len(evidence) == 1
+
+
 def test_work_item_supersede_rejects_deploying_state(tmp_path: Path) -> None:
     db = _work_db(tmp_path)
     db.transition_work_item(

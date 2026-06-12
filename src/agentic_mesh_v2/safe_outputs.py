@@ -38,6 +38,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "report.incomplete",
         "work_item.reopen",
         "work_item.supersede",
+        "work_item.override_blocker",
     }
 )
 
@@ -161,7 +162,7 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "work_item.close": ("work_item_id", "reason"),
     "work_item.supersede": ("work_item_id", "reason", "replacement_ref"),
     "work_item.reopen": ("work_item_id", "target_role", "reason"),
-    "work_item.override_blocker": ("work_item_id", "reason"),
+    "work_item.override_blocker": ("work_item_id", "target_role", "reason"),
 }
 
 NUMERIC_FIELDS: dict[str, tuple[str, ...]] = {
@@ -233,6 +234,8 @@ class SafeOutputService:
             self._validate_work_item_reopen_target(call)
         if self.process_effects and call.tool_name == "work_item.supersede":
             self._validate_work_item_supersede_target(call)
+        if self.process_effects and call.tool_name == "work_item.override_blocker":
+            self._validate_work_item_override_blocker_target(call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -286,6 +289,8 @@ class SafeOutputService:
             self._reopen_work_item(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "work_item.supersede":
             self._supersede_work_item(call_id=call_id, call=call)
+        if call.tool_name == "work_item.override_blocker":
+            self._override_blocker(call_id=call_id, run_id=run_id, call=call)
         return None
 
     def _publish_document_update(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
@@ -415,6 +420,13 @@ class SafeOutputService:
         if "superseded" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
             raise SafeOutputError(
                 f"`work_item.supersede` cannot supersede work item state `{work_item.state}`"
+            )
+
+    def _validate_work_item_override_blocker_target(self, call: SafeOutputCall) -> None:
+        work_item = self.db.get_work_item(_required_text(call.payload, "work_item_id"))
+        if work_item.state != "blocked":
+            raise SafeOutputError(
+                f"`work_item.override_blocker` requires work item state `blocked`, found `{work_item.state}`"
             )
 
     def _record_work_item_evidence(
@@ -601,6 +613,55 @@ class SafeOutputService:
             evidence_id=f"evidence-{call_id}",
             evidence_type="work_item_superseded",
             evidence_summary=_work_item_supersede_summary(call.payload),
+            evidence_role_id=call.role_id,
+            safe_output_ref=call_id,
+        )
+
+    def _override_blocker(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        assignment_id = _work_item_override_assignment_id(call_id)
+        if _has_work_item_evidence_ref(self.db, safe_output_ref=call_id) or self.db.get_role_assignment(assignment_id):
+            return
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state != "blocked":
+            raise SafeOutputError(
+                f"`work_item.override_blocker` requires work item state `blocked`, found `{work_item.state}`"
+            )
+        target_role = _required_text(call.payload, "target_role")
+        reason = _required_text(call.payload, "reason")
+        self.db.override_blocker_with_assignment_and_evidence(
+            request=TransitionRequest(
+                work_item_id=work_item_id,
+                from_state="blocked",
+                to_state="active",
+                actor_role=call.role_id,
+                reason=reason,
+                owner=target_role,
+            ),
+            assignment_id=assignment_id,
+            role_id=target_role,
+            source_ref=call_id,
+            title=_optional_text(call.payload.get("title")) or f"Blocker override for {target_role}",
+            summary=_single_line_text(reason),
+            assignment_type="work_item_blocker_override",
+            visibility_scope=_optional_text(call.payload.get("context_visibility")) or "project",
+            payload={
+                "safe_output_ref": call_id,
+                "source_run_id": run_id,
+                "source_role": call.role_id,
+                "target_role": target_role,
+                "reason": _single_line_text(reason),
+                "route_tool": call.tool_name,
+                "work_item_id": work_item_id,
+                "previous_flow_state": "blocked",
+                "current_flow_state": "active",
+                "source_documents": _string_list(call.payload.get("source_documents")),
+                "target_outputs": _string_list(call.payload.get("target_outputs")),
+                "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
+            },
+            evidence_id=f"evidence-{call_id}",
+            evidence_type="blocker_override",
+            evidence_summary=_work_item_override_summary(call.payload),
             evidence_role_id=call.role_id,
             safe_output_ref=call_id,
         )
@@ -937,6 +998,9 @@ def _reject_fake_claims(tool_name: str, payload: dict[str, Any]) -> None:
             "released",
             "closed work-",
             "superseded",
+            "overrode blocker",
+            "overrode the blocker",
+            "override blocker",
             "approval received",
             "approved by sponsor",
             "sponsor approved",
@@ -1045,6 +1109,13 @@ def _release_decision_summary(payload: dict[str, Any]) -> str:
 def _work_item_supersede_summary(payload: dict[str, Any]) -> str:
     return (
         f"Superseded by {_single_line_text(_required_text(payload, 'replacement_ref'))}: "
+        f"{_single_line_text(_required_text(payload, 'reason'))}"
+    )
+
+
+def _work_item_override_summary(payload: dict[str, Any]) -> str:
+    return (
+        f"Blocker override to {_single_line_text(_required_text(payload, 'target_role'))}: "
         f"{_single_line_text(_required_text(payload, 'reason'))}"
     )
 
@@ -1176,6 +1247,10 @@ def _release_rework_assignment_id(call_id: str) -> str:
 
 def _work_item_reopen_assignment_id(call_id: str) -> str:
     return f"assignment-{call_id}-work-item-reopen"
+
+
+def _work_item_override_assignment_id(call_id: str) -> str:
+    return f"assignment-{call_id}-blocker-override"
 
 
 def _artifact_exists(db: V2Database, *, artifact_id: str) -> bool:

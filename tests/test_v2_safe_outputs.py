@@ -56,6 +56,8 @@ def test_status_reply_cannot_claim_fake_work_creation(tmp_path: Path) -> None:
     for message in [
         "I created work-123 for this.",
         "I superseded the old dashboard work.",
+        "I overrode blocker handling for the old slice.",
+        "I overrode the blocker for the old slice.",
     ]:
         with pytest.raises(SafeOutputError, match="must not claim durable mutations"):
             service.record(
