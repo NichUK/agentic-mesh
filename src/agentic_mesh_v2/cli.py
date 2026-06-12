@@ -31,6 +31,21 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("demo-slice", help="Create one complete v2 end-to-end demo slice.")
     subparsers.add_parser("status-json", help="Print the v2 runtime status snapshot as JSON.")
 
+    recover_parser = subparsers.add_parser(
+        "recover-stale-assignments",
+        help="Recover stale claimed role assignments back to queued state.",
+    )
+    recover_parser.add_argument(
+        "--role-id",
+        help="Optional role id to recover. Omit only for operator/global recovery.",
+    )
+    recover_parser.add_argument("--limit", type=int, default=50)
+    recover_parser.add_argument(
+        "--reason",
+        default="Recovered by operator stale-assignment recovery command.",
+        help="Audit reason to record on recovered assignments.",
+    )
+
     topology_parser = subparsers.add_parser(
         "validate-topology",
         help="Validate v2 source/runtime/project repository boundaries.",
@@ -104,6 +119,24 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.command == "status-json":
                 print(json.dumps(db.status_snapshot(), indent=2, sort_keys=True))
+                return 0
+            if args.command == "recover-stale-assignments":
+                recovered = db.recover_stale_role_assignments(
+                    role_id=args.role_id,
+                    limit=args.limit,
+                    reason=args.reason,
+                )
+                print(
+                    json.dumps(
+                        {
+                            "status": "ok",
+                            "role_id": args.role_id,
+                            "recovered_count": len(recovered),
+                            "assignment_ids": [row["assignment_id"] for row in recovered],
+                        },
+                        sort_keys=True,
+                    )
+                )
                 return 0
         finally:
             db.close()

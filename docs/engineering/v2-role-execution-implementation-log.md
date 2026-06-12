@@ -393,6 +393,62 @@ Results:
   concurrent refresh while a long-running worker subprocess is blocked.
 - Container hibernation/hydration and process supervision remain PB-005.
 
+## PB-004 Story 7 - Operator Stale-Recovery CLI
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Expose stale assignment recovery through the v2 CLI so operators, scripts, and
+future supervisors can recover expired claimed assignments without writing
+ad-hoc database mutations. This story deliberately avoids adding a fake CLI role
+worker until the real worker adapter is available.
+
+### Implementation Notes
+
+- Added `recover-stale-assignments` to `agentic-mesh-v2`.
+- The command accepts:
+  - `--role-id` for role-scoped recovery
+  - `--limit` for bounded recovery batches
+  - `--reason` for auditable recovery notes
+- The command uses the same database recovery path as role-service maintenance
+  ticks.
+- JSON output includes status, role id, recovered count, and recovered
+  assignment ids.
+
+### Tests Added
+
+- CLI stale recovery recovers only the requested role's expired claims.
+- CLI stale recovery records the supplied audit reason and increments recovery
+  count.
+- CLI stale recovery does not recover another role's stale claim when `--role-id`
+  is supplied.
+- CLI stale recovery respects `--limit` for bounded recovery batches.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+27 passed
+96 passed
+```
+
+### Known Limitations
+
+- This command is an operator/supervisor entry point, not an automatic scheduler.
+- The command does not execute role workers; real worker-adapter CLI/supervisor
+  integration remains a later PB-004/PB-005 slice.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -413,5 +469,8 @@ Results:
   dashboard lease/recovery visibility. | QA accepted 2026-06-12
 - RL-006 | engineering | implementation | PB-004 Story 6 | Added a
   role-scoped service maintenance tick that recovers stale assignments before
-  draining queued work and records recovered/processed status. | awaiting QA
-  review 2026-06-12
+  draining queued work and records recovered/processed status. | QA accepted
+  2026-06-12
+- RL-007 | engineering | implementation | PB-004 Story 7 | Added an operator
+  CLI command for bounded role-scoped stale assignment recovery with auditable
+  JSON output. | awaiting QA review 2026-06-12

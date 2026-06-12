@@ -362,3 +362,61 @@ These are not blockers for PB-004 Story 6 because they remain later v2 runtime s
 ### Review Log
 
 - QA-RL-006 | qa-engineer | acceptance | PB-004 Story 6 | Verified role-scoped stale recovery, service tick recovery-before-drain ordering, cross-role isolation, role-instance status reporting, and explicit non-claim of scheduler or hibernation support. | accepted 2026-06-12
+
+## PB-004 Story 7 - Operator Stale-Recovery CLI
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+27 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+96 passed
+```
+
+### Acceptance Assessment
+
+- `agentic-mesh-v2 recover-stale-assignments` exposes the shared stale assignment recovery path through the operator CLI.
+- `--role-id` scopes recovery to one role and leaves another role's stale claimed assignment untouched.
+- `--limit` is covered by regression testing and recovers only one stale assignment when invoked with `--limit 1`, leaving the other assignment claimed.
+- `--reason` is recorded as the recovered assignment's audit/failure reason.
+- JSON output includes `status`, `role_id`, `recovered_count`, and recovered `assignment_ids`, which is useful for operators and future schedulers.
+- The implementation log is factual and does not claim this is an automatic scheduler or a real worker-adapter CLI.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 7 because they remain later v2 runtime scope:
+
+- No automatic scheduler invokes the command yet.
+- No role worker is executed by this CLI command.
+- No distributed locking or external process supervision is added by this story.
+
+### Review Log
+
+- QA-RL-007 | qa-engineer | acceptance | PB-004 Story 7 | Verified operator stale-recovery CLI, role-scoped recovery, `--limit` behavior, audit reason propagation, useful JSON output, and explicit non-claim of scheduler or worker-adapter behavior. | accepted 2026-06-12
