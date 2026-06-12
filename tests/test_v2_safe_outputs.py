@@ -53,16 +53,20 @@ def test_status_reply_cannot_claim_fake_work_creation(tmp_path: Path) -> None:
     db = _db(tmp_path)
     service = SafeOutputService(db)
 
-    with pytest.raises(SafeOutputError, match="must not claim durable mutations"):
-        service.record(
-            run_id="run-1",
-            call=SafeOutputCall(
-                role_id="product-manager",
-                tool_name="status.reply",
-                payload={"message": "I created work-123 for this."},
-                terminal=True,
-            ),
-        )
+    for message in [
+        "I created work-123 for this.",
+        "I superseded the old dashboard work.",
+    ]:
+        with pytest.raises(SafeOutputError, match="must not claim durable mutations"):
+            service.record(
+                run_id="run-1",
+                call=SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="status.reply",
+                    payload={"message": message},
+                    terminal=True,
+                ),
+            )
 
 
 def test_status_reply_cannot_claim_connector_delivery_success(tmp_path: Path) -> None:

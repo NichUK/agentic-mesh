@@ -3339,3 +3339,65 @@ Results:
 - QA-RL-062 | qa-engineer | acceptance | PB-005 Story 38 | Verified
   service-level reopen, stale replay guard, DB-level existing-assignment guard,
   and conditional state update rework. | accepted after rework 2026-06-12
+
+## PB-005 Story 39 - Release Manager Work-Item Supersede
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after QA review
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/state_machine.py`
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_state_machine.py`
+- `tests/test_v2_role_assignment_execution.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_state_machine.py tests\test_v2_role_assignment_execution.py -q
+python -m pytest tests\test_v2_state_machine.py tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+```
+
+Results:
+
+```text
+50 passed before QA review
+78 passed before QA review
+78 passed after fake-claim guard addition
+79 passed after deferred replay coverage
+```
+
+### Findings And Rework
+
+- QA found no blocking issues.
+- QA noted that deferred record-only supersede replay was not explicitly
+  covered. Engineering added coverage proving a `process_effects=False`
+  supersede call can be processed later by `process_recorded_call`.
+
+### Acceptance Assessment
+
+- `work_item.supersede` is terminal and Release Manager scoped.
+- Normal pre-release work states can be superseded.
+- Deploying, released, and terminal states cannot be superseded by this tool.
+- Supersede clears attention, records durable replacement evidence, and marks
+  the work item `superseded`.
+- Replay and deferred effect processing are idempotent.
+- Status messages cannot claim work was superseded without using the durable
+  safe-output tool.
+
+### Review Log
+
+- QA-RL-063 | qa-engineer | review-pending | PB-005 Story 39 | Focused
+  release-manager work-item supersede implementation completed and engineering
+  tests passed. | pending QA review 2026-06-12
+- QA-RL-064 | qa-engineer | acceptance | PB-005 Story 39 | Verified
+  supersede state-machine scope, release safety, evidence recording,
+  attention clearing, fake-claim guard, and deferred replay coverage.
+  | accepted after QA review 2026-06-12

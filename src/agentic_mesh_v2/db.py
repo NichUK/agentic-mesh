@@ -2507,6 +2507,89 @@ class V2Database:
             )
         return self.get_work_item(request.work_item_id)
 
+    def supersede_work_item_with_evidence(
+        self,
+        *,
+        request: TransitionRequest,
+        evidence_id: str,
+        evidence_type: str,
+        evidence_summary: str,
+        evidence_role_id: str,
+        safe_output_ref: str,
+    ) -> WorkItem:
+        validate_transition(request)
+        current = self.get_work_item(request.work_item_id)
+        if current.state != request.from_state:
+            raise ValueError(
+                f"work item `{request.work_item_id}` is in `{current.state}`, not `{request.from_state}`"
+            )
+        with self.connection:
+            evidence_cursor = self.connection.execute(
+                """
+                INSERT INTO work_item_evidence(
+                  evidence_id, work_item_id, evidence_type, summary, role_id, safe_output_ref
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(safe_output_ref) DO NOTHING
+                """,
+                (
+                    evidence_id,
+                    request.work_item_id,
+                    evidence_type,
+                    evidence_summary,
+                    evidence_role_id,
+                    safe_output_ref,
+                ),
+            )
+            if evidence_cursor.rowcount == 0:
+                return self.get_work_item(request.work_item_id)
+            transition_cursor = self.connection.execute(
+                """
+                UPDATE work_items
+                SET state = ?, current_role = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE work_item_id = ?
+                  AND state = ?
+                """,
+                (
+                    request.to_state,
+                    request.owner or current.owner_role,
+                    request.work_item_id,
+                    request.from_state,
+                ),
+            )
+            if transition_cursor.rowcount != 1:
+                fresh = self.get_work_item(request.work_item_id)
+                raise ValueError(
+                    f"work item `{request.work_item_id}` is in `{fresh.state}`, not `{request.from_state}`"
+                )
+            self.connection.execute(
+                "DELETE FROM work_item_attention WHERE work_item_id = ?",
+                (request.work_item_id,),
+            )
+            self.append_event(
+                "work_item.transitioned",
+                "work_item",
+                request.work_item_id,
+                {
+                    "from_state": request.from_state,
+                    "to_state": request.to_state,
+                    "actor_role": request.actor_role,
+                    "reason": request.reason,
+                },
+            )
+            self.append_event(
+                "work_item_evidence.recorded",
+                "work_item",
+                request.work_item_id,
+                {
+                    "evidence_type": evidence_type,
+                    "summary": evidence_summary,
+                    "role_id": evidence_role_id,
+                    "safe_output_ref": safe_output_ref,
+                },
+            )
+        return self.get_work_item(request.work_item_id)
+
     def create_run(
         self,
         *,

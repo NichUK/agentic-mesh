@@ -1007,6 +1007,185 @@ def test_reopen_db_helper_is_guarded_by_existing_assignment(tmp_path: Path) -> N
     assert len(reopened_events) == 1
 
 
+def test_release_manager_supersede_blocked_work_item_records_terminal_evidence(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-supersede",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+
+    call_id = service.record(
+        run_id="run-work-item-supersede",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="work_item.supersede",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "reason": "The dashboard slice has been replaced by a more complete redesign.",
+                "replacement_ref": "work-dashboard-redesign-v2",
+            },
+        ),
+    )
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    evidence = [
+        row
+        for row in db.list_work_item_evidence()
+        if row["safe_output_ref"] == call_id and row["evidence_type"] == "work_item_superseded"
+    ]
+    calls = db.list_safe_output_calls_for_run("run-work-item-supersede")
+
+    assert work_item["state"] == "superseded"
+    assert work_item["current_role"] == "release-manager"
+    assert work_item["attention_owner"] is None
+    assert len(evidence) == 1
+    assert evidence[0]["summary"].startswith("Superseded by work-dashboard-redesign-v2:")
+    assert calls[0]["terminal"] is True
+
+
+def test_work_item_supersede_replay_is_idempotent(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-supersede-replay",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+    call = SafeOutputCall(
+        role_id="release-manager",
+        tool_name="work_item.supersede",
+        payload={
+            "work_item_id": "work-runtime-execution",
+            "reason": "The dashboard slice has been replaced by a more complete redesign.",
+            "replacement_ref": "work-dashboard-redesign-v2",
+        },
+    )
+
+    call_id = service.record(run_id="run-work-item-supersede-replay", call=call)
+    service.process_recorded_call(call_id=call_id, run_id="run-work-item-supersede-replay", call=call)
+
+    superseded_events = [
+        event
+        for event in db.list_events("work-runtime-execution")
+        if event["event_type"] == "work_item.transitioned"
+        and event["payload"]["to_state"] == "superseded"
+    ]
+    evidence = [
+        row
+        for row in db.list_work_item_evidence()
+        if row["safe_output_ref"] == call_id and row["evidence_type"] == "work_item_superseded"
+    ]
+
+    assert db.get_work_item("work-runtime-execution").state == "superseded"
+    assert len(superseded_events) == 1
+    assert len(evidence) == 1
+
+
+def test_deferred_work_item_supersede_can_be_replayed(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-supersede-deferred",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    call = SafeOutputCall(
+        role_id="release-manager",
+        tool_name="work_item.supersede",
+        payload={
+            "work_item_id": "work-runtime-execution",
+            "reason": "The dashboard slice has been replaced by a more complete redesign.",
+            "replacement_ref": "work-dashboard-redesign-v2",
+        },
+    )
+    call_id = SafeOutputService(db, process_effects=False).record(
+        run_id="run-work-item-supersede-deferred",
+        call=call,
+    )
+
+    assert db.get_work_item("work-runtime-execution").state == "blocked"
+
+    SafeOutputService(db).process_recorded_call(
+        call_id=call_id,
+        run_id="run-work-item-supersede-deferred",
+        call=call,
+    )
+
+    evidence = [
+        row
+        for row in db.list_work_item_evidence()
+        if row["safe_output_ref"] == call_id and row["evidence_type"] == "work_item_superseded"
+    ]
+    assert db.get_work_item("work-runtime-execution").state == "superseded"
+    assert len(evidence) == 1
+
+
+def test_work_item_supersede_rejects_deploying_state(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="shaping",
+            to_state="ready",
+            actor_role="product-manager",
+            reason="Ready.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="ready",
+            to_state="active",
+            actor_role="engineering",
+            reason="Engineering complete.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="active",
+            to_state="release_review",
+            actor_role="qa-engineer",
+            reason="QA passed.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="release_review",
+            to_state="deploying",
+            actor_role="release-manager",
+            reason="Deployment started.",
+        )
+    )
+    db.create_run(
+        run_id="run-work-item-supersede-deploying",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+
+    with pytest.raises(SafeOutputError, match="cannot supersede work item state `deploying`"):
+        SafeOutputService(db).record(
+            run_id="run-work-item-supersede-deploying",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="work_item.supersede",
+                payload={
+                    "work_item_id": "work-runtime-execution",
+                    "reason": "Do not hide an active deployment.",
+                    "replacement_ref": "work-dashboard-redesign-v2",
+                },
+            ),
+        )
+
+    assert db.list_safe_output_calls_for_run("run-work-item-supersede-deploying") == []
+
+
 def test_report_blocked_rejects_invalid_explicit_work_item_before_recording(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()

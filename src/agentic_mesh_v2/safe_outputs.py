@@ -37,6 +37,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "report.blocked",
         "report.incomplete",
         "work_item.reopen",
+        "work_item.supersede",
     }
 )
 
@@ -230,6 +231,8 @@ class SafeOutputService:
             self._validate_optional_work_item_target(run_id=run_id, call=call)
         if self.process_effects and call.tool_name == "work_item.reopen":
             self._validate_work_item_reopen_target(call)
+        if self.process_effects and call.tool_name == "work_item.supersede":
+            self._validate_work_item_supersede_target(call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -281,6 +284,8 @@ class SafeOutputService:
             self._block_linked_work_item(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "work_item.reopen":
             self._reopen_work_item(call_id=call_id, run_id=run_id, call=call)
+        if call.tool_name == "work_item.supersede":
+            self._supersede_work_item(call_id=call_id, call=call)
         return None
 
     def _publish_document_update(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
@@ -403,6 +408,13 @@ class SafeOutputService:
         if work_item.state != "blocked":
             raise SafeOutputError(
                 f"`work_item.reopen` requires work item state `blocked`, found `{work_item.state}`"
+            )
+
+    def _validate_work_item_supersede_target(self, call: SafeOutputCall) -> None:
+        work_item = self.db.get_work_item(_required_text(call.payload, "work_item_id"))
+        if "superseded" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
+            raise SafeOutputError(
+                f"`work_item.supersede` cannot supersede work item state `{work_item.state}`"
             )
 
     def _record_work_item_evidence(
@@ -565,6 +577,32 @@ class SafeOutputService:
                 "target_outputs": _string_list(call.payload.get("target_outputs")),
                 "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
             },
+        )
+
+    def _supersede_work_item(self, *, call_id: str, call: SafeOutputCall) -> None:
+        if _has_work_item_evidence_ref(self.db, safe_output_ref=call_id):
+            return
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if "superseded" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
+            raise SafeOutputError(
+                f"`work_item.supersede` cannot supersede work item state `{work_item.state}`"
+            )
+        reason = _required_text(call.payload, "reason")
+        self.db.supersede_work_item_with_evidence(
+            request=TransitionRequest(
+                work_item_id=work_item_id,
+                from_state=work_item.state,
+                to_state="superseded",
+                actor_role=call.role_id,
+                reason=reason,
+                owner=call.role_id,
+            ),
+            evidence_id=f"evidence-{call_id}",
+            evidence_type="work_item_superseded",
+            evidence_summary=_work_item_supersede_summary(call.payload),
+            evidence_role_id=call.role_id,
+            safe_output_ref=call_id,
         )
 
     def _validate_release_decision_target(self, call: SafeOutputCall) -> None:
@@ -898,6 +936,7 @@ def _reject_fake_claims(tool_name: str, payload: dict[str, Any]) -> None:
             "deployed",
             "released",
             "closed work-",
+            "superseded",
             "approval received",
             "approved by sponsor",
             "sponsor approved",
@@ -1001,6 +1040,13 @@ def _release_decision_summary(payload: dict[str, Any]) -> str:
     if reason is not None:
         parts.append(f"reason: {_single_line_text(reason)}")
     return "; ".join(parts)
+
+
+def _work_item_supersede_summary(payload: dict[str, Any]) -> str:
+    return (
+        f"Superseded by {_single_line_text(_required_text(payload, 'replacement_ref'))}: "
+        f"{_single_line_text(_required_text(payload, 'reason'))}"
+    )
 
 
 def _smoke_checks(value: object) -> dict[str, str]:

@@ -42,16 +42,17 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
             "blocked",
             "recovering",
             "release_review",
+            "superseded",
             "failed_terminal",
         }
     ),
-    "waiting_human": frozenset({"shaping", "active", "release_review", "blocked", "canceled"}),
-    "waiting_agent": frozenset({"active", "blocked", "recovering", "canceled"}),
-    "waiting_external": frozenset({"active", "blocked", "recovering", "canceled"}),
+    "waiting_human": frozenset({"shaping", "active", "release_review", "blocked", "canceled", "superseded"}),
+    "waiting_agent": frozenset({"active", "blocked", "recovering", "canceled", "superseded"}),
+    "waiting_external": frozenset({"active", "blocked", "recovering", "canceled", "superseded"}),
     "blocked": frozenset({"recovering", "waiting_human", "active", "canceled", "superseded"}),
-    "recovering": frozenset({"active", "waiting_agent", "blocked", "failed_terminal"}),
+    "recovering": frozenset({"active", "waiting_agent", "blocked", "superseded", "failed_terminal"}),
     "release_review": frozenset(
-        {"deploying", "released", "waiting_human", "active", "blocked", "canceled"}
+        {"deploying", "released", "waiting_human", "active", "blocked", "canceled", "superseded"}
     ),
     "deploying": frozenset({"released", "blocked", "recovering", "failed_terminal"}),
     "released": frozenset({"closed"}),

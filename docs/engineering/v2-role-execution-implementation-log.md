@@ -3510,3 +3510,57 @@ Results:
 - This story implements `work_item.reopen` only. `work_item.override_blocker`,
   `work_item.close`, and `work_item.supersede` remain follow-up release-manager
   authority stories.
+
+## PB-005 Story 39 - Release Manager Work-Item Supersede
+
+Date: 2026-06-12
+
+### Goal
+
+Make the existing Release Manager `work_item.supersede` safe-output tool
+perform real runtime work so replaced work can be closed as `superseded`
+without pretending it was released.
+
+### Changes
+
+- Marked `work_item.supersede` as a terminal safe-output tool.
+- Extended the state machine so normal pre-release states can transition to
+  `superseded`.
+- Kept `deploying`, `released`, and terminal states from being superseded by
+  this tool.
+- Added `SafeOutputService` validation and processing for
+  `work_item.supersede`.
+- Added an atomic database helper that records supersede evidence, transitions
+  the work item to `superseded`, and clears attention metadata in one
+  transaction.
+- Recorded replacement references and reason in durable work-item evidence.
+- Added replay idempotency through the safe-output evidence marker.
+- Extended fake-claim validation so `status.reply` / `status.complete` cannot
+  claim work was superseded without using the supersede tool.
+- Added deferred replay coverage for record-only safe-output calls processed
+  later through `process_recorded_call`.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_state_machine.py tests\test_v2_role_assignment_execution.py -q
+python -m pytest tests\test_v2_state_machine.py tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+```
+
+Results:
+
+```text
+50 passed before QA review
+78 passed before QA review
+78 passed after fake-claim guard addition
+79 passed after deferred replay coverage
+```
+
+### Notes
+
+- This story intentionally does not supersede `deploying` or `released` work.
+  Those states need release-specific rollback or closure handling.
+- `work_item.close` and `work_item.override_blocker` remain follow-up
+  release-manager authority stories.
