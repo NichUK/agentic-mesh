@@ -3236,3 +3236,54 @@ compileall passed
 - RL-059 | engineering | QA rework | PB-005 Story 33 | Added duplicate
   submission detection, private follow-up redaction, private submission comment
   redaction, and richer follow-up context. | QA accepted 2026-06-12
+- RL-060 | engineering | implementation | PB-005 Story 34 | Wired
+  `release.record_decision` to durable release-decision work-item evidence with
+  normalized decisions, optional answered release-approval validation, and
+  replay idempotency. | QA requested rework 2026-06-12
+- RL-061 | engineering | QA rework | PB-005 Story 34 | Made release-decision
+  replay idempotent after downstream state changes and rejected conflicting
+  `approval_ref` / `response_request_id` payloads. | QA accepted 2026-06-12
+
+## PB-005 Story 34 - Release Decision Evidence
+
+Date: 2026-06-12
+
+### Goal
+
+Allow the Release Manager to turn a sponsor approval response into durable,
+validated release decision evidence before deployment or no-deployment closure.
+
+### Changes
+
+- Added runtime processing for `release.record_decision`.
+- Validated that decisions are recorded only while the work item is in
+  `release_review`.
+- Normalized release decisions to `approve`, `reject`, or `request_changes`.
+- Allowed `approval_ref` or `response_request_id` to link the decision to an
+  answered `release_approval` human response request for the same work item.
+- Rejected mismatched approval responses before evidence is recorded.
+- Stored accepted decisions as `release_decision` rows in work-item evidence,
+  using existing safe-output idempotency by `safe_output_ref`.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_teams_connector_response_cards.py tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_work_item_evidence_safe_outputs.py -q
+```
+
+Results:
+
+```text
+10 passed before QA rework
+29 passed after QA rework
+```
+
+### Notes
+
+- This story records the release decision fact; later release-manager stories
+  can consume that evidence when deploying, recording a no-deployment
+  disposition, or closing the work item.
+- QA found replay after state movement could fail before the idempotency guard
+  and dual approval reference fields could conflict silently. Engineering added
+  both regression fixes and retested the focused/adjacent suites.

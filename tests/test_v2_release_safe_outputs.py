@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -132,6 +133,252 @@ def test_release_request_approval_safe_output_records_human_response_request(tmp
     assert requests[0]["required_authority"] == "release_approver"
     assert requests[0]["response_contract_id"] == "release-decision-v1"
     assert requests[0]["payload"]["card"]["request_id"] == requests[0]["request_id"]
+
+
+def test_release_record_decision_records_release_decision_evidence(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-decision",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        request_call_id = service.record(
+            run_id="run-release-decision",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.request_approval",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "question": "Approve release of work-release-safe-output?",
+                },
+                terminal=True,
+            ),
+        )
+        request_id = f"human-response-{hashlib.sha256(request_call_id.encode('utf-8')).hexdigest()[:16]}"
+        db.complete_human_response_request(
+            request_id=request_id,
+            response_value="approve",
+            responder_ref="sponsor",
+        )
+
+        decision_call_id = service.record(
+            run_id="run-release-decision",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "decision": "approved",
+                    "approval_ref": request_id,
+                    "reason": "Sponsor approved release after reviewing evidence.",
+                },
+                terminal=True,
+            ),
+        )
+        service.process_recorded_call(
+            call_id=decision_call_id,
+            run_id="run-release-decision",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "decision": "approved",
+                    "approval_ref": request_id,
+                    "reason": "Sponsor approved release after reviewing evidence.",
+                },
+                terminal=True,
+            ),
+        )
+        db.transition_work_item(
+            TransitionRequest(
+                work_item_id="work-release-safe-output",
+                from_state="release_review",
+                to_state="released",
+                actor_role="release-manager",
+                reason="Release completed after decision evidence was recorded.",
+            )
+        )
+        service.process_recorded_call(
+            call_id=decision_call_id,
+            run_id="run-release-decision",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "decision": "approved",
+                    "approval_ref": request_id,
+                    "reason": "Sponsor approved release after reviewing evidence.",
+                },
+                terminal=True,
+            ),
+        )
+        evidence = db.list_work_item_evidence()
+        event_types = [event["event_type"] for event in db.list_events()]
+        work = db.get_work_item("work-release-safe-output")
+    finally:
+        db.close()
+
+    decisions = [row for row in evidence if row["evidence_type"] == "release_decision"]
+    assert len(decisions) == 1
+    assert decisions[0]["safe_output_ref"] == decision_call_id
+    assert decisions[0]["role_id"] == "release-manager"
+    assert decisions[0]["summary"] == (
+        f"Release decision: approve; approval_ref: {request_id}; "
+        "reason: Sponsor approved release after reviewing evidence."
+    )
+    assert event_types.count("work_item_evidence.recorded") == 1
+    assert work.state == "released"
+
+
+def test_release_record_decision_rejects_mismatched_approval_response(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-decision-mismatch",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        request_call_id = service.record(
+            run_id="run-release-decision-mismatch",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.request_approval",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "question": "Approve release of work-release-safe-output?",
+                },
+                terminal=True,
+            ),
+        )
+        request_id = f"human-response-{hashlib.sha256(request_call_id.encode('utf-8')).hexdigest()[:16]}"
+        db.complete_human_response_request(
+            request_id=request_id,
+            response_value="reject",
+            responder_ref="sponsor",
+        )
+
+        with pytest.raises(SafeOutputError, match="does not match"):
+            service.record(
+                run_id="run-release-decision-mismatch",
+                call=SafeOutputCall(
+                    role_id="release-manager",
+                    tool_name="release.record_decision",
+                    payload={
+                        "work_item_id": "work-release-safe-output",
+                        "decision": "approve",
+                        "approval_ref": request_id,
+                        "reason": "This should not pass.",
+                    },
+                    terminal=True,
+                ),
+            )
+        evidence = db.list_work_item_evidence()
+    finally:
+        db.close()
+
+    assert [row for row in evidence if row["evidence_type"] == "release_decision"] == []
+
+
+def test_release_record_decision_accepts_response_request_id_alias(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-decision-alias",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        request_call_id = service.record(
+            run_id="run-release-decision-alias",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.request_approval",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "question": "Approve release of work-release-safe-output?",
+                },
+                terminal=True,
+            ),
+        )
+        request_id = f"human-response-{hashlib.sha256(request_call_id.encode('utf-8')).hexdigest()[:16]}"
+        db.complete_human_response_request(
+            request_id=request_id,
+            response_value="request changes",
+            responder_ref="sponsor",
+        )
+
+        service.record(
+            run_id="run-release-decision-alias",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "decision": "changes_requested",
+                    "response_request_id": request_id,
+                    "reason": "Sponsor requested one more correction.",
+                },
+                terminal=True,
+            ),
+        )
+        evidence = db.list_work_item_evidence()
+    finally:
+        db.close()
+
+    decisions = [row for row in evidence if row["evidence_type"] == "release_decision"]
+    assert len(decisions) == 1
+    assert decisions[0]["summary"] == (
+        f"Release decision: request_changes; approval_ref: {request_id}; "
+        "reason: Sponsor requested one more correction."
+    )
+
+
+def test_release_record_decision_rejects_conflicting_approval_refs(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-decision-conflicting-refs",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        with pytest.raises(SafeOutputError, match="must match"):
+            service.record(
+                run_id="run-release-decision-conflicting-refs",
+                call=SafeOutputCall(
+                    role_id="release-manager",
+                    tool_name="release.record_decision",
+                    payload={
+                        "work_item_id": "work-release-safe-output",
+                        "decision": "approve",
+                        "approval_ref": "human-response-one",
+                        "response_request_id": "human-response-two",
+                    },
+                    terminal=True,
+                ),
+            )
+        evidence = db.list_work_item_evidence()
+    finally:
+        db.close()
+
+    assert [row for row in evidence if row["evidence_type"] == "release_decision"] == []
 
 
 def test_release_manager_safe_output_executes_compose_deployment(tmp_path: Path) -> None:

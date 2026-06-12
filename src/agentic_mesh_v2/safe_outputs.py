@@ -220,6 +220,8 @@ class SafeOutputService:
             self._validate_work_item_evidence_target(call)
         if self.process_effects and call.tool_name in {"quality.approve", "quality.request_changes"}:
             self._validate_quality_decision_target(call)
+        if self.process_effects and call.tool_name == "release.record_decision":
+            self._validate_release_decision_target(call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -259,6 +261,8 @@ class SafeOutputService:
             self._record_human_response_request(call_id=call_id, call=call, request_type="human_response")
         if call.tool_name == "release.request_approval":
             self._record_human_response_request(call_id=call_id, call=call, request_type="release_approval")
+        if call.tool_name == "release.record_decision":
+            self._record_release_decision(call_id=call_id, call=call)
         if call.tool_name == "release.record_no_deployment":
             self._record_no_deployment(call)
         if call.tool_name == "release.deploy":
@@ -445,6 +449,45 @@ class SafeOutputService:
                 next_action=reason,
                 retryable=True,
             )
+        )
+
+    def _validate_release_decision_target(self, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state != "release_review":
+            raise SafeOutputError(
+                f"`release.record_decision` requires work item state `release_review`, found `{work_item.state}`"
+            )
+        decision = _normalize_release_decision(_required_text(call.payload, "decision"))
+        approval_ref = _release_approval_ref(call.payload)
+        if approval_ref is None:
+            return
+        request = self.db.get_human_response_request(approval_ref)
+        if request is None:
+            raise SafeOutputError(f"release.record_decision approval_ref `{approval_ref}` was not found")
+        if request.get("request_type") != "release_approval":
+            raise SafeOutputError("release.record_decision approval_ref must reference a release_approval request")
+        if request.get("work_item_id") != work_item_id:
+            raise SafeOutputError("release.record_decision approval_ref belongs to a different work item")
+        if request.get("status") != "responded":
+            raise SafeOutputError("release.record_decision approval_ref has not been answered")
+        response_value = _normalize_release_decision(str(request.get("response_value") or ""))
+        if response_value != decision:
+            raise SafeOutputError(
+                f"release.record_decision decision `{decision}` does not match approval_ref response `{response_value}`"
+            )
+
+    def _record_release_decision(self, *, call_id: str, call: SafeOutputCall) -> None:
+        if _has_work_item_evidence_ref(self.db, safe_output_ref=call_id):
+            return
+        self._validate_release_decision_target(call)
+        self.db.add_work_item_evidence(
+            evidence_id=f"evidence-{call_id}",
+            work_item_id=_required_text(call.payload, "work_item_id"),
+            evidence_type="release_decision",
+            summary=_release_decision_summary(call.payload),
+            role_id=call.role_id,
+            safe_output_ref=call_id,
         )
 
     def _record_human_response_request(
@@ -721,6 +764,49 @@ def _release_evidence_from_payload(payload: dict[str, Any]) -> ReleaseEvidence:
     )
 
 
+def _normalize_release_decision(value: str) -> str:
+    normalized = value.strip().casefold().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "approve": "approve",
+        "approved": "approve",
+        "accept": "approve",
+        "accepted": "approve",
+        "reject": "reject",
+        "rejected": "reject",
+        "decline": "reject",
+        "declined": "reject",
+        "request_changes": "request_changes",
+        "changes_requested": "request_changes",
+        "change_requested": "request_changes",
+        "needs_changes": "request_changes",
+    }
+    decision = aliases.get(normalized)
+    if decision is None:
+        raise SafeOutputError(
+            "release.record_decision decision must be approve, reject, or request_changes"
+        )
+    return decision
+
+
+def _release_approval_ref(payload: dict[str, Any]) -> str | None:
+    approval_ref = _optional_text(payload.get("approval_ref"))
+    response_request_id = _optional_text(payload.get("response_request_id"))
+    if approval_ref is not None and response_request_id is not None and approval_ref != response_request_id:
+        raise SafeOutputError("release.record_decision approval_ref and response_request_id must match when both are provided")
+    return approval_ref or response_request_id
+
+
+def _release_decision_summary(payload: dict[str, Any]) -> str:
+    parts = [f"Release decision: {_normalize_release_decision(_required_text(payload, 'decision'))}"]
+    approval_ref = _release_approval_ref(payload)
+    if approval_ref is not None:
+        parts.append(f"approval_ref: {approval_ref}")
+    reason = _optional_text(payload.get("reason"))
+    if reason is not None:
+        parts.append(f"reason: {_single_line_text(reason)}")
+    return "; ".join(parts)
+
+
 def _smoke_checks(value: object) -> dict[str, str]:
     if not isinstance(value, dict) or not value:
         raise SafeOutputError("release.deploy requires non-empty smoke_checks")
@@ -773,6 +859,13 @@ def _has_successful_deployment(db: V2Database, *, release_id: str, work_item_id:
         and run.get("work_item_id") == work_item_id
         and run.get("status") == "succeeded"
         for run in db.list_deployment_runs()
+    )
+
+
+def _has_work_item_evidence_ref(db: V2Database, *, safe_output_ref: str) -> bool:
+    return any(
+        evidence.get("safe_output_ref") == safe_output_ref
+        for evidence in db.list_work_item_evidence()
     )
 
 

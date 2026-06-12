@@ -2986,3 +2986,70 @@ compileall passed
   human response follow-up assignment creation, retry idempotency, stale
   callback behavior, enriched response context, and private status redaction.
   | accepted after rework 2026-06-12
+
+## PB-005 Story 34 - Release Decision Evidence
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_release_safe_outputs.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_teams_connector_response_cards.py tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_work_item_evidence_safe_outputs.py -q
+```
+
+Results:
+
+```text
+10 passed before QA rework
+29 passed after QA rework
+```
+
+### Findings And Rework
+
+- Initial implementation only replayed cleanly while the work item remained in
+  `release_review`. Engineering now returns early when release-decision evidence
+  already exists for the safe-output call, so replay remains idempotent after
+  later release state movement.
+- Initial implementation silently preferred `approval_ref` when both
+  `approval_ref` and `response_request_id` were supplied. Engineering now
+  rejects conflicting values and added alias coverage.
+
+### Acceptance Assessment
+
+- `release.record_decision` records a durable `release_decision`
+  work-item-evidence row.
+- Decision aliases are normalized before evidence is recorded.
+- Optional `approval_ref` / `response_request_id` values must reference an
+  answered `release_approval` request for the same work item.
+- Conflicting `approval_ref` / `response_request_id` values are rejected before
+  recording.
+- Mismatched release-approval responses are rejected before release-decision
+  evidence is recorded.
+- Replaying the same safe-output call remains idempotent even after downstream
+  state changes.
+
+### Residual Risks
+
+- The release decision is evidence only in this story. Deployment,
+  no-deployment disposition, and closure behavior remain governed by the
+  existing Release Manager safe outputs and later release-flow stories.
+
+### Review Log
+
+- QA-RL-048 | qa-engineer | rework-request | PB-005 Story 34 | Found replay
+  after downstream state movement was not idempotent and conflicting approval
+  references were not rejected. | rework requested 2026-06-12
+- QA-RL-049 | qa-engineer | acceptance | PB-005 Story 34 | Verified
+  release-decision evidence recording, approval response validation, alias
+  coverage, conflict rejection, and replay after release state movement.
+  | accepted after rework 2026-06-12
