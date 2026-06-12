@@ -71,6 +71,7 @@ class V2Database:
                   conversation_id TEXT PRIMARY KEY,
                   connector TEXT NOT NULL,
                   external_ref TEXT NOT NULL,
+                  source_type TEXT NOT NULL DEFAULT 'unknown',
                   sponsor_ref TEXT,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -546,6 +547,7 @@ class V2Database:
                 "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
                 (SCHEMA_VERSION,),
             )
+            self._ensure_column("conversations", "source_type", "TEXT NOT NULL DEFAULT 'unknown'")
             self._ensure_column("connector_participants", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column("role_assignments", "claimed_at", "TEXT")
             self._ensure_column("role_assignments", "claim_expires_at", "TEXT")
@@ -1189,18 +1191,20 @@ class V2Database:
         conversation_id: str,
         connector: str,
         external_ref: str,
+        source_type: str = "unknown",
         sponsor_ref: str | None = None,
     ) -> None:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT INTO conversations(conversation_id, connector, external_ref, sponsor_ref)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO conversations(conversation_id, connector, external_ref, source_type, sponsor_ref)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(conversation_id) DO UPDATE SET
+                  source_type = excluded.source_type,
                   sponsor_ref = COALESCE(excluded.sponsor_ref, sponsor_ref),
                   updated_at = CURRENT_TIMESTAMP
                 """,
-                (conversation_id, connector, external_ref, sponsor_ref),
+                (conversation_id, connector, external_ref, source_type, sponsor_ref),
             )
 
     def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:

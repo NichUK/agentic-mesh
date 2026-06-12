@@ -325,6 +325,7 @@ class LocalTeamsTestAdapter:
             conversation_id=conversation_id,
             connector=connector_id,
             external_ref=external_conversation_ref,
+            source_type=source_type,
             sponsor_ref=sender_ref if "sponsor" in self._authority_for_human(sender_ref) else None,
         )
         self.db.upsert_connector_participant(
@@ -1301,6 +1302,7 @@ class ConnectorSafeOutputService(SafeOutputService):
         self.db.get_work_item(_required_string(payload, "work_item_id"))
         conversation_id = _required_string(payload, "conversation_id")
         destination_ref = _required_string(payload, "destination_ref")
+        destination_type = str(payload.get("destination_type") or "dm")
         conversation = self.db.get_conversation(conversation_id)
         if conversation is None:
             raise ValueError(f"release notification referenced unknown conversation `{conversation_id}`")
@@ -1311,6 +1313,15 @@ class ConnectorSafeOutputService(SafeOutputService):
         if conversation.get("external_ref") != destination_ref:
             raise ValueError(
                 f"release notification destination `{destination_ref}` does not match conversation `{conversation_id}`"
+            )
+        source_type = str(conversation.get("source_type") or "unknown")
+        if source_type == "dm" and destination_type != "dm":
+            raise ValueError(
+                f"release notification destination type `{destination_type}` does not match DM conversation `{conversation_id}`"
+            )
+        if source_type in {"channel", "private_channel"} and destination_type == "dm":
+            raise ValueError(
+                f"release notification destination type `dm` does not match {source_type} conversation `{conversation_id}`"
             )
 
     def _record_work_proposal(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> None:

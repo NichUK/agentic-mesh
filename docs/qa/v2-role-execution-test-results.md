@@ -3788,3 +3788,56 @@ Results:
   connector-backed final release notification, duplicate suppression,
   failed-close no-notification behavior, and mismatched destination rejection.
   | accepted after rework 2026-06-12
+
+## PB-005 Story 46 - Release Notification Destination-Type Validation
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_response_cards.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_teams_connector_response_cards.py tests\test_v2_end_to_end.py tests\test_v2_status_dashboard.py -q
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+18 passed before QA review
+19 passed after extra DM-to-channel regression
+compileall passed
+```
+
+### Findings And Rework
+
+- QA found no blocking issues.
+- QA noted residual risk that migrated conversations receive
+  `source_type='unknown'`. Engineering accepted this because strict validation
+  becomes definitive after the conversation is next ingested/upserted.
+- QA noted that only channel-to-DM had direct negative coverage. Engineering
+  added a DM-to-channel regression before final verification.
+
+### Acceptance Assessment
+
+- Conversation source type is persisted for newly ingested Teams events.
+- Release notification validation rejects DM notification payloads for channel
+  conversations.
+- Release notification validation rejects channel notification payloads for DM
+  conversations.
+- Existing connector-backed release notification happy path remains green.
+
+### Review Log
+
+- QA-RL-076 | qa-engineer | acceptance | PB-005 Story 46 | Verified
+  conversation source-type persistence and destination-type validation, with
+  residual caveat for legacy `unknown` source-type rows. | accepted 2026-06-12

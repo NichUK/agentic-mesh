@@ -363,6 +363,86 @@ def test_release_notification_rejects_mismatched_conversation_destination(tmp_pa
     assert snapshot["counts"]["delivery_records"] == 0
 
 
+def test_release_notification_rejects_mismatched_conversation_destination_type(tmp_path: Path) -> None:
+    db, adapter, conversation_id = _db_with_work_item(tmp_path)
+    assert db.get_conversation(conversation_id)["source_type"] == "channel"
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    db.create_run(
+        run_id="run-release-notify-mismatched-destination-type",
+        role_id="release-manager",
+        role_instance_id="release-manager-1",
+        work_item_id="work-release-card",
+    )
+
+    with pytest.raises(ValueError, match="destination type `dm` does not match channel conversation"):
+        service.record(
+            run_id="run-release-notify-mismatched-destination-type",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="work_item.close",
+                payload={
+                    "work_item_id": "work-release-card",
+                    "reason": "Do not notify a channel conversation as a DM.",
+                    "conversation_id": conversation_id,
+                    "destination_ref": "channel-project",
+                    "destination_type": "dm",
+                    "notification_message": "This message must not be sent.",
+                },
+                terminal=True,
+            ),
+        )
+
+    snapshot = db.status_snapshot()
+    assert snapshot["counts"]["safe_output_calls"] == 0
+    assert snapshot["counts"]["delivery_records"] == 0
+
+
+def test_release_notification_rejects_dm_conversation_with_channel_destination_type(tmp_path: Path) -> None:
+    db, adapter, _conversation_id = _db_with_work_item(tmp_path)
+    replayed = adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-release-dm-context",
+            "conversation_ref": "dm-nicholas-release",
+            "sender_ref": "nicholas",
+            "source_type": "dm",
+            "target_role_id": "release-manager",
+            "target_ref": "bot-release-manager",
+            "body": "Please tell me when this release closes.",
+        }
+    )
+    assert db.get_conversation(replayed.conversation_id)["source_type"] == "dm"
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    db.create_run(
+        run_id="run-release-notify-dm-as-channel",
+        role_id="release-manager",
+        role_instance_id="release-manager-1",
+        work_item_id="work-release-card",
+    )
+
+    with pytest.raises(ValueError, match="destination type `channel` does not match DM conversation"):
+        service.record(
+            run_id="run-release-notify-dm-as-channel",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="work_item.close",
+                payload={
+                    "work_item_id": "work-release-card",
+                    "reason": "Do not notify a DM conversation as a channel.",
+                    "conversation_id": replayed.conversation_id,
+                    "destination_ref": "dm-nicholas-release",
+                    "destination_type": "channel",
+                    "notification_message": "This message must not be sent.",
+                },
+                terminal=True,
+            ),
+        )
+
+    snapshot = db.status_snapshot()
+    assert snapshot["counts"]["safe_output_calls"] == 0
+    assert snapshot["counts"]["delivery_records"] == 0
+
+
 def test_release_approval_request_preserves_connector_metadata_and_default_title(tmp_path: Path) -> None:
     db, adapter, conversation_id = _db_with_work_item(tmp_path)
 

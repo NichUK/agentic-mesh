@@ -3941,3 +3941,53 @@ PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files a
 - Destination type remains payload-driven because the current conversation
   table stores the external reference but not source type. QA accepted this as a
   residual risk for this story.
+
+## PB-005 Story 46 - Release Notification Destination-Type Validation
+
+Date: 2026-06-12
+
+### Goal
+
+Close the Story 45 residual risk by persisting conversation source type and
+rejecting release notifications whose destination type does not match the
+conversation that originally anchored the human thread.
+
+### Changes
+
+- Added `source_type` to the `conversations` table and migration guards for
+  existing SQLite databases.
+- Persisted Teams inbound source type when replaying connector events into
+  conversations.
+- Extended release notification validation so:
+  - DM conversations must use `destination_type=dm`
+  - channel and private-channel conversations must not use `destination_type=dm`
+- Added connector regressions for channel conversation to DM delivery and DM
+  conversation to channel delivery.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_teams_connector_response_cards.py tests\test_v2_end_to_end.py tests\test_v2_status_dashboard.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+python scripts\check-pr-size.py --base origin/develop --committed-only
+```
+
+Results:
+
+```text
+18 passed before QA review
+19 passed after adding DM-to-channel coverage
+compileall passed
+319 passed full suite
+V2 topology validation passed
+PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files and 105842 changed lines against origin/develop
+```
+
+### QA Result
+
+QA accepted the story with no findings. The only residual caveat is that
+existing migrated conversation rows default to `source_type='unknown'`; strict
+type validation becomes definitive after each conversation is ingested or
+upserted with an explicit source type.
