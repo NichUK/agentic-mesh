@@ -1170,3 +1170,64 @@ operations scope:
   updated durable-state lifecycle records, default planned-only mode, guarded
   `--execute` path reuse, nested JSON receipts, focused and broader runtime
   tests, and factual scope limits. | accepted 2026-06-12
+
+## PB-005 Story 6 - Runtime Attention for Lifecycle Failures
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/container_lifecycle.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_container_lifecycle.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+40 passed
+```
+
+### Acceptance Assessment
+
+- Failed role-container lifecycle executions create `runtime_attention_items`
+  owned by `platform-engineer`, classified as `container_lifecycle_failed`,
+  marked retryable, and linked to the failed lifecycle `action_id`.
+- Successful lifecycle execution does not create runtime attention.
+- Repeated failed attempts preserve distinct failed action records and distinct
+  attention source references.
+- `status_snapshot()` exposes runtime attention counts and rows.
+- The v2 status dashboard renders a Runtime Attention section with reason,
+  owner, source, retryability, and next-action detail.
+- The engineering log accurately documents this as visibility and retry
+  readiness, not automatic retry, rollback, or alert routing.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 6 because they remain later runtime
+operations scope:
+
+- Runtime attention is not yet automatically closed after a later successful
+  retry.
+- Automatic retry policy, alert routing, and rollback execution are not part of
+  this story.
+
+### Review Log
+
+- QA-RL-019 | qa-engineer | acceptance | PB-005 Story 6 | Verified failed
+  container lifecycle executions produce actionable runtime attention linked to
+  failed action evidence, successful executions produce none, repeated failures
+  retain distinct evidence, status/dashboard visibility is present, focused
+  tests pass, and documentation states the remaining retry/alerting limits. |
+  accepted 2026-06-12

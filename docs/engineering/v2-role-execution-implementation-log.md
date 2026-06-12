@@ -1154,6 +1154,65 @@ Results:
 - Retry, rollback, and alert routing for failed lifecycle actions remain later
   slices.
 
+## PB-005 Story 6 - Runtime Attention for Lifecycle Failures
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Make failed role-container lifecycle actions visible as actionable runtime
+attention items. A failed Docker Compose start/stop attempt should no longer be
+visible only as a failed command record; the operator/status surface should
+also show who owns the recovery, why it needs attention, and what the next
+retry action is.
+
+### Implementation Notes
+
+- Added a `runtime_attention_items` table for non-connector runtime failures.
+- Added `create_runtime_attention_item` and `list_runtime_attention_items` to
+  the v2 database repository.
+- Container lifecycle executor now records a retryable
+  `container_lifecycle_failed` runtime attention item for failed start/stop
+  commands.
+- Runtime attention is included in `status_snapshot()` counts and data.
+- The v2 status dashboard now shows runtime attention alongside connector
+  attention and lifecycle action evidence.
+
+### Tests Added
+
+- successful container lifecycle start does not create runtime attention
+- failed container lifecycle stop creates a retryable platform-engineer-owned
+  runtime attention item linked to the failed action
+- repeated failed attempts preserve separate action evidence and separate
+  attention source references
+- rendered status HTML includes runtime attention details
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+15 passed
+76 passed
+```
+
+### Known Limitations
+
+- Runtime attention is visible and retry-ready, but no automatic retry policy or
+  alert-routing loop is implemented in this story.
+- Runtime attention is currently emitted by the container lifecycle executor;
+  future supervisor stories should add ownership/closure handling across other
+  runtime failure classes.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1220,3 +1279,7 @@ Results:
 - RL-020 | engineering | implementation | PB-005 Story 5 | Added a bounded
   project supervisor tick that chains hibernation maintenance and container
   lifecycle action handling. | QA accepted 2026-06-12
+- RL-021 | engineering | implementation | PB-005 Story 6 | Added runtime
+  attention records for failed role-container lifecycle actions, linked them
+  to failed action evidence, and surfaced them on the v2 dashboard. | QA
+  accepted 2026-06-12

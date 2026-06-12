@@ -325,6 +325,19 @@ class V2Database:
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS runtime_attention_items (
+                  attention_id TEXT PRIMARY KEY,
+                  source_type TEXT NOT NULL,
+                  source_ref TEXT NOT NULL,
+                  owner TEXT NOT NULL,
+                  reason_class TEXT NOT NULL,
+                  next_action TEXT NOT NULL,
+                  retryable INTEGER NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'open',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS connector_permission_checks (
                   check_id TEXT PRIMARY KEY,
                   connector_id TEXT NOT NULL REFERENCES connectors(connector_id),
@@ -1393,6 +1406,53 @@ class V2Database:
                 "connector.attention_created",
                 "connector",
                 connector_id,
+                {"attention_id": attention_id, "reason_class": reason_class, "retryable": retryable},
+            )
+
+    def create_runtime_attention_item(
+        self,
+        *,
+        attention_id: str,
+        source_type: str,
+        source_ref: str,
+        owner: str,
+        reason_class: str,
+        next_action: str,
+        retryable: bool,
+    ) -> None:
+        if not source_type.strip():
+            raise ValueError("runtime attention source_type is required")
+        if not source_ref.strip():
+            raise ValueError("runtime attention source_ref is required")
+        if not owner.strip():
+            raise ValueError("runtime attention owner is required")
+        if not reason_class.strip():
+            raise ValueError("runtime attention reason_class is required")
+        if not next_action.strip():
+            raise ValueError("runtime attention next_action is required")
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO runtime_attention_items(
+                  attention_id, source_type, source_ref, owner, reason_class, next_action, retryable
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(attention_id) DO UPDATE SET
+                  source_type = excluded.source_type,
+                  source_ref = excluded.source_ref,
+                  owner = excluded.owner,
+                  reason_class = excluded.reason_class,
+                  next_action = excluded.next_action,
+                  retryable = excluded.retryable,
+                  status = 'open',
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (attention_id, source_type, source_ref, owner, reason_class, next_action, 1 if retryable else 0),
+            )
+            self.append_event(
+                "runtime.attention_created",
+                source_type,
+                source_ref,
                 {"attention_id": attention_id, "reason_class": reason_class, "retryable": retryable},
             )
 
@@ -2800,6 +2860,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_runtime_attention_items(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM runtime_attention_items
+            ORDER BY updated_at DESC, attention_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_connector_permission_checks(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -2881,6 +2951,7 @@ class V2Database:
         redacted_delivery_records = _redact_private_delivery_records(delivery_records)
         delivery_attempts = self.list_delivery_attempts()
         connector_attention_items = self.list_connector_attention_items()
+        runtime_attention_items = self.list_runtime_attention_items()
         connector_permission_checks = self.list_connector_permission_checks()
         role_assignments = self.list_role_assignments()
         role_instance_statuses = self.list_role_instance_statuses()
@@ -2975,6 +3046,7 @@ class V2Database:
                 "delivery_records": len(delivery_records),
                 "delivery_attempts": len(delivery_attempts),
                 "connector_attention_items": len(connector_attention_items),
+                "runtime_attention_items": len(runtime_attention_items),
                 "connector_permission_checks": len(connector_permission_checks),
                 "role_assignments": len(role_assignments),
                 "role_instance_statuses": len(role_instance_statuses),
@@ -3009,6 +3081,7 @@ class V2Database:
             "delivery_records": redacted_delivery_records,
             "delivery_attempts": delivery_attempts,
             "connector_attention_items": connector_attention_items,
+            "runtime_attention_items": runtime_attention_items,
             "connector_permission_checks": connector_permission_checks,
             "role_assignments": role_assignments,
             "role_instance_statuses": role_instance_statuses,

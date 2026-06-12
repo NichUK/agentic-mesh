@@ -132,6 +132,19 @@ class ContainerLifecycleExecutor:
             stdout=result.stdout,
             stderr=result.stderr,
         )
+        if result.exit_code != 0:
+            self.db.create_runtime_attention_item(
+                attention_id=f"attention-{action_id}",
+                source_type="role_container_lifecycle",
+                source_ref=action_id,
+                owner="platform-engineer",
+                reason_class="container_lifecycle_failed",
+                next_action=(
+                    "Inspect the failed role container lifecycle action, correct the runtime host "
+                    "or deployment target, then retry the lifecycle action."
+                ),
+                retryable=True,
+            )
         if result.exit_code == 0 and action.action == "start":
             self.db.update_role_instance_status(
                 role_id=action.role_id,

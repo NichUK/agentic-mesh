@@ -235,6 +235,7 @@ def test_container_lifecycle_executor_records_success_and_hydrates_started_insta
     assert snapshot["role_container_lifecycle_actions"][0]["stdout"] == "started"
     assert snapshot["role_instance_statuses"][0]["status"] == "idle"
     assert snapshot["role_instance_statuses"][0]["detail"] == "Role instance hydrated after container lifecycle start."
+    assert snapshot["runtime_attention_items"] == []
     html = _render(snapshot)
     assert "Role Container Lifecycle Actions" in html
     assert "test-project-product-manager-1" in html
@@ -277,6 +278,17 @@ def test_container_lifecycle_executor_records_failed_stop_without_changing_insta
     assert snapshot["role_container_lifecycle_actions"][0]["status"] == "failed"
     assert snapshot["role_container_lifecycle_actions"][0]["stderr"] == "compose failed"
     assert snapshot["role_instance_statuses"][0]["status"] == "hibernated"
+    assert snapshot["counts"]["runtime_attention_items"] == 1
+    attention = snapshot["runtime_attention_items"][0]
+    assert attention["source_type"] == "role_container_lifecycle"
+    assert attention["source_ref"] == snapshot["role_container_lifecycle_actions"][0]["action_id"]
+    assert attention["owner"] == "platform-engineer"
+    assert attention["reason_class"] == "container_lifecycle_failed"
+    assert attention["retryable"] is True
+    assert "retry the lifecycle action" in attention["next_action"]
+    html = _render(snapshot)
+    assert "Runtime Attention" in html
+    assert "container_lifecycle_failed" in html
 
 
 def test_container_lifecycle_executor_preserves_repeated_attempt_evidence(tmp_path: Path) -> None:
@@ -322,3 +334,6 @@ def test_container_lifecycle_executor_preserves_repeated_attempt_evidence(tmp_pa
     assert statuses.count("failed") == 2
     assert statuses.count("planned") == 1
     assert any(row["action_id"] == first_id and row["stderr"] == "compose failed" for row in rows)
+    attention_items = db.status_snapshot()["runtime_attention_items"]
+    assert len(attention_items) == 2
+    assert {item["source_ref"] for item in attention_items} == {first_id, third_id}

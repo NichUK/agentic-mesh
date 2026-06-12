@@ -98,6 +98,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     {self._count_tile("Context summaries", counts["context_summaries"])}
     {self._count_tile("Permission checks", counts["connector_permission_checks"])}
     {self._count_tile("Connector attention", counts["connector_attention_items"])}
+    {self._count_tile("Runtime attention", counts.get("runtime_attention_items", 0))}
   </div>
   <h2>Connector Metrics</h2>
   <div class="tiles">
@@ -148,6 +149,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   {self._context_summary_table(snapshot["context_summaries"])}
   <h2>Connector Attention</h2>
   {self._connector_attention_table(snapshot["connector_attention_items"])}
+  <h2>Runtime Attention</h2>
+  {self._runtime_attention_table(snapshot.get("runtime_attention_items", []))}
   <h2>Work Items</h2>
   {self._work_items_table(snapshot["work_items"])}
   <h2>Queue</h2>
@@ -465,6 +468,23 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 "</tr>"
             )
         return "<table><tr><th>Attention</th><th>Reason / Status</th><th>Owner</th><th>Next Action</th><th>Retryable</th></tr>" + "".join(body) + "</table>"
+
+    def _runtime_attention_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 runtime attention items.</p>'
+        body = []
+        for row in items:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['attention_id'])}</code><br>{_e(row['source_type'])}<br>{_e(row['source_ref'])}</td>"
+                f"<td><span class=\"status\">{_e(row['reason_class'])}</span><br>{_e(row['status'])}</td>"
+                f"<td>{_e(row['owner'])}</td>"
+                f"<td>{_e(row['next_action'])}</td>"
+                f"<td>{_e(row['retryable'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Attention / Source</th><th>Reason / Status</th><th>Owner</th><th>Next Action</th><th>Retryable</th></tr>" + "".join(body) + "</table>"
 
     def _queue_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []
