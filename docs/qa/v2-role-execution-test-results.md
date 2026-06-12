@@ -479,3 +479,64 @@ These are not blockers for PB-004 Story 8 because they remain later v2 runtime s
 ### Review Log
 
 - QA-RL-008 | qa-engineer | acceptance | PB-004 Story 8 | Verified deterministic safe-output-file worker adapter, role binding, malformed-file validation, role-service tick CLI execution, terminal assignment recording, role-instance status, useful JSON receipts, and factual scope boundaries. | accepted 2026-06-12
+
+## PB-004 Story 9 - Subprocess Safe-Output Worker Adapter
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/worker_adapters.py`
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+33 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+102 passed
+```
+
+### Acceptance Assessment
+
+- `SafeOutputSubprocessWorker` runs an external command from a tuple/JSON-array command boundary and does not use shell command-string parsing.
+- The adapter writes normalized assignment JSON to subprocess stdin.
+- Subprocess stdout is parsed through the shared safe-output parser used by the file-backed worker.
+- Parsed safe-output calls continue through the normal `RoleService` and `SafeOutputService` path, including `status.complete` terminal recording.
+- Non-zero subprocess exit is recorded as an assignment failure with exit code and stderr context.
+- Malformed subprocess stdout is recorded as an assignment failure with invalid-JSON context.
+- CLI wiring accepts `--worker safe-output-subprocess`, `--worker-command-json`, and `--worker-timeout-seconds`.
+- The engineering log is factual about scope and does not claim Codex/OpenAI prompt generation, credential management, streaming progress, or daemonized container supervision.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 9 because they remain later v2 runtime scope:
+
+- Timeout behavior is implemented and wired, but is not yet covered by a dedicated regression test.
+- No Codex/OpenAI-specific prompt generation, progress streaming, credential selection, or provider failure classification is implemented by this story.
+- The CLI runner still executes one bounded role-service tick rather than a daemonized role-service container.
+
+### Review Log
+
+- QA-RL-009 | qa-engineer | acceptance | PB-004 Story 9 | Verified subprocess worker command boundary, assignment stdin, shared safe-output parsing, normal role-service/safe-output recording, subprocess failure capture, CLI wiring, and factual scope limits. | accepted 2026-06-12

@@ -1,3 +1,5 @@
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -341,6 +343,190 @@ def test_v2_cli_run_role_service_tick_rejects_malformed_safe_output_file(
     assert assignment is not None
     assert assignment["status"] == "failed"
     assert "calls list" in assignment["failure_reason"]
+
+
+def test_v2_cli_run_role_service_tick_processes_assignment_from_subprocess_worker(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    worker_path = tmp_path / "worker.py"
+    worker_path.write_text(
+        """
+import json
+import sys
+
+assignment = json.loads(sys.stdin.read())
+assert assignment["assignment_id"] == "assignment-cli-subprocess"
+print(json.dumps({
+    "calls": [
+        {
+            "tool_name": "status.complete",
+            "payload": {"message": f"Processed {assignment['title']}"},
+            "terminal": True,
+        }
+    ]
+}))
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-cli-subprocess",
+            role_id="product-manager",
+            source_ref="msg-cli-subprocess",
+            title="CLI subprocess assignment",
+            summary="Run a role-service tick through a subprocess worker adapter.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-role-service-tick",
+                "--role-id",
+                "product-manager",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--worker",
+                "safe-output-subprocess",
+                "--worker-command-json",
+                json.dumps([sys.executable, str(worker_path)]),
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert '"processed_count": 1' in output
+    assert '"terminal_tool": "status.complete"' in output
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-cli-subprocess")
+        safe_outputs = db.list_safe_output_calls()
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "completed"
+    assert safe_outputs[0]["payload"]["message"] == "Processed CLI subprocess assignment"
+
+
+def test_v2_cli_run_role_service_tick_records_subprocess_failure(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    worker_path = tmp_path / "worker.py"
+    worker_path.write_text(
+        """
+import sys
+
+print("worker exploded", file=sys.stderr)
+raise SystemExit(17)
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-cli-subprocess-fail",
+            role_id="product-manager",
+            source_ref="msg-cli-subprocess-fail",
+            title="CLI subprocess failure",
+            summary="Record subprocess worker failure.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    with pytest.raises(RuntimeError, match="exited with code 17"):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-role-service-tick",
+                "--role-id",
+                "product-manager",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--worker",
+                "safe-output-subprocess",
+                "--worker-command-json",
+                json.dumps([sys.executable, str(worker_path)]),
+            ]
+        )
+
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-cli-subprocess-fail")
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "failed"
+    assert "exited with code 17" in assignment["failure_reason"]
+    assert "worker exploded" in assignment["failure_reason"]
+
+
+def test_v2_cli_run_role_service_tick_records_subprocess_invalid_json(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    worker_path = tmp_path / "worker.py"
+    worker_path.write_text('print("not-json")', encoding="utf-8")
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-cli-subprocess-invalid-json",
+            role_id="product-manager",
+            source_ref="msg-cli-subprocess-invalid-json",
+            title="CLI subprocess invalid JSON",
+            summary="Record invalid subprocess worker output.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-role-service-tick",
+                "--role-id",
+                "product-manager",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--worker",
+                "safe-output-subprocess",
+                "--worker-command-json",
+                json.dumps([sys.executable, str(worker_path)]),
+            ]
+        )
+
+    db = V2Database(db_path)
+    try:
+        assignment = db.get_role_assignment("assignment-cli-subprocess-invalid-json")
+    finally:
+        db.close()
+
+    assert assignment is not None
+    assert assignment["status"] == "failed"
+    assert "invalid JSON" in assignment["failure_reason"]
 
 
 def test_v2_cli_validate_topology_accepts_distinct_roots(tmp_path: Path, capsys) -> None:

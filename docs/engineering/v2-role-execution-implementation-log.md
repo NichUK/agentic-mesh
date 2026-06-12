@@ -514,6 +514,70 @@ Results:
   supervision remains later PB-004/PB-005 work.
 - The adapter does not generate prompts or invoke models.
 
+## PB-004 Story 9 - Subprocess Safe-Output Worker Adapter
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add a subprocess worker-adapter boundary that can run an external command,
+provide assignment context on stdin, parse safe-output JSON from stdout, and
+record failures through the existing role-service path. This is the immediate
+predecessor to a Codex/OpenAI adapter without hard-coding a model provider into
+the runtime.
+
+### Implementation Notes
+
+- Added `SafeOutputSubprocessWorker`.
+- The subprocess adapter:
+  - accepts a command tuple and timeout
+  - writes normalized assignment JSON to stdin
+  - captures stdout and stderr
+  - parses stdout using the shared safe-output parser
+  - raises clear timeout, non-zero exit, missing stdout, and invalid JSON errors
+- Shared safe-output JSON parsing now serves both file and subprocess workers.
+- `run-role-service-tick` now accepts `--worker safe-output-subprocess`,
+  `--worker-command-json`, and `--worker-timeout-seconds`.
+- CLI subprocess command configuration uses a JSON command array, avoiding shell
+  command-string parsing and quoting hazards.
+
+### Tests Added
+
+- subprocess worker receives assignment JSON and completes a role assignment
+  through `status.complete`
+- subprocess worker safe-output payload is recorded through the normal
+  safe-output service
+- non-zero subprocess exit marks the assignment failed with exit code and stderr
+  context
+- invalid subprocess stdout JSON marks the assignment failed with a useful
+  parse error
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+33 passed
+102 passed
+```
+
+### Known Limitations
+
+- This adapter executes an external process but does not yet generate prompts,
+  stream progress, classify provider-specific failures, or manage credentials.
+- Codex/OpenAI-specific worker behavior remains later adapter work.
+- The CLI runner still runs one bounded tick and exits rather than acting as a
+  daemonized role-service container.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -541,5 +605,9 @@ Results:
   JSON output. | QA accepted 2026-06-12
 - RL-008 | engineering | implementation | PB-004 Story 8 | Added a
   deterministic safe-output-file worker adapter and CLI role-service tick runner
-  with bounded recovery/drain options and JSON run receipts. | awaiting QA
-  review 2026-06-12
+  with bounded recovery/drain options and JSON run receipts. | QA accepted
+  2026-06-12
+- RL-009 | engineering | implementation | PB-004 Story 9 | Added a subprocess
+  safe-output worker adapter and CLI wiring for external command execution with
+  assignment stdin, safe-output stdout parsing, and failure capture. | awaiting
+  QA review 2026-06-12

@@ -13,6 +13,7 @@ from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.topology import ProjectRepo
 from agentic_mesh_v2.topology import RuntimeTopology
 from agentic_mesh_v2.worker_adapters import SafeOutputFileWorker
+from agentic_mesh_v2.worker_adapters import SafeOutputSubprocessWorker
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,11 +57,16 @@ def main(argv: list[str] | None = None) -> int:
     tick_parser.add_argument("--role-instance-id", required=True)
     tick_parser.add_argument(
         "--worker",
-        choices=["safe-output-file"],
+        choices=["safe-output-file", "safe-output-subprocess"],
         required=True,
         help="Worker adapter to use for claimed assignments.",
     )
-    tick_parser.add_argument("--safe-output-file", type=Path, required=True)
+    tick_parser.add_argument("--safe-output-file", type=Path)
+    tick_parser.add_argument(
+        "--worker-command-json",
+        help="JSON array command for the safe-output-subprocess worker.",
+    )
+    tick_parser.add_argument("--worker-timeout-seconds", type=int, default=300)
     tick_parser.add_argument("--max-recoveries", type=int, default=50)
     tick_parser.add_argument("--max-assignments", type=int, default=10)
     tick_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
@@ -158,7 +164,17 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
             if args.command == "run-role-service-tick":
-                worker = SafeOutputFileWorker(args.safe_output_file)
+                if args.worker == "safe-output-file":
+                    if args.safe_output_file is None:
+                        raise ValueError("--safe-output-file is required for safe-output-file worker")
+                    worker = SafeOutputFileWorker(args.safe_output_file)
+                elif args.worker == "safe-output-subprocess":
+                    worker = SafeOutputSubprocessWorker(
+                        _parse_worker_command(args.worker_command_json),
+                        timeout_seconds=args.worker_timeout_seconds,
+                    )
+                else:
+                    raise AssertionError(f"unhandled worker adapter: {args.worker}")
                 service = RoleService(
                     db=db,
                     role_id=args.role_id,
@@ -215,6 +231,20 @@ def _parse_project_repo(value: str) -> ProjectRepo:
         path=Path(path),
         document_library_root=Path(docroot),
     )
+
+
+def _parse_worker_command(value: str | None) -> tuple[str, ...]:
+    if not value:
+        raise ValueError("--worker-command-json is required for safe-output-subprocess worker")
+    raw = json.loads(value)
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("--worker-command-json must be a non-empty JSON array")
+    command: list[str] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"--worker-command-json item {index} must be a non-empty string")
+        command.append(item)
+    return tuple(command)
 
 
 if __name__ == "__main__":
