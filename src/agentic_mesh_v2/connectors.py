@@ -235,8 +235,9 @@ class LocalTeamsTestAdapter:
                     or event.get("target_ref")
                 ),
             )
+        conversation_event_id = f"conversation-event-{_stable_digest(f'{receipt.receipt_id}:event')}"
         self.db.record_conversation_event(
-            conversation_event_id=f"conversation-event-{_stable_digest(f'{receipt.receipt_id}:event')}",
+            conversation_event_id=conversation_event_id,
             conversation_id=conversation_id,
             receipt_id=receipt.receipt_id,
             connector_id=connector_id,
@@ -269,6 +270,7 @@ class LocalTeamsTestAdapter:
                     payload={
                         "connector_id": connector_id,
                         "conversation_id": conversation_id,
+                        "conversation_event_id": conversation_event_id,
                         "receipt_id": receipt.receipt_id,
                         "message_id": message_id,
                         "channel_scope": channel_binding.__dict__ if channel_binding else None,
@@ -301,10 +303,35 @@ class LocalTeamsTestAdapter:
                     payload={
                         "connector_id": connector_id,
                         "conversation_id": conversation_id,
+                        "conversation_event_id": conversation_event_id,
                         "receipt_id": receipt.receipt_id,
                         "message_id": message_id,
                         "thread_ref": thread_ref,
                         "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                    },
+                )
+        if route_type == "team_wide_prompt":
+            for role_id, identity in self.config.role_identities.items():
+                if not identity.enabled:
+                    continue
+                self.db.create_role_assignment(
+                    assignment_id=f"assignment-{_stable_digest(f'{receipt.receipt_id}:{role_id}:relevance')}",
+                    role_id=role_id,
+                    conversation_id=conversation_id,
+                    source_ref=receipt.receipt_id,
+                    title="Team-wide relevance check",
+                    summary="Human asked all roles to consider whether they have material specialist input.",
+                    assignment_type="team_wide_relevance_check",
+                    visibility_scope="project",
+                    payload={
+                        "connector_id": connector_id,
+                        "conversation_id": conversation_id,
+                        "conversation_event_id": conversation_event_id,
+                        "receipt_id": receipt.receipt_id,
+                        "message_id": message_id,
+                        "thread_ref": thread_ref,
+                        "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                        "threshold": 0.6,
                     },
                 )
         if route_type in {"unknown_role_mention", "disabled_role_identity", "unbound_private_channel"}:
@@ -492,6 +519,28 @@ class LocalTeamsTestAdapter:
             role_id=role_id,
         )
 
+    def record_relevance(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> None:
+        conversation_event_id = _required_string(payload, "conversation_event_id")
+        decision = _required_string(payload, "decision")
+        if decision not in {"material", "not_relevant", "exception"}:
+            raise ValueError(f"unknown relevance decision `{decision}`")
+        score = _float_field(payload, "score")
+        threshold = _float_field(payload, "threshold")
+        noop = _bool_field(payload, "noop", default=decision == "not_relevant")
+        self.db.record_relevance_check(
+            relevance_check_id=f"relevance-{_stable_digest(f'{conversation_event_id}:{role_id}')}",
+            conversation_event_id=conversation_event_id,
+            role_id=role_id,
+            score=score,
+            threshold=threshold,
+            decision=decision,
+            reason=_required_string(payload, "reason"),
+            noop=noop,
+            exception_reason=str(payload["exception_reason"]) if payload.get("exception_reason") else None,
+            safe_output_ref=call_id,
+            delivery_ref=str(payload["delivery_ref"]) if payload.get("delivery_ref") else None,
+        )
+
     def _route_type(self, *, source_type: str, mentioned_roles: tuple[str, ...], body: str) -> str:
         if source_type == "dm":
             return "role_direct_message"
@@ -601,7 +650,11 @@ class ConnectorSafeOutputService(SafeOutputService):
         self.adapter = adapter
 
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:
+        if call.tool_name == "status.reply":
+            self._reject_noop_relevance_reply(run_id=run_id, role_id=call.role_id)
         call_id = super().record(run_id=run_id, call=call)
+        if call.tool_name == "relevance.record":
+            self.adapter.record_relevance(call_id=call_id, role_id=call.role_id, payload=call.payload)
         if call.tool_name == "status.reply" and "conversation_id" in call.payload:
             self.adapter.deliver_status_reply(
                 call_id=call_id,
@@ -616,11 +669,36 @@ class ConnectorSafeOutputService(SafeOutputService):
             )
         return call_id
 
+    def _reject_noop_relevance_reply(self, *, run_id: str, role_id: str) -> None:
+        for check in self.adapter.db.list_relevance_checks_for_run(run_id, role_id):
+            if check.get("noop") is True:
+                raise ValueError(
+                    "role recorded a no-op relevance decision in this run; it must not post a Teams reply"
+                )
+
 
 def _required_string(raw: dict[str, Any], key: str) -> str:
     value = raw.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"`{key}` must be a non-empty string")
+    return value
+
+
+def _float_field(raw: dict[str, Any], key: str) -> float:
+    value = raw.get(key)
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"`{key}` must be a number") from exc
+    if parsed < 0 or parsed > 1:
+        raise ValueError(f"`{key}` must be between 0 and 1")
+    return parsed
+
+
+def _bool_field(raw: dict[str, Any], key: str, *, default: bool) -> bool:
+    value = raw.get(key, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"`{key}` must be a boolean")
     return value
 
 

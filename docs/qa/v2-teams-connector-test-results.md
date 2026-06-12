@@ -1247,3 +1247,167 @@ Story 8 may begin for the local Teams connector progression.
   scope/visibility probe all pass. Feature, epic, incident, focused-work, and
   private-channel binding behavior is acceptable for the local connector
   scope. Story 8 may begin. | accepted 2026-06-12
+
+# V2 Teams Connector Story 8 QA Results
+
+Status: QA reviewed - pass with residual gap
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Story reviewed: Story 8 - Team-Wide Relevance Checks.
+
+Files inspected:
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_teams_connector_team_wide_relevance.py`
+- Story 1-7 connector regression tests
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+- `docs/engineering/v2-teams-connector-implementation-plan.md`
+- `docs/qa/v2-teams-connector-test-plan.md`
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Engineering changes and the new Story 8 test file. QA edited only this results file. |
+| `pytest -q -p no:cacheprovider tests\test_v2_teams_connector_team_wide_relevance.py` | Passed: 3 passed in 0.30s. |
+| `pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_team_wide_relevance.py` | Passed: 6 passed in 0.44s. |
+| `pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py` | Passed: 26 passed in 1.68s. |
+| `pytest -q -p no:cacheprovider` | Passed: 43 passed in 2.50s. |
+| In-memory duplicate/no-op probe through `LocalTeamsTestAdapter`, `ConnectorSafeOutputService`, and `status_snapshot()` | Passed for duplicate suppression and visibility: first route `team_wide_prompt`, duplicate replay `duplicate=True`, `conversation_events=1`, `role_assignments=3`, enabled assignment roles `engineering`, `product-manager`, and `qa-engineer`, and `relevance_checks=1`. Probe also exposed the residual gap that a later `status.reply` after a no-op relevance record is accepted and creates one delivery record. |
+
+## QA Decision
+
+Story 8 passes QA for the implemented local Teams connector scope.
+
+The implementation creates team-wide relevance assignments for every enabled
+role, skips disabled role identities, persists `relevance.record` decisions
+with score, threshold, decision, reason, no-op, exception, safe-output, and
+delivery refs, keeps no-op relevance records silent in the tested flow, and
+keeps role-to-role follow-up in runtime safe-output (`consult.request`) rather
+than Teams delivery.
+
+This is not complete connector release approval. The actual relevance evaluator
+and prompt behavior remain outside this slice, and no real Teams tenant
+evidence exists yet.
+
+## Acceptance Assessment
+
+| Story 8 expectation | QA result |
+| --- | --- |
+| Team-wide trigger creates a `team_wide_prompt` record | Pass. Focused tests and probe show route type `team_wide_prompt` on the conversation event. |
+| Every enabled role receives relevance work | Pass. Product Manager, Engineering, and QA Engineer receive `team_wide_relevance_check` assignments; disabled Release Manager is skipped. |
+| Relevance records persist score, threshold, decision, reason, no-op, exception reason, safe-output ref, and delivery ref | Pass. `relevance_checks` are exposed in `status_snapshot()`, and focused tests cover no-op, material, and exception records. |
+| Non-relevant roles stay quiet | Pass for the compliant tested flow: recording `decision=not_relevant` with `noop=true` creates no delivery record. |
+| Material or justified-exception roles may reply with delivery evidence | Pass for local adapter evidence. Material input can pair with `status.reply`; exception records can store a delivery ref and exception reason. |
+| Role-to-role follow-up uses runtime consult, not Teams transport | Pass. The focused regression records `consult.request` and creates zero delivery records. |
+| Duplicate team-wide trigger does not duplicate side effects | Pass in extra probe: duplicate replay reused the receipt and left one conversation event plus one assignment per enabled role. |
+
+## Residual Gaps
+
+- No connector-side guard currently prevents a role from recording
+  `not_relevant`/`noop=true` and then later emitting `status.reply` to the same
+  conversation. The quiet behavior is proven for the intended flow, but not
+  enforced as a hard channel-noise invariant.
+- The actual relevance scoring worker/prompt contract is still not
+  implemented; Story 8 provides the runtime record and persistence surface.
+- Threshold selection is currently the local adapter default `0.6`; project
+  configuration and evaluator calibration remain future work.
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra, permission, throttling, or real
+  team-wide mention evidence exists yet.
+- `consult.request` is represented as runtime safe-output evidence in this
+  slice; richer consult routing/claiming remains runtime work outside this
+  local connector story.
+
+## Story 9 Gate
+
+Story 9 may begin for the local Teams connector progression.
+
+Before the complete Teams connector release, Engineering should either add a
+runtime/connector guard or explicitly document the prompt/runtime enforcement
+boundary for suppressing `status.reply` after a no-op relevance decision.
+
+## Review Log
+
+- RL-014 | qa-engineer | Story 8 QA | Focused team-wide relevance tests,
+  safe-output tests, Story 1-8 connector regression tests, full pytest, and an
+  extra duplicate/no-op probe pass for the local connector scope. Story 9 may
+  begin, with a tracked residual gap that no-op silence is not yet a hard
+  connector-side guard against later `status.reply` noise. | accepted
+  2026-06-12
+
+# V2 Teams Connector Story 8 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 8 rework for the prior residual no-op relevance gap:
+
+- a run that records `decision=not_relevant` with `noop=true` must not later
+  post a Teams `status.reply`
+- the rejected no-op reply must not create a delivery record
+- material and exception relevance replies must remain allowed
+- runtime consult follow-up must remain runtime-only and create no Teams
+  delivery
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Engineering changes. QA edited only this results file. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_team_wide_relevance.py` | Passed: 4 passed in 0.39s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_team_wide_relevance.py` | Passed: 7 passed in 0.54s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py` | Passed: 27 passed in 1.74s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 44 passed in 2.60s. |
+
+## Retest Decision
+
+Story 8 now passes QA without the prior no-op residual gap for the implemented
+local Teams connector scope.
+
+The focused regression `test_noop_relevance_decision_cannot_post_teams_reply_in_same_run`
+proves that after a `not_relevant`/`noop=true` relevance record, a same-run
+`status.reply` is rejected with a no-op relevance error, the safe-output count
+stays at the original relevance record, and `delivery_records` remains zero.
+The same focused file still proves material reply delivery evidence, exception
+delivery references, and runtime `consult.request` follow-up with zero Teams
+delivery.
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra, permission, throttling, or real
+  team-wide mention evidence exists yet.
+- The actual relevance scoring worker/prompt contract is still outside this
+  slice; Story 8 covers persistence, guardrails, and connector behavior.
+- Threshold calibration and project-configurable relevance policy remain future
+  work.
+
+## Story 9 Gate
+
+Story 9 may begin for the local Teams connector progression.
+
+## Review Log
+
+- RL-015 | qa-engineer | Story 8 QA retest | Focused Story 8 tests,
+  safe-output regression tests, Story 1-8 connector regression tests, and full
+  pytest pass. The prior no-op residual gap is closed: same-run no-op
+  relevance decisions cannot post Teams `status.reply` or create delivery
+  records. Story 9 may begin for the local connector scope. | accepted
+  2026-06-12

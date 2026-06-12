@@ -301,6 +301,23 @@ class V2Database:
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS relevance_checks (
+                  relevance_check_id TEXT PRIMARY KEY,
+                  conversation_event_id TEXT NOT NULL,
+                  role_id TEXT NOT NULL,
+                  score REAL NOT NULL,
+                  threshold REAL NOT NULL,
+                  decision TEXT NOT NULL,
+                  reason TEXT NOT NULL,
+                  noop INTEGER NOT NULL,
+                  exception_reason TEXT,
+                  safe_output_ref TEXT,
+                  delivery_ref TEXT,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(conversation_event_id, role_id)
+                );
                 """
             )
             self.connection.execute(
@@ -822,6 +839,69 @@ class V2Database:
                 {"role_instance_id": role_instance_id},
             )
 
+    def record_relevance_check(
+        self,
+        *,
+        relevance_check_id: str,
+        conversation_event_id: str,
+        role_id: str,
+        score: float,
+        threshold: float,
+        decision: str,
+        reason: str,
+        noop: bool,
+        exception_reason: str | None = None,
+        safe_output_ref: str | None = None,
+        delivery_ref: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO relevance_checks(
+                  relevance_check_id, conversation_event_id, role_id, score, threshold,
+                  decision, reason, noop, exception_reason, safe_output_ref, delivery_ref
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(conversation_event_id, role_id) DO UPDATE SET
+                  score = excluded.score,
+                  threshold = excluded.threshold,
+                  decision = excluded.decision,
+                  reason = excluded.reason,
+                  noop = excluded.noop,
+                  exception_reason = excluded.exception_reason,
+                  safe_output_ref = excluded.safe_output_ref,
+                  delivery_ref = excluded.delivery_ref,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    relevance_check_id,
+                    conversation_event_id,
+                    role_id,
+                    score,
+                    threshold,
+                    decision,
+                    reason,
+                    1 if noop else 0,
+                    exception_reason,
+                    safe_output_ref,
+                    delivery_ref,
+                ),
+            )
+            self.append_event(
+                "connector.relevance_recorded",
+                "conversation_event",
+                conversation_event_id,
+                {
+                    "role_id": role_id,
+                    "score": score,
+                    "threshold": threshold,
+                    "decision": decision,
+                    "noop": noop,
+                    "safe_output_ref": safe_output_ref,
+                    "delivery_ref": delivery_ref,
+                },
+            )
+
     def promote_queue_item(
         self,
         *,
@@ -1311,6 +1391,31 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_relevance_checks(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM relevance_checks
+            ORDER BY updated_at DESC, relevance_check_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def list_relevance_checks_for_run(self, run_id: str, role_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT relevance_checks.*
+            FROM relevance_checks
+            JOIN safe_output_calls
+              ON safe_output_calls.call_id = relevance_checks.safe_output_ref
+            WHERE safe_output_calls.run_id = ?
+              AND relevance_checks.role_id = ?
+            ORDER BY relevance_checks.updated_at DESC, relevance_checks.relevance_check_id
+            """,
+            (run_id, role_id),
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def status_snapshot(self) -> dict[str, Any]:
         work_items = self.list_work_items()
         queue_items = self.list_queue_items()
@@ -1325,6 +1430,7 @@ class V2Database:
         delivery_attempts = self.list_delivery_attempts()
         connector_attention_items = self.list_connector_attention_items()
         role_assignments = self.list_role_assignments()
+        relevance_checks = self.list_relevance_checks()
         safe_output_calls = self.list_safe_output_calls()
         redacted_safe_output_calls = _redact_private_safe_output_calls(safe_output_calls)
         states: dict[str, int] = {}
@@ -1358,6 +1464,7 @@ class V2Database:
                 "delivery_attempts": len(delivery_attempts),
                 "connector_attention_items": len(connector_attention_items),
                 "role_assignments": len(role_assignments),
+                "relevance_checks": len(relevance_checks),
             },
             "work_item_states": states,
             "queue_statuses": queue_statuses,
@@ -1378,6 +1485,7 @@ class V2Database:
             "delivery_attempts": delivery_attempts,
             "connector_attention_items": connector_attention_items,
             "role_assignments": role_assignments,
+            "relevance_checks": relevance_checks,
             "recent_events": self.list_events()[-50:],
         }
 
@@ -1388,8 +1496,9 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         if isinstance(result.get(key), str):
             result[key.removesuffix("_json")] = json.loads(result[key])
             del result[key]
-    if "retryable" in result and result["retryable"] is not None:
-        result["retryable"] = bool(result["retryable"])
+    for key in ("retryable", "noop"):
+        if key in result and result[key] is not None:
+            result[key] = bool(result[key])
     return result
 
 

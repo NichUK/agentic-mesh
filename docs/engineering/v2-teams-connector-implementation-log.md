@@ -636,6 +636,91 @@ Story 8 - Team-Wide Relevance Checks.
 Do not begin Story 8 until QA has reviewed Story 7 and any required rework has
 passed retest.
 
+## Story 8 - Team-Wide Relevance Checks
+
+Status: engineering implemented; awaiting QA review
+
+### Objective
+
+Make `@all-agents` channel requests quiet by default: every enabled role gets a
+lightweight relevance assignment, each role records its relevance decision, and
+only materially relevant roles or justified exceptions post human-visible
+Teams replies.
+
+### Files Changed
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_teams_connector_team_wide_relevance.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+### Implementation Notes
+
+- Team-wide trigger messages now create a `team_wide_prompt` conversation event.
+- Each enabled configured role receives a `team_wide_relevance_check`
+  assignment; disabled role identities are not assigned.
+- Relevance assignments include conversation, source receipt, thread, channel
+  scope, and threshold metadata.
+- Added `relevance.record` as a common safe-output tool.
+- Added `relevance_checks` records to persist score, threshold, decision,
+  reason, no-op, exception reason, safe-output ref, and delivery ref.
+- Relevance checks are idempotent by conversation event and role.
+- `status_snapshot()` exposes relevance checks and count summaries.
+- No-op relevance decisions create no delivery records.
+- A run that records a no-op relevance decision is blocked from later posting a
+  `status.reply` Teams delivery in the same run.
+- Material and exception decisions can be paired with `status.reply` delivery
+  evidence, while role-to-role follow-up remains a runtime `consult.request`
+  with no Teams delivery.
+
+### Tests Run
+
+Commands:
+
+```powershell
+pytest -q tests\test_v2_teams_connector_team_wide_relevance.py
+pytest -q tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_team_wide_relevance.py
+pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py
+pytest -q
+```
+
+Results:
+
+```text
+4 passed
+7 passed
+27 passed
+44 passed
+```
+
+Focused coverage added:
+
+- team-wide trigger creates relevance assignments for all enabled roles
+- disabled role identities do not receive relevance assignments
+- relevance checks record score, threshold, decision, reason, no-op, exception
+  reason, safe-output refs, and delivery refs
+- no-op decisions remain silent
+- no-op decisions are enforced against later same-run Teams replies
+- material input can produce a Teams reply with delivery evidence
+- below-threshold exception can record a justified exception
+- role-to-role follow-up uses `consult.request` and creates no Teams delivery
+
+### Known Limitations
+
+- The actual relevance scoring worker/prompt is not implemented in this story;
+  this story provides the runtime contract and persistence surface.
+- Threshold selection is currently a local adapter default of `0.6`.
+- Real Teams tenant behavior for team-wide messages remains real-connector
+  scope.
+
+### Next Engineering Story
+
+Story 9 - Proactive Work Proposals And Conversation Promotion.
+
+Do not begin Story 9 until QA has reviewed Story 8 and any required rework has
+passed retest.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
@@ -680,4 +765,12 @@ passed retest.
 - RL-012 | engineering | implementation | Story 7 | Implemented focused channel
   bindings, scoped conversation/assignment metadata, private-channel explicit
   binding enforcement, and focus-channel regression tests. | awaiting QA review
+  2026-06-12
+- RL-013 | engineering | implementation | Story 8 | Implemented team-wide
+  relevance assignments, `relevance.record`, relevance-check persistence, quiet
+  no-op behavior, and runtime consult/no-Teams follow-up regression tests. |
+  awaiting QA review 2026-06-12
+- RL-014 | engineering | QA hardening | Story 8 | Added enforcement that a
+  same-run no-op relevance decision cannot later post a Teams `status.reply`,
+  closing the residual channel-noise gap found by QA. | awaiting QA retest
   2026-06-12

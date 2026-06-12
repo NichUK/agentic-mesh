@@ -35,6 +35,7 @@ COMMON_TOOLS: frozenset[str] = frozenset(
         "memory.propose_update",
         "risk.register",
         "decision.record",
+        "relevance.record",
         "report.blocked",
         "report.incomplete",
     }
@@ -85,6 +86,7 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "memory.propose_update": ("summary", "provenance_ref"),
     "risk.register": ("risk", "impact"),
     "decision.record": ("decision", "rationale"),
+    "relevance.record": ("conversation_event_id", "score", "threshold", "decision", "reason"),
     "report.blocked": ("reason", "owner", "next_action"),
     "report.incomplete": ("reason",),
     "product.mark_sponsor_ready": ("work_item_id", "summary"),
@@ -103,6 +105,10 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "work_item.supersede": ("work_item_id", "reason", "replacement_ref"),
     "work_item.reopen": ("work_item_id", "target_role", "reason"),
     "work_item.override_blocker": ("work_item_id", "reason"),
+}
+
+NUMERIC_FIELDS: dict[str, tuple[str, ...]] = {
+    "relevance.record": ("score", "threshold"),
 }
 
 
@@ -154,11 +160,17 @@ class SafeOutputService:
 def validate_payload(tool_name: str, payload: dict[str, Any]) -> None:
     if tool_name not in REQUIRED_FIELDS:
         raise SafeOutputError(f"unsupported safe-output tool `{tool_name}`")
-    missing = [
-        field
-        for field in REQUIRED_FIELDS[tool_name]
-        if not isinstance(payload.get(field), str) or not payload[field].strip()
-    ]
+    numeric_fields = set(NUMERIC_FIELDS.get(tool_name, ()))
+    missing = []
+    for field in REQUIRED_FIELDS[tool_name]:
+        value = payload.get(field)
+        if field in numeric_fields:
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                missing.append(field)
+        elif not isinstance(value, str) or not value.strip():
+            missing.append(field)
     if missing:
         raise SafeOutputError(
             f"`{tool_name}` missing required fields: {', '.join(missing)}"
