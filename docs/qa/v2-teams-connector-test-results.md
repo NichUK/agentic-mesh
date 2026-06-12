@@ -1166,3 +1166,84 @@ Story 7 may begin for the local Teams connector progression.
   disabled direct-message misassignment, display-name-only direct-message
   fallback, and disabled outbound delivery blockers are fixed. Story 7 may
   begin for the local connector scope. | accepted 2026-06-12
+
+# V2 Teams Connector Story 7 QA Results
+
+Status: QA reviewed - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Scope Reviewed
+
+Story reviewed: Story 7 - Feature, Epic, Incident, And Focused-Work Channels.
+
+Files inspected:
+
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_focus_channels.py`
+- Story 1-6 connector regression tests
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Engineering changes in `docs/engineering/v2-teams-connector-implementation-log.md`, `src/agentic_mesh_v2/connectors.py`, and untracked `tests/test_v2_teams_connector_focus_channels.py`. QA edited only this results file. |
+| `pytest -q tests\test_v2_teams_connector_focus_channels.py` | Passed: 4 passed in 0.24s. |
+| `pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py` | Passed: 23 passed in 1.40s. |
+| `pytest -q` | Passed: 40 passed in 2.15s. |
+| `python -m agentic_mesh_v2.cli --db .tmp\v2-story7-qa.sqlite3 init-db` then `python -m agentic_mesh_v2.cli --db .tmp\v2-story7-qa.sqlite3 status-json` | Passed; migration/status smoke returned an empty status snapshot with connector counts present. |
+| In-memory Story 7 scope/visibility probe through `ConnectorConfig`, `LocalTeamsTestAdapter`, and `status_snapshot()` | Passed. Feature, epic, incident, focused-work, and default project channel events carried expected `channel_scope`; focused-work mention created one role assignment with `work_scope=focus-abc`; unbound private channel created one `unbound_private_channel` attention item and no extra assignment. Probe counts included `conversation_events=6`, `role_assignments=1`, `connector_attention_items=1`, `queue_items=0`, and `work_items=0`. |
+
+## QA Decision
+
+Story 7 passes QA for the implemented local Teams connector scope.
+
+The implementation supports explicit channel bindings for feature, epic,
+incident, and focused-work contexts; records scoped channel metadata on
+conversation events; carries the same scope into role-mention assignments; keeps
+focused-channel mentions and threads on the default project-channel routing
+rules; exposes configured channel bindings through connector health; and blocks
+unbound private-channel routing by creating operator attention without creating
+role assignments.
+
+## Acceptance Assessment
+
+| Story 7 expectation | QA result |
+| --- | --- |
+| Feature, epic, incident, and focused-work channel bindings are accepted | Pass. Config parsing accepts the allowed scope types, and the extra probe exercised all four. |
+| Scoped channel context is visible in conversation events | Pass. Focused tests and probe show `channel_scope` metadata including `scope_type`, `visibility`, `display_name`, and `work_scope`. |
+| Focus-channel role mentions follow default channel assignment rules | Pass. Focused-channel mention creates `channel_role_mention` assignment without queue/work-item inference. |
+| Focus-channel thread bindings follow default channel thread rules | Pass. Focused tests verify source thread binding for role mentions; probe also created focused/default thread bindings. |
+| Channel binding visibility and work scope remain visible | Pass. Tests and probe verified project, restricted, and private visibility plus work-scope propagation into events and assignments. |
+| Private channels require explicit binding | Pass. Bound private incident channel routed normally; unbound private channel produced `unbound_private_channel` attention and no role assignment. |
+| Regression impact on Stories 1-6 | Pass. Story 1-7 connector regression tests and full pytest suite remained green. |
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Graph private-channel membership, Bot Framework permission, consent,
+  or real channel installation evidence exists yet.
+- Runtime creation or discovery of Teams channels is intentionally out of scope;
+  Story 7 depends on explicit configured bindings.
+- Focus-channel metadata is exposed through JSON/status read models, but richer
+  dashboard presentation remains future UI scope.
+- Current tests cover invalid default-channel duplication and bad scope. Bad
+  visibility, duplicate focus-channel refs, and non-list binding shape are
+  enforced in code but not each represented by a named focused test.
+
+## Story 8 Gate
+
+Story 8 may begin for the local Teams connector progression.
+
+## Review Log
+
+- RL-013 | qa-engineer | Story 7 QA | Focused channel tests, Story 1-7
+  connector regression tests, full pytest, CLI status smoke, and an extra
+  scope/visibility probe all pass. Feature, epic, incident, focused-work, and
+  private-channel binding behavior is acceptable for the local connector
+  scope. Story 8 may begin. | accepted 2026-06-12

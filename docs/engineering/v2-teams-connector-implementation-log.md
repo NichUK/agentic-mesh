@@ -558,6 +558,84 @@ Story 7 - Feature, Epic, Incident, And Focused-Work Channels.
 Do not begin Story 7 until QA has reviewed Story 6 and any required rework has
 passed retest.
 
+## Story 7 - Feature, Epic, Incident, And Focused-Work Channels
+
+Status: engineering implemented; awaiting QA review
+
+### Objective
+
+Allow project teams to bind additional Teams channels to feature, epic,
+incident, or focused-work scopes so conversations and role mentions in those
+channels carry the right project/work context without using Teams for
+agent-to-agent transport.
+
+### Files Changed
+
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_teams_connector_focus_channels.py`
+- `docs/engineering/v2-teams-connector-implementation-log.md`
+
+### Implementation Notes
+
+- Added `ChannelBinding` config objects with `channel_ref`, `scope_type`,
+  `display_name`, `visibility`, optional `work_scope`, and `private`.
+- Supported focus channel scope types are `feature`, `epic`, `incident`, and
+  `focused_work`.
+- Connector health/status now exposes configured channel bindings for dashboard
+  and status views.
+- Focus-channel messages are captured as project conversation events with
+  `channel_scope` metadata.
+- Role mentions inside focus channels create the same role assignments and
+  thread bindings as default project channel mentions, with the channel scope
+  copied into assignment payloads.
+- Private channel events require an explicit channel binding; unbound private
+  channels create operator attention and do not create role assignments.
+- Channel binding config rejects duplicate/default channel refs and unknown
+  scope/visibility values.
+
+### Tests Run
+
+Commands:
+
+```powershell
+pytest -q tests\test_v2_teams_connector_focus_channels.py
+pytest -q tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py
+pytest -q
+```
+
+Results:
+
+```text
+4 passed
+23 passed
+40 passed
+```
+
+Focused coverage added:
+
+- feature-channel context is captured with channel scope metadata
+- focus-channel role mentions and threads follow default routing rules
+- assignment payloads include focused channel scope and work scope
+- explicitly bound private channels can route role mentions
+- unbound private channels create attention and no assignment
+- invalid channel binding config is rejected
+
+### Known Limitations
+
+- Runtime channel creation is intentionally not implemented; manual channel
+  binding is the v2 local/open-source path for this story.
+- Real Teams private-channel membership and permission validation remain
+  real-connector/security-release scope.
+- Dashboard rendering of channel scope beyond JSON/status read models remains a
+  later UI slice.
+
+### Next Engineering Story
+
+Story 8 - Team-Wide Relevance Checks.
+
+Do not begin Story 8 until QA has reviewed Story 7 and any required rework has
+passed retest.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
@@ -598,4 +676,8 @@ passed retest.
 - RL-011 | engineering | QA rework | Story 6 | Removed unsafe direct-message
   fallback when target hints do not resolve to enabled configured identities and
   blocked outbound delivery from disabled role identities. | awaiting QA retest
+  2026-06-12
+- RL-012 | engineering | implementation | Story 7 | Implemented focused channel
+  bindings, scoped conversation/assignment metadata, private-channel explicit
+  binding enforcement, and focus-channel regression tests. | awaiting QA review
   2026-06-12

@@ -35,6 +35,16 @@ class RoleIdentity:
 
 
 @dataclass(frozen=True)
+class ChannelBinding:
+    channel_ref: str
+    scope_type: str
+    display_name: str
+    visibility: str
+    work_scope: str | None
+    private: bool
+
+
+@dataclass(frozen=True)
 class ConnectorConfig:
     connector_id: str
     project_id: str
@@ -44,6 +54,7 @@ class ConnectorConfig:
     default_project_channel_ref: str
     external_base_url: str
     role_identities: dict[str, RoleIdentity]
+    channel_bindings: dict[str, ChannelBinding]
     human_authorities: dict[str, list[str]]
     retention: dict[str, int]
     team_wide_trigger: str
@@ -71,6 +82,8 @@ class ConnectorConfig:
         role_identities = _role_identity_map(raw["role_identities"])
         if not role_identities:
             raise ValueError("connector config must define at least one role identity")
+        default_channel_ref = _required_string(raw, "default_project_channel_ref")
+        channel_bindings = _channel_binding_map(raw.get("channel_bindings", ()), default_channel_ref=default_channel_ref)
         retention = _positive_int_map(raw["retention"], "retention")
         unknown_retention = sorted(set(retention) - VALID_RETENTION_KEYS)
         if unknown_retention:
@@ -81,9 +94,10 @@ class ConnectorConfig:
             connector_type=_required_string(raw, "connector_type"),
             display_name=_required_string(raw, "display_name"),
             project_team_ref=_required_string(raw, "project_team_ref"),
-            default_project_channel_ref=_required_string(raw, "default_project_channel_ref"),
+            default_project_channel_ref=default_channel_ref,
             external_base_url=_required_string(raw, "external_base_url"),
             role_identities=role_identities,
+            channel_bindings=channel_bindings,
             human_authorities=_authority_map(raw["human_authorities"]),
             retention=retention,
             team_wide_trigger=_required_string(raw, "team_wide_trigger"),
@@ -117,6 +131,7 @@ class LocalTeamsTestAdapter:
                 "project_team_ref": self.config.project_team_ref,
                 "default_project_channel_ref": self.config.default_project_channel_ref,
                 "identity_models": sorted({identity.identity_model for identity in self.config.role_identities.values()}),
+                "channel_bindings": [binding.__dict__ for binding in self.config.channel_bindings.values()],
             },
         )
         for role_id, identity in self.config.role_identities.items():
@@ -151,9 +166,13 @@ class LocalTeamsTestAdapter:
         external_conversation_ref = _required_string(event, "conversation_ref")
         sender_ref = _required_string(event, "sender_ref")
         source_type = _required_string(event, "source_type")
+        channel_binding = self._channel_binding(external_conversation_ref, source_type=source_type)
+        unbound_private_channel = source_type == "private_channel" and channel_binding is None
         body = str(event.get("body", ""))
-        mentioned_roles = self._mentioned_roles(event)
+        mentioned_roles = () if unbound_private_channel else self._mentioned_roles(event)
         route_type = self._route_type(source_type=source_type, mentioned_roles=mentioned_roles, body=body)
+        if unbound_private_channel:
+            route_type = "unbound_private_channel"
         idempotency_key = self._idempotency_key(event)
         receipt_id = f"receipt-{_stable_digest(idempotency_key)}"
         receipt = self.db.record_external_event_receipt(
@@ -232,6 +251,7 @@ class LocalTeamsTestAdapter:
                 "message_id": message_id,
                 "mentioned_roles": list(mentioned_roles),
                 "route_type": route_type,
+                "channel_scope": channel_binding.__dict__ if channel_binding else None,
             },
         )
         if route_type == "role_direct_message":
@@ -251,6 +271,7 @@ class LocalTeamsTestAdapter:
                         "conversation_id": conversation_id,
                         "receipt_id": receipt.receipt_id,
                         "message_id": message_id,
+                        "channel_scope": channel_binding.__dict__ if channel_binding else None,
                     },
                 )
             else:
@@ -283,15 +304,20 @@ class LocalTeamsTestAdapter:
                         "receipt_id": receipt.receipt_id,
                         "message_id": message_id,
                         "thread_ref": thread_ref,
+                        "channel_scope": channel_binding.__dict__ if channel_binding else None,
                     },
                 )
-        if route_type in {"unknown_role_mention", "disabled_role_identity"}:
+        if route_type in {"unknown_role_mention", "disabled_role_identity", "unbound_private_channel"}:
             reason_class = "unknown_role_mention" if route_type == "unknown_role_mention" else "disabled_role_identity"
+            if route_type == "unbound_private_channel":
+                reason_class = "unbound_private_channel"
             next_action = (
                 "Map the Teams mention to a configured Agentic Mesh role or correct the message."
                 if route_type == "unknown_role_mention"
                 else "Enable the configured role identity or route the message to an active role."
             )
+            if route_type == "unbound_private_channel":
+                next_action = "Add an explicit private channel binding before using this channel for project context."
             self.db.create_connector_attention_item(
                 attention_id=f"attention-{_stable_digest(f'{receipt.receipt_id}:{reason_class}')}",
                 connector_id=connector_id,
@@ -481,6 +507,25 @@ class LocalTeamsTestAdapter:
             return "role_mention"
         return "project_channel_context"
 
+    def _channel_binding(self, conversation_ref: str, *, source_type: str) -> ChannelBinding | None:
+        if source_type == "dm":
+            return None
+        binding = self.config.channel_bindings.get(conversation_ref)
+        if source_type == "private_channel" and binding is None:
+            return None
+        if binding is not None:
+            return binding
+        if conversation_ref == self.config.default_project_channel_ref:
+            return ChannelBinding(
+                channel_ref=conversation_ref,
+                scope_type="project",
+                display_name="Project",
+                visibility="project",
+                work_scope=None,
+                private=False,
+            )
+        return None
+
     def _role_for_direct_message(self, event: dict[str, Any]) -> str | None:
         role_id = event.get("target_role_id")
         if isinstance(role_id, str) and self._role_enabled(role_id):
@@ -611,14 +656,37 @@ def _role_identity_map(value: object) -> dict[str, RoleIdentity]:
     return result
 
 
-def _string_map(value: object, name: str) -> dict[str, str]:
-    if not isinstance(value, dict):
-        raise ValueError(f"`{name}` must be a mapping")
-    result: dict[str, str] = {}
-    for key, item in value.items():
-        if not isinstance(key, str) or not key.strip() or not isinstance(item, str) or not item.strip():
-            raise ValueError(f"`{name}` must map non-empty strings to non-empty strings")
-        result[key] = item
+def _channel_binding_map(value: object, *, default_channel_ref: str) -> dict[str, ChannelBinding]:
+    if value in (None, ()):
+        return {}
+    if not isinstance(value, list):
+        raise ValueError("`channel_bindings` must be a list")
+    result: dict[str, ChannelBinding] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("`channel_bindings` entries must be objects")
+        channel_ref = _required_string(item, "channel_ref")
+        if channel_ref == default_channel_ref:
+            raise ValueError("focused channel bindings must not duplicate the default project channel")
+        if channel_ref in result:
+            raise ValueError("channel binding channel_ref values must be unique")
+        scope_type = _required_string(item, "scope_type")
+        if scope_type not in {"feature", "epic", "incident", "focused_work"}:
+            raise ValueError(f"unknown channel binding scope_type `{scope_type}`")
+        visibility = _required_string(item, "visibility")
+        if visibility not in {"project", "restricted", "private"}:
+            raise ValueError(f"unknown channel binding visibility `{visibility}`")
+        private = item.get("private", visibility == "private")
+        if not isinstance(private, bool):
+            raise ValueError("channel binding `private` must be a boolean")
+        result[channel_ref] = ChannelBinding(
+            channel_ref=channel_ref,
+            scope_type=scope_type,
+            display_name=_required_string(item, "display_name"),
+            visibility=visibility,
+            work_scope=str(item["work_scope"]) if item.get("work_scope") is not None else None,
+            private=private,
+        )
     return result
 
 
