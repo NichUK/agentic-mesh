@@ -169,6 +169,33 @@
     {
       "accountability": "accountable_owner",
       "contributing_roles": [
+        "ux-designer",
+        "solution-architect",
+        "security-architect",
+        "engineering",
+        "qa-engineer",
+        "release-manager"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "product-manager",
+      "path": "docs/product/v2-teams-connector-product-definition.md",
+      "required_sections": [
+        "product_intent",
+        "target_users",
+        "user_outcomes",
+        "scope",
+        "non_goals",
+        "acceptance_criteria",
+        "success_signals",
+        "sponsor_review_questions"
+      ],
+      "review_on_contribution": true,
+      "status": "sponsor_review"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
         "business-analyst",
         "ux-designer",
         "solution-architect",
