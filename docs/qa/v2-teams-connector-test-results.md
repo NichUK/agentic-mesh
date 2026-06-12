@@ -1945,3 +1945,184 @@ regression pack, and full pytest suite all pass.
   classifications require durable refs or a target, and repeated raw expiry is
   idempotent without source-row hash drift. Story 11 is accepted for the local
   connector scope. | accepted 2026-06-12
+
+# V2 Teams Connector Story 12 QA Review
+
+Status: QA reviewed current tree - changes requested
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Review Scope
+
+Story 12 permission, consent, installation, and authority hardening:
+
+- startup validation for app installation, consent, team binding, channel
+  binding, role identity binding, member metadata access, and send capability
+- setup/runtime permission declarations and broad Graph approval gating
+- fail-closed receive, send, card send, and card response paths
+- people/group authority mapping and display-name rejection
+- inline credential-material rejection
+- outside-boundary event rejection
+
+QA reviewed only the Story 12 files named by the sponsor and appended this
+result file only. QA did not edit source.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 12 workspace changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_permissions.py` | Passed: 5 passed in 0.62s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py tests\test_v2_teams_connector_permissions.py` | Passed: 51 passed in 6.05s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 65 passed in 6.49s. |
+| In-memory configured-human participant probe after the install-loop fix | Passed: install persisted `aad-nicholas` as a human connector participant with `release_approver`; `_authority_for_human("aad-nicholas")` returned `["release_approver"]`; `_authority_for_human("Nicholas Overend")` returned `[]`. |
+| In-memory outside-boundary channel probe | Failed Story 12 boundary expectation: `conversation_ref="channel-outside-project"` with `source_type="channel"` produced `route_type=project_channel_context`, `conversation_events=1`, `attention_items=0`, `body_preview="OUTSIDE_BOUNDARY_SENTINEL should not become project context"`, `channel_scope=None`, and no failed permission checks. |
+
+## Decision
+
+Changes requested before Story 12 QA acceptance.
+
+The focused Story 12 tests, connector regression pack, and full pytest suite are
+green. The current tree also fixes the local install refactor issue where
+configured human participants were not persisted. However, one Story 12
+boundary guardrail remains incomplete: a normal Teams channel outside the
+configured project/default/channel bindings is accepted as project-visible
+context instead of being rejected or quarantined with actionable permission or
+binding attention.
+
+## Findings
+
+- P1 - outside-boundary channel events are accepted as project context.
+  `LocalTeamsTestAdapter.replay_event()` runs runtime capability checks before
+  resolving the channel binding, but `runtime_capabilities_for_receive()` falls
+  back to the generic `channel_binding` capability for any non-DM
+  `conversation_ref`. When `_channel_binding()` returns `None` for an unknown
+  normal channel, the adapter still records a project-visible
+  `project_channel_context` event with the raw body preview, no attention item,
+  and no failed permission check. Story 12 release/test notes require
+  outside-boundary event rejection. Relevant code:
+  `src/agentic_mesh_v2/connectors.py` lines 262-357 and
+  `src/agentic_mesh_v2/permissions.py` lines 152-156.
+
+## Passing Evidence
+
+| Story 12 expectation | QA result |
+| --- | --- |
+| Startup records app installation, tenant consent, team/channel binding, role identity, member metadata, and send capability checks | Pass. Focused test verifies startup permission check records and configured status. |
+| Missing or revoked permissions fail closed | Pass for covered receive/send/runtime capabilities. Focused tests raise `PermissionValidationFailure`, mark connector `permission_failed`, and create permission attention. |
+| Setup/admin permissions are documented separately from runtime permissions | Pass for structured local declarations with phase and consent type in `connector_permission_checks`. |
+| Broad Graph permissions require explicit approval | Pass. Missing approval for `ChannelMessage.Read.All` marks startup failed and creates actionable attention. |
+| Human authority maps from people/groups, not display names | Pass after current-tree install fix. Configured external refs authorize; display-name submissions do not. |
+| Inline connector credential material is rejected | Pass. Focused test rejects top-level and nested secret-like config keys. |
+| Status exposes permission check counts and records | Pass. `status_snapshot()` includes `connector_permission_checks` and count data. |
+| Outside-boundary events are rejected | Fail. Unknown normal channel events are accepted as project-visible context without attention or failed permission evidence. |
+
+## Required Rework
+
+- Reject or quarantine non-DM Teams channel events whose `conversation_ref` is
+  neither the configured default project channel nor an explicit channel
+  binding.
+- Record actionable connector attention and/or a failed permission/binding
+  check for the rejected outside-boundary event.
+- Add a regression test with a sentinel body proving the unknown channel does
+  not create project-visible conversation context, role assignments, work, or
+  default-status body exposure.
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra group, Teams app installation, or
+  resource-specific consent validation has been executed.
+- Tenant consent package, owner, rotation, and disablement evidence remain
+  required before a real Teams release.
+- Authority records are local configured people/groups, not live Entra group
+  expansion.
+
+## Review Log
+
+- RL-022 | qa-engineer | Story 12 QA | Focused Story 12 tests, Story 1-12
+  connector regression pack, full pytest, and extra authority/boundary probes
+  were run. Tests pass and the human participant install-loop fix is verified,
+  but QA requests changes because a channel outside configured project/channel
+  bindings is accepted as project-visible context without attention or failed
+  permission evidence. | changes requested 2026-06-12
+
+# V2 Teams Connector Story 12 QA Retest
+
+Status: QA retested current tree - pass
+
+Owner role: QA Engineer
+
+Date: 2026-06-12
+
+Branch: `codex/v2-runtime-reset`
+
+## Retest Scope
+
+Story 12 rework for the prior QA finding:
+
+- unbound non-DM Teams channels must fail closed before external receipt,
+  conversation event, role assignment, work, or context capture
+- unbound private channels must follow the same fail-closed behavior
+- rejected boundary events must record actionable connector permission
+  attention and failed runtime channel-binding permission checks
+- focused permissions/focus tests, Story 1-12 connector regressions, and full
+  pytest must continue to pass
+
+QA did not edit source. QA appended this result file only.
+
+## Commands Run
+
+| Command | Result |
+| --- | --- |
+| `git status --short --branch` | Passed; confirmed branch `codex/v2-runtime-reset` with existing Story 12 workspace changes. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_permissions.py tests\test_v2_teams_connector_focus_channels.py` | Passed: 10 passed in 1.02s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py tests\test_v2_teams_connector_permissions.py` | Passed: 52 passed in 6.00s. |
+| `$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider` | Passed: 66 passed in 6.72s. |
+| In-memory outside-boundary retest probe for normal and private channels | Passed: normal `channel-outside-project` and private `channel-private-unbound` both raised `PermissionValidationFailure`; `conversation_events=0`, `external_event_receipts=0`, `role_assignments=0`, `work_items=0`, `attention_items=2`, failed permission checks were recorded for both `channel_binding:*` capabilities, and boundary sentinels did not appear in default status output. |
+
+## Retest Decision
+
+Story 12 passes QA for the implemented local Teams connector scope.
+
+The prior P1 finding is closed. Unknown normal channels and unbound private
+channels now fail closed before receipt, conversation-event, assignment, work,
+or context capture. The local adapter records actionable
+`connector_permission_failed` attention and failed runtime
+`channel_binding:<conversation_ref>` permission-check evidence for the rejected
+event.
+
+## Acceptance Retest
+
+| Story 12 expectation | Retest result |
+| --- | --- |
+| Startup permission validation remains visible | Pass. Focused Story 12 tests remain green and status exposes connector permission checks. |
+| Missing or revoked permissions fail closed | Pass. Focused tests still cover revoked receive and missing send capability behavior. |
+| Broad Graph permissions require documented approval | Pass. Focused tests still fail startup without approval for broad Graph permissions. |
+| Human authority maps from people/groups, not display names | Pass. Focused tests still reject display-name authority and accept the configured external ref. |
+| Inline credential material is rejected | Pass. Focused tests still reject top-level and nested secret-like config keys. |
+| Outside-boundary normal channel events are rejected | Pass. Retest probe raises before receipt/context capture and records failed `channel_binding:channel-outside-project` evidence. |
+| Unbound private channel events fail closed | Pass. Focus-channel regression and retest probe raise before project context capture and record failed `channel_binding:channel-private-unbound` evidence. |
+
+## Residual Gaps
+
+- Coverage remains deterministic local-adapter coverage only; no real Teams
+  tenant, Bot Framework, Graph, Entra group, Teams app installation, or
+  resource-specific consent validation has been executed.
+- Tenant consent package, app owner, credential rotation, and disablement
+  evidence remain required before a real Teams release.
+- Authority records are local configured people/groups, not live Entra group
+  expansion.
+
+## Review Log
+
+- RL-023 | qa-engineer | Story 12 QA retest | Focused permissions/focus
+  tests, Story 1-12 connector regression pack, full pytest, and the prior
+  outside-boundary probe all pass. Prior P1 is closed: unbound normal and
+  private channels fail closed before receipt/context capture and record
+  permission attention plus failed runtime channel-binding checks. Story 12 is
+  accepted for the local connector scope. | accepted 2026-06-12

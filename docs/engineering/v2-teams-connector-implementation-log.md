@@ -967,6 +967,96 @@ Story 12 - Permission, Consent, Installation, And Authority Hardening.
 Do not begin Story 12 until QA has reviewed Story 11 and any required rework has
 passed retest.
 
+## Story 12 - Permission, Consent, Installation, And Authority Hardening
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Story 12 adds deterministic local-adapter security hardening for Teams
+permission, consent, installation, binding, authority, and credential-material
+guardrails. This remains local/runtime validation, but the model is designed so
+real Teams/Bot Framework/Graph checks can replace local status inputs later.
+
+### Implementation Notes
+
+- Added `agentic_mesh_v2.permissions` with:
+  - startup capability validation for app installation, tenant consent, team
+    binding, channel binding, role identity binding, member metadata access,
+    and send capability
+  - runtime capability checks for receive, send, card send, and card response
+    submission paths
+  - setup/runtime permission declarations with consent type, required flag,
+    broad Graph classification, approval reference, and rationale
+  - inline credential-material rejection for secret-like config keys
+- Added `connector_permission_checks` for auditable validation evidence.
+- Connector startup now records permission checks, marks connector status
+  `permission_failed` when validation fails, and creates actionable connector
+  attention items.
+- Receive, send, card send, and card-response submission fail closed when a
+  required runtime capability is missing or revoked.
+- Human response authority now resolves from stored connector participant
+  records, with optional `people` and `authority_groups` config support. Display
+  names and free-text mentions do not authorize privileged actions.
+- Broad Graph permissions such as `ChannelMessage.Read.All` require explicit
+  documented approval before startup health can pass.
+- Status snapshots expose connector permission-check counts and records.
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_teams_connector_permissions.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_foundation.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_project_channels.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_role_identities.py tests\test_v2_teams_connector_focus_channels.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_context_retention.py tests\test_v2_teams_connector_permissions.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+6 passed
+52 passed
+66 passed
+```
+
+### QA Rework
+
+QA found that an unbound non-default Teams channel could still be accepted as
+project-visible context with `channel_scope=None`.
+
+Rework completed:
+
+- Unbound non-DM channels now fail closed before receipt, conversation event,
+  assignment, or project-context capture.
+- The runtime records a failed `channel_binding:{conversation_ref}` permission
+  check and creates actionable `connector_permission_failed` attention.
+- Existing private-channel behavior was tightened to the same fail-closed model:
+  explicitly bound private channels work; unbound private channels are rejected
+  before context capture.
+- Added focused regression coverage proving outside-channel raw body text does
+  not appear in status snapshots after rejection.
+
+### Known Limitations
+
+- Permission values are deterministic local-adapter inputs; no real tenant,
+  Graph, Teams app installation, Bot Framework, Entra group, or resource-specific
+  consent validation has been executed.
+- Setup/admin permission documentation is represented in structured permission
+  declaration fields and test coverage, but the install guide/evidence package
+  for a real tenant remains later release work.
+- Authority records are local configured people/groups, not live Entra group
+  expansion.
+
+### Next Engineering Story
+
+Story 13 - Dashboard And Observability Completion.
+
+Do not begin Story 13 until QA has reviewed Story 12 and any required rework has
+passed retest.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | Story 1 | Implemented connector
@@ -1046,3 +1136,10 @@ passed retest.
   summaries from default status, required durable targets for durable
   classifications, and made raw expiry idempotent so original hashes remain
   authoritative. | awaiting QA retest 2026-06-12
+- RL-021 | engineering | implementation | Story 12 | Implemented connector
+  permission checks, fail-closed runtime capability enforcement, broad Graph
+  approval gating, people/group authority mapping, and inline credential
+  guardrails. | awaiting QA review 2026-06-12
+- RL-022 | engineering | QA rework | Story 12 | Rejected unbound Teams channel
+  ingress before project context capture and added regression coverage for
+  outside-boundary channel messages. | awaiting QA retest 2026-06-12

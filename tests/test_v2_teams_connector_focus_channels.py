@@ -5,6 +5,7 @@ import pytest
 from agentic_mesh_v2.connectors import ConnectorConfig
 from agentic_mesh_v2.connectors import LocalTeamsTestAdapter
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.permissions import PermissionValidationFailure
 
 
 def _raw_config() -> dict[str, object]:
@@ -142,26 +143,26 @@ def test_private_focus_channel_requires_explicit_binding(tmp_path: Path) -> None
             "mentioned_role_refs": ["@AM-Product Manager"],
         }
     )
-    unbound = adapter.replay_event(
-        {
-            "event_type": "message.created",
-            "message_id": "msg-private-unbound",
-            "conversation_ref": "channel-private-unbound",
-            "sender_ref": "nicholas",
-            "source_type": "private_channel",
-            "body": "@AM-QA Engineer please inspect this private area.",
-            "mentioned_role_refs": ["@AM-QA Engineer"],
-        }
-    )
+    with pytest.raises(PermissionValidationFailure, match="channel_binding:channel-private-unbound=missing"):
+        adapter.replay_event(
+            {
+                "event_type": "message.created",
+                "message_id": "msg-private-unbound",
+                "conversation_ref": "channel-private-unbound",
+                "sender_ref": "nicholas",
+                "source_type": "private_channel",
+                "body": "@AM-QA Engineer please inspect this private area.",
+                "mentioned_role_refs": ["@AM-QA Engineer"],
+            }
+        )
 
     snapshot = db.status_snapshot()
     assert bound.route_type == "role_mention"
-    assert unbound.route_type == "unbound_private_channel"
     assert snapshot["counts"]["role_assignments"] == 1
     assert snapshot["role_assignments"][0]["payload"]["channel_scope"]["visibility"] == "private"
     assert snapshot["role_assignments"][0]["payload"]["channel_scope"]["private"] is True
     assert snapshot["counts"]["connector_attention_items"] == 1
-    assert snapshot["connector_attention_items"][0]["reason_class"] == "unbound_private_channel"
+    assert snapshot["connector_attention_items"][0]["reason_class"] == "connector_permission_failed"
 
 
 def test_channel_binding_config_rejects_duplicate_default_and_bad_scope() -> None:

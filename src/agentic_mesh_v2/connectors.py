@@ -5,6 +5,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.permissions import ConnectorPermissionModel
+from agentic_mesh_v2.permissions import PermissionValidationFailure
+from agentic_mesh_v2.permissions import reject_inline_secrets
+from agentic_mesh_v2.permissions import runtime_capabilities_for_receive
+from agentic_mesh_v2.permissions import runtime_capabilities_for_response
+from agentic_mesh_v2.permissions import runtime_capabilities_for_send
+from agentic_mesh_v2.permissions import startup_capabilities_for
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.safe_outputs import ToolPolicy
@@ -59,9 +66,11 @@ class ConnectorConfig:
     human_authorities: dict[str, list[str]]
     retention: dict[str, int]
     team_wide_trigger: str
+    permission_model: ConnectorPermissionModel
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> ConnectorConfig:
+        reject_inline_secrets(raw)
         required = {
             "connector_id",
             "project_id",
@@ -71,7 +80,6 @@ class ConnectorConfig:
             "default_project_channel_ref",
             "external_base_url",
             "role_identities",
-            "human_authorities",
             "retention",
             "team_wide_trigger",
         }
@@ -99,9 +107,14 @@ class ConnectorConfig:
             external_base_url=_required_string(raw, "external_base_url"),
             role_identities=role_identities,
             channel_bindings=channel_bindings,
-            human_authorities=_authority_map(raw["human_authorities"]),
+            human_authorities=_authority_map(
+                raw.get("human_authorities", {}),
+                people=raw.get("people", ()),
+                authority_groups=raw.get("authority_groups", {}),
+            ),
             retention=retention,
             team_wide_trigger=_required_string(raw, "team_wide_trigger"),
+            permission_model=ConnectorPermissionModel.from_dict(raw.get("permission_validation")),
         )
 
 
@@ -127,12 +140,22 @@ class LocalTeamsTestAdapter:
             project_id=self.config.project_id,
             connector_type=self.config.connector_type,
             display_name=self.config.display_name,
-            status="configured",
+            status="validating",
+            health={},
+        )
+        permission_healthy = self.validate_startup_permissions()
+        self.db.upsert_connector(
+            connector_id=self.config.connector_id,
+            project_id=self.config.project_id,
+            connector_type=self.config.connector_type,
+            display_name=self.config.display_name,
+            status="configured" if permission_healthy else "permission_failed",
             health={
                 "project_team_ref": self.config.project_team_ref,
                 "default_project_channel_ref": self.config.default_project_channel_ref,
                 "identity_models": sorted({identity.identity_model for identity in self.config.role_identities.values()}),
                 "channel_bindings": [binding.__dict__ for binding in self.config.channel_bindings.values()],
+                "permission_health": "healthy" if permission_healthy else "failed",
             },
         )
         for role_id, identity in self.config.role_identities.items():
@@ -160,6 +183,75 @@ class LocalTeamsTestAdapter:
                 authority=authorities,
             )
 
+    def validate_startup_permissions(self) -> bool:
+        capabilities = startup_capabilities_for(
+            project_team_ref=self.config.project_team_ref,
+            default_project_channel_ref=self.config.default_project_channel_ref,
+            role_ids=sorted(self.config.role_identities),
+            channel_refs=sorted(self.config.channel_bindings),
+        )
+        healthy = True
+        for capability in capabilities:
+            status = self.config.permission_model.status_for(capability)
+            check_status = "pass" if status == "granted" else "fail"
+            healthy = healthy and check_status == "pass"
+            self.db.record_connector_permission_check(
+                check_id=f"permission-{_stable_digest(f'{self.config.connector_id}:startup:{capability}')}",
+                connector_id=self.config.connector_id,
+                check_type="startup",
+                capability=capability,
+                status=check_status,
+                required_status="granted",
+                actual_status=status,
+                phase="runtime" if capability in {"member_metadata_access", "send_capability"} else "setup",
+                next_action=_permission_next_action(capability, status),
+            )
+            if check_status == "fail":
+                self._permission_attention(
+                    capability=capability,
+                    status=status,
+                    source_ref=f"startup:{capability}",
+                    retryable=True,
+                )
+        for declaration in self.config.permission_model.declarations:
+            declaration_status = "pass"
+            next_action = "No action required."
+            if declaration.required and declaration.status != "granted":
+                declaration_status = "fail"
+                next_action = f"Restore or grant required {declaration.phase} permission `{declaration.permission}`."
+            if declaration.broad_graph and not declaration.approval_ref:
+                declaration_status = "fail"
+                next_action = (
+                    f"Document explicit security approval before using broad Graph permission "
+                    f"`{declaration.permission}`."
+                )
+            healthy = healthy and declaration_status == "pass"
+            self.db.record_connector_permission_check(
+                check_id=f"permission-{_stable_digest(f'{self.config.connector_id}:declaration:{declaration.permission}:{declaration.phase}')}",
+                connector_id=self.config.connector_id,
+                check_type="permission",
+                capability=declaration.permission,
+                status=declaration_status,
+                required_status="granted" if declaration.required else "documented",
+                actual_status=declaration.status,
+                phase=declaration.phase,
+                consent_type=declaration.consent_type,
+                permission_name=declaration.permission,
+                required=declaration.required,
+                broad_graph=declaration.broad_graph,
+                approval_ref=declaration.approval_ref,
+                next_action=next_action,
+            )
+            if declaration_status == "fail":
+                self._permission_attention(
+                    capability=declaration.permission,
+                    status=declaration.status,
+                    source_ref=f"permission:{declaration.permission}",
+                    retryable=True,
+                    next_action=next_action,
+                )
+        return healthy
+
     def replay_event(self, event: dict[str, Any]) -> ReplayedEvent:
         connector_id = self.config.connector_id
         event_type = _required_string(event, "event_type")
@@ -167,7 +259,37 @@ class LocalTeamsTestAdapter:
         external_conversation_ref = _required_string(event, "conversation_ref")
         sender_ref = _required_string(event, "sender_ref")
         source_type = _required_string(event, "source_type")
+        self._ensure_runtime_capabilities(
+            runtime_capabilities_for_receive(
+                source_type=source_type,
+                conversation_ref=external_conversation_ref,
+            ),
+            source_ref=message_id,
+        )
         channel_binding = self._channel_binding(external_conversation_ref, source_type=source_type)
+        if source_type != "dm" and channel_binding is None:
+            self._permission_attention(
+                capability=f"channel_binding:{external_conversation_ref}",
+                status="missing",
+                source_ref=message_id,
+                retryable=True,
+                next_action="Add an explicit project, focus, or private channel binding before ingesting this Teams channel.",
+            )
+            self.db.record_connector_permission_check(
+                check_id=f"permission-{_stable_digest(f'{self.config.connector_id}:runtime:channel_binding:{external_conversation_ref}:{message_id}')}",
+                connector_id=self.config.connector_id,
+                check_type="runtime",
+                capability=f"channel_binding:{external_conversation_ref}",
+                status="fail",
+                required_status="granted",
+                actual_status="missing",
+                phase="runtime",
+                next_action="Add an explicit project, focus, or private channel binding before ingesting this Teams channel.",
+            )
+            raise PermissionValidationFailure(
+                f"connector permission validation failed closed: channel_binding:{external_conversation_ref}=missing",
+                failures=[(f"channel_binding:{external_conversation_ref}", "missing")],
+            )
         unbound_private_channel = source_type == "private_channel" and channel_binding is None
         body = str(event.get("body", ""))
         mentioned_roles = () if unbound_private_channel else self._mentioned_roles(event)
@@ -191,7 +313,7 @@ class LocalTeamsTestAdapter:
             conversation_id=conversation_id,
             connector=connector_id,
             external_ref=external_conversation_ref,
-            sponsor_ref=sender_ref if "sponsor" in self.config.human_authorities.get(sender_ref, []) else None,
+            sponsor_ref=sender_ref if "sponsor" in self._authority_for_human(sender_ref) else None,
         )
         self.db.upsert_connector_participant(
             participant_id=f"{connector_id}:human:{sender_ref}",
@@ -199,7 +321,7 @@ class LocalTeamsTestAdapter:
             participant_type="human",
             display_name=sender_ref,
             external_ref=sender_ref,
-            authority=self.config.human_authorities.get(sender_ref, []),
+            authority=self._authority_for_human(sender_ref),
         )
         thread_ref = event.get("thread_ref")
         if thread_ref:
@@ -369,6 +491,10 @@ class LocalTeamsTestAdapter:
         fail: bool = False,
         outcome: str | None = None,
     ) -> str:
+        self._ensure_runtime_capabilities(
+            runtime_capabilities_for_send(),
+            source_ref=source_ref,
+        )
         if role_id is not None and not self._role_enabled(role_id):
             self.db.create_connector_attention_item(
                 attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{source_ref}:{role_id}:disabled-send')}",
@@ -609,6 +735,10 @@ class LocalTeamsTestAdapter:
         role_id: str | None = None,
         outcome: str = "sent",
     ) -> str:
+        self._ensure_runtime_capabilities(
+            runtime_capabilities_for_send(),
+            source_ref=source_ref,
+        )
         if role_id is not None and not self._role_enabled(role_id):
             self.db.create_connector_attention_item(
                 attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:{source_ref}:{role_id}:disabled-card-send')}",
@@ -652,6 +782,10 @@ class LocalTeamsTestAdapter:
         submission_id: str | None = None,
         update_outcome: str = "sent",
     ) -> str:
+        self._ensure_runtime_capabilities(
+            runtime_capabilities_for_response(),
+            source_ref=request_id,
+        )
         request = self.db.get_human_response_request(request_id)
         if request is None:
             self.db.create_connector_attention_item(
@@ -664,7 +798,7 @@ class LocalTeamsTestAdapter:
                 source_ref=request_id,
             )
             raise ValueError(f"unknown human response request `{request_id}`")
-        authority = self.config.human_authorities.get(responder_ref, [])
+        authority = self._authority_for_human(responder_ref)
         normalized_seed = str(response_value or "").strip().casefold().replace("-", "_").replace(" ", "_")
         resolved_submission_id = submission_id or f"human-response-submission-{_stable_digest(f'{request_id}:{responder_ref}:{normalized_seed}')}"
         try:
@@ -793,6 +927,64 @@ class LocalTeamsTestAdapter:
             safe_output_ref=call_id,
             delivery_ref=str(payload["delivery_ref"]) if payload.get("delivery_ref") else None,
         )
+
+    def _ensure_runtime_capabilities(self, capabilities: list[str], *, source_ref: str) -> None:
+        failures = self.config.permission_model.failing_capabilities(capabilities)
+        if not failures:
+            return
+        for capability, status in failures:
+            self.db.record_connector_permission_check(
+                check_id=f"permission-{_stable_digest(f'{self.config.connector_id}:runtime:{capability}:{source_ref}')}",
+                connector_id=self.config.connector_id,
+                check_type="runtime",
+                capability=capability,
+                status="fail",
+                required_status="granted",
+                actual_status=status,
+                phase="runtime",
+                next_action=_permission_next_action(capability, status),
+            )
+            self._permission_attention(
+                capability=capability,
+                status=status,
+                source_ref=source_ref,
+                retryable=True,
+            )
+        joined = ", ".join(f"{capability}={status}" for capability, status in failures)
+        raise PermissionValidationFailure(
+            f"connector permission validation failed closed: {joined}",
+            failures=failures,
+        )
+
+    def _permission_attention(
+        self,
+        *,
+        capability: str,
+        status: str,
+        source_ref: str,
+        retryable: bool,
+        next_action: str | None = None,
+    ) -> None:
+        self.db.create_connector_attention_item(
+            attention_id=f"attention-{_stable_digest(f'{self.config.connector_id}:permission:{capability}:{source_ref}')}",
+            connector_id=self.config.connector_id,
+            owner="operator",
+            reason_class="connector_permission_failed",
+            next_action=next_action or _permission_next_action(capability, status),
+            retryable=retryable,
+            source_ref=source_ref,
+        )
+
+    def _authority_for_human(self, external_ref: str) -> list[str]:
+        participant = self.db.get_connector_participant_by_external_ref(
+            connector_id=self.config.connector_id,
+            external_ref=external_ref,
+        )
+        if participant is not None and participant.get("participant_type") == "human":
+            authority = participant.get("authority")
+            if isinstance(authority, list):
+                return [str(item) for item in authority]
+        return list(self.config.human_authorities.get(external_ref, []))
 
     def _route_type(self, *, source_type: str, mentioned_roles: tuple[str, ...], body: str) -> str:
         if source_type == "dm":
@@ -1075,6 +1267,18 @@ def _normalize_response_value(value: str) -> str:
     return normalized
 
 
+def _permission_next_action(capability: str, status: str) -> str:
+    if status == "revoked":
+        return (
+            f"Connector capability `{capability}` was revoked. Restore consent, installation, "
+            "or binding before processing Teams traffic."
+        )
+    return (
+        f"Connector capability `{capability}` is missing. Complete setup/admin consent "
+        "or correct the project/team/channel/role binding before retrying."
+    )
+
+
 def _role_identity_map(value: object) -> dict[str, RoleIdentity]:
     if not isinstance(value, dict):
         raise ValueError("`role_identities` must be a mapping")
@@ -1141,14 +1345,62 @@ def _channel_binding_map(value: object, *, default_channel_ref: str) -> dict[str
     return result
 
 
-def _authority_map(value: object) -> dict[str, list[str]]:
+def _authority_map(
+    value: object,
+    *,
+    people: object = (),
+    authority_groups: object = {},
+) -> dict[str, list[str]]:
     if not isinstance(value, dict):
         raise ValueError("`human_authorities` must be a mapping")
     result: dict[str, list[str]] = {}
     for key, item in value.items():
         if not isinstance(key, str) or not key.strip() or not isinstance(item, list):
             raise ValueError("`human_authorities` must map humans to authority lists")
-        result[key] = [str(authority) for authority in item]
+        result[key] = _unique_strings(item)
+    groups = _authority_group_map(authority_groups)
+    if people not in (None, ()):
+        if not isinstance(people, list):
+            raise ValueError("`people` must be a list")
+        for person in people:
+            if not isinstance(person, dict):
+                raise ValueError("`people` entries must be objects")
+            refs = person.get("external_refs")
+            if not isinstance(refs, list) or not refs:
+                raise ValueError("people entries must define non-empty `external_refs`")
+            direct = _unique_strings(person.get("authorities", []))
+            group_authorities: list[str] = []
+            for group in _unique_strings(person.get("groups", [])):
+                group_authorities.extend(groups.get(group, []))
+            authorities = _unique_strings([*direct, *group_authorities])
+            for ref in _unique_strings(refs):
+                result[ref] = authorities
+    return result
+
+
+def _authority_group_map(value: object) -> dict[str, list[str]]:
+    if value in (None, ()):
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("`authority_groups` must be a mapping")
+    result: dict[str, list[str]] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip() or not isinstance(item, list):
+            raise ValueError("`authority_groups` must map group ids to authority lists")
+        result[key] = _unique_strings(item)
+    return result
+
+
+def _unique_strings(value: object) -> list[str]:
+    if value in (None, ()):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("authority values must be lists")
+    result: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text and text not in result:
+            result.append(text)
     return result
 
 

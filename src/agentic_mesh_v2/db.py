@@ -285,6 +285,25 @@ class V2Database:
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS connector_permission_checks (
+                  check_id TEXT PRIMARY KEY,
+                  connector_id TEXT NOT NULL REFERENCES connectors(connector_id),
+                  check_type TEXT NOT NULL,
+                  capability TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  required_status TEXT NOT NULL,
+                  actual_status TEXT NOT NULL,
+                  phase TEXT NOT NULL,
+                  consent_type TEXT,
+                  permission_name TEXT,
+                  required INTEGER NOT NULL,
+                  broad_graph INTEGER NOT NULL,
+                  approval_ref TEXT,
+                  next_action TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS role_assignments (
                   assignment_id TEXT PRIMARY KEY,
                   role_id TEXT NOT NULL,
@@ -1261,6 +1280,14 @@ class V2Database:
                   attention_id, connector_id, owner, reason_class, next_action, retryable, source_ref
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(attention_id) DO UPDATE SET
+                  owner = excluded.owner,
+                  reason_class = excluded.reason_class,
+                  next_action = excluded.next_action,
+                  retryable = excluded.retryable,
+                  source_ref = excluded.source_ref,
+                  status = 'open',
+                  updated_at = CURRENT_TIMESTAMP
                 """,
                 (attention_id, connector_id, owner, reason_class, next_action, 1 if retryable else 0, source_ref),
             )
@@ -1269,6 +1296,76 @@ class V2Database:
                 "connector",
                 connector_id,
                 {"attention_id": attention_id, "reason_class": reason_class, "retryable": retryable},
+            )
+
+    def record_connector_permission_check(
+        self,
+        *,
+        check_id: str,
+        connector_id: str,
+        check_type: str,
+        capability: str,
+        status: str,
+        required_status: str,
+        actual_status: str,
+        phase: str,
+        next_action: str,
+        consent_type: str | None = None,
+        permission_name: str | None = None,
+        required: bool = True,
+        broad_graph: bool = False,
+        approval_ref: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO connector_permission_checks(
+                  check_id, connector_id, check_type, capability, status, required_status,
+                  actual_status, phase, consent_type, permission_name, required, broad_graph,
+                  approval_ref, next_action
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(check_id) DO UPDATE SET
+                  status = excluded.status,
+                  required_status = excluded.required_status,
+                  actual_status = excluded.actual_status,
+                  phase = excluded.phase,
+                  consent_type = excluded.consent_type,
+                  permission_name = excluded.permission_name,
+                  required = excluded.required,
+                  broad_graph = excluded.broad_graph,
+                  approval_ref = excluded.approval_ref,
+                  next_action = excluded.next_action,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    check_id,
+                    connector_id,
+                    check_type,
+                    capability,
+                    status,
+                    required_status,
+                    actual_status,
+                    phase,
+                    consent_type,
+                    permission_name,
+                    1 if required else 0,
+                    1 if broad_graph else 0,
+                    approval_ref,
+                    next_action,
+                ),
+            )
+            self.append_event(
+                "connector.permission_checked",
+                "connector",
+                connector_id,
+                {
+                    "check_id": check_id,
+                    "check_type": check_type,
+                    "capability": capability,
+                    "status": status,
+                    "phase": phase,
+                },
             )
 
     def create_role_assignment(
@@ -1847,6 +1944,24 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def get_connector_participant_by_external_ref(
+        self,
+        *,
+        connector_id: str,
+        external_ref: str,
+    ) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM connector_participants
+            WHERE connector_id = ?
+              AND external_ref = ?
+            LIMIT 1
+            """,
+            (connector_id, external_ref),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def list_conversations(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -1956,6 +2071,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_connector_permission_checks(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM connector_permission_checks
+            ORDER BY updated_at DESC, check_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_role_assignments(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -2004,6 +2129,7 @@ class V2Database:
         redacted_delivery_records = _redact_private_delivery_records(delivery_records)
         delivery_attempts = self.list_delivery_attempts()
         connector_attention_items = self.list_connector_attention_items()
+        connector_permission_checks = self.list_connector_permission_checks()
         role_assignments = self.list_role_assignments()
         relevance_checks = self.list_relevance_checks()
         work_proposals = self.list_work_proposals()
@@ -2045,6 +2171,7 @@ class V2Database:
                 "delivery_records": len(delivery_records),
                 "delivery_attempts": len(delivery_attempts),
                 "connector_attention_items": len(connector_attention_items),
+                "connector_permission_checks": len(connector_permission_checks),
                 "role_assignments": len(role_assignments),
                 "relevance_checks": len(relevance_checks),
                 "work_proposals": len(work_proposals),
@@ -2071,6 +2198,7 @@ class V2Database:
             "delivery_records": redacted_delivery_records,
             "delivery_attempts": delivery_attempts,
             "connector_attention_items": connector_attention_items,
+            "connector_permission_checks": connector_permission_checks,
             "role_assignments": role_assignments,
             "relevance_checks": relevance_checks,
             "work_proposals": work_proposals,
@@ -2095,7 +2223,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         if isinstance(result.get(key), str):
             result[key.removesuffix("_json")] = json.loads(result[key])
             del result[key]
-    for key in ("retryable", "noop"):
+    for key in ("retryable", "noop", "required", "broad_graph"):
         if key in result and result[key] is not None:
             result[key] = bool(result[key])
     return result
