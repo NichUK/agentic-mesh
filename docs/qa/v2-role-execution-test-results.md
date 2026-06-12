@@ -3720,3 +3720,71 @@ compileall passed
   role-service E2E proof, connector-backed human approval follow-up,
   evidence assertions, deployment proof, release record, and closed final
   state. | accepted after rework 2026-06-12
+
+## PB-005 Story 45 - Connector-Backed Final Release Notification
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after rework
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/connectors.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_end_to_end.py`
+- `tests/test_v2_teams_connector_response_cards.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+- `docs/qa/v2-role-execution-test-results.md`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_end_to_end.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_release_safe_outputs.py tests\test_v2_release_deployment.py -q
+```
+
+Results:
+
+```text
+40 passed before QA review
+43 passed after QA rework
+```
+
+### Findings And Rework
+
+- QA found that a second distinct close call after a work item was already
+  closed could send a duplicate `release.notification`. Engineering now sends
+  the notification only when the close call changes state to `closed`, and added
+  a regression for the already-closed case.
+- QA found that release notification routing only checked field presence.
+  Engineering added conversation existence, connector ownership, and
+  destination-reference validation, plus a mismatched-destination regression.
+- QA requested negative coverage that failed close validation does not create a
+  human-visible notification. Engineering added that regression.
+
+### Acceptance Assessment
+
+- Release Manager can close through connector-aware safe-output processing and
+  still execute release deployment/no-deployment effects.
+- `work_item.close` / `release.close` with conversation routing sends a
+  `release.notification` only after durable closure succeeds.
+- Failed closure validation produces no safe-output record and no delivery.
+- Already-closed idempotent close calls do not send duplicate notifications.
+- Mismatched conversation/destination routing is rejected before recording.
+
+### Residual Risk
+
+- Destination type is not matched to conversation source type because the
+  conversation table currently stores external reference but not source type.
+
+### Review Log
+
+- QA-RL-074 | qa-engineer | changes-requested | PB-005 Story 45 |
+  Duplicate notifications were possible after already-closed idempotent close,
+  and routing validation did not prove the destination matched the conversation.
+  | addressed 2026-06-12
+- QA-RL-075 | qa-engineer | acceptance | PB-005 Story 45 | Verified
+  connector-backed final release notification, duplicate suppression,
+  failed-close no-notification behavior, and mismatched destination rejection.
+  | accepted after rework 2026-06-12

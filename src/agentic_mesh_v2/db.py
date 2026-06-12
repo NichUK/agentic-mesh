@@ -1203,6 +1203,13 @@ class V2Database:
                 (conversation_id, connector, external_ref, sponsor_ref),
             )
 
+    def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def record_conversation_event(
         self,
         *,

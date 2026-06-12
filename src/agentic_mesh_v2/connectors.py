@@ -13,6 +13,7 @@ from agentic_mesh_v2.permissions import runtime_capabilities_for_response
 from agentic_mesh_v2.permissions import runtime_capabilities_for_send
 from agentic_mesh_v2.permissions import startup_capabilities_for
 from agentic_mesh_v2.observability import span
+from agentic_mesh_v2.release import ReleaseService
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.safe_outputs import ToolPolicy
@@ -641,6 +642,26 @@ class LocalTeamsTestAdapter:
             role_id=role_id,
         )
 
+    def deliver_release_notification(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
+        work_item_id = _required_string(payload, "work_item_id")
+        _required_string(payload, "conversation_id")
+        destination_ref = _required_string(payload, "destination_ref")
+        destination_type = str(payload.get("destination_type") or "dm")
+        message = str(
+            payload.get("message")
+            or payload.get("notification_message")
+            or f"Release completed for `{work_item_id}`."
+        )
+        return self.send_message(
+            source_ref=call_id,
+            destination_ref=destination_ref,
+            destination_type=destination_type,
+            purpose="release.notification",
+            body=message,
+            role_id=role_id,
+            outcome=str(payload.get("delivery_outcome") or "sent"),
+        )
+
     def deliver_human_question(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
         question = _required_string(payload, "question")
         conversation_id = _required_string(payload, "conversation_id")
@@ -1173,14 +1194,17 @@ class ConnectorSafeOutputService(SafeOutputService):
         *,
         adapter: LocalTeamsTestAdapter,
         policy: ToolPolicy | None = None,
+        release_service: ReleaseService | None = None,
     ) -> None:
-        super().__init__(db, policy)
+        super().__init__(db, policy, release_service=release_service)
         self.adapter = adapter
 
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:
         if call.tool_name == "status.reply":
             self._reject_noop_relevance_reply(run_id=run_id, role_id=call.role_id)
             self._validate_reply_references(call.payload)
+        if call.tool_name in {"release.close", "work_item.close"} and "conversation_id" in call.payload:
+            self._validate_release_notification_payload(call.payload)
         if call.tool_name == "queue.propose_item":
             self._validate_work_proposal_source(call.payload)
         if call.tool_name in {"human_response.request", "release.request_approval"}:
@@ -1189,6 +1213,10 @@ class ConnectorSafeOutputService(SafeOutputService):
         return super().record(run_id=run_id, call=call)
 
     def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        close_pre_state: str | None = None
+        if call.tool_name in {"release.close", "work_item.close"} and "conversation_id" in call.payload:
+            self._validate_release_notification_payload(call.payload)
+            close_pre_state = self.db.get_work_item(_required_string(call.payload, "work_item_id")).state
         super().process_recorded_call(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "relevance.record":
             self.adapter.record_relevance(call_id=call_id, role_id=call.role_id, payload=call.payload)
@@ -1225,6 +1253,15 @@ class ConnectorSafeOutputService(SafeOutputService):
                 payload=call.payload,
                 request_type="release_approval",
             )
+        if call.tool_name in {"release.close", "work_item.close"} and "conversation_id" in call.payload:
+            self._validate_release_notification_payload(call.payload)
+            close_post_state = self.db.get_work_item(_required_string(call.payload, "work_item_id")).state
+            if close_pre_state != "closed" and close_post_state == "closed":
+                self.adapter.deliver_release_notification(
+                    call_id=call_id,
+                    role_id=call.role_id,
+                    payload=call.payload,
+                )
 
     def _reject_noop_relevance_reply(self, *, run_id: str, role_id: str) -> None:
         for check in self.adapter.db.list_relevance_checks_for_run(run_id, role_id):
@@ -1259,6 +1296,22 @@ class ConnectorSafeOutputService(SafeOutputService):
                 raise ValueError(f"response request referenced unknown work item `{work_item_id}`") from exc
         if "conversation_id" in payload:
             _required_string(payload, "destination_ref")
+
+    def _validate_release_notification_payload(self, payload: dict[str, Any]) -> None:
+        self.db.get_work_item(_required_string(payload, "work_item_id"))
+        conversation_id = _required_string(payload, "conversation_id")
+        destination_ref = _required_string(payload, "destination_ref")
+        conversation = self.db.get_conversation(conversation_id)
+        if conversation is None:
+            raise ValueError(f"release notification referenced unknown conversation `{conversation_id}`")
+        if conversation.get("connector") != self.adapter.config.connector_id:
+            raise ValueError(
+                f"release notification conversation `{conversation_id}` does not belong to connector `{self.adapter.config.connector_id}`"
+            )
+        if conversation.get("external_ref") != destination_ref:
+            raise ValueError(
+                f"release notification destination `{destination_ref}` does not match conversation `{conversation_id}`"
+            )
 
     def _record_work_proposal(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> None:
         source_ref = _required_string(payload, "source_ref")

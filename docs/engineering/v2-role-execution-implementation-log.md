@@ -3872,3 +3872,72 @@ PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files a
 - This proof uses the local Compose release adapter with an injectable command
   runner; real tenant/container smoke remains deployment evidence rather than
   a unit-test responsibility.
+
+## PB-005 Story 45 - Connector-Backed Final Release Notification
+
+Date: 2026-06-12
+
+### Goal
+
+Make completed releases visible to humans by allowing Release Manager closure
+safe-output calls to send a connector-backed final release notification after
+durable release closure succeeds.
+
+### Changes
+
+- Added `LocalTeamsTestAdapter.deliver_release_notification`, which records a
+  `release.notification` delivery using the role identity for the sending
+  Release Manager.
+- Extended `ConnectorSafeOutputService` to accept an injected
+  `ReleaseService`, so connector-aware release runs can still execute configured
+  deployment targets.
+- Added release notification processing for `release.close` and
+  `work_item.close` when the safe-output payload includes conversation routing
+  fields.
+- Guarded notifications so they are emitted only when the close call actually
+  moves the work item into `closed`; an already-closed idempotent close does
+  not create another human-visible message.
+- Validated release notification routing against an existing connector
+  conversation and required `destination_ref` to match the conversation's
+  external reference.
+- Extended the role-service E2E proof so Release Manager closes the work item
+  through `ConnectorSafeOutputService` and sends a `release.notification`.
+- Added connector regressions for failed close validation, duplicate already
+  closed notification suppression, and mismatched conversation/destination
+  rejection.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_end_to_end.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_release_safe_outputs.py tests\test_v2_release_deployment.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+python scripts\check-pr-size.py --base origin/develop --committed-only
+```
+
+Results:
+
+```text
+40 passed before QA review
+43 passed after QA rework
+compileall passed
+317 passed full suite
+V2 topology validation passed
+PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files and 105450 changed lines against origin/develop
+```
+
+### QA Rework
+
+- QA found duplicate notification risk for a second distinct close call after
+  the work item was already closed. Engineering now captures close pre-state
+  and suppresses notifications unless the call changes state to `closed`.
+- QA found routing validation only checked field presence. Engineering now
+  verifies the conversation exists, belongs to the connector, and matches the
+  requested destination reference.
+
+### Notes
+
+- Destination type remains payload-driven because the current conversation
+  table stores the external reference but not source type. QA accepted this as a
+  residual risk for this story.

@@ -1,10 +1,14 @@
 from pathlib import Path
 
+import pytest
+
 from agentic_mesh_v2.connectors import ConnectorConfig
 from agentic_mesh_v2.connectors import ConnectorSafeOutputService
 from agentic_mesh_v2.connectors import LocalTeamsTestAdapter
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.safe_outputs import SafeOutputError
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
+from agentic_mesh_v2.state_machine import TransitionRequest
 
 
 def _config() -> ConnectorConfig:
@@ -124,6 +128,51 @@ def _request_release_approval(
     return db.status_snapshot()["human_response_requests"][0]["request_id"]
 
 
+def _move_release_card_to_release_review(db: V2Database) -> None:
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-release-card",
+            from_state="shaping",
+            to_state="ready",
+            actor_role="product-manager",
+            reason="Product ready.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-release-card",
+            from_state="ready",
+            to_state="active",
+            actor_role="engineering",
+            reason="Engineering complete.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-release-card",
+            from_state="active",
+            to_state="release_review",
+            actor_role="qa-engineer",
+            reason="QA passed.",
+        )
+    )
+
+
+def _record_release_card_decision(service: ConnectorSafeOutputService, *, run_id: str) -> str:
+    return service.record(
+        run_id=run_id,
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="release.record_decision",
+            payload={
+                "work_item_id": "work-release-card",
+                "decision": "approve",
+                "reason": "Sponsor approved release after reviewing evidence.",
+            },
+        ),
+    )
+
+
 def test_release_approval_card_delivery_and_authorized_submission(tmp_path: Path) -> None:
     db, adapter, conversation_id = _db_with_work_item(tmp_path)
 
@@ -176,6 +225,142 @@ def test_release_approval_card_delivery_and_authorized_submission(tmp_path: Path
     assert "release.deploy" in followups[0]["payload"]["allowed_tools"]
     assert any(binding["binding_type"] == "human_response" for binding in snapshot["thread_bindings"])
     assert snapshot["counts"]["connector_attention_items"] == 0
+
+
+def test_release_notification_is_not_sent_when_close_validation_fails(tmp_path: Path) -> None:
+    db, adapter, conversation_id = _db_with_work_item(tmp_path)
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    db.create_run(
+        run_id="run-release-notify-invalid-close",
+        role_id="release-manager",
+        role_instance_id="release-manager-1",
+        work_item_id="work-release-card",
+    )
+
+    with pytest.raises(SafeOutputError):
+        service.record(
+            run_id="run-release-notify-invalid-close",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="work_item.close",
+                payload={
+                    "work_item_id": "work-release-card",
+                    "reason": "Cannot close without release evidence.",
+                    "conversation_id": conversation_id,
+                    "destination_ref": "channel-project",
+                    "destination_type": "channel",
+                    "notification_message": "This message must not be sent.",
+                },
+                terminal=True,
+            ),
+        )
+
+    snapshot = db.status_snapshot()
+    assert snapshot["counts"]["safe_output_calls"] == 0
+    assert snapshot["counts"]["delivery_records"] == 0
+
+
+def test_release_notification_is_not_duplicated_for_already_closed_work(tmp_path: Path) -> None:
+    db, adapter, conversation_id = _db_with_work_item(tmp_path)
+    _move_release_card_to_release_review(db)
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    db.create_run(
+        run_id="run-release-notify-close-once",
+        role_id="release-manager",
+        role_instance_id="release-manager-1",
+        work_item_id="work-release-card",
+    )
+    approval_ref = _record_release_card_decision(service, run_id="run-release-notify-close-once")
+    service.record(
+        run_id="run-release-notify-close-once",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="release.record_no_deployment",
+            payload={
+                "work_item_id": "work-release-card",
+                "release_id": "release-card-no-deployment",
+                "reason": "No deployment needed for notification regression.",
+                "scope": "Release notification regression.",
+                "rollback_plan": "Reopen the work item if the evidence is wrong.",
+                "residual_risks": "None known.",
+                "approval_ref": approval_ref,
+                "commit_ref": "commit-release-card",
+            },
+        ),
+    )
+    close_payload = {
+        "work_item_id": "work-release-card",
+        "reason": "Sponsor approved no-deployment release.",
+        "conversation_id": conversation_id,
+        "destination_ref": "channel-project",
+        "destination_type": "channel",
+        "notification_message": "Release notification should appear once.",
+    }
+    service.record(
+        run_id="run-release-notify-close-once",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="work_item.close",
+            payload=close_payload,
+            terminal=True,
+        ),
+    )
+    db.create_run(
+        run_id="run-release-notify-close-again",
+        role_id="release-manager",
+        role_instance_id="release-manager-1",
+        work_item_id="work-release-card",
+    )
+    service.record(
+        run_id="run-release-notify-close-again",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="work_item.close",
+            payload={**close_payload, "notification_message": "Duplicate notification must not be sent."},
+            terminal=True,
+        ),
+    )
+
+    notifications = [
+        record
+        for record in db.status_snapshot()["delivery_records"]
+        if record["purpose"] == "release.notification"
+    ]
+    assert len(notifications) == 1
+    assert notifications[0]["payload"]["body"] == "Release notification should appear once."
+
+
+def test_release_notification_rejects_mismatched_conversation_destination(tmp_path: Path) -> None:
+    db, adapter, conversation_id = _db_with_work_item(tmp_path)
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    db.create_run(
+        run_id="run-release-notify-mismatched-destination",
+        role_id="release-manager",
+        role_instance_id="release-manager-1",
+        work_item_id="work-release-card",
+    )
+
+    with pytest.raises(ValueError, match="does not match conversation"):
+        service.record(
+            run_id="run-release-notify-mismatched-destination",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="work_item.close",
+                payload={
+                    "work_item_id": "work-release-card",
+                    "reason": "Do not notify the wrong channel.",
+                    "conversation_id": conversation_id,
+                    "destination_ref": "channel-other",
+                    "destination_type": "channel",
+                    "notification_message": "This message must not be sent.",
+                },
+                terminal=True,
+            ),
+        )
+
+    snapshot = db.status_snapshot()
+    assert snapshot["counts"]["safe_output_calls"] == 0
+    assert snapshot["counts"]["delivery_records"] == 0
 
 
 def test_release_approval_request_preserves_connector_metadata_and_default_title(tmp_path: Path) -> None:

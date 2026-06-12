@@ -10,7 +10,6 @@ from agentic_mesh_v2.release import ReleaseService
 from agentic_mesh_v2.role_service import RoleAssignment
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
-from agentic_mesh_v2.safe_outputs import SafeOutputService
 
 
 class StaticWorker:
@@ -209,7 +208,7 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
         db=db,
         role_id="release-manager",
         role_instance_id="rel-1",
-        safe_outputs=SafeOutputService(db, release_service=release),
+        safe_outputs=ConnectorSafeOutputService(db, adapter=adapter, release_service=release),
         worker=StaticWorker(
             [
                 SafeOutputCall(
@@ -249,7 +248,15 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
                 SafeOutputCall(
                     role_id="release-manager",
                     tool_name="work_item.close",
-                    payload={"work_item_id": "work-1", "reason": "Sponsor approved release."},
+                    payload={
+                        "work_item_id": "work-1",
+                        "reason": "Sponsor approved release.",
+                        "conversation_id": conversation.conversation_id,
+                        "destination_ref": "channel-project",
+                        "destination_type": "channel",
+                        "thread_ref": "thread-release-approval",
+                        "notification_message": "Released and closed `work-1` after sponsor approval.",
+                    },
                     terminal=True,
                 ),
             ]
@@ -264,12 +271,15 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
     snapshot = db.status_snapshot()
     evidence = db.list_work_item_evidence()
     event_types = [event["event_type"] for event in db.list_events()]
+    deliveries = {row["purpose"]: row for row in snapshot["delivery_records"]}
     assert snapshot["role_assignment_statuses"]["completed"] >= 4
     assert any(row["evidence_type"] == "implementation_change" for row in evidence)
     assert any(row["evidence_type"] == "test_evidence" for row in evidence)
     assert any(row["evidence_type"] == "release_decision" for row in evidence)
     assert snapshot["releases"][0]["status"] == "deployed"
     assert snapshot["deployment_runs"][0]["status"] == "succeeded"
+    assert deliveries["release.notification"]["status"] == "sent"
+    assert deliveries["release.notification"]["payload"]["body"] == "Released and closed `work-1` after sponsor approval."
     assert len(snapshot["release_evidence_links"]) == 7
     assert "queue_item.created" in event_types
     assert "safe_output.recorded" in event_types
