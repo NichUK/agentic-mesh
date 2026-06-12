@@ -3543,3 +3543,67 @@ V2 topology validation passed
   closure, rejected missing release/deployed evidence, accepted evidence-link
   status enforcement, and replay idempotency. | accepted after rework
   2026-06-12
+
+## PB-005 Story 42 - Product Manager Work-Item Readiness
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after rework
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_role_assignment_execution.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py -q
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+```
+
+Results:
+
+```text
+63 passed before QA review
+compileall passed
+64 passed after QA rework
+311 passed full suite
+V2 topology validation passed
+```
+
+### Findings And Rework
+
+- QA found that a second distinct deferred `work_item.mark_ready` call could
+  bypass pre-recording validation after the first call moved work to `ready`,
+  creating a duplicate implementation assignment.
+- Engineering tightened effect-time validation so `work_item.mark_ready`
+  requires `shaping` during deferred processing as well.
+- Engineering added a regression proving a second distinct deferred readiness
+  call is rejected and does not create a duplicate assignment.
+
+### Acceptance Assessment
+
+- `work_item.mark_ready` is terminal and Product Manager scoped.
+- The tool rejects non-`shaping` work before direct safe-output recording.
+- The effect path also rejects non-`shaping` work during deferred replay.
+- Successful readiness transitions work from `shaping` to `ready`, sets the
+  continuation role, and queues one implementation assignment.
+- Replaying the same recorded call is idempotent.
+- Engineering start/claim behavior for `ready -> active` remains separate
+  scope.
+
+### Review Log
+
+- QA-RL-069 | qa-engineer | changes-requested | PB-005 Story 42 |
+  Deferred processing could duplicate implementation assignments after work was
+  already ready. | addressed 2026-06-12
+- QA-RL-070 | qa-engineer | acceptance | PB-005 Story 42 | Verified
+  shaping-state validation, ready transition, implementation assignment
+  creation, same-call replay idempotency, and duplicate deferred-call
+  rejection. | accepted after rework 2026-06-12

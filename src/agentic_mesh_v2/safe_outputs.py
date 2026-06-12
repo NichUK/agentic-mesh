@@ -36,6 +36,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "noop",
         "report.blocked",
         "report.incomplete",
+        "work_item.mark_ready",
         "work_item.close",
         "work_item.reopen",
         "work_item.supersede",
@@ -223,6 +224,8 @@ class SafeOutputService:
             self._validate_document_review_comment_target(call)
         if self.process_effects and call.tool_name in {"implementation.record_change", "test_evidence.record"}:
             self._validate_work_item_evidence_target(call)
+        if self.process_effects and call.tool_name == "work_item.mark_ready":
+            self._validate_work_item_mark_ready_target(call)
         if self.process_effects and call.tool_name in {"quality.approve", "quality.request_changes"}:
             self._validate_quality_decision_target(call)
         if self.process_effects and call.tool_name == "release.record_decision":
@@ -266,6 +269,8 @@ class SafeOutputService:
             self._append_document_review_comment(call_id=call_id, call=call)
         if call.tool_name == "memory.propose_update":
             self._publish_role_memory_update(call_id=call_id, call=call)
+        if call.tool_name == "work_item.mark_ready":
+            self._mark_work_item_ready(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "implementation.record_change":
             self._record_work_item_evidence(call_id=call_id, call=call, evidence_type="implementation_change")
         if call.tool_name == "test_evidence.record":
@@ -402,6 +407,13 @@ class SafeOutputService:
         work_item_id = _required_text(call.payload, "work_item_id")
         self.db.get_work_item(work_item_id)
 
+    def _validate_work_item_mark_ready_target(self, call: SafeOutputCall) -> None:
+        work_item = self.db.get_work_item(_required_text(call.payload, "work_item_id"))
+        if work_item.state != "shaping":
+            raise SafeOutputError(
+                f"`work_item.mark_ready` requires work item state `shaping`, found `{work_item.state}`"
+            )
+
     def _validate_optional_work_item_target(self, *, run_id: str, call: SafeOutputCall) -> None:
         work_item_id = _work_item_id_from_payload_or_run(self.db, run_id=run_id, call=call)
         if work_item_id is None:
@@ -475,6 +487,52 @@ class SafeOutputService:
             summary=_single_line_text(_required_text(call.payload, "summary")),
             role_id=call.role_id,
             safe_output_ref=call_id,
+        )
+
+    def _mark_work_item_ready(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        assignment_id = _work_item_ready_assignment_id(call_id)
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state != "shaping":
+            raise SafeOutputError(
+                f"`work_item.mark_ready` requires work item state `shaping`, found `{work_item.state}`"
+            )
+        target_role = _optional_text(call.payload.get("target_role")) or "engineering"
+        self.db.transition_work_item(
+            TransitionRequest(
+                work_item_id=work_item_id,
+                from_state="shaping",
+                to_state="ready",
+                actor_role=call.role_id,
+                reason=_required_text(call.payload, "reason"),
+                owner=target_role,
+            )
+        )
+        work_item = self.db.get_work_item(work_item_id)
+        self.db.create_role_assignment(
+            assignment_id=assignment_id,
+            role_id=target_role,
+            work_item_id=work_item_id,
+            source_ref=call_id,
+            title=_optional_text(call.payload.get("title")) or f"Implement: {work_item.title}",
+            summary=_single_line_text(_required_text(call.payload, "reason")),
+            assignment_type="implementation",
+            visibility_scope=_optional_text(call.payload.get("context_visibility")) or "project",
+            payload={
+                "safe_output_ref": call_id,
+                "source_run_id": run_id,
+                "source_role": call.role_id,
+                "target_role": target_role,
+                "reason": _single_line_text(_required_text(call.payload, "reason")),
+                "route_tool": call.tool_name,
+                "work_item_id": work_item_id,
+                "current_flow_state": "ready",
+                "source_documents": _string_list(call.payload.get("source_documents")),
+                "target_outputs": _string_list(call.payload.get("target_outputs")),
+                "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
+            },
         )
 
     def _validate_quality_decision_target(self, call: SafeOutputCall) -> None:
@@ -1313,6 +1371,10 @@ def _release_decision_summary_field(summary: str, field_name: str) -> str | None
 
 def _release_rework_assignment_id(call_id: str) -> str:
     return f"assignment-{call_id}-release-rework"
+
+
+def _work_item_ready_assignment_id(call_id: str) -> str:
+    return f"assignment-{call_id}-work-item-ready"
 
 
 def _work_item_reopen_assignment_id(call_id: str) -> str:

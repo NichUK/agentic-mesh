@@ -152,6 +152,194 @@ def _blocked_work_db(tmp_path: Path) -> V2Database:
     return db
 
 
+def test_product_mark_ready_transitions_work_and_queues_engineering(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.create_run(
+            run_id="run-product-mark-ready",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-runtime-execution",
+        )
+        service = SafeOutputService(db)
+
+        call_id = service.record(
+            run_id="run-product-mark-ready",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="work_item.mark_ready",
+                payload={
+                    "work_item_id": "work-runtime-execution",
+                    "reason": "Product shaping is complete and Engineering can implement.",
+                    "source_documents": ["work-items/work-runtime-execution/020-product-definition.md"],
+                    "target_outputs": ["implementation_change", "handoff.request"],
+                },
+            ),
+        )
+
+        work = db.get_work_item("work-runtime-execution")
+        work_row = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+        assignments = db.list_role_assignments()
+        calls = db.list_safe_output_calls()
+    finally:
+        db.close()
+
+    assert work.state == "ready"
+    assert work_row["current_role"] == "engineering"
+    assert next(row for row in calls if row["call_id"] == call_id)["terminal"] == 1
+    assert len(assignments) == 1
+    assert assignments[0]["role_id"] == "engineering"
+    assert assignments[0]["assignment_type"] == "implementation"
+    assert assignments[0]["work_item_id"] == "work-runtime-execution"
+    assert assignments[0]["payload"]["safe_output_ref"] == call_id
+    assert "implementation.record_change" in assignments[0]["payload"]["allowed_tools"]
+
+
+def test_product_mark_ready_rejects_non_shaping_work_before_recording(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.transition_work_item(
+            TransitionRequest(
+                work_item_id="work-runtime-execution",
+                from_state="shaping",
+                to_state="ready",
+                actor_role="product-manager",
+                reason="Already ready.",
+            )
+        )
+        db.create_run(
+            run_id="run-product-mark-ready-reject",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-runtime-execution",
+        )
+        service = SafeOutputService(db)
+
+        with pytest.raises(SafeOutputError, match="requires work item state `shaping`"):
+            service.record(
+                run_id="run-product-mark-ready-reject",
+                call=SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="work_item.mark_ready",
+                    payload={
+                        "work_item_id": "work-runtime-execution",
+                        "reason": "Product shaping is complete.",
+                    },
+                ),
+            )
+        calls = db.list_safe_output_calls()
+    finally:
+        db.close()
+
+    assert calls == []
+
+
+def test_deferred_product_mark_ready_replay_is_idempotent(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.create_run(
+            run_id="run-product-mark-ready-deferred",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-runtime-execution",
+        )
+        call = SafeOutputCall(
+            role_id="product-manager",
+            tool_name="work_item.mark_ready",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "reason": "Product shaping is complete and Engineering can implement.",
+            },
+        )
+        call_id = SafeOutputService(db, process_effects=False).record(
+            run_id="run-product-mark-ready-deferred",
+            call=call,
+        )
+        active_service = SafeOutputService(db)
+
+        active_service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-product-mark-ready-deferred",
+            call=call,
+        )
+        active_service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-product-mark-ready-deferred",
+            call=call,
+        )
+        work = db.get_work_item("work-runtime-execution")
+        assignments = db.list_role_assignments()
+        transition_events = [
+            event
+            for event in db.list_events("work-runtime-execution")
+            if event["event_type"] == "work_item.transitioned"
+        ]
+    finally:
+        db.close()
+
+    assert work.state == "ready"
+    assert len(assignments) == 1
+    assert assignments[0]["assignment_id"] == f"assignment-{call_id}-work-item-ready"
+    assert sum(1 for event in transition_events if event["payload"]["to_state"] == "ready") == 1
+
+
+def test_distinct_deferred_product_mark_ready_cannot_duplicate_ready_assignment(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.create_run(
+            run_id="run-product-mark-ready-deferred-duplicate",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-runtime-execution",
+        )
+        first_call = SafeOutputCall(
+            role_id="product-manager",
+            tool_name="work_item.mark_ready",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "reason": "Product shaping is complete and Engineering can implement.",
+            },
+        )
+        second_call = SafeOutputCall(
+            role_id="product-manager",
+            tool_name="work_item.mark_ready",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "reason": "Duplicate deferred readiness attempt.",
+            },
+        )
+        record_only_service = SafeOutputService(db, process_effects=False)
+        first_call_id = record_only_service.record(
+            run_id="run-product-mark-ready-deferred-duplicate",
+            call=first_call,
+        )
+        second_call_id = record_only_service.record(
+            run_id="run-product-mark-ready-deferred-duplicate",
+            call=second_call,
+        )
+        active_service = SafeOutputService(db)
+
+        active_service.process_recorded_call(
+            call_id=first_call_id,
+            run_id="run-product-mark-ready-deferred-duplicate",
+            call=first_call,
+        )
+        with pytest.raises(SafeOutputError, match="requires work item state `shaping`"):
+            active_service.process_recorded_call(
+                call_id=second_call_id,
+                run_id="run-product-mark-ready-deferred-duplicate",
+                call=second_call,
+            )
+        work = db.get_work_item("work-runtime-execution")
+        assignments = db.list_role_assignments()
+    finally:
+        db.close()
+
+    assert work.state == "ready"
+    assert len(assignments) == 1
+    assert assignments[0]["assignment_id"] == f"assignment-{first_call_id}-work-item-ready"
+
+
 def test_role_service_claims_connector_assignment_and_completes_with_safe_output(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()

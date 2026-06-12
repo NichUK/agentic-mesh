@@ -3696,3 +3696,64 @@ PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files a
   `work_item.override_blocker` for those authority paths.
 - `work_item.close` is a release-evidence closure tool, not an administrative
   abandon/cancel tool.
+
+## PB-005 Story 42 - Product Manager Work-Item Readiness
+
+Date: 2026-06-12
+
+### Goal
+
+Make the existing Product Manager `work_item.mark_ready` safe-output tool
+perform real lifecycle work. Product shaping should be able to move a work item
+from `shaping` to `ready` and queue the next specialist role without manual
+database transitions.
+
+### Changes
+
+- Marked `work_item.mark_ready` as a terminal safe-output tool.
+- Added pre-recording validation requiring the target work item to be in
+  `shaping`.
+- Added runtime processing for `work_item.mark_ready`.
+- Transitioned shaped work from `shaping` to `ready` using the current
+  state-machine transition path.
+- Defaulted the continuation role to `engineering`, while allowing an optional
+  `target_role` payload for later flow variants.
+- Queued one deterministic `implementation` role assignment containing the
+  source safe-output ref, source role, target role, reason, work item,
+  current flow state, source documents, target outputs, and target role
+  safe-output tools.
+- Added deferred replay idempotency so processing the same recorded call again
+  does not duplicate assignments or transitions.
+- Tightened the effect path after QA review so deferred calls also require the
+  work item to still be in `shaping`; a second distinct deferred readiness call
+  can no longer create a duplicate implementation assignment after the work is
+  already `ready`.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py -q
+python -m compileall -q src\agentic_mesh_v2
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_state_machine.py -q
+python -m pytest -q
+python -m agentic_mesh_v2.cli validate-topology --source-repo C:\Dev\agentic-mesh --deployed-runtime C:\Dev\agentic-mesh-deploy --runtime-state C:\Dev\agentic-mesh-state --project-repo 'agentic-mesh-dev=C:\Dev\agentic-mesh-projects\agentic-mesh-dev|C:\Dev\agentic-mesh-projects\agentic-mesh-dev\docs'
+python scripts\check-pr-size.py --base origin/develop --committed-only
+```
+
+Results:
+
+```text
+63 passed before QA review
+compileall passed
+64 passed after QA rework
+311 passed full suite
+V2 topology validation passed
+PR size guard failed branch-wide for the long-lived V2 reset branch: 202 files and 104512 changed lines against origin/develop
+```
+
+### Notes
+
+- This story intentionally stops at `ready`. Engineering claim/start behavior
+  for `ready -> active` remains a separate lifecycle execution story.
+- `work_item.mark_ready` is not an administrative close/cancel path and does
+  not create release evidence.
