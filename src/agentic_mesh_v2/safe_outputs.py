@@ -15,6 +15,7 @@ from agentic_mesh_v2.documents import validate_document_content
 from agentic_mesh_v2.release import ReleaseEvidence
 from agentic_mesh_v2.release import ReleaseEvidenceLink
 from agentic_mesh_v2.release import ReleaseService
+from agentic_mesh_v2.state_machine import TransitionRequest
 
 
 TERMINAL_TOOLS: frozenset[str] = frozenset(
@@ -28,6 +29,8 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "queue.propose_item",
         "release.request_approval",
         "release.close",
+        "quality.approve",
+        "quality.request_changes",
         "noop",
         "report.blocked",
         "report.incomplete",
@@ -214,6 +217,8 @@ class SafeOutputService:
             self._validate_document_review_comment_target(call)
         if self.process_effects and call.tool_name in {"implementation.record_change", "test_evidence.record"}:
             self._validate_work_item_evidence_target(call)
+        if self.process_effects and call.tool_name in {"quality.approve", "quality.request_changes"}:
+            self._validate_quality_decision_target(call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -245,6 +250,10 @@ class SafeOutputService:
             self._record_work_item_evidence(call_id=call_id, call=call, evidence_type="implementation_change")
         if call.tool_name == "test_evidence.record":
             self._record_work_item_evidence(call_id=call_id, call=call, evidence_type="test_evidence")
+        if call.tool_name == "quality.approve":
+            self._approve_quality(call)
+        if call.tool_name == "quality.request_changes":
+            self._request_quality_changes(call)
         if call.tool_name == "release.record_no_deployment":
             self._record_no_deployment(call)
         if call.tool_name == "release.deploy":
@@ -372,6 +381,53 @@ class SafeOutputService:
             summary=_single_line_text(_required_text(call.payload, "summary")),
             role_id=call.role_id,
             safe_output_ref=call_id,
+        )
+
+    def _validate_quality_decision_target(self, call: SafeOutputCall) -> None:
+        work_item = self.db.get_work_item(_required_text(call.payload, "work_item_id"))
+        if work_item.state != "active":
+            raise SafeOutputError(
+                f"`{call.tool_name}` requires work item state `active`, found `{work_item.state}`"
+            )
+        if call.tool_name == "quality.approve" and not _has_test_evidence(self.db, work_item_id=work_item.work_item_id):
+            raise SafeOutputError("quality.approve requires existing test_evidence for the work item")
+
+    def _approve_quality(self, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state == "release_review":
+            return
+        self._validate_quality_decision_target(call)
+        self.db.transition_work_item(
+            TransitionRequest(
+                work_item_id=work_item_id,
+                from_state="active",
+                to_state="release_review",
+                actor_role=call.role_id,
+                reason=_required_text(call.payload, "summary"),
+                owner="release-manager",
+            )
+        )
+
+    def _request_quality_changes(self, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state == "waiting_agent":
+            return
+        self._validate_quality_decision_target(call)
+        reason = _required_text(call.payload, "reason")
+        self.db.transition_work_item(
+            TransitionRequest(
+                work_item_id=work_item_id,
+                from_state="active",
+                to_state="waiting_agent",
+                actor_role=call.role_id,
+                reason=reason,
+                owner="engineering",
+                reason_class="quality_changes_requested",
+                next_action=reason,
+                retryable=True,
+            )
         )
 
     def _record_no_deployment(self, call: SafeOutputCall) -> None:
@@ -601,6 +657,14 @@ def _has_successful_deployment(db: V2Database, *, release_id: str, work_item_id:
 
 def _artifact_exists(db: V2Database, *, artifact_id: str) -> bool:
     return any(artifact.get("artifact_id") == artifact_id for artifact in db.list_artifacts())
+
+
+def _has_test_evidence(db: V2Database, *, work_item_id: str) -> bool:
+    return any(
+        evidence.get("work_item_id") == work_item_id
+        and evidence.get("evidence_type") == "test_evidence"
+        for evidence in db.list_work_item_evidence()
+    )
 
 
 def _contained_document_path(root: Path, relative_path: str) -> Path:

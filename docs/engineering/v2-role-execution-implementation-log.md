@@ -2755,6 +2755,78 @@ compileall passed
   implementation and quality documents.
 - Quality decision tools remain later stories.
 
+## PB-005 Story 30 - QA Decision Safe Outputs
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Make `quality.approve` and `quality.request_changes` real lifecycle decisions
+instead of inert safe-output rows.
+
+### Changes
+
+- Marked `quality.approve` and `quality.request_changes` as terminal
+  safe-output tools.
+- `quality.approve` now requires active work and existing `test_evidence`, then
+  transitions the work item to `release_review` owned by Release Manager.
+- `quality.request_changes` now requires active work and transitions the work
+  item to `waiting_agent` with Engineering-owned attention metadata.
+- Invalid QA decision state or missing QA evidence fails before direct
+  effects-enabled safe-output rows are recorded.
+- Added replay idempotency for already-applied QA decision states.
+- Ensured connector-backed safe-output services delegate to the base runtime
+  processor before connector-specific side effects.
+
+### QA Rework
+
+QA found `ConnectorSafeOutputService.process_recorded_call` replaced base
+runtime processing, so connector-backed safe outputs could record terminal
+`quality.approve` rows without creating QA evidence or moving the work item.
+Engineering delegated connector processing through the base
+`SafeOutputService` first and added a connector-backed QA decision regression.
+
+### Tests Added
+
+- `quality.approve` requires test evidence and moves active work to
+  `release_review`.
+- `quality.approve` fails before recording if test evidence is missing.
+- `quality.request_changes` moves active work to `waiting_agent` with
+  Engineering attention metadata.
+- QA decisions fail before recording for non-active work.
+- Connector-backed `test_evidence.record` and `quality.approve` run core
+  runtime effects.
+- QA decision safe outputs are terminal.
+
+### Tests Run
+
+```text
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_work_item_evidence_safe_outputs.py tests\test_v2_state_machine.py tests\test_v2_end_to_end.py tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_work_item_evidence_safe_outputs.py tests\test_v2_state_machine.py tests\test_v2_end_to_end.py tests\test_v2_safe_outputs.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_human_questions.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+35 passed focused suite before connector rework
+21 passed focused connector/quality suite after rework
+43 passed final QA decision regression suite
+251 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- Release approval, deployment, and closure remain Release Manager concerns.
+- Rich QA evidence documents are still produced through document safe outputs,
+  not automatically generated from the decision row.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -2923,3 +2995,9 @@ compileall passed
 - RL-051 | engineering | implementation | PB-005 Story 29 | Recorded
   `implementation.record_change` and `test_evidence.record` safe outputs as
   durable work-item evidence rows. | QA accepted 2026-06-12
+- RL-052 | engineering | implementation | PB-005 Story 30 | Wired
+  `quality.approve` and `quality.request_changes` safe outputs to real
+  lifecycle transitions. | QA requested rework 2026-06-12
+- RL-053 | engineering | QA rework | PB-005 Story 30 | Delegated
+  connector-backed safe outputs through base runtime processing so Teams-style
+  QA decisions apply core lifecycle effects. | QA accepted 2026-06-12

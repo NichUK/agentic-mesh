@@ -2722,3 +2722,71 @@ No QA findings.
   implementation and test-evidence safe-output publication, work-item target
   validation, safe-output idempotency, status visibility, and end-to-end
   compatibility. | accepted 2026-06-12
+
+## PB-005 Story 30 - QA Decision Safe Outputs
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/connectors.py`
+- `tests/test_v2_quality_decision_safe_outputs.py`
+- Related work-item evidence, state-machine, and connector tests
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_work_item_evidence_safe_outputs.py tests\test_v2_state_machine.py tests\test_v2_end_to_end.py tests\test_v2_safe_outputs.py tests\test_v2_role_assignment_execution.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_role_assignment_execution.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_teams_connector_context_retention.py tests\test_v2_teams_connector_delivery_retry.py tests\test_v2_teams_connector_direct_messages.py tests\test_v2_teams_connector_human_questions.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_teams_connector_team_wide_relevance.py tests\test_v2_teams_connector_work_proposals.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+35 passed initial focused suite
+36 passed connector-focused QA suite after rework
+33 passed broader Teams connector recheck after rework
+43 passed final QA decision regression suite
+251 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation wired base `SafeOutputService` QA decisions, but
+  connector-backed safe outputs overrode `process_recorded_call` and skipped
+  base runtime effects. QA found connector-backed `quality.approve` could be
+  recorded terminal without moving the work item. Engineering made connector
+  safe-output processing delegate to the base runtime processor first and added
+  a connector regression.
+
+### Acceptance Assessment
+
+- `quality.approve` is terminal, requires active work and prior QA evidence,
+  and transitions work to `release_review`.
+- `quality.request_changes` is terminal, requires active work, and transitions
+  work to `waiting_agent` with Engineering-owned attention.
+- Invalid state or missing evidence fails before direct effects-enabled
+  safe-output rows are recorded.
+- Connector-backed QA evidence and approval now perform the same core runtime
+  effects as the base service.
+
+### Residual Risks
+
+- Rich QA documentation and release approval remain separate safe-output and
+  release stories.
+
+### Review Log
+
+- QA-RL-044 | qa-engineer | acceptance | PB-005 Story 30 | Verified QA
+  decision lifecycle transitions, evidence preconditions, terminal behavior,
+  invalid-state rejection, connector-backed processing, and regression coverage.
+  | accepted after rework 2026-06-12

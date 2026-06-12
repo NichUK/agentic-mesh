@@ -1128,6 +1128,7 @@ class ConnectorSafeOutputService(SafeOutputService):
         return super().record(run_id=run_id, call=call)
 
     def process_recorded_call(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        super().process_recorded_call(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "relevance.record":
             self.adapter.record_relevance(call_id=call_id, role_id=call.role_id, payload=call.payload)
         if call.tool_name == "queue.propose_item":
