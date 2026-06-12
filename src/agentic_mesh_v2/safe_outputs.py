@@ -251,7 +251,7 @@ class SafeOutputService:
         if call.tool_name == "test_evidence.record":
             self._record_work_item_evidence(call_id=call_id, call=call, evidence_type="test_evidence")
         if call.tool_name == "quality.approve":
-            self._approve_quality(call)
+            self._approve_quality(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "quality.request_changes":
             self._request_quality_changes(call)
         if call.tool_name == "release.record_no_deployment":
@@ -392,10 +392,16 @@ class SafeOutputService:
         if call.tool_name == "quality.approve" and not _has_test_evidence(self.db, work_item_id=work_item.work_item_id):
             raise SafeOutputError("quality.approve requires existing test_evidence for the work item")
 
-    def _approve_quality(self, call: SafeOutputCall) -> None:
+    def _approve_quality(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
         work_item_id = _required_text(call.payload, "work_item_id")
         work_item = self.db.get_work_item(work_item_id)
         if work_item.state == "release_review":
+            self._create_release_review_assignment(
+                call_id=call_id,
+                run_id=run_id,
+                call=call,
+                work_item=work_item,
+            )
             return
         self._validate_quality_decision_target(call)
         self.db.transition_work_item(
@@ -407,6 +413,12 @@ class SafeOutputService:
                 reason=_required_text(call.payload, "summary"),
                 owner="release-manager",
             )
+        )
+        self._create_release_review_assignment(
+            call_id=call_id,
+            run_id=run_id,
+            call=call,
+            work_item=work_item,
         )
 
     def _request_quality_changes(self, call: SafeOutputCall) -> None:
@@ -504,6 +516,40 @@ class SafeOutputService:
             assignment_type=assignment_type,
             visibility_scope=visibility_scope,
             payload=payload,
+        )
+
+    def _create_release_review_assignment(
+        self,
+        *,
+        call_id: str,
+        run_id: str,
+        call: SafeOutputCall,
+        work_item: Any,
+    ) -> None:
+        assignment_id = f"assignment-{call_id}"
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        summary = _single_line_text(_required_text(call.payload, "summary"))
+        self.db.create_role_assignment(
+            assignment_id=assignment_id,
+            role_id="release-manager",
+            work_item_id=work_item.work_item_id,
+            source_ref=call_id,
+            title=f"Release review: {work_item.title}",
+            summary=summary,
+            assignment_type="release_review",
+            visibility_scope="project",
+            payload={
+                "safe_output_ref": call_id,
+                "source_run_id": run_id,
+                "source_role": call.role_id,
+                "target_role": "release-manager",
+                "reason": summary,
+                "route_tool": call.tool_name,
+                "work_item_id": work_item.work_item_id,
+                "current_flow_state": "release_review",
+                "allowed_tools": sorted(self.policy.tools_for_role("release-manager")),
+            },
         )
 
 

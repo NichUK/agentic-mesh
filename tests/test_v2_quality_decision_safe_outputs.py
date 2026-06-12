@@ -42,6 +42,7 @@ def test_quality_approve_requires_test_evidence_and_moves_to_release_review(tmp_
         call_id = service.record(run_id="run-quality-approve", call=approve_call)
         service.process_recorded_call(call_id=call_id, run_id="run-quality-approve", call=approve_call)
         work_item = db.list_work_items()[0]
+        assignments = db.list_role_assignments()
         calls = db.list_safe_output_calls_for_run("run-quality-approve")
         transition_events = [
             event
@@ -54,6 +55,13 @@ def test_quality_approve_requires_test_evidence_and_moves_to_release_review(tmp_
     assert work_item["state"] == "release_review"
     assert work_item["owner_role"] == "engineering"
     assert work_item["current_role"] == "release-manager"
+    assert len(assignments) == 1
+    assert assignments[0]["role_id"] == "release-manager"
+    assert assignments[0]["work_item_id"] == "work-quality"
+    assert assignments[0]["assignment_type"] == "release_review"
+    assert assignments[0]["status"] == "queued"
+    assert assignments[0]["payload"]["safe_output_ref"] == call_id
+    assert "release.request_approval" in assignments[0]["payload"]["allowed_tools"]
     approve_row = next(call for call in calls if call["tool_name"] == "quality.approve")
     assert approve_row["terminal"] is True
     assert sum(1 for event in transition_events if event["payload"]["to_state"] == "release_review") == 1
@@ -84,6 +92,71 @@ def test_quality_approve_without_test_evidence_fails_before_recording(tmp_path: 
         db.close()
 
     assert calls == []
+
+
+def test_quality_approve_replay_repairs_missing_release_assignment(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _active_work_item(db)
+        db.create_run(
+            run_id="run-quality-replay-repair",
+            role_id="qa-engineer",
+            role_instance_id="test-project.qa-engineer.1",
+            work_item_id="work-quality",
+        )
+        service = SafeOutputService(db)
+        service.record(
+            run_id="run-quality-replay-repair",
+            call=SafeOutputCall(
+                role_id="qa-engineer",
+                tool_name="test_evidence.record",
+                payload={"work_item_id": "work-quality", "summary": "Replay repair QA evidence passed."},
+            ),
+        )
+        approve_call = SafeOutputCall(
+            role_id="qa-engineer",
+            tool_name="quality.approve",
+            payload={"work_item_id": "work-quality", "summary": "QA approved before assignment failure."},
+        )
+        call_id = SafeOutputService(db, process_effects=False).record(
+            run_id="run-quality-replay-repair",
+            call=approve_call,
+        )
+        db.transition_work_item(
+            TransitionRequest(
+                work_item_id="work-quality",
+                from_state="active",
+                to_state="release_review",
+                actor_role="qa-engineer",
+                reason="Simulate transition committed before assignment write failed.",
+                owner="release-manager",
+            )
+        )
+        service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-quality-replay-repair",
+            call=approve_call,
+        )
+        service.process_recorded_call(
+            call_id=call_id,
+            run_id="run-quality-replay-repair",
+            call=approve_call,
+        )
+        assignments = db.list_role_assignments()
+        transition_events = [
+            event
+            for event in db.list_events("work-quality")
+            if event["event_type"] == "work_item.transitioned"
+        ]
+    finally:
+        db.close()
+
+    assert len(assignments) == 1
+    assert assignments[0]["role_id"] == "release-manager"
+    assert assignments[0]["assignment_type"] == "release_review"
+    assert assignments[0]["payload"]["safe_output_ref"] == call_id
+    assert sum(1 for event in transition_events if event["payload"]["to_state"] == "release_review") == 1
 
 
 def test_quality_request_changes_moves_to_waiting_agent_with_engineering_attention(tmp_path: Path) -> None:
@@ -184,12 +257,16 @@ def test_connector_backed_quality_decision_runs_core_runtime_effects(tmp_path: P
         )
         work_item = db.list_work_items()[0]
         evidence = db.list_work_item_evidence()
+        assignments = db.list_role_assignments()
     finally:
         db.close()
 
     assert work_item["state"] == "release_review"
     assert work_item["current_role"] == "release-manager"
     assert any(row["evidence_type"] == "test_evidence" for row in evidence)
+    assert len(assignments) == 1
+    assert assignments[0]["role_id"] == "release-manager"
+    assert assignments[0]["assignment_type"] == "release_review"
 
 
 def _connector_config() -> ConnectorConfig:

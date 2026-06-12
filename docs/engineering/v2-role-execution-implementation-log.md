@@ -2827,6 +2827,74 @@ compileall passed
 - Rich QA evidence documents are still produced through document safe outputs,
   not automatically generated from the decision row.
 
+## PB-005 Story 31 - QA Approval Release Review Assignment
+
+Date: 2026-06-12
+
+Owner: Engineering
+
+Status: implemented; QA accepted after rework
+
+### Intent
+
+Make QA approval actively continue the lifecycle by queuing Release Manager
+release-review work, rather than only moving the work item to
+`release_review`.
+
+### Changes
+
+- `quality.approve` now creates a queued `release_review` role assignment for
+  `release-manager` after successfully transitioning active work into
+  `release_review`.
+- The release-review assignment is linked to the QA approval safe-output call,
+  source run, work item, source role, current flow state, and Release Manager
+  tool visibility.
+- Replaying an already-successful QA approval remains idempotent.
+- Replaying after a partial effect failure now repairs a missing Release
+  Manager assignment if the transition already committed.
+
+### QA Rework
+
+QA found a partial-effect recovery gap: if the work-item transition committed
+but assignment creation failed, replay would see `release_review` and return
+without creating the missing Release Manager assignment. Engineering changed
+the replay path to create the assignment when needed and made assignment
+creation idempotent by `assignment-{call_id}`.
+
+### Tests Added
+
+- `quality.approve` creates exactly one queued Release Manager
+  `release_review` assignment.
+- The assignment payload links back to the QA safe-output call and exposes
+  Release Manager tools.
+- Connector-backed QA approval also creates the Release Manager assignment.
+- Replay repairs a missing Release Manager assignment after a simulated
+  transition-before-assignment partial effect failure.
+
+### Tests Run
+
+```text
+python -m compileall -q src\agentic_mesh_v2
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_work_item_evidence_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_human_questions.py
+```
+
+Results:
+
+```text
+30 passed before QA rework
+31 passed focused suite after QA rework
+49 passed broader handoff/release/end-to-end suite after QA rework
+252 passed full suite
+compileall passed
+```
+
+### Known Limitations
+
+- The Release Manager assignment still depends on the Release Manager role
+  service to request approval, deploy/no-deploy, record release evidence, and
+  close the work.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -3001,3 +3069,10 @@ compileall passed
 - RL-053 | engineering | QA rework | PB-005 Story 30 | Delegated
   connector-backed safe outputs through base runtime processing so Teams-style
   QA decisions apply core lifecycle effects. | QA accepted 2026-06-12
+- RL-054 | engineering | implementation | PB-005 Story 31 | Added queued
+  Release Manager `release_review` assignments after `quality.approve`.
+  | QA requested replay rework 2026-06-12
+- RL-055 | engineering | QA rework | PB-005 Story 31 | Repaired partial-effect
+  replay by creating the missing release-review assignment when the work item is
+  already in `release_review`, with idempotent assignment creation by call id.
+  | QA accepted 2026-06-12

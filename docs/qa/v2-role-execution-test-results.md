@@ -2790,3 +2790,65 @@ compileall passed
   decision lifecycle transitions, evidence preconditions, terminal behavior,
   invalid-state rejection, connector-backed processing, and regression coverage.
   | accepted after rework 2026-06-12
+
+## PB-005 Story 31 - QA Approval Release Review Assignment
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_quality_decision_safe_outputs.py`
+- Related role assignment, release, safe-output, connector, and end-to-end
+  regression tests
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_quality_decision_safe_outputs.py tests\test_v2_work_item_evidence_safe_outputs.py tests\test_v2_role_assignment_execution.py tests\test_v2_safe_outputs.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py tests\test_v2_teams_connector_work_proposals.py tests\test_v2_teams_connector_human_questions.py
+python -m compileall -q src\agentic_mesh_v2
+```
+
+Results:
+
+```text
+30 passed initial focused suite
+31 passed focused suite after rework
+49 passed broader handoff/release/end-to-end suite after rework
+252 passed full suite
+compileall passed
+```
+
+### Findings And Rework
+
+- Initial implementation queued Release Manager after QA approval, but replay
+  could miss that assignment if the work-item transition committed before
+  assignment creation failed. Engineering changed replay to create the missing
+  `release_review` assignment when the work item is already in
+  `release_review`, and made creation idempotent by `assignment-{call_id}`.
+
+### Acceptance Assessment
+
+- QA approval now continues the lifecycle by creating a queued Release Manager
+  assignment with work-item, source-run, safe-output, source-role, current-flow,
+  and allowed-tool context.
+- Normal replay does not duplicate the assignment.
+- Partial-effect replay repairs the missing assignment.
+- Connector-backed QA approval performs the same transition and assignment
+  behavior.
+
+### Residual Risks
+
+- Release Manager execution remains a separate role-service responsibility.
+
+### Review Log
+
+- QA-RL-045 | qa-engineer | acceptance | PB-005 Story 31 | Verified QA
+  approval queues Release Manager release-review work, connector-backed approval
+  preserves the behavior, and replay repairs missing assignments without
+  duplication. | accepted after rework 2026-06-12
