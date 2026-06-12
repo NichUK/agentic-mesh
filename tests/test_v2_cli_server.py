@@ -1071,6 +1071,74 @@ roles:
     assert output["actions"][1]["command"][-3:] == ["up", "-d", "test-project-product-manager-2"]
 
 
+def test_v2_cli_records_project_container_lifecycle_plan_without_execute(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+container_lifecycle:
+  adapter: docker-compose
+  compose_files:
+    - docker-compose.yml
+  service_name_template: "{project_id}-{role_id}-{index}"
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.update_role_instance_hibernation(
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            status="hibernated",
+            reason="Idle grace elapsed.",
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-container-lifecycle",
+                "--project-file",
+                str(project_file),
+            ]
+        )
+        == 0
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["execute"] is False
+    assert output["planned_count"] == 1
+    assert output["executed_count"] == 0
+    assert output["actions"][0]["status"] == "planned"
+    db = V2Database(db_path)
+    try:
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    assert snapshot["counts"]["role_container_lifecycle_actions"] == 1
+    assert snapshot["role_container_lifecycle_actions"][0]["status"] == "planned"
+    assert snapshot["role_container_lifecycle_actions"][0]["command"][-2:] == [
+        "stop",
+        "test-project-product-manager-1",
+    ]
+
+
 @pytest.mark.parametrize(
     ("extra_args", "message"),
     [

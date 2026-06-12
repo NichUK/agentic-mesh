@@ -5,8 +5,18 @@ from pathlib import Path
 import pytest
 
 from agentic_mesh_v2.container_lifecycle import ComposeRoleLifecycleConfig
+from agentic_mesh_v2.container_lifecycle import ContainerCommandResult
+from agentic_mesh_v2.container_lifecycle import ContainerLifecycleExecutor
 from agentic_mesh_v2.container_lifecycle import plan_compose_lifecycle_action
+from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
+from agentic_mesh_v2.server import V2StatusHandler
+
+
+def _render(snapshot: dict[str, object]) -> str:
+    handler = object.__new__(V2StatusHandler)
+    handler._snapshot = lambda: snapshot  # type: ignore[method-assign]
+    return handler._render_status()
 
 
 def test_container_lifecycle_config_loads_project_defaults_and_role_overrides(tmp_path: Path) -> None:
@@ -180,3 +190,135 @@ def test_compose_role_lifecycle_requires_numeric_role_instance_index(tmp_path: P
             status="hibernated",
             reason="Idle grace elapsed.",
         )
+
+
+def test_container_lifecycle_executor_records_success_and_hydrates_started_instance(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.update_role_instance_hibernation(
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hydrating",
+        reason="Queued work arrived.",
+    )
+    calls: list[tuple[list[str], Path | None, int]] = []
+
+    def runner(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ContainerCommandResult:
+        calls.append((command, cwd, timeout_seconds))
+        return ContainerCommandResult(exit_code=0, stdout="started")
+
+    config = ComposeRoleLifecycleConfig.from_mapping(
+        {
+            "adapter": "docker-compose",
+            "compose_files": [str(tmp_path / "compose.yml")],
+            "service_name_template": "{project_id}-{role_id}-{index}",
+            "working_directory": str(tmp_path),
+        }
+    )
+    action = plan_compose_lifecycle_action(
+        config=config,
+        project_id="test-project",
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hydrating",
+        reason="Queued work arrived.",
+    )
+    assert action is not None
+
+    action_id, result = ContainerLifecycleExecutor(db, runner=runner, timeout_seconds=42).execute(action)
+
+    snapshot = db.status_snapshot()
+    assert result.exit_code == 0
+    assert calls == [(list(action.command), tmp_path, 42)]
+    assert snapshot["role_container_lifecycle_actions"][0]["action_id"] == action_id
+    assert snapshot["role_container_lifecycle_actions"][0]["status"] == "succeeded"
+    assert snapshot["role_container_lifecycle_actions"][0]["stdout"] == "started"
+    assert snapshot["role_instance_statuses"][0]["status"] == "idle"
+    assert snapshot["role_instance_statuses"][0]["detail"] == "Role instance hydrated after container lifecycle start."
+    html = _render(snapshot)
+    assert "Role Container Lifecycle Actions" in html
+    assert "test-project-product-manager-1" in html
+
+
+def test_container_lifecycle_executor_records_failed_stop_without_changing_instance_state(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.update_role_instance_hibernation(
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Idle grace elapsed.",
+    )
+
+    def runner(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ContainerCommandResult:
+        return ContainerCommandResult(exit_code=17, stdout="stopping", stderr="compose failed")
+
+    config = ComposeRoleLifecycleConfig.from_mapping(
+        {
+            "adapter": "docker-compose",
+            "compose_files": [str(tmp_path / "compose.yml")],
+            "service_name_template": "{project_id}-{role_id}-{index}",
+        }
+    )
+    action = plan_compose_lifecycle_action(
+        config=config,
+        project_id="test-project",
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Idle grace elapsed.",
+    )
+    assert action is not None
+
+    _, result = ContainerLifecycleExecutor(db, runner=runner).execute(action)
+
+    snapshot = db.status_snapshot()
+    assert result.exit_code == 17
+    assert snapshot["role_container_lifecycle_actions"][0]["status"] == "failed"
+    assert snapshot["role_container_lifecycle_actions"][0]["stderr"] == "compose failed"
+    assert snapshot["role_instance_statuses"][0]["status"] == "hibernated"
+
+
+def test_container_lifecycle_executor_preserves_repeated_attempt_evidence(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.update_role_instance_hibernation(
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Idle grace elapsed.",
+    )
+
+    def runner(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ContainerCommandResult:
+        return ContainerCommandResult(exit_code=17, stderr="compose failed")
+
+    config = ComposeRoleLifecycleConfig.from_mapping(
+        {
+            "adapter": "docker-compose",
+            "compose_files": [str(tmp_path / "compose.yml")],
+            "service_name_template": "{project_id}-{role_id}-{index}",
+        }
+    )
+    action = plan_compose_lifecycle_action(
+        config=config,
+        project_id="test-project",
+        role_id="product-manager",
+        role_instance_id="test-project.product-manager.1",
+        status="hibernated",
+        reason="Idle grace elapsed.",
+    )
+    assert action is not None
+    executor = ContainerLifecycleExecutor(db, runner=runner)
+
+    first_id, _ = executor.execute(action)
+    second_id = executor.record_plan(action)
+    third_id, _ = executor.execute(action)
+
+    rows = db.status_snapshot()["role_container_lifecycle_actions"]
+    assert first_id != second_id != third_id
+    assert len(rows) == 3
+    assert {row["action_fingerprint"] for row in rows} == {rows[0]["action_fingerprint"]}
+    statuses = [row["status"] for row in rows]
+    assert statuses.count("failed") == 2
+    assert statuses.count("planned") == 1
+    assert any(row["action_id"] == first_id and row["stderr"] == "compose failed" for row in rows)

@@ -1022,3 +1022,80 @@ scope:
   strict compose-file and template-field validation after QA rework,
   durable-status CLI JSON receipts, focused and broader runtime tests, and
   factual scope limits. | accepted 2026-06-12
+
+## PB-005 Story 4 - Container Lifecycle Execution Records
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after retest
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/container_lifecycle.py`
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_container_lifecycle.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py
+```
+
+Result:
+
+```text
+36 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+75 passed
+```
+
+### Acceptance Assessment
+
+- Runtime DB records role container lifecycle attempts with command, status,
+  reason, exit code, stdout, stderr, and correlation fingerprint.
+- Repeated lifecycle attempts receive unique `action_id` values and preserve
+  prior failure evidence.
+- Status snapshot and dashboard expose role container lifecycle actions.
+- The executor records planned actions without command execution.
+- The executor runs through an injectable runner and finalizes the current
+  attempt as succeeded or failed.
+- Successful `start` returns a hydrating role instance to `idle`.
+- Failed stop/start attempts preserve failure evidence and do not mark the
+  role instance healthy.
+- `run-project-container-lifecycle` records planned actions by default and
+  executes only with `--execute`.
+- The engineering log is factual about current limits: no automatic
+  maintenance-triggered execution, retry, rollback, alerting, or extra stop
+  success state beyond existing hibernated state.
+
+### Residual Gaps
+
+These are not blockers for PB-005 Story 4 because they remain later lifecycle
+operations scope:
+
+- Container execution is operator-triggered through the CLI rather than wired
+  into hibernation maintenance.
+- Failed lifecycle actions record evidence but do not yet trigger retry,
+  rollback, or alert routing.
+
+### Review Log
+
+- QA-RL-017 | qa-engineer | acceptance | PB-005 Story 4 | Verified durable
+  container lifecycle action records, append-only repeated-attempt evidence,
+  guarded CLI execution, status/dashboard visibility, focused and broader
+  runtime tests, and factual scope limits after QA rework. | accepted
+  2026-06-12

@@ -1026,6 +1026,78 @@ Results:
 - The planner maps current runtime state to commands but does not yet record
   command execution results or update status after container action completion.
 
+## PB-005 Story 4 - Container Lifecycle Execution Records
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add durable execution records for role container lifecycle actions and a guarded
+CLI path that can either record planned actions or execute them through an
+injectable command runner. This is the first slice that records container
+lifecycle outcomes, while keeping real command execution behind an explicit
+operator flag.
+
+### Implementation Notes
+
+- Added `role_container_lifecycle_actions` runtime table.
+- Added status snapshot and dashboard visibility for container lifecycle
+  actions.
+- Added `ContainerLifecycleExecutor`.
+- `record_plan()` stores planned lifecycle actions without executing commands.
+- `execute()` records the planned action, runs the command through the runner,
+  and updates the action to `succeeded` or `failed`.
+- Successful `start` actions return the role instance from `hydrating` to
+  `idle`.
+- Added `run-project-container-lifecycle` CLI command:
+  - without `--execute`, it records planned actions only
+  - with `--execute`, it runs planned commands
+  - `--timeout-seconds` controls command timeout
+
+### Tests Added
+
+- executor records successful container lifecycle command output
+- successful start/hydration returns the role instance to `idle`
+- executor records failed command output and preserves hibernated state
+- dashboard/status exposes lifecycle action records
+- CLI records planned container lifecycle actions without executing them
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+36 passed
+75 passed
+```
+
+### QA Rework
+
+- Changed lifecycle action records so each attempt gets a unique `action_id`.
+- Added `action_fingerprint` so repeated attempts against the same role,
+  service, command, and reason can be correlated without overwriting evidence.
+- Added explicit completion updates for the current attempt only.
+- Added regression coverage proving repeated failed attempts and later planned
+  actions preserve previous failure evidence.
+
+### Known Limitations
+
+- Real Docker execution exists only through the CLI `--execute` flag and is not
+  automatically triggered by hibernation maintenance.
+- Failure handling records command output but does not yet perform retry,
+  rollback, or alert routing.
+- Stop action success does not yet change the role-instance status beyond the
+  already recorded `hibernated` state.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1083,3 +1155,9 @@ Results:
 - RL-017 | engineering | QA rework | PB-005 Story 3 | Rejected non-string
   Compose file config and non-exact template field expressions after QA found
   validation gaps. | QA accepted 2026-06-12
+- RL-018 | engineering | implementation | PB-005 Story 4 | Added durable
+  container lifecycle action records, guarded execution, status visibility, and
+  planned-action CLI recording. | QA accepted after rework 2026-06-12
+- RL-019 | engineering | QA rework | PB-005 Story 4 | Made lifecycle action
+  attempts append-only with correlation fingerprints and preserved repeated
+  failure evidence after QA found overwrite risk. | QA accepted 2026-06-12

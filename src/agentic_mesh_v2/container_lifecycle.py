@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from string import Formatter
 from typing import Any
+from typing import Protocol
+from uuid import uuid4
+
+from agentic_mesh_v2.db import V2Database
 
 
 @dataclass(frozen=True)
@@ -60,6 +66,80 @@ class ContainerLifecycleAction:
     command: tuple[str, ...]
     working_directory: Path | None
     reason: str
+
+
+@dataclass(frozen=True)
+class ContainerCommandResult:
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+
+
+class ContainerCommandRunner(Protocol):
+    def __call__(
+        self,
+        command: list[str],
+        *,
+        cwd: Path | None,
+        timeout_seconds: int,
+    ) -> ContainerCommandResult:
+        ...
+
+
+class ContainerLifecycleExecutor:
+    def __init__(
+        self,
+        db: V2Database,
+        *,
+        runner: ContainerCommandRunner | None = None,
+        timeout_seconds: int = 300,
+    ) -> None:
+        if timeout_seconds < 1:
+            raise ValueError("container lifecycle timeout_seconds must be at least 1")
+        self.db = db
+        self.runner = runner or _run_container_command
+        self.timeout_seconds = timeout_seconds
+
+    def record_plan(self, action: ContainerLifecycleAction) -> str:
+        action_id = _action_id(action)
+        action_fingerprint = _action_fingerprint(action)
+        self.db.record_role_container_lifecycle_action(
+            action_id=action_id,
+            action_fingerprint=action_fingerprint,
+            role_id=action.role_id,
+            role_instance_id=action.role_instance_id,
+            action=action.action,
+            service_name=action.service_name,
+            command=list(action.command),
+            working_directory=str(action.working_directory) if action.working_directory is not None else None,
+            status="planned",
+            reason=action.reason,
+        )
+        return action_id
+
+    def execute(self, action: ContainerLifecycleAction) -> tuple[str, ContainerCommandResult]:
+        action_id = self.record_plan(action)
+        result = self.runner(
+            list(action.command),
+            cwd=action.working_directory,
+            timeout_seconds=self.timeout_seconds,
+        )
+        status = "succeeded" if result.exit_code == 0 else "failed"
+        self.db.complete_role_container_lifecycle_action(
+            action_id=action_id,
+            status=status,
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+        if result.exit_code == 0 and action.action == "start":
+            self.db.update_role_instance_status(
+                role_id=action.role_id,
+                role_instance_id=action.role_instance_id,
+                status="idle",
+                detail="Role instance hydrated after container lifecycle start.",
+            )
+        return action_id, result
 
 
 def plan_compose_lifecycle_action(
@@ -130,3 +210,50 @@ def _validate_template(template: str) -> None:
             continue
         if field_name not in allowed:
             raise ValueError(f"unsupported service_name_template field `{field_name}`")
+
+
+def _action_id(action: ContainerLifecycleAction) -> str:
+    return f"role-container-action-{uuid4().hex}"
+
+
+def _action_fingerprint(action: ContainerLifecycleAction) -> str:
+    value = "|".join(
+        [
+            action.role_instance_id,
+            action.action,
+            action.service_name,
+            " ".join(action.command),
+            action.reason,
+        ]
+    )
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _run_container_command(
+    command: list[str],
+    *,
+    cwd: Path | None,
+    timeout_seconds: int,
+) -> ContainerCommandResult:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd) if cwd is not None else None,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return ContainerCommandResult(
+            exit_code=124,
+            stdout=exc.stdout or "",
+            stderr=(exc.stderr or "") + f"\nTimed out after {timeout_seconds} seconds.",
+        )
+    except OSError as exc:
+        return ContainerCommandResult(exit_code=127, stderr=str(exc))
+    return ContainerCommandResult(
+        exit_code=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )

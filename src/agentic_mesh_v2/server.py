@@ -91,6 +91,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     {self._count_tile("Connectors", counts["connectors"])}
     {self._count_tile("Role identities", counts["connector_participants"])}
     {self._count_tile("Role instances", counts.get("role_instance_statuses", 0))}
+    {self._count_tile("Container actions", counts.get("role_container_lifecycle_actions", 0))}
     {self._count_tile("Conversation events", counts["conversation_events"])}
     {self._count_tile("Deliveries", counts["delivery_records"])}
     {self._count_tile("Relevance checks", counts["relevance_checks"])}
@@ -157,6 +158,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   {self._deployment_target_table(snapshot["deployment_targets"])}
   <h2>Deployment Runs</h2>
   {self._deployment_run_table(snapshot["deployment_runs"])}
+  <h2>Role Container Lifecycle Actions</h2>
+  {self._role_container_lifecycle_table(snapshot["role_container_lifecycle_actions"])}
   <h2>Release Evidence Links</h2>
   {self._release_evidence_table(snapshot["release_evidence_links"])}
   <h2>Recent Events</h2>
@@ -275,6 +278,25 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 "</tr>"
             )
         return "<table><tr><th>Instance / Role</th><th>Status / Detail</th><th>Assignment / Run</th><th>Processed</th><th>Heartbeat / Hibernated</th><th>Hibernate / Wake Reason</th></tr>" + "".join(body) + "</table>"
+
+    def _role_container_lifecycle_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 role container lifecycle actions.</p>'
+        body = []
+        for row in items[:30]:
+            command = row.get("command")
+            command_text = " ".join(str(item) for item in command) if isinstance(command, list) else ""
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['action_id'])}</code><br>{_e(row['role_id'])}<br>{_e(row['role_instance_id'])}</td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row['action'])}<br>{_e(row['service_name'])}</td>"
+                f"<td>{_e(command_text)}<br><span class=\"muted\">{_e(row.get('working_directory') or '')}</span></td>"
+                f"<td>{_e(row.get('exit_code') if row.get('exit_code') is not None else '')}<br>{_e(row.get('stderr') or '')}</td>"
+                f"<td>{_e(row.get('reason') or '')}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Action / Role</th><th>Status / Service</th><th>Command / CWD</th><th>Exit / Error</th><th>Reason</th></tr>" + "".join(body) + "</table>"
 
     def _channel_binding_table(self, rows: object) -> str:
         connectors = list(rows) if isinstance(rows, list) else []

@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 
 from agentic_mesh_v2.container_lifecycle import ComposeRoleLifecycleConfig
+from agentic_mesh_v2.container_lifecycle import ContainerLifecycleAction
+from agentic_mesh_v2.container_lifecycle import ContainerLifecycleExecutor
 from agentic_mesh_v2.container_lifecycle import plan_compose_lifecycle_action
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
@@ -132,6 +134,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Plan container lifecycle commands for hibernated or hydrating project role instances.",
     )
     container_lifecycle_parser.add_argument("--project-file", type=Path, required=True)
+
+    run_container_lifecycle_parser = subparsers.add_parser(
+        "run-project-container-lifecycle",
+        help="Record or execute container lifecycle commands for hibernated or hydrating project role instances.",
+    )
+    run_container_lifecycle_parser.add_argument("--project-file", type=Path, required=True)
+    run_container_lifecycle_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually run planned lifecycle commands. Without this flag, actions are recorded as planned only.",
+    )
+    run_container_lifecycle_parser.add_argument("--timeout-seconds", type=int, default=300)
 
     topology_parser = subparsers.add_parser(
         "validate-topology",
@@ -275,6 +289,10 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.command == "plan-project-container-lifecycle":
                 result = _plan_project_container_lifecycle(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            if args.command == "run-project-container-lifecycle":
+                result = _run_project_container_lifecycle(db, args)
                 print(json.dumps(result, sort_keys=True))
                 return 0
         finally:
@@ -490,13 +508,75 @@ def _run_project_hibernation_maintenance(db: V2Database, args: argparse.Namespac
 
 
 def _plan_project_container_lifecycle(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    actions, skipped = _project_container_lifecycle_actions(db, args.project_file)
+    return {
+        "status": "ok",
+        "project_file": str(args.project_file),
+        "action_count": len(actions),
+        "skipped_count": len(skipped),
+        "actions": [_action_to_dict(action) for action in actions],
+        "skipped": skipped,
+    }
+
+
+def _run_project_container_lifecycle(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    actions, skipped = _project_container_lifecycle_actions(db, args.project_file)
+    executor = ContainerLifecycleExecutor(db, timeout_seconds=args.timeout_seconds)
+    receipts: list[dict[str, object]] = []
+    executed_count = 0
+    failed_count = 0
+    planned_count = 0
+    for action in actions:
+        if args.execute:
+            action_id, result = executor.execute(action)
+            executed_count += 1
+            if result.exit_code != 0:
+                failed_count += 1
+            receipts.append(
+                {
+                    **_action_to_dict(action),
+                    "action_id": action_id,
+                    "status": "succeeded" if result.exit_code == 0 else "failed",
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                }
+            )
+        else:
+            action_id = executor.record_plan(action)
+            planned_count += 1
+            receipts.append(
+                {
+                    **_action_to_dict(action),
+                    "action_id": action_id,
+                    "status": "planned",
+                }
+            )
+    return {
+        "status": "ok",
+        "project_file": str(args.project_file),
+        "execute": bool(args.execute),
+        "action_count": len(actions),
+        "planned_count": planned_count,
+        "executed_count": executed_count,
+        "failed_count": failed_count,
+        "skipped_count": len(skipped),
+        "actions": receipts,
+        "skipped": skipped,
+    }
+
+
+def _project_container_lifecycle_actions(
+    db: V2Database,
+    project_file: Path,
+) -> tuple[list[ContainerLifecycleAction], list[dict[str, str]]]:
     statuses = {
         row["role_instance_id"]: row
         for row in db.list_role_instance_statuses()
     }
-    actions: list[dict[str, object]] = []
+    actions: list[ContainerLifecycleAction] = []
     skipped: list[dict[str, str]] = []
-    for config in list_project_role_service_configs(args.project_file):
+    for config in list_project_role_service_configs(project_file):
         row = statuses.get(config.role_instance_id)
         if row is None:
             skipped.append(
@@ -507,7 +587,7 @@ def _plan_project_container_lifecycle(db: V2Database, args: argparse.Namespace) 
                 }
             )
             continue
-        raw_lifecycle = load_role_container_lifecycle_config(args.project_file, role_id=config.role_id)
+        raw_lifecycle = load_role_container_lifecycle_config(project_file, role_id=config.role_id)
         if not raw_lifecycle:
             skipped.append(
                 {
@@ -535,24 +615,19 @@ def _plan_project_container_lifecycle(db: V2Database, args: argparse.Namespace) 
                 }
             )
             continue
-        actions.append(
-            {
-                "role_id": action.role_id,
-                "role_instance_id": action.role_instance_id,
-                "action": action.action,
-                "service_name": action.service_name,
-                "command": list(action.command),
-                "working_directory": str(action.working_directory) if action.working_directory is not None else None,
-                "reason": action.reason,
-            }
-        )
+        actions.append(action)
+    return actions, skipped
+
+
+def _action_to_dict(action: ContainerLifecycleAction) -> dict[str, object]:
     return {
-        "status": "ok",
-        "project_file": str(args.project_file),
-        "action_count": len(actions),
-        "skipped_count": len(skipped),
-        "actions": actions,
-        "skipped": skipped,
+        "role_id": action.role_id,
+        "role_instance_id": action.role_instance_id,
+        "action": action.action,
+        "service_name": action.service_name,
+        "command": list(action.command),
+        "working_directory": str(action.working_directory) if action.working_directory is not None else None,
+        "reason": action.reason,
     }
 
 

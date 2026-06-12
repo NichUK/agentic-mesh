@@ -384,6 +384,24 @@ class V2Database:
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS role_container_lifecycle_actions (
+                  action_id TEXT PRIMARY KEY,
+                  action_fingerprint TEXT NOT NULL,
+                  role_id TEXT NOT NULL,
+                  role_instance_id TEXT NOT NULL,
+                  action TEXT NOT NULL,
+                  service_name TEXT NOT NULL,
+                  command_json TEXT NOT NULL,
+                  working_directory TEXT,
+                  status TEXT NOT NULL,
+                  reason TEXT NOT NULL,
+                  exit_code INTEGER,
+                  stdout TEXT,
+                  stderr TEXT,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS relevance_checks (
                   relevance_check_id TEXT PRIMARY KEY,
                   conversation_event_id TEXT NOT NULL,
@@ -503,6 +521,7 @@ class V2Database:
             self._ensure_column("role_instance_status", "hibernation_reason", "TEXT")
             self._ensure_column("role_instance_status", "hibernated_at", "TEXT")
             self._ensure_column("role_instance_status", "wake_reason", "TEXT")
+            self._ensure_column("role_container_lifecycle_actions", "action_fingerprint", "TEXT NOT NULL DEFAULT ''")
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
@@ -1839,6 +1858,115 @@ class V2Database:
                 },
             )
 
+    def record_role_container_lifecycle_action(
+        self,
+        *,
+        action_id: str,
+        action_fingerprint: str,
+        role_id: str,
+        role_instance_id: str,
+        action: str,
+        service_name: str,
+        command: list[str],
+        working_directory: str | None,
+        status: str,
+        reason: str,
+        exit_code: int | None = None,
+        stdout: str | None = None,
+        stderr: str | None = None,
+    ) -> None:
+        if status not in {"planned", "succeeded", "failed"}:
+            raise ValueError("role container lifecycle status must be planned, succeeded, or failed")
+        if action not in {"start", "stop"}:
+            raise ValueError("role container lifecycle action must be start or stop")
+        if not command:
+            raise ValueError("role container lifecycle command is required")
+        if not reason.strip():
+            raise ValueError("role container lifecycle reason is required")
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO role_container_lifecycle_actions(
+                  action_id, action_fingerprint, role_id, role_instance_id, action, service_name,
+                  command_json, working_directory, status, reason, exit_code, stdout, stderr
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_id,
+                    action_fingerprint,
+                    role_id,
+                    role_instance_id,
+                    action,
+                    service_name,
+                    json.dumps(command),
+                    working_directory,
+                    status,
+                    reason,
+                    exit_code,
+                    stdout,
+                    stderr,
+                ),
+            )
+            self.append_event(
+                f"role_container_lifecycle.{status}",
+                "role_container_lifecycle",
+                action_id,
+                {
+                    "role_id": role_id,
+                    "role_instance_id": role_instance_id,
+                    "action": action,
+                    "action_fingerprint": action_fingerprint,
+                    "service_name": service_name,
+                    "status": status,
+                    "exit_code": exit_code,
+                },
+            )
+
+    def complete_role_container_lifecycle_action(
+        self,
+        *,
+        action_id: str,
+        status: str,
+        exit_code: int,
+        stdout: str | None = None,
+        stderr: str | None = None,
+    ) -> None:
+        if status not in {"succeeded", "failed"}:
+            raise ValueError("role container lifecycle completion status must be succeeded or failed")
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT * FROM role_container_lifecycle_actions WHERE action_id = ?",
+                (action_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown role container lifecycle action `{action_id}`")
+            self.connection.execute(
+                """
+                UPDATE role_container_lifecycle_actions
+                SET status = ?,
+                    exit_code = ?,
+                    stdout = ?,
+                    stderr = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE action_id = ?
+                """,
+                (status, exit_code, stdout, stderr, action_id),
+            )
+            self.append_event(
+                f"role_container_lifecycle.{status}",
+                "role_container_lifecycle",
+                action_id,
+                {
+                    "role_id": row["role_id"],
+                    "role_instance_id": row["role_instance_id"],
+                    "action": row["action"],
+                    "service_name": row["service_name"],
+                    "status": status,
+                    "exit_code": exit_code,
+                },
+            )
+
     def record_relevance_check(
         self,
         *,
@@ -2702,6 +2830,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_role_container_lifecycle_actions(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM role_container_lifecycle_actions
+            ORDER BY updated_at DESC, action_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_relevance_checks(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -2746,6 +2884,7 @@ class V2Database:
         connector_permission_checks = self.list_connector_permission_checks()
         role_assignments = self.list_role_assignments()
         role_instance_statuses = self.list_role_instance_statuses()
+        role_container_lifecycle_actions = self.list_role_container_lifecycle_actions()
         relevance_checks = self.list_relevance_checks()
         work_proposals = self.list_work_proposals()
         human_response_requests = self.list_human_response_requests()
@@ -2839,6 +2978,7 @@ class V2Database:
                 "connector_permission_checks": len(connector_permission_checks),
                 "role_assignments": len(role_assignments),
                 "role_instance_statuses": len(role_instance_statuses),
+                "role_container_lifecycle_actions": len(role_container_lifecycle_actions),
                 "relevance_checks": len(relevance_checks),
                 "work_proposals": len(work_proposals),
                 "human_response_requests": len(human_response_requests),
@@ -2872,12 +3012,14 @@ class V2Database:
             "connector_permission_checks": connector_permission_checks,
             "role_assignments": role_assignments,
             "role_instance_statuses": role_instance_statuses,
+            "role_container_lifecycle_actions": role_container_lifecycle_actions,
             "relevance_checks": relevance_checks,
             "work_proposals": work_proposals,
             "human_response_requests": redacted_human_response_requests,
             "human_response_submissions": human_response_submissions,
             "context_summaries": redacted_context_summaries,
             "retention_expiry_records": retention_expiry_records,
+            "role_container_lifecycle_actions": role_container_lifecycle_actions,
             "recent_events": self.list_events()[-50:],
         }
 
