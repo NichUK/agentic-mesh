@@ -1683,3 +1683,58 @@ None blocking for PB-005 Story 14.
   supervisor service CLI mode selection, bounded cycle aggregation,
   lifecycle idempotency, clean interrupt receipts, dashboard command scoping,
   and factual engineering-log boundaries. | accepted 2026-06-12
+
+## PB-005 Story 15 - Dogfood Compose Supervisor Service Wiring
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml`
+- `examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml`
+- `tests/test_v2_dogfood_compose.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_dogfood_compose.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+docker compose -f examples\projects\agentic-mesh-dev\deploy\compose\docker-compose.yml -f examples\projects\agentic-mesh-dev\deploy\compose\docker-compose.linuxch.yml config --quiet
+```
+
+Results:
+
+```text
+39 passed
+docker compose config passed
+```
+
+### Acceptance Assessment
+
+- `v2-runtime` starts the status server with
+  `serve --project-file /mesh/project/agentic-mesh/project.yaml`.
+- The dogfood Compose file defines `v2-supervisor` using the shared
+  Agentic Mesh image, environment, volumes, and working directory.
+- `v2-supervisor` runs
+  `run-project-supervisor-service --continuous --execute` with the configured
+  project file and poll interval.
+- The linuxch overlay gives `v2-supervisor` a restart policy.
+- Compose validation passes with the base file and linuxch overlay.
+- Test and implementation claims stay scoped to the dogfood Docker Compose
+  supervisor container and do not claim systemd, Kubernetes, Helm, Terraform,
+  or role worker service deployment support.
+
+### Residual Gaps
+
+None blocking for PB-005 Story 15.
+
+### Review Log
+
+- QA-RL-028 | qa-engineer | acceptance | PB-005 Story 15 | Verified dogfood
+  Compose status-server project-file wiring, continuous executing supervisor
+  service wiring, linuxch restart policy, Compose config validity, and scoped
+  deployment claims. | accepted 2026-06-12

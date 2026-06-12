@@ -31,9 +31,15 @@ services:
 
   v2-runtime:
     <<: *agentic-mesh-service
-    command: python -m agentic_mesh_v2.cli --db /mesh/project/state/v2/agentic-mesh-v2.sqlite3 serve --host 0.0.0.0 --port 8080
+    command: python -m agentic_mesh_v2.cli --db /mesh/project/state/v2/agentic-mesh-v2.sqlite3 serve --host 0.0.0.0 --port 8080 --project-file /mesh/project/agentic-mesh/project.yaml
     ports:
       - "8100:8080"
+
+  v2-supervisor:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh_v2.cli --db /mesh/project/state/v2/agentic-mesh-v2.sqlite3 run-project-supervisor-service --project-file /mesh/project/agentic-mesh/project.yaml --continuous --poll-seconds ${AGENTIC_MESH_SUPERVISOR_POLL_SECONDS:-5} --execute
+    depends_on:
+      - v2-runtime
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.101.0

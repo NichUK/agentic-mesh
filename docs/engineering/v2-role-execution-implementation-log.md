@@ -1658,6 +1658,65 @@ Results:
 - Continuous mode remains host-supervisor controlled and writes its summary
   only when interrupted.
 
+## PB-005 Story 15 - Dogfood Compose Supervisor Service Wiring
+
+Status: QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Wire the new project supervisor service entrypoint into the dogfood Docker
+Compose deployment so the installed v2 runtime has a long-running supervisor
+container, not only an operator CLI command.
+
+### Implementation Notes
+
+- Updated the dogfood `v2-runtime` service to start the status server with
+  `--project-file /mesh/project/agentic-mesh/project.yaml`.
+- Added a `v2-supervisor` Compose service using the shared Agentic Mesh image,
+  environment, volumes, and working directory.
+- The supervisor service runs:
+  `run-project-supervisor-service --continuous --execute`.
+- Added `AGENTIC_MESH_SUPERVISOR_POLL_SECONDS` interpolation with a default of
+  five seconds for local tuning.
+- Added `depends_on: v2-runtime` so the status/runtime service can initialize
+  the DB before the supervisor starts, while the supervisor still migrates the
+  DB defensively through the CLI path.
+- Updated the linuxch overlay so `v2-supervisor` restarts unless stopped.
+
+### Tests Added
+
+- dogfood Compose starts the status server with a project file
+- dogfood Compose includes a `v2-supervisor` service running the continuous
+  supervisor command with project file, poll interval, and execute flag
+- linuxch overlay includes restart policy for the supervisor service
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_dogfood_compose.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+docker compose -f examples\projects\agentic-mesh-dev\deploy\compose\docker-compose.yml -f examples\projects\agentic-mesh-dev\deploy\compose\docker-compose.linuxch.yml config --quiet
+```
+
+Results:
+
+```text
+39 passed
+docker compose config passed
+```
+
+### Known Limitations
+
+- This story wires the dogfood Docker Compose deployment only. Systemd,
+  Kubernetes, Helm, Terraform, and generated deployment templates remain future
+  slices.
+- The supervisor service loops the hibernation/container lifecycle supervisor;
+  long-running role worker service containers are still represented by later
+  deployment/profile stories.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1756,3 +1815,6 @@ Results:
   project supervisor service command with bounded and continuous modes,
   interrupt receipts, and dashboard command guidance. | QA accepted
   2026-06-12
+- RL-030 | engineering | implementation | PB-005 Story 15 | Wired the dogfood
+  Compose deployment to run the v2 supervisor service continuously and start
+  the status server with project-file context. | QA accepted 2026-06-12

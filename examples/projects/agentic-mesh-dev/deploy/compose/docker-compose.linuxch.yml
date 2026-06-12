@@ -2,6 +2,9 @@ services:
   v2-runtime:
     restart: unless-stopped
 
+  v2-supervisor:
+    restart: unless-stopped
+
   otel-collector:
     ports: !reset []
     networks:
