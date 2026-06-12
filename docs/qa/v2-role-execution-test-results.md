@@ -1738,3 +1738,53 @@ None blocking for PB-005 Story 15.
   Compose status-server project-file wiring, continuous executing supervisor
   service wiring, linuxch restart policy, Compose config validity, and scoped
   deployment claims. | accepted 2026-06-12
+
+## PB-005 Story 16 - Single Role Service Entrypoint
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py
+```
+
+Results:
+
+```text
+36 passed
+```
+
+### Acceptance Assessment
+
+- `run-role-service-loop` is registered in the v2 CLI.
+- The command targets one explicit role id and role-instance id, which supports
+  one-container-per-role-instance deployment wiring.
+- The command requires explicit bounded or continuous service mode.
+- Bounded execution reuses the existing role-service tick path and aggregates
+  recovered/processed totals across cycles.
+- Continuous interruption returns an `interrupted` receipt and counts only
+  completed cycles.
+- The implementation log limits the claim to the entrypoint and does not claim
+  dogfood Compose role-container deployment or Codex-worker execution support.
+
+### Residual Gaps
+
+None blocking for PB-005 Story 16.
+
+### Review Log
+
+- QA-RL-029 | qa-engineer | acceptance | PB-005 Story 16 | Verified
+  single-role service loop CLI registration, explicit role-instance targeting,
+  explicit mode selection, bounded aggregate receipts, clean interrupt
+  receipts, and scoped implementation claims. | accepted 2026-06-12

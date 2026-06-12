@@ -1717,6 +1717,63 @@ docker compose config passed
   long-running role worker service containers are still represented by later
   deployment/profile stories.
 
+## PB-005 Story 16 - Single Role Service Entrypoint
+
+Status: QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add a long-running service entrypoint for one role-agent instance so deployed
+role containers can run their own claim/recover/process loop instead of relying
+on a project-wide operator loop.
+
+### Implementation Notes
+
+- Added `run-role-service-loop`.
+- The command targets one explicit `--role-id` and `--role-instance-id`.
+- Worker config is loaded through the existing role-service worker path:
+  `--project-file` for project YAML worker config, or explicit worker override
+  arguments for tests/operators.
+- Service mode must be explicit:
+  - `--cycles N` runs a bounded role-service session and exits.
+  - `--continuous` runs until interrupted by the host/container supervisor.
+- The existing `run-role-service-tick` path now shares the same helper as the
+  loop, so one-shot and service execution record runs and safe outputs
+  identically.
+- JSON receipts include service mode, role id, role instance id, project file,
+  completed cycle count, recovered/processed totals, and per-cycle receipts.
+- `KeyboardInterrupt` is handled as a clean `interrupted` service receipt.
+
+### Tests Added
+
+- single role-service loop processes queued role work across bounded cycles
+- invalid role-service loop cycle and poll bounds are rejected
+- role-service loop requires explicit bounded or continuous mode
+- continuous role-service interruption reports completed cycles and totals
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_cli_server.py
+```
+
+Results:
+
+```text
+36 passed
+```
+
+### Known Limitations
+
+- This story adds the single role-service entrypoint only. Dogfood Compose
+  role-agent containers remain the next deployment/profile slice.
+- The command still uses the currently supported worker adapters; Codex-worker
+  execution remains behind the worker-adapter implementation boundary.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1818,3 +1875,7 @@ docker compose config passed
 - RL-030 | engineering | implementation | PB-005 Story 15 | Wired the dogfood
   Compose deployment to run the v2 supervisor service continuously and start
   the status server with project-file context. | QA accepted 2026-06-12
+- RL-031 | engineering | implementation | PB-005 Story 16 | Added a
+  single-role service loop entrypoint for one role-agent instance with bounded
+  and continuous modes, shared tick execution, and interrupt receipts. |
+  QA accepted 2026-06-12

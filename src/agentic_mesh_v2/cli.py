@@ -90,6 +90,44 @@ def main(argv: list[str] | None = None) -> int:
     tick_parser.add_argument("--max-assignments", type=int, default=10)
     tick_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
 
+    role_loop_parser = subparsers.add_parser(
+        "run-role-service-loop",
+        help="Run a repeated role-service loop for one configured role instance.",
+    )
+    role_loop_parser.add_argument("--role-id", required=True)
+    role_loop_parser.add_argument("--role-instance-id", required=True)
+    role_loop_parser.add_argument(
+        "--project-file",
+        type=Path,
+        help="Optional project.yaml to load roles.<role>.worker when --worker is omitted.",
+    )
+    role_loop_parser.add_argument(
+        "--worker",
+        choices=["safe-output-file", "safe-output-subprocess"],
+        help="Worker adapter to use for claimed assignments.",
+    )
+    role_loop_parser.add_argument("--safe-output-file", type=Path)
+    role_loop_parser.add_argument(
+        "--worker-command-json",
+        help="JSON array command for the safe-output-subprocess worker.",
+    )
+    role_loop_parser.add_argument("--worker-timeout-seconds", type=int, default=300)
+    role_loop_parser.add_argument("--max-recoveries", type=int, default=50)
+    role_loop_parser.add_argument("--max-assignments", type=int, default=10)
+    role_loop_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
+    role_loop_mode = role_loop_parser.add_mutually_exclusive_group(required=True)
+    role_loop_mode.add_argument(
+        "--cycles",
+        type=int,
+        help="Run a bounded number of role-service cycles and exit.",
+    )
+    role_loop_mode.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Run continuously until interrupted by the host/container supervisor.",
+    )
+    role_loop_parser.add_argument("--poll-seconds", type=float, default=5.0)
+
     project_tick_parser = subparsers.add_parser(
         "run-project-role-services-once",
         help="Run one bounded role-service tick for each configured project role instance.",
@@ -331,40 +369,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
             if args.command == "run-role-service-tick":
-                worker = build_worker_adapter(_worker_config_from_args(args))
-                service = RoleService(
-                    db=db,
-                    role_id=args.role_id,
-                    role_instance_id=args.role_instance_id,
-                    worker=worker,
-                    assignment_lease_seconds=args.assignment_lease_seconds,
-                )
-                receipt = service.run_service_tick(
-                    max_recoveries=args.max_recoveries,
-                    max_assignments=args.max_assignments,
-                )
-                print(
-                    json.dumps(
-                        {
-                            "status": receipt.status,
-                            "role_id": args.role_id,
-                            "role_instance_id": args.role_instance_id,
-                            "recovered_count": receipt.recovered_count,
-                            "processed_count": receipt.processed_count,
-                            "runs": [
-                                {
-                                    "assignment_id": run.assignment_id,
-                                    "run_id": run.run_id,
-                                    "status": run.status,
-                                    "terminal_tool": run.terminal_tool,
-                                    "safe_output_count": run.safe_output_count,
-                                }
-                                for run in receipt.receipts
-                            ],
-                        },
-                        sort_keys=True,
-                    )
-                )
+                print(json.dumps(_run_role_service_tick(db, args), sort_keys=True))
+                return 0
+            if args.command == "run-role-service-loop":
+                print(json.dumps(_run_role_service_loop(db, args), sort_keys=True))
                 return 0
             if args.command == "run-project-role-services-once":
                 result = _run_project_role_services_once(db, args)
@@ -443,7 +451,7 @@ def _parse_worker_command(value: str | None) -> tuple[str, ...]:
 def _worker_config_from_args(args: argparse.Namespace) -> dict[str, object]:
     if args.worker is None:
         if args.project_file is None:
-            raise ValueError("--worker or --project-file is required for run-role-service-tick")
+            raise ValueError("--worker or --project-file is required for role-service execution")
         return load_role_worker_config(args.project_file, role_id=args.role_id)
     if args.worker == "safe-output-file":
         if args.safe_output_file is None:
@@ -456,6 +464,76 @@ def _worker_config_from_args(args: argparse.Namespace) -> dict[str, object]:
             "timeout_seconds": args.worker_timeout_seconds,
         }
     raise AssertionError(f"unhandled worker adapter: {args.worker}")
+
+
+def _run_role_service_tick(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    worker = build_worker_adapter(_worker_config_from_args(args))
+    service = RoleService(
+        db=db,
+        role_id=args.role_id,
+        role_instance_id=args.role_instance_id,
+        worker=worker,
+        assignment_lease_seconds=args.assignment_lease_seconds,
+    )
+    receipt = service.run_service_tick(
+        max_recoveries=args.max_recoveries,
+        max_assignments=args.max_assignments,
+    )
+    return {
+        "status": receipt.status,
+        "role_id": args.role_id,
+        "role_instance_id": args.role_instance_id,
+        "recovered_count": receipt.recovered_count,
+        "processed_count": receipt.processed_count,
+        "runs": [
+            {
+                "assignment_id": run.assignment_id,
+                "run_id": run.run_id,
+                "status": run.status,
+                "terminal_tool": run.terminal_tool,
+                "safe_output_count": run.safe_output_count,
+            }
+            for run in receipt.receipts
+        ],
+    }
+
+
+def _run_role_service_loop(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    if args.cycles is not None and args.cycles < 1:
+        raise ValueError("--cycles must be at least 1")
+    if args.poll_seconds < 0:
+        raise ValueError("--poll-seconds must be zero or greater")
+
+    continuous = bool(args.continuous)
+    cycles_requested = None if continuous else int(args.cycles)
+    cycles: list[dict[str, object]] = []
+    totals = {"processed_count": 0, "recovered_count": 0}
+    status = "ok"
+    index = 0
+    try:
+        while cycles_requested is None or index < cycles_requested:
+            index += 1
+            cycle = _run_role_service_tick(db, args)
+            cycle["cycle"] = index
+            cycles.append(cycle)
+            totals["processed_count"] += int(cycle["processed_count"])
+            totals["recovered_count"] += int(cycle["recovered_count"])
+            if (cycles_requested is None or index < cycles_requested) and args.poll_seconds:
+                time.sleep(args.poll_seconds)
+    except KeyboardInterrupt:
+        status = "interrupted"
+
+    return {
+        "status": status,
+        "service_mode": "continuous" if continuous else "bounded",
+        "role_id": args.role_id,
+        "role_instance_id": args.role_instance_id,
+        "project_file": str(args.project_file) if args.project_file is not None else None,
+        "cycles_requested": cycles_requested,
+        "cycles_completed": len(cycles),
+        **totals,
+        "cycles": cycles,
+    }
 
 
 def _run_project_role_services_once(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
