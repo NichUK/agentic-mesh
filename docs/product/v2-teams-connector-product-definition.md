@@ -46,6 +46,32 @@ Teams is the human collaboration surface. It must not become the orchestration
 engine. Runtime state, routing, queue capture, safe-output calls, approvals,
 handoffs, and release evidence remain owned by the v2 runtime.
 
+## Human Team Collaboration Intent
+
+Agentic Mesh should support the collaboration patterns that already work in
+human teams, while making them auditable and durable enough for enterprise
+delivery.
+
+The intended experience is:
+
+- A human can ask a specialist role a direct question and get an answer in that
+  role's voice and authority.
+- A role can ask a human for clarification, a decision, approval, risk
+  acceptance, or missing context.
+- A human or role can bring another human or role into a discussion when the
+  decision needs more perspectives.
+- A channel can act as a project room where important discussion is visible to
+  the team without forcing every role to reply.
+- Feature or epic channels can narrow context for larger bodies of work.
+- A role can proactively propose work when conversation reveals a valuable or
+  necessary action.
+- The final important outcome of a conversation is recorded in the document
+  library, work item, decision record, risk, approval, or release evidence.
+
+The runtime should make these behaviours traceable, but not make the human
+interaction brittle. Role instructions should guide communication choices so
+agents can adapt to the situation, just as human specialists would.
+
 ## Product Manager Framing
 
 The Product Manager role owns product intent, scope, non-goals, acceptance
