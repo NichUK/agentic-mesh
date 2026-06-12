@@ -15,6 +15,16 @@ class ProjectRoleServiceConfig:
     worker_config: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class RoleMemoryConfig:
+    enabled: bool
+    backend: str
+    config_root: Path
+    role_config_path: Path
+    memory_path: Path
+    memory_filename: str
+
+
 def load_role_worker_config(project_file: Path, *, role_id: str) -> dict[str, Any]:
     raw = _load_project_mapping(project_file)
     role = _role_mapping(raw, role_id=role_id)
@@ -59,6 +69,74 @@ def load_role_container_lifecycle_config(project_file: Path, *, role_id: str) ->
             compose_files.append(str(compose_file))
         config["compose_files"] = compose_files
     return config
+
+
+def load_role_memory_config(project_file: Path, *, role_id: str) -> RoleMemoryConfig:
+    raw = _load_project_mapping(project_file)
+    project_root = _project_root(project_file)
+    project_memory = raw.get("role_memory")
+    if not isinstance(project_memory, dict) or project_memory.get("enabled") is False:
+        config_root = project_root / "agentic-mesh" / "roles"
+        memory_filename = "MEMORY.md"
+        role_config_path = config_root / role_id / "role.yaml"
+        return RoleMemoryConfig(
+            enabled=False,
+            backend="filesystem",
+            config_root=config_root,
+            role_config_path=role_config_path,
+            memory_path=role_config_path.parent / memory_filename,
+            memory_filename=memory_filename,
+        )
+
+    backend = str(project_memory.get("backend") or "filesystem")
+    if backend != "filesystem":
+        raise ValueError(f"role_memory backend `{backend}` is not supported yet")
+    memory_filename = _non_empty_string(project_memory.get("memory_filename"), default="MEMORY.md")
+    _validate_relative_file_name(memory_filename, field="role_memory.memory_filename")
+    config_root = _contained_project_path(
+        project_root,
+        project_file,
+        _non_empty_string(project_memory.get("config_root"), default="agentic-mesh/roles"),
+        field="role_memory.config_root",
+    )
+    role_dir = _contained_child_path(config_root, role_id, field="role_id")
+    _ensure_contained(role_dir, project_root, field="role role directory")
+    role_config_path = role_dir / "role.yaml"
+    memory_path = _contained_child_path(role_dir, memory_filename, field="role_memory.memory_filename")
+    _ensure_contained(memory_path, project_root, field="role memory path")
+    if role_config_path.exists():
+        with role_config_path.open("r", encoding="utf-8") as handle:
+            role_config = yaml.safe_load(handle)
+        if isinstance(role_config, dict):
+            role_memory = role_config.get("memory")
+            if isinstance(role_memory, dict):
+                role_memory_file = role_memory.get("file")
+                if isinstance(role_memory_file, str) and role_memory_file.strip():
+                    _validate_relative_file_name(role_memory_file, field="role.memory.file")
+                    memory_path = _contained_child_path(
+                        role_config_path.parent,
+                        role_memory_file,
+                        field="role.memory.file",
+                    )
+                    _ensure_contained(memory_path, project_root, field="role memory path")
+    return RoleMemoryConfig(
+        enabled=True,
+        backend=backend,
+        config_root=config_root,
+        role_config_path=role_config_path,
+        memory_path=memory_path,
+        memory_filename=memory_filename,
+    )
+
+
+def load_role_memory_context(project_file: Path, *, role_id: str) -> tuple[str, ...]:
+    config = load_role_memory_config(project_file, role_id=role_id)
+    if not config.enabled or not config.memory_path.exists():
+        return ()
+    text = config.memory_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return ()
+    return (f"Role memory file: {config.memory_path}\n{text}",)
 
 
 def list_project_role_service_configs(project_file: Path) -> list[ProjectRoleServiceConfig]:
@@ -126,3 +204,48 @@ def _worker_config(project_file: Path, *, role_id: str, role: dict[str, Any]) ->
                 worker_path = project_file.parent / worker_path
             config["path"] = str(worker_path)
     return config
+
+
+def _project_root(project_file: Path) -> Path:
+    project_file = Path(project_file)
+    if project_file.parent.name == "agentic-mesh":
+        return project_file.parent.parent
+    return project_file.parent
+
+
+def _contained_project_path(project_root: Path, project_file: Path, value: str, *, field: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        candidate = path
+    else:
+        candidate = _project_root(project_file) / path
+    return _ensure_contained(candidate, project_root, field=field)
+
+
+def _contained_child_path(root: Path, value: str, *, field: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        raise ValueError(f"{field} must be relative to the project role folder")
+    return _ensure_contained(root / path, root, field=field)
+
+
+def _ensure_contained(path: Path, root: Path, *, field: str) -> Path:
+    resolved_path = path.resolve(strict=False)
+    resolved_root = root.resolve(strict=False)
+    try:
+        resolved_path.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"{field} must resolve inside project root `{resolved_root}`") from exc
+    return resolved_path
+
+
+def _validate_relative_file_name(value: str, *, field: str) -> None:
+    path = Path(value)
+    if path.is_absolute() or path.name != value:
+        raise ValueError(f"{field} must be a single relative file name")
+
+
+def _non_empty_string(value: object, *, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return default

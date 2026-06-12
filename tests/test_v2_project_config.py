@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from agentic_mesh_v2.project_config import load_role_worker_config
+from agentic_mesh_v2.project_config import load_role_memory_config
+from agentic_mesh_v2.project_config import load_role_memory_context
 from agentic_mesh_v2.project_config import list_project_role_service_configs
 
 
@@ -80,6 +82,177 @@ roles:
     ]
     assert configs[0].worker_config["adapter"] == "safe-output-subprocess"
     assert configs[-1].worker_config["path"] == str(tmp_path / "calls.json")
+
+
+def test_load_role_memory_context_reads_project_local_role_memory(tmp_path: Path) -> None:
+    project_root = tmp_path / "demo-project"
+    project_file = project_root / "agentic-mesh" / "project.yaml"
+    role_dir = project_root / "agentic-mesh" / "roles" / "product-manager"
+    role_dir.mkdir(parents=True)
+    (role_dir / "role.yaml").write_text(
+        """
+schema_version: role-runtime-config-v0
+role_id: product-manager
+memory:
+  file: MEMORY.md
+""",
+        encoding="utf-8",
+    )
+    (role_dir / "MEMORY.md").write_text(
+        "# Product Manager Memory\n\n- Source: work-123. Sponsor cares about compact dashboards.",
+        encoding="utf-8",
+    )
+    project_file.write_text(
+        """
+project_id: test-project
+role_memory:
+  enabled: true
+  backend: filesystem
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    config = load_role_memory_config(project_file, role_id="product-manager")
+    context = load_role_memory_context(project_file, role_id="product-manager")
+
+    assert config.enabled is True
+    assert config.config_root == project_root / "agentic-mesh" / "roles"
+    assert config.memory_path == role_dir / "MEMORY.md"
+    assert len(context) == 1
+    assert "Role memory file:" in context[0]
+    assert "Sponsor cares about compact dashboards." in context[0]
+
+
+def test_load_role_memory_context_returns_empty_when_disabled(tmp_path: Path) -> None:
+    project_file = tmp_path / "agentic-mesh" / "project.yaml"
+    project_file.parent.mkdir()
+    project_file.write_text(
+        """
+project_id: test-project
+role_memory:
+  enabled: false
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    assert load_role_memory_context(project_file, role_id="product-manager") == ()
+
+
+def test_load_role_memory_context_returns_empty_when_enabled_file_missing(tmp_path: Path) -> None:
+    project_file = tmp_path / "demo-project" / "agentic-mesh" / "project.yaml"
+    project_file.parent.mkdir(parents=True)
+    project_file.write_text(
+        """
+project_id: test-project
+role_memory:
+  enabled: true
+  backend: filesystem
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    assert load_role_memory_context(project_file, role_id="product-manager") == ()
+
+
+def test_load_role_memory_config_rejects_config_root_escape(tmp_path: Path) -> None:
+    project_file = tmp_path / "demo-project" / "agentic-mesh" / "project.yaml"
+    project_file.parent.mkdir(parents=True)
+    project_file.write_text(
+        """
+project_id: test-project
+role_memory:
+  enabled: true
+  backend: filesystem
+  config_root: ../outside-project
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="role_memory.config_root must resolve inside project root"):
+        load_role_memory_config(project_file, role_id="product-manager")
+
+
+def test_load_role_memory_config_rejects_memory_file_escape(tmp_path: Path) -> None:
+    project_root = tmp_path / "demo-project"
+    project_file = project_root / "agentic-mesh" / "project.yaml"
+    role_dir = project_root / "agentic-mesh" / "roles" / "product-manager"
+    role_dir.mkdir(parents=True)
+    (role_dir / "role.yaml").write_text(
+        """
+schema_version: role-runtime-config-v0
+role_id: product-manager
+memory:
+  file: ../outside.md
+""",
+        encoding="utf-8",
+    )
+    project_file.write_text(
+        """
+project_id: test-project
+role_memory:
+  enabled: true
+  backend: filesystem
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="role.memory.file must be a single relative file name"):
+        load_role_memory_config(project_file, role_id="product-manager")
+
+
+def test_load_role_memory_config_rejects_role_id_escape(tmp_path: Path) -> None:
+    project_file = tmp_path / "demo-project" / "agentic-mesh" / "project.yaml"
+    project_file.parent.mkdir(parents=True)
+    project_file.write_text(
+        """
+project_id: test-project
+role_memory:
+  enabled: true
+  backend: filesystem
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="role_id must resolve inside project root"):
+        load_role_memory_config(project_file, role_id="../product-manager")
 
 
 @pytest.mark.parametrize(

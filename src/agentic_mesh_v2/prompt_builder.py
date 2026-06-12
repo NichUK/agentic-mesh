@@ -69,6 +69,7 @@ class PromptAssembler:
                 for key in ("system-security", "safe-outputs", "instructions")
             },
             "safe_output_tools": sorted(self.tool_policy.tools_for_role(assignment.role_id)),
+            "memory_context_count": len(assignment.memory_context),
         }
         return PromptRender(prompt_text=prompt_text, component_manifest=manifest)
 

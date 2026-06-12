@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import replace
 from typing import Any
@@ -70,6 +71,7 @@ class RoleService:
         worker: Worker,
         safe_outputs: SafeOutputService | None = None,
         prompt_assembler: Any | None = None,
+        memory_context_loader: Callable[[str], tuple[str, ...]] | None = None,
         assignment_lease_seconds: int = 300,
     ) -> None:
         self.db = db
@@ -78,6 +80,7 @@ class RoleService:
         self.worker = worker
         self.safe_outputs = safe_outputs or SafeOutputService(db)
         self.prompt_assembler = prompt_assembler
+        self.memory_context_loader = memory_context_loader
         self.assignment_lease_seconds = assignment_lease_seconds
         self.db.update_role_instance_status(
             role_id=self.role_id,
@@ -97,6 +100,7 @@ class RoleService:
             work_item_id=assignment.work_item_id,
         )
         try:
+            assignment = self._with_loaded_memory_context(assignment)
             worker_assignment = replace(
                 assignment,
                 run_id=run_id,
@@ -177,6 +181,15 @@ class RoleService:
             safe_output_count=len(recorded_calls),
             assignment_id=assignment.assignment_id,
         )
+
+    def _with_loaded_memory_context(self, assignment: RoleAssignment) -> RoleAssignment:
+        if self.memory_context_loader is None:
+            return assignment
+        loaded = self.memory_context_loader(assignment.role_id)
+        if not loaded:
+            return assignment
+        combined = _dedupe_context((*assignment.memory_context, *loaded))
+        return replace(assignment, memory_context=combined)
 
     def claim_next_assignment(self) -> RoleAssignment | None:
         row = self.db.claim_role_assignment(
@@ -345,3 +358,14 @@ def _assignment_status_for_terminal_tool(terminal_tool: str) -> str:
     if terminal_tool == "report.incomplete":
         return "incomplete"
     return "completed"
+
+
+def _dedupe_context(values: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return tuple(deduped)

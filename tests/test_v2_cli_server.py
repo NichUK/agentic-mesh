@@ -542,6 +542,21 @@ def test_v2_cli_run_role_service_tick_loads_worker_from_project_file(
     db_path = tmp_path / "v2.sqlite3"
     project_dir = tmp_path / "agentic-mesh"
     project_dir.mkdir()
+    role_dir = project_dir / "roles" / "product-manager"
+    role_dir.mkdir(parents=True)
+    (role_dir / "role.yaml").write_text(
+        """
+schema_version: role-runtime-config-v0
+role_id: product-manager
+memory:
+  file: MEMORY.md
+""",
+        encoding="utf-8",
+    )
+    (role_dir / "MEMORY.md").write_text(
+        "# Product Manager Memory\n\n- Source: work-memory. Remember compact dashboard scope.",
+        encoding="utf-8",
+    )
     calls_path = project_dir / "calls.json"
     calls_path.write_text(
         """
@@ -561,6 +576,11 @@ def test_v2_cli_run_role_service_tick_loads_worker_from_project_file(
     project_file.write_text(
         """
 project_id: test-project
+role_memory:
+  enabled: true
+  backend: filesystem
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
 roles:
   product-manager:
     worker:
@@ -618,6 +638,9 @@ roles:
     assert prompts[0]["assignment_id"] == "assignment-cli-project-worker"
     assert "<agentic-mesh-worker-prompt" in prompts[0]["prompt_text"]
     assert "CLI project worker" in prompts[0]["prompt_text"]
+    assert "Role memory file:" in prompts[0]["prompt_text"]
+    assert "Remember compact dashboard scope." in prompts[0]["prompt_text"]
+    assert prompts[0]["component_manifest"]["memory_context_count"] == 1
     assert safe_outputs[0]["payload"]["message"] == "Project-configured worker complete."
 
 
@@ -1033,6 +1056,12 @@ def test_v2_cli_runs_project_role_services_once_for_configured_instances(
     db_path = tmp_path / "v2.sqlite3"
     project_dir = tmp_path / "agentic-mesh"
     project_dir.mkdir()
+    product_role_dir = project_dir / "roles" / "product-manager"
+    product_role_dir.mkdir(parents=True)
+    (product_role_dir / "MEMORY.md").write_text(
+        "# Product Memory\n\n- Source: queue-project-runner. Preserve project-wide runner context.",
+        encoding="utf-8",
+    )
     calls_path = project_dir / "calls.json"
     calls_path.write_text(
         """
@@ -1052,6 +1081,11 @@ def test_v2_cli_runs_project_role_services_once_for_configured_instances(
     project_file.write_text(
         """
 project_id: test-project
+role_memory:
+  enabled: true
+  backend: filesystem
+  config_root: agentic-mesh/roles
+  memory_filename: MEMORY.md
 roles:
   engineering:
     instances: 2
@@ -1104,6 +1138,7 @@ roles:
     try:
         assignments = db.list_role_assignments()
         instances = db.status_snapshot()["role_instance_statuses"]
+        prompts = db.list_agent_prompts()
     finally:
         db.close()
 
@@ -1113,6 +1148,11 @@ roles:
         "test-project.engineering.2",
         "test-project.product-manager.1",
     }
+    product_prompt = next(prompt for prompt in prompts if prompt["role_id"] == "product-manager")
+    engineering_prompts = [prompt for prompt in prompts if prompt["role_id"] == "engineering"]
+    assert "Preserve project-wide runner context." in product_prompt["prompt_text"]
+    assert product_prompt["component_manifest"]["memory_context_count"] == 1
+    assert {prompt["component_manifest"]["memory_context_count"] for prompt in engineering_prompts} == {0}
 
 
 def test_v2_cli_project_role_services_can_skip_unsupported_adapters(

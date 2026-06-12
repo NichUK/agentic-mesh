@@ -18,6 +18,7 @@ from agentic_mesh_v2.observability import span
 from agentic_mesh_v2.project_config import list_project_role_service_configs
 from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
 from agentic_mesh_v2.project_config import load_role_hibernation_config
+from agentic_mesh_v2.project_config import load_role_memory_context
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
 from agentic_mesh_v2.role_service import RoleService
@@ -526,6 +527,16 @@ def _worker_config_from_args(args: argparse.Namespace) -> dict[str, object]:
     raise AssertionError(f"unhandled worker adapter: {args.worker}")
 
 
+def _memory_context_loader(project_file: Path | None):
+    if project_file is None:
+        return None
+
+    def load(role_id: str) -> tuple[str, ...]:
+        return load_role_memory_context(project_file, role_id=role_id)
+
+    return load
+
+
 def _run_role_service_tick(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
     worker = build_worker_adapter(_worker_config_from_args(args))
     prompt_assembler = build_prompt_assembler_for_project(args.project_file) if args.project_file is not None else None
@@ -535,6 +546,7 @@ def _run_role_service_tick(db: V2Database, args: argparse.Namespace) -> dict[str
         role_instance_id=args.role_instance_id,
         worker=worker,
         prompt_assembler=prompt_assembler,
+        memory_context_loader=_memory_context_loader(args.project_file),
         assignment_lease_seconds=args.assignment_lease_seconds,
     )
     receipt = service.run_service_tick(
@@ -623,6 +635,7 @@ def _run_project_role_services_once(db: V2Database, args: argparse.Namespace) ->
             role_instance_id=config.role_instance_id,
             worker=worker,
             prompt_assembler=build_prompt_assembler_for_project(args.project_file),
+            memory_context_loader=_memory_context_loader(args.project_file),
             assignment_lease_seconds=args.assignment_lease_seconds,
         )
         receipt = service.run_service_tick(
