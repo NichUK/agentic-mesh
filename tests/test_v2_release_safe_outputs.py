@@ -33,6 +33,10 @@ def test_release_manager_safe_outputs_record_no_deployment_and_close_work(tmp_pa
             work_item_id="work-release-safe-output",
         )
         service = SafeOutputService(db)
+        approval_ref = _record_approved_release_decision(
+            service,
+            run_id="run-release-no-deployment",
+        )
 
         service.record(
             run_id="run-release-no-deployment",
@@ -46,7 +50,7 @@ def test_release_manager_safe_outputs_record_no_deployment_and_close_work(tmp_pa
                     "scope": "Close documentation-only release evidence.",
                     "rollback_plan": "No deployment was performed; reopen the work item if the evidence is wrong.",
                     "residual_risks": "None beyond accepting a no-deployment disposition.",
-                    "approval_ref": "approval-safe-output",
+                    "approval_ref": approval_ref,
                     "commit_ref": "commit-safe-output",
                 },
             ),
@@ -410,6 +414,10 @@ def test_release_manager_safe_output_executes_compose_deployment(tmp_path: Path)
             )
         )
         service = SafeOutputService(db, release_service=release)
+        approval_ref = _record_approved_release_decision(
+            service,
+            run_id="run-release-deploy",
+        )
 
         service.record(
             run_id="run-release-deploy",
@@ -423,7 +431,7 @@ def test_release_manager_safe_output_executes_compose_deployment(tmp_path: Path)
                     "reason": "Deploy the approved slice to the configured compose target.",
                     "scope": "Activate the safe-output release deployment path.",
                     "commit_ref": "commit-safe-output",
-                    "approval_ref": "approval-safe-output",
+                    "approval_ref": approval_ref,
                     "rollback_plan": "Revert commit-safe-output and redeploy the previous image.",
                     "residual_risks": "Local compose target only.",
                     "smoke_checks": {
@@ -490,7 +498,7 @@ def test_release_manager_cli_transport_release_outputs_apply_once_in_role_servic
         db.close()
 
     assert receipt.status == "completed"
-    assert receipt.safe_output_count == 2
+    assert receipt.safe_output_count == 3
     assert work.state == "closed"
     assert len(releases) == 1
 
@@ -654,10 +662,205 @@ def test_release_no_deployment_safe_output_requires_approval_and_commit(tmp_path
     assert calls == []
 
 
+def test_release_activation_rejects_unrecorded_approval_ref(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-activation-unapproved",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        with pytest.raises(SafeOutputError, match="approved release decision"):
+            service.record(
+                run_id="run-release-activation-unapproved",
+                call=SafeOutputCall(
+                    role_id="release-manager",
+                    tool_name="release.record_no_deployment",
+                    payload={
+                        "work_item_id": "work-release-safe-output",
+                        "release_id": "release-safe-output-unapproved",
+                        "reason": "Try to close without a recorded release decision.",
+                        "scope": "Bad no-deployment release.",
+                        "rollback_plan": "No deployment performed.",
+                        "residual_risks": "Unknown.",
+                        "approval_ref": "approval-safe-output",
+                        "commit_ref": "commit-safe-output",
+                    },
+                ),
+            )
+        releases = db.list_releases()
+        calls = db.list_safe_output_calls()
+    finally:
+        db.close()
+
+    assert releases == []
+    assert calls == []
+
+
+def test_release_activation_rejects_rejected_release_decision(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-activation-rejected",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        decision_ref = service.record(
+            run_id="run-release-activation-rejected",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "decision": "reject",
+                    "reason": "Sponsor rejected release.",
+                },
+                terminal=True,
+            ),
+        )
+        with pytest.raises(SafeOutputError, match="approved release decision"):
+            service.record(
+                run_id="run-release-activation-rejected",
+                call=SafeOutputCall(
+                    role_id="release-manager",
+                    tool_name="release.record_no_deployment",
+                    payload={
+                        "work_item_id": "work-release-safe-output",
+                        "release_id": "release-safe-output-rejected",
+                        "reason": "Try to close after rejected release decision.",
+                        "scope": "Bad no-deployment release.",
+                        "rollback_plan": "No deployment performed.",
+                        "residual_risks": "Sponsor rejected release.",
+                        "approval_ref": decision_ref,
+                        "commit_ref": "commit-safe-output",
+                    },
+                ),
+            )
+        releases = db.list_releases()
+    finally:
+        db.close()
+
+    assert releases == []
+
+
+def test_release_activation_rejects_deferred_unrecorded_approval_ref(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-deferred-unapproved",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        record_only = SafeOutputService(db, process_effects=False)
+        call = SafeOutputCall(
+            role_id="release-manager",
+            tool_name="release.record_no_deployment",
+            payload={
+                "work_item_id": "work-release-safe-output",
+                "release_id": "release-safe-output-deferred-unapproved",
+                "reason": "Try to close without a recorded release decision.",
+                "scope": "Bad deferred no-deployment release.",
+                "rollback_plan": "No deployment performed.",
+                "residual_risks": "Unknown.",
+                "approval_ref": "approval-safe-output",
+                "commit_ref": "commit-safe-output",
+            },
+        )
+        call_id = record_only.record(run_id="run-release-deferred-unapproved", call=call)
+        with pytest.raises(SafeOutputError, match="approved release decision"):
+            SafeOutputService(db).process_recorded_call(
+                call_id=call_id,
+                run_id="run-release-deferred-unapproved",
+                call=call,
+            )
+        releases = db.list_releases()
+        calls = db.list_safe_output_calls()
+    finally:
+        db.close()
+
+    assert len(calls) == 1
+    assert releases == []
+
+
+def test_release_activation_rejects_deferred_wrong_work_item_decision_ref(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        _other_work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-deferred-wrong-work",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        wrong_work_decision_ref = service.record(
+            run_id="run-release-deferred-wrong-work",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-other-release-safe-output",
+                    "decision": "approve",
+                    "reason": "Sponsor approved a different work item.",
+                },
+                terminal=True,
+            ),
+        )
+        record_only = SafeOutputService(db, process_effects=False)
+        call = SafeOutputCall(
+            role_id="release-manager",
+            tool_name="release.record_no_deployment",
+            payload={
+                "work_item_id": "work-release-safe-output",
+                "release_id": "release-safe-output-deferred-wrong-work",
+                "reason": "Try to close with a decision for another work item.",
+                "scope": "Bad deferred no-deployment release.",
+                "rollback_plan": "No deployment performed.",
+                "residual_risks": "Wrong work item approval.",
+                "approval_ref": wrong_work_decision_ref,
+                "commit_ref": "commit-safe-output",
+            },
+        )
+        call_id = record_only.record(run_id="run-release-deferred-wrong-work", call=call)
+        with pytest.raises(SafeOutputError, match="approved release decision"):
+            service.process_recorded_call(
+                call_id=call_id,
+                run_id="run-release-deferred-wrong-work",
+                call=call,
+            )
+        releases = db.list_releases()
+    finally:
+        db.close()
+
+    assert releases == []
+
+
 class CliReleaseWorker:
     def run(self, assignment: RoleAssignment) -> list[SafeOutputCall]:
         assert assignment.safe_output_transport is not None
         command = assignment.safe_output_transport["record_command"]
+        approval_ref = _run_record_command(
+            command,
+            tool_name="release.record_decision",
+            payload={
+                "work_item_id": "work-release-safe-output",
+                "decision": "approve",
+                "reason": "Sponsor approved no-deployment release closure.",
+            },
+        )
         _run_record_command(
             command,
             tool_name="release.record_no_deployment",
@@ -667,7 +870,7 @@ class CliReleaseWorker:
                 "reason": "Documentation-only release; no runtime activation required.",
                 "scope": "Close documentation-only release evidence.",
                 "commit_ref": "commit-safe-output",
-                "approval_ref": "approval-safe-output",
+                "approval_ref": approval_ref,
                 "rollback_plan": "No deployment was performed; reopen the work item if the evidence is wrong.",
                 "residual_risks": "None beyond accepting a no-deployment disposition.",
             },
@@ -690,7 +893,7 @@ def _run_record_command(
     tool_name: str,
     payload: dict[str, object],
     terminal: bool = False,
-) -> None:
+) -> str:
     full_command = [
         *command,
         "--tool-name",
@@ -702,6 +905,23 @@ def _run_record_command(
         full_command.append("--terminal")
     completed = subprocess.run(full_command, capture_output=True, check=False, text=True)
     assert completed.returncode == 0, completed.stdout + completed.stderr
+    return str(json.loads(completed.stdout)["call_id"])
+
+
+def _record_approved_release_decision(service: SafeOutputService, *, run_id: str) -> str:
+    return service.record(
+        run_id=run_id,
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="release.record_decision",
+            payload={
+                "work_item_id": "work-release-safe-output",
+                "decision": "approve",
+                "reason": "Sponsor approved release after reviewing evidence.",
+            },
+            terminal=True,
+        ),
+    )
 
 
 def _work_in_release_review(db: V2Database) -> None:
@@ -738,6 +958,48 @@ def _work_in_release_review(db: V2Database) -> None:
     db.transition_work_item(
         TransitionRequest(
             work_item_id="work-release-safe-output",
+            from_state="active",
+            to_state="release_review",
+            actor_role="qa-engineer",
+            reason="QA passed.",
+        )
+    )
+
+
+def _other_work_in_release_review(db: V2Database) -> None:
+    db.create_queue_item(
+        queue_item_id="queue-other-release-safe-output",
+        title="Other release safe-output work",
+        summary="Exercise approval isolation between work items.",
+        owner_role="release-manager",
+    )
+    db.mark_queue_ready("queue-other-release-safe-output", actor_role="product-manager", reason="Ready.")
+    db.promote_queue_item(
+        queue_item_id="queue-other-release-safe-output",
+        work_item_id="work-other-release-safe-output",
+        owner_role="release-manager",
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-other-release-safe-output",
+            from_state="shaping",
+            to_state="ready",
+            actor_role="product-manager",
+            reason="Product ready.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-other-release-safe-output",
+            from_state="ready",
+            to_state="active",
+            actor_role="engineering",
+            reason="Engineering complete.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-other-release-safe-output",
             from_state="active",
             to_state="release_review",
             actor_role="qa-engineer",

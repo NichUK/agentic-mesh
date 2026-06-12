@@ -3243,6 +3243,13 @@ compileall passed
 - RL-061 | engineering | QA rework | PB-005 Story 34 | Made release-decision
   replay idempotent after downstream state changes and rejected conflicting
   `approval_ref` / `response_request_id` payloads. | QA accepted 2026-06-12
+- RL-062 | engineering | implementation | PB-005 Story 35 | Required
+  `release.deploy` and `release.record_no_deployment` approval references to
+  point to approved release-decision evidence for the same work item. |
+  QA requested deferred-path rework 2026-06-12
+- RL-063 | engineering | QA rework | PB-005 Story 35 | Moved release
+  activation approval validation to the release-effect boundary so deferred
+  CLI/MCP replay cannot bypass approval checks. | QA accepted 2026-06-12
 
 ## PB-005 Story 34 - Release Decision Evidence
 
@@ -3287,3 +3294,53 @@ Results:
 - QA found replay after state movement could fail before the idempotency guard
   and dual approval reference fields could conflict silently. Engineering added
   both regression fixes and retested the focused/adjacent suites.
+
+## PB-005 Story 35 - Release Activation Approval Enforcement
+
+Date: 2026-06-12
+
+### Goal
+
+Prevent Release Manager deployment and no-deployment activation actions from
+using arbitrary approval strings. Release activation must be backed by an
+approved release decision recorded through safe outputs.
+
+### Changes
+
+- Added activation approval validation for `release.deploy` and
+  `release.record_no_deployment`.
+- Required activation `approval_ref` to match either the safe-output call id of
+  an approved `release_decision` evidence row or the `approval_ref` captured
+  inside that evidence row.
+- Rejected arbitrary approval references before safe-output calls are recorded
+  on direct effect-processing paths and before release effects are applied on
+  deferred record-only paths.
+- Rejected rejected release decisions as activation approval.
+- Updated CLI transport coverage so a worker records `release.record_decision`
+  first and uses the returned call id as the activation `approval_ref`.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_end_to_end.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_role_assignment_execution.py -q
+```
+
+Results:
+
+```text
+14 passed before QA rework
+53 passed before QA rework
+16 passed after QA rework
+55 passed after QA rework
+```
+
+### Notes
+
+- MCP safe-output transport still records intent without immediate release
+  effects; the activation approval check is applied by effect-processing
+  services.
+- QA found deferred record-only calls could bypass the approval gate during
+  effect replay. Engineering moved the check into `release.deploy` and
+  `release.record_no_deployment` effect handlers and added deferred regression
+  coverage.

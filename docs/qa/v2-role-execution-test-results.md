@@ -3053,3 +3053,74 @@ Results:
   release-decision evidence recording, approval response validation, alias
   coverage, conflict rejection, and replay after release state movement.
   | accepted after rework 2026-06-12
+
+## PB-005 Story 35 - Release Activation Approval Enforcement
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `tests/test_v2_release_safe_outputs.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_release_safe_outputs.py -q
+python -m pytest tests\test_v2_release_safe_outputs.py tests\test_v2_release.py tests\test_v2_release_deployment.py tests\test_v2_end_to_end.py tests\test_v2_teams_connector_response_cards.py tests\test_v2_role_assignment_execution.py -q
+```
+
+Results:
+
+```text
+14 passed before QA rework
+53 passed before QA rework
+16 passed after QA rework
+55 passed after QA rework
+```
+
+### Findings And Rework
+
+- Initial implementation validated activation approval only during direct
+  `SafeOutputService.record()` calls with effects enabled. Deferred CLI/MCP
+  record-only calls could be replayed later through `process_recorded_call()`
+  and apply release effects without the approval gate.
+- Engineering moved the approval check into the actual `release.deploy` and
+  `release.record_no_deployment` effect handlers.
+- Engineering added deferred regression coverage for arbitrary approval
+  references and approved decisions belonging to another work item.
+
+### Acceptance Assessment
+
+- `release.deploy` and `release.record_no_deployment` require activation
+  approval backed by approved `release_decision` evidence for the same work
+  item.
+- Arbitrary approval references are rejected before safe-output calls are
+  stored on direct effect-processing paths and before release records are
+  created on deferred record-only paths.
+- Rejected release decisions cannot be used as deployment/no-deployment
+  approval.
+- CLI transport workers can record a release decision and use the returned
+  safe-output call id as the later activation `approval_ref`.
+
+### Residual Risks
+
+- This story enforces release approval provenance. It does not yet advance
+  rejected or change-requested release decisions into downstream rework states.
+
+### Review Log
+
+- QA-RL-050 | qa-engineer | review-pending | PB-005 Story 35 | Focused
+  release activation approval enforcement implemented and engineering tests
+  passed. | pending QA review 2026-06-12
+- QA-RL-051 | qa-engineer | rework-request | PB-005 Story 35 | Found deferred
+  CLI/MCP record-only release activation could bypass approval validation
+  during effect replay. | rework requested 2026-06-12
+- QA-RL-052 | qa-engineer | acceptance | PB-005 Story 35 | Verified direct and
+  deferred release activation approval enforcement, rejected arbitrary refs,
+  wrong-work-item decision refs, rejected decisions, and CLI decision-ref
+  chaining. | accepted after rework 2026-06-12

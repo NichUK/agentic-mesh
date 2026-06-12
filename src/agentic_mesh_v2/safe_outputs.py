@@ -222,6 +222,8 @@ class SafeOutputService:
             self._validate_quality_decision_target(call)
         if self.process_effects and call.tool_name == "release.record_decision":
             self._validate_release_decision_target(call)
+        if self.process_effects and call.tool_name in {"release.deploy", "release.record_no_deployment"}:
+            self._validate_release_activation_approval(call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -490,6 +492,19 @@ class SafeOutputService:
             safe_output_ref=call_id,
         )
 
+    def _validate_release_activation_approval(self, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        self.db.get_work_item(work_item_id)
+        approval_ref = _required_text(call.payload, "approval_ref")
+        if not _has_approved_release_decision(
+            self.db,
+            work_item_id=work_item_id,
+            approval_ref=approval_ref,
+        ):
+            raise SafeOutputError(
+                f"`{call.tool_name}` requires approval_ref to reference an approved release decision for this work item"
+            )
+
     def _record_human_response_request(
         self,
         *,
@@ -561,12 +576,14 @@ class SafeOutputService:
         )
 
     def _record_no_deployment(self, call: SafeOutputCall) -> None:
+        self._validate_release_activation_approval(call)
         self.release_service.record_no_deployment(
             _release_evidence_from_payload(call.payload),
             reason=_required_text(call.payload, "reason"),
         )
 
     def _deploy_release(self, call: SafeOutputCall) -> None:
+        self._validate_release_activation_approval(call)
         evidence = _release_evidence_from_payload(call.payload)
         if _has_successful_deployment(self.db, release_id=evidence.release_id, work_item_id=evidence.work_item_id):
             return
@@ -867,6 +884,36 @@ def _has_work_item_evidence_ref(db: V2Database, *, safe_output_ref: str) -> bool
         evidence.get("safe_output_ref") == safe_output_ref
         for evidence in db.list_work_item_evidence()
     )
+
+
+def _has_approved_release_decision(
+    db: V2Database,
+    *,
+    work_item_id: str,
+    approval_ref: str,
+) -> bool:
+    for evidence in db.list_work_item_evidence():
+        if evidence.get("work_item_id") != work_item_id:
+            continue
+        if evidence.get("evidence_type") != "release_decision":
+            continue
+        if not str(evidence.get("summary") or "").startswith("Release decision: approve"):
+            continue
+        if evidence.get("safe_output_ref") == approval_ref:
+            return True
+        if _release_decision_summary_field(str(evidence.get("summary") or ""), "approval_ref") == approval_ref:
+            return True
+    return False
+
+
+def _release_decision_summary_field(summary: str, field_name: str) -> str | None:
+    prefix = f"{field_name}: "
+    for part in summary.split(";"):
+        text = part.strip()
+        if text.startswith(prefix):
+            value = text[len(prefix) :].strip()
+            return value or None
+    return None
 
 
 def _artifact_exists(db: V2Database, *, artifact_id: str) -> bool:
