@@ -95,8 +95,65 @@ Acceptance criteria:
   library with provenance.
 - Produce UX and QA scenarios before Teams connector implementation begins.
 
+### PB-003 V2 Teams Connector Downstream Design And Build
+
+Status: ready for downstream shaping
+
+Type: feature
+
+Owner role: product-manager
+
+Supporting roles:
+
+- ux-designer
+- solution-architect
+- security-architect
+- prompt-engineer
+- engineering
+- qa-engineer
+- release-manager
+
+Intent:
+
+Progress the sponsor-shaped Teams connector product definition through
+downstream UX, architecture, security, prompt-contract, implementation, QA, and
+release work.
+
+Rationale:
+
+The Teams connector is the first major human-collaboration surface for v2. It
+must support direct role DMs, project-channel shared context, team-wide
+relevance checks, agent-initiated human questions, proactive work proposals, and
+durable document-library outcomes without repeating v1's noisy channel and
+hidden-state failures.
+
+Source artifacts:
+
+- `docs/product/v2-teams-connector-product-definition.md`
+- `docs/product/v2-teams-connector-downstream-handoff.md`
+
+Acceptance criteria:
+
+- UX defines DM, channel, thread, approval, status-link, and agent-initiated
+  question patterns.
+- Solution Architecture defines connector runtime, identity, conversation,
+  routing, idempotency, and safe-output integration.
+- Security Architecture defines Teams/Entra permissions, privacy, retention,
+  and audit requirements.
+- Prompt Engineer defines role communication instructions, relevance-check
+  prompts, and invalid-output regression scenarios.
+- QA defines BDD and failure-mode coverage before implementation.
+- Engineering implements the smallest useful MVP after the shaping work is
+  clear.
+- Release Manager deploys, smoke tests, records release evidence, and closes the
+  work only when deployment or no-deployment disposition is explicit.
+
 ## Review Log
 
 - RL-001 | product-manager | initial | full document | Created initial backlog
   with prompt-engineering review and human-team collaboration validation as
   future work. | incorporated 2026-06-12
+- RL-002 | product-manager | backlog-update | PB-003 | Added Teams connector
+  downstream design and build item from sponsor request to hand the product
+  definition to UX, Solution Architecture, and other roles. | incorporated
+  2026-06-12

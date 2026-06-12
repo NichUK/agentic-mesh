@@ -218,6 +218,32 @@
     {
       "accountability": "accountable_owner",
       "contributing_roles": [
+        "ux-designer",
+        "solution-architect",
+        "security-architect",
+        "prompt-engineer",
+        "engineering",
+        "qa-engineer",
+        "release-manager"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "product-manager",
+      "path": "docs/product/v2-teams-connector-downstream-handoff.md",
+      "required_sections": [
+        "purpose",
+        "product_outcome_to_preserve",
+        "handoff_assignments",
+        "suggested_slice_sequence",
+        "open_decisions",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "ready_for_downstream_shaping"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
         "product-manager",
         "ux-designer",
         "solution-architect",
