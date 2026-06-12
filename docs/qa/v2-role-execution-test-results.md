@@ -1573,3 +1573,58 @@ None blocking for PB-005 Story 12.
   supervisor loop validation, per-cycle receipts, aggregate hibernation and
   container lifecycle totals, plan-only lifecycle idempotency across repeated
   cycles, and no daemon/scheduler claim. | accepted 2026-06-12
+
+## PB-005 Story 13 - Dashboard Supervisor Command Guidance
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/cli.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_status_dashboard.py`
+- `tests/test_v2_cli_server.py`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_status_dashboard.py tests\test_v2_cli_server.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_container_lifecycle.py tests\test_v2_hibernation.py tests\test_v2_project_config.py tests\test_v2_role_assignment_execution.py tests\test_v2_cli_server.py tests\test_v2_status_dashboard.py
+```
+
+Results:
+
+```text
+31 passed
+85 passed
+```
+
+### Acceptance Assessment
+
+- `serve --project-file` is available and passes the configured project file
+  through to the v2 status server.
+- The v2 status dashboard renders a read-only `Supervisor Commands` section.
+- When a project file is configured, the dashboard shows the configured project
+  file and copyable project supervisor tick/loop commands using the same DB
+  path and project file, including plan-only and `--execute` variants.
+- When no project file is configured, the dashboard does not fake
+  project-scoped supervisor commands and clearly says to start the status
+  server with `--project-file`.
+- Existing status dashboard privacy/redaction coverage remains green in the
+  focused status dashboard suite.
+
+### Residual Gaps
+
+None blocking for PB-005 Story 13.
+
+### Review Log
+
+- QA-RL-026 | qa-engineer | acceptance | PB-005 Story 13 | Verified
+  `serve --project-file` status-server wiring, read-only supervisor command
+  dashboard guidance, plan-only and execute tick/loop command rendering with
+  DB/project paths, no fake commands without a project file, and no regression
+  to status privacy/redaction tests. | accepted 2026-06-12

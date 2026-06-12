@@ -217,9 +217,11 @@ def _rich_snapshot(tmp_path: Path) -> dict[str, object]:
         db.close()
 
 
-def _render(snapshot: dict[str, object]) -> str:
+def _render(snapshot: dict[str, object], *, project_file: Path | None = None) -> str:
     handler = object.__new__(V2StatusHandler)
     handler._snapshot = lambda: snapshot  # type: ignore[method-assign]
+    handler.db_path = Path(snapshot["database"])
+    handler.project_file = project_file
     return handler._render_status()
 
 
@@ -267,6 +269,33 @@ def test_status_html_smoke_shows_connector_sections_and_redacts_private_text(tmp
     assert "Improve dashboard observability" in html
     assert "PRIVATE_DASHBOARD_SENTINEL" not in html
     assert "[redacted private conversation]" in html
+
+
+def test_status_html_shows_project_supervisor_commands_when_project_file_configured(tmp_path: Path) -> None:
+    snapshot = _rich_snapshot(tmp_path)
+    project_file = tmp_path / "Project Root" / "agentic-mesh" / "project.yaml"
+
+    rendered = _render(snapshot, project_file=project_file)
+
+    assert "Supervisor Commands" in rendered
+    assert "Project file:" in rendered
+    assert str(project_file) in rendered
+    assert f'--db &quot;{snapshot["database"]}&quot;' in rendered
+    assert f'--project-file &quot;{project_file}&quot;' in rendered
+    assert "run-project-supervisor-tick" in rendered
+    assert "run-project-supervisor-loop" in rendered
+    assert "--cycles 10 --poll-seconds 5" in rendered
+    assert "--execute" in rendered
+    assert "dashboard remains read-only" in rendered
+
+
+def test_status_html_without_project_file_does_not_fake_supervisor_commands(tmp_path: Path) -> None:
+    rendered = _render(_rich_snapshot(tmp_path))
+
+    assert "Supervisor Commands" in rendered
+    assert "Start the status server with --project-file" in rendered
+    assert "run-project-supervisor-loop" not in rendered
+    assert "Project file:" not in rendered
 
 
 def test_bound_private_channel_is_redacted_in_status_json_and_html(tmp_path: Path) -> None:

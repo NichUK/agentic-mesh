@@ -1540,6 +1540,60 @@ Results:
 - The loop delegates lifecycle execution behavior to the existing `--execute`
   flag and does not add new retry scheduling or alert delivery.
 
+## PB-005 Story 13 - Dashboard Supervisor Command Guidance
+
+Status: implemented, QA accepted.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Expose copyable bounded supervisor commands on the v2 status dashboard when
+the status server is started with a project file. This gives operators a
+visible path to run the existing project supervisor tick or loop without
+guessing the required DB/project CLI arguments.
+
+### Implementation Notes
+
+- Added optional `serve --project-file`.
+- The status dashboard banner now shows the configured project file when one
+  is provided.
+- Added a read-only `Supervisor Commands` dashboard section.
+- When the project file is configured, the dashboard renders copyable commands
+  for:
+  - plan-only supervisor tick
+  - execute supervisor tick
+  - plan-only bounded supervisor loop
+  - execute bounded supervisor loop
+- When no project file is configured, the dashboard explicitly says to restart
+  the status server with `--project-file` and does not fake project-scoped
+  commands.
+
+### Tests Added
+
+- status HTML shows project-file-rooted supervisor commands when configured
+- status HTML does not render supervisor commands without a configured project
+  file
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_status_dashboard.py tests\test_v2_cli_server.py
+```
+
+Results:
+
+```text
+31 passed
+```
+
+### Known Limitations
+
+- This story exposes command guidance only. It does not add HTTP-side action
+  buttons, a background daemon, or automatic supervisor scheduling.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -1631,3 +1685,6 @@ Results:
 - RL-027 | engineering | implementation | PB-005 Story 12 | Added a bounded
   project supervisor loop with cycle/poll validation, aggregate JSON receipts,
   and idempotent plan-only lifecycle handling. | QA accepted 2026-06-12
+- RL-028 | engineering | implementation | PB-005 Story 13 | Added v2 status
+  dashboard guidance for copyable project supervisor tick/loop commands when a
+  project file is configured. | QA accepted 2026-06-12

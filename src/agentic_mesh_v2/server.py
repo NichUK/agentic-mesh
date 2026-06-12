@@ -16,6 +16,7 @@ from agentic_mesh_v2.observability import span
 
 class V2StatusHandler(BaseHTTPRequestHandler):
     db_path: Path
+    project_file: Path | None = None
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -46,6 +47,12 @@ class V2StatusHandler(BaseHTTPRequestHandler):
         snapshot = self._snapshot()
         counts = snapshot["counts"]
         metrics = snapshot.get("connector_metrics") if isinstance(snapshot.get("connector_metrics"), dict) else {}
+        project_file = getattr(self, "project_file", None)
+        project_line = (
+            f'<br><strong>Project file:</strong> {html.escape(str(project_file))}'
+            if project_file is not None
+            else ""
+        )
         return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -76,7 +83,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   <div class="banner">
     <strong>Runtime:</strong> agentic_mesh_v2<br>
     <strong>Database:</strong> {html.escape(str(snapshot["database"]))}<br>
-    <strong>OTEL:</strong> {html.escape(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "not configured"))}
+    <strong>OTEL:</strong> {html.escape(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "not configured"))}{project_line}
   </div>
   <h2>Counts</h2>
   <div class="tiles">
@@ -153,6 +160,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   {self._connector_attention_table(snapshot["connector_attention_items"])}
   <h2>Runtime Attention</h2>
   {self._runtime_attention_table(snapshot.get("runtime_attention_items", []))}
+  <h2>Supervisor Commands</h2>
+  {self._supervisor_commands()}
   <h2>Work Items</h2>
   {self._work_items_table(snapshot["work_items"])}
   <h2>Queue</h2>
@@ -510,6 +519,46 @@ class V2StatusHandler(BaseHTTPRequestHandler):
             )
         return '<span class="muted">No operator action available.</span>'
 
+    def _supervisor_commands(self) -> str:
+        project_file = getattr(self, "project_file", None)
+        if project_file is None:
+            return '<p class="muted">Start the status server with --project-file to show project supervisor commands.</p>'
+        db_path = getattr(self, "db_path", Path("/mesh/project/state/v2/agentic-mesh-v2.sqlite3"))
+        base = f'python -m agentic_mesh_v2.cli --db "{db_path}"'
+        project_arg = f'--project-file "{project_file}"'
+        commands = [
+            (
+                "Plan one supervisor tick",
+                f"{base} run-project-supervisor-tick {project_arg}",
+            ),
+            (
+                "Execute one supervisor tick",
+                f"{base} run-project-supervisor-tick {project_arg} --execute",
+            ),
+            (
+                "Plan bounded supervisor loop",
+                f"{base} run-project-supervisor-loop {project_arg} --cycles 10 --poll-seconds 5",
+            ),
+            (
+                "Execute bounded supervisor loop",
+                f"{base} run-project-supervisor-loop {project_arg} --cycles 10 --poll-seconds 5 --execute",
+            ),
+        ]
+        body = []
+        for label, command in commands:
+            body.append(
+                "<tr>"
+                f"<td>{_e(label)}</td>"
+                f"<td><code>{_e(command)}</code></td>"
+                "</tr>"
+            )
+        return (
+            '<p class="muted">These are copyable operator commands; the dashboard remains read-only.</p>'
+            "<table><tr><th>Action</th><th>Command</th></tr>"
+            + "".join(body)
+            + "</table>"
+        )
+
     def _queue_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []
         if not items:
@@ -622,7 +671,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def serve(*, host: str, port: int, db_path: Path) -> None:
+def serve(*, host: str, port: int, db_path: Path, project_file: Path | None = None) -> None:
     configure_observability("agentic-mesh-v2-runtime")
     db = V2Database(db_path)
     try:
@@ -630,6 +679,7 @@ def serve(*, host: str, port: int, db_path: Path) -> None:
     finally:
         db.close()
     V2StatusHandler.db_path = Path(db_path)
+    V2StatusHandler.project_file = Path(project_file) if project_file is not None else None
     server = ThreadingHTTPServer((host, port), V2StatusHandler)
     server.serve_forever()
 

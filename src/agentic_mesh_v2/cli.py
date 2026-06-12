@@ -40,6 +40,11 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser = subparsers.add_parser("serve", help="Run the v2 status/reporting server.")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8080)
+    serve_parser.add_argument(
+        "--project-file",
+        type=Path,
+        help="Optional project.yaml used to render copyable project supervisor commands.",
+    )
 
     subparsers.add_parser("demo-slice", help="Create one complete v2 end-to-end demo slice.")
     subparsers.add_parser("status-json", help="Print the v2 runtime status snapshot as JSON.")
@@ -258,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "serve":
-        serve(host=args.host, port=args.port, db_path=db_path)
+        serve(host=args.host, port=args.port, db_path=db_path, project_file=args.project_file)
         return 0
 
     with span("v2.cli.command", command=args.command):
