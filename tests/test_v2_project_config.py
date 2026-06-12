@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from agentic_mesh_v2.project_config import load_role_worker_config
+from agentic_mesh_v2.project_config import list_project_role_service_configs
 
 
 def test_load_role_worker_config_resolves_safe_output_file_path(tmp_path: Path) -> None:
@@ -51,6 +52,36 @@ roles:
     }
 
 
+def test_list_project_role_service_configs_expands_instances(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  engineering:
+    instances: 2
+    worker:
+      adapter: safe-output-subprocess
+      command: ["python", "-c", "print('{}')"]
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    configs = list_project_role_service_configs(project_file)
+
+    assert [config.role_instance_id for config in configs] == [
+        "test-project.engineering.1",
+        "test-project.engineering.2",
+        "test-project.product-manager.1",
+    ]
+    assert configs[0].worker_config["adapter"] == "safe-output-subprocess"
+    assert configs[-1].worker_config["path"] == str(tmp_path / "calls.json")
+
+
 @pytest.mark.parametrize(
     ("body", "role_id", "message"),
     [
@@ -76,3 +107,22 @@ def test_load_role_worker_config_rejects_invalid_project_config(
 
     with pytest.raises(ValueError, match=message):
         load_role_worker_config(project_file, role_id=role_id)
+
+
+def test_list_project_role_service_configs_rejects_invalid_instances(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test
+roles:
+  product-manager:
+    instances: 0
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="instances must be a positive integer"):
+        list_project_role_service_configs(project_file)

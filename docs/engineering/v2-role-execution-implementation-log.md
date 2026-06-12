@@ -696,6 +696,69 @@ Results:
 - Unsupported adapters such as `codex-cli` are preserved but still rejected by
   the worker factory until their concrete adapter is implemented.
 
+## PB-004 Story 12 - Project Role-Service Runner
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Run one bounded role-service tick for every configured role instance in a
+project file. This turns project-owned role/instance/worker config into actual
+runtime role-service execution without requiring operators to invoke each role
+instance manually.
+
+### Implementation Notes
+
+- Added `ProjectRoleServiceConfig`.
+- Added `list_project_role_service_configs()` to expand project roles and
+  instance counts into concrete role-service instance configs.
+- Role instance ids use `{project_id}.{role_id}.{index}`.
+- Added `run-project-role-services-once` CLI command.
+- The command runs one bounded `RoleService.run_service_tick()` per configured
+  role instance.
+- JSON output includes project file, recovered/processed/skipped totals, and
+  per-role-instance receipts.
+- Added `--skip-unsupported` so future adapters such as `codex-cli` can be
+  reported as skipped instead of faked.
+
+### Tests Added
+
+- project role-service configs expand multi-instance roles into stable instance
+  ids
+- invalid role instance counts are rejected
+- project runner processes assignments for multiple configured roles
+- project runner records idle status for configured role instances, including
+  idle instances with no work
+- project runner can skip unsupported adapters while still processing supported
+  roles
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+54 passed
+123 passed
+```
+
+### Known Limitations
+
+- The command runs one bounded pass and exits; it is not a daemonized
+  supervisor.
+- Unsupported adapters are skipped only when explicitly requested by the
+  operator.
+- The project runner does not yet merge organization defaults or deployment
+  profile overrides.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -734,4 +797,7 @@ Results:
   through it. | QA accepted 2026-06-12
 - RL-011 | engineering | implementation | PB-004 Story 11 | Added project YAML
   role worker config loading and wired `run-role-service-tick --project-file`
-  into the shared worker factory path. | awaiting QA review 2026-06-12
+  into the shared worker factory path. | QA accepted 2026-06-12
+- RL-012 | engineering | implementation | PB-004 Story 12 | Added project
+  role-service instance expansion and a CLI command to run one bounded tick for
+  each configured role instance. | awaiting QA review 2026-06-12

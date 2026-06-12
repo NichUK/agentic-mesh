@@ -659,3 +659,79 @@ These are not blockers for PB-004 Story 11 because they remain later v2 runtime 
 ### Review Log
 
 - QA-RL-011 | qa-engineer | acceptance | PB-004 Story 11 | Verified project YAML role worker loading, invalid-shape rejection, relative path resolution, future adapter preservation with explicit unsupported-runtime rejection, CLI project-file execution, and factual scope limits. | accepted 2026-06-12
+
+## PB-004 Story 12 - Project Role-Service Runner
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/project_config.py`
+- `src/agentic_mesh_v2/cli.py`
+- `tests/test_v2_project_config.py`
+- `tests/test_v2_cli_server.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_project_config.py tests\test_v2_worker_adapters.py tests\test_v2_cli_server.py tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+54 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+123 passed
+```
+
+Additional manual verification:
+
+```text
+run-project-role-services-once with a project `codex-cli` worker and no
+--skip-unsupported raised: unsupported worker adapter `codex-cli`
+```
+
+### Acceptance Assessment
+
+- `list_project_role_service_configs()` expands configured roles and instance
+  counts into stable `{project_id}.{role_id}.{index}` role instance ids.
+- Invalid role instance counts are rejected.
+- `run-project-role-services-once` runs one bounded `RoleService` tick per
+  configured role instance.
+- Multiple configured roles process their own assignments, while configured
+  idle instances are still represented in role-instance status.
+- Unsupported adapters such as `codex-cli` are skipped only with
+  `--skip-unsupported`; without that flag they fail explicitly and are not
+  faked.
+- The engineering log is factual and does not claim daemonized supervision,
+  organization-default merging, deployment-profile overrides, or Codex adapter
+  support.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 12 because they remain later v2 runtime
+scope:
+
+- The project runner runs one bounded pass and exits; long-running daemonized
+  supervision is not implemented yet.
+- Organization-default merging and deployment-profile worker overrides are not
+  implemented yet.
+- Real `codex-cli` provider execution remains a future worker-adapter story.
+
+### Review Log
+
+- QA-RL-012 | qa-engineer | acceptance | PB-004 Story 12 | Verified project role-service config expansion, invalid instance-count rejection, bounded project runner execution, idle instance visibility, explicit unsupported-adapter behavior, and factual scope limits. | accepted 2026-06-12

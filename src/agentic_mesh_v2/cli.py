@@ -8,6 +8,7 @@ from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
+from agentic_mesh_v2.project_config import list_project_role_service_configs
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.server import serve
@@ -74,6 +75,20 @@ def main(argv: list[str] | None = None) -> int:
     tick_parser.add_argument("--max-recoveries", type=int, default=50)
     tick_parser.add_argument("--max-assignments", type=int, default=10)
     tick_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
+
+    project_tick_parser = subparsers.add_parser(
+        "run-project-role-services-once",
+        help="Run one bounded role-service tick for each configured project role instance.",
+    )
+    project_tick_parser.add_argument("--project-file", type=Path, required=True)
+    project_tick_parser.add_argument("--max-recoveries", type=int, default=50)
+    project_tick_parser.add_argument("--max-assignments", type=int, default=10)
+    project_tick_parser.add_argument("--assignment-lease-seconds", type=int, default=300)
+    project_tick_parser.add_argument(
+        "--skip-unsupported",
+        action="store_true",
+        help="Skip role instances whose worker adapter is not implemented yet.",
+    )
 
     topology_parser = subparsers.add_parser(
         "validate-topology",
@@ -203,6 +218,10 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
                 return 0
+            if args.command == "run-project-role-services-once":
+                result = _run_project_role_services_once(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0
         finally:
             db.close()
 
@@ -257,6 +276,65 @@ def _worker_config_from_args(args: argparse.Namespace) -> dict[str, object]:
             "timeout_seconds": args.worker_timeout_seconds,
         }
     raise AssertionError(f"unhandled worker adapter: {args.worker}")
+
+
+def _run_project_role_services_once(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    entries: list[dict[str, object]] = []
+    totals = {"processed_count": 0, "recovered_count": 0, "skipped_count": 0}
+    for config in list_project_role_service_configs(args.project_file):
+        try:
+            worker = build_worker_adapter(config.worker_config)
+        except ValueError as exc:
+            if not args.skip_unsupported:
+                raise
+            totals["skipped_count"] += 1
+            entries.append(
+                {
+                    "role_id": config.role_id,
+                    "role_instance_id": config.role_instance_id,
+                    "status": "skipped",
+                    "reason": str(exc),
+                }
+            )
+            continue
+        service = RoleService(
+            db=db,
+            role_id=config.role_id,
+            role_instance_id=config.role_instance_id,
+            worker=worker,
+            assignment_lease_seconds=args.assignment_lease_seconds,
+        )
+        receipt = service.run_service_tick(
+            max_recoveries=args.max_recoveries,
+            max_assignments=args.max_assignments,
+        )
+        totals["processed_count"] += receipt.processed_count
+        totals["recovered_count"] += receipt.recovered_count
+        entries.append(
+            {
+                "role_id": config.role_id,
+                "role_instance_id": config.role_instance_id,
+                "status": receipt.status,
+                "processed_count": receipt.processed_count,
+                "recovered_count": receipt.recovered_count,
+                "runs": [
+                    {
+                        "assignment_id": run.assignment_id,
+                        "run_id": run.run_id,
+                        "status": run.status,
+                        "terminal_tool": run.terminal_tool,
+                        "safe_output_count": run.safe_output_count,
+                    }
+                    for run in receipt.receipts
+                ],
+            }
+        )
+    return {
+        "status": "ok",
+        "project_file": str(args.project_file),
+        **totals,
+        "role_instances": entries,
+    }
 
 
 if __name__ == "__main__":

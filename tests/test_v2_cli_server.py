@@ -641,6 +641,170 @@ roles:
         )
 
 
+def test_v2_cli_runs_project_role_services_once_for_configured_instances(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    calls_path = project_dir / "calls.json"
+    calls_path.write_text(
+        """
+        {
+          "calls": [
+            {
+              "tool_name": "status.complete",
+              "payload": {"message": "Project role service complete."},
+              "terminal": true
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  engineering:
+    instances: 2
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        for role_id in ("product-manager", "engineering"):
+            db.create_role_assignment(
+                assignment_id=f"assignment-project-runner-{role_id}",
+                role_id=role_id,
+                source_ref=f"msg-project-runner-{role_id}",
+                title=f"Project runner {role_id}",
+                summary="Run configured project role services once.",
+                assignment_type="work_item_handoff",
+                visibility_scope="project",
+                payload={},
+            )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-role-services-once",
+                "--project-file",
+                str(project_file),
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert '"processed_count": 2' in output
+    assert '"role_instance_id": "test-project.engineering.1"' in output
+    assert '"role_instance_id": "test-project.engineering.2"' in output
+    assert '"role_instance_id": "test-project.product-manager.1"' in output
+    db = V2Database(db_path)
+    try:
+        assignments = db.list_role_assignments()
+        instances = db.status_snapshot()["role_instance_statuses"]
+    finally:
+        db.close()
+
+    assert {assignment["status"] for assignment in assignments} == {"completed"}
+    assert {instance["role_instance_id"] for instance in instances} == {
+        "test-project.engineering.1",
+        "test-project.engineering.2",
+        "test-project.product-manager.1",
+    }
+
+
+def test_v2_cli_project_role_services_can_skip_unsupported_adapters(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_dir = tmp_path / "agentic-mesh"
+    project_dir.mkdir()
+    calls_path = project_dir / "calls.json"
+    calls_path.write_text(
+        """
+        {
+          "calls": [
+            {
+              "tool_name": "status.complete",
+              "payload": {"message": "Supported worker complete."},
+              "terminal": true
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+roles:
+  engineering:
+    worker:
+      adapter: codex-cli
+      model: codex
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_role_assignment(
+            assignment_id="assignment-project-runner-product",
+            role_id="product-manager",
+            source_ref="msg-project-runner-product",
+            title="Project runner supported role",
+            summary="Run supported role and skip unsupported role.",
+            assignment_type="work_item_handoff",
+            visibility_scope="project",
+            payload={},
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "run-project-role-services-once",
+                "--project-file",
+                str(project_file),
+                "--skip-unsupported",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert '"processed_count": 1' in output
+    assert '"skipped_count": 1' in output
+    assert '"status": "skipped"' in output
+    assert "unsupported worker adapter `codex-cli`" in output
+
+
 def test_v2_cli_validate_topology_accepts_distinct_roots(tmp_path: Path, capsys) -> None:
     source = tmp_path / "source"
     deployed = tmp_path / "deployed"
