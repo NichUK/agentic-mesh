@@ -9,6 +9,10 @@ curated references from the repository instead of fetching live standards pages.
 - BMAD Method agents: specialist agents, workflow triggers, artifact-driven
   handoffs, and role-specific operating modes.
   Source: https://docs.bmad-method.org/reference/agents/
+- Prompt engineering practice: clear task instructions, context separation,
+  examples, tool-use guidance, evaluation scenarios, and regression-driven
+  prompt improvement.
+  Source: https://platform.openai.com/docs/guides/prompt-engineering
 
 ## Digital Role Expectations
 
@@ -31,6 +35,10 @@ curated references from the repository instead of fetching live standards pages.
   Source: https://ddat-capability-framework.service.gov.uk/role/solution-architect
 - Technical architect: technical architecture design and build guidance.
   Source: https://ddat-capability-framework.service.gov.uk/role/technical-architect
+- Prompt engineer: Agentic Mesh specialist role adapted from prompt
+  engineering practice, BMAD-style agent workflow design, technical
+  architecture discipline, and QA-style behavioural regression thinking.
+  Source: internal Agentic Mesh role template `config/roles/prompt-engineer.yaml`
 - Security architect: system or service security design, security documentation,
   and security architecture patterns.
   Source: https://ddat-capability-framework.service.gov.uk/role/security-architect

@@ -86,6 +86,7 @@ meshes:
     roles:
     - business-analyst
     - product-manager
+    - prompt-engineer
     - ux-designer
     - enterprise-architect
     - solution-architect
@@ -413,6 +414,43 @@ roles:
         impact: Product scope and acceptance criteria depend on approved role instructions.
         next_action: Keep product artifacts under configured write paths.
         action_owner: product-manager
+  prompt-engineer:
+    template: prompt-engineer
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Design prompt components, safe-output guidance, and behavioural evaluation
+      scenarios that help role agents act reliably within their authority.
+    - Diagnose invalid, misleading, noisy, or low-value agent outputs using prompt
+      traces, safe-output records, and runtime interpretation evidence.
+    write_paths:
+    - config/roles/**
+    - config/prompts/**
+    - docs/prompt-engineering/**
+    - tests/**
+    - work-items/**
+    - documents/analysis/**
+    channels:
+      primary: prompt-engineering
+      handoff_inbox: prompt-engineering
+    capabilities:
+      schema_version: role-capability-profile-v0
+      capabilities:
+      - capability_id: role.prompt-engineering
+        category: skill
+        requirement: required
+        display_name: Prompt engineering role skill
+        validation:
+          kind: configured
+        impact: Reliable role-agent behaviour depends on prompt, tool-contract, and context guidance being reviewed against observed failure evidence.
+        next_action: Keep prompt-engineering artifacts and regression scenarios under configured write paths.
+        action_owner: prompt-engineer
   ux-designer:
     template: ux-designer
     instances: 1

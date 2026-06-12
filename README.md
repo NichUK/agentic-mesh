@@ -78,6 +78,9 @@ into one methodology.
 - ISTQB and BDD practice inform QA planning and evidence handling.
 - OWASP SAMM and NIST SSDF inform secure SDLC expectations and residual-risk
   recording.
+- Prompt engineering practice informs prompt contracts, safe-output tool
+  instructions, context boundaries, and behavioural regression scenarios for
+  role agents.
 
 ## Product Positioning
 
@@ -92,6 +95,8 @@ Open source core should remain useful on its own:
 - documentation framework primitives
 - status/reporting dashboard
 - starter role and flow templates
+- prompt-engineering role support for agent prompt contracts and behavioural
+  diagnosis
 
 Commercial offerings may add supported enterprise deployments, SSO/RBAC,
 managed storage/message backends, policy packs, compliance reporting, premium

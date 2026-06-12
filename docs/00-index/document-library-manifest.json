@@ -196,6 +196,28 @@
     {
       "accountability": "accountable_owner",
       "contributing_roles": [
+        "product-manager",
+        "ux-designer",
+        "solution-architect",
+        "engineering",
+        "qa-engineer",
+        "security-architect"
+      ],
+      "document_kind": "durable",
+      "lifecycle_states": [],
+      "owner_role": "prompt-engineer",
+      "path": "docs/prompt-engineering/prompt-contracts.md",
+      "required_sections": [
+        "purpose",
+        "current_contract_principles",
+        "review_log"
+      ],
+      "review_on_contribution": true,
+      "status": "initial"
+    },
+    {
+      "accountability": "accountable_owner",
+      "contributing_roles": [
         "business-analyst",
         "ux-designer",
         "solution-architect",
@@ -724,6 +746,7 @@
       "roles": [
         "business-analyst",
         "product-manager",
+        "prompt-engineer",
         "ux-designer",
         "enterprise-architect",
         "solution-architect",

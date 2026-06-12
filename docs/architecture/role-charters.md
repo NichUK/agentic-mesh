@@ -44,6 +44,9 @@ their text or enforcing a single process.
 - TOGAF informs enterprise architecture governance, capability fit, architecture content, and decision traceability.
 - ISTQB and BDD practice inform quality planning, test evidence, defect classification, and behaviour scenarios.
 - OWASP SAMM and NIST SSDF inform secure SDLC responsibilities, control evidence, and security review gates.
+- Prompt engineering practice informs prompt contract design, tool-use
+  guidance, behavioural regression scenarios, and diagnosis of invalid or
+  low-value agent outputs.
 
 Projects can override role instructions, tools, flows, gates, and document
 accountabilities. The stock charters are useful defaults, not a rigid operating
@@ -70,6 +73,28 @@ core_workflows:
 The workflow tells the agent what kind of work it performs and what evidence it
 should leave behind. It does not replace the project flow; the flow still owns
 state transitions, gates, consult routes, and handoffs.
+
+## Prompt Engineer Role
+
+The `prompt-engineer` role is a specialist SDLC role for agent-facing work. It
+does not own product scope, architecture, implementation, QA, or release
+decisions. It owns the quality of prompt contracts and advises other roles when
+agent behaviour, safe-output tools, context loading, role memory, or prompt
+regression evidence affects the work.
+
+Use this role when a slice changes:
+
+- role prompts or prompt components
+- safe-output tool instructions
+- conversational behaviour
+- role handoff or blocker wording
+- memory/context-loading instructions
+- agent failure recovery guidance
+- behavioural tests for prompt-driven work
+
+The role should work from evidence: generated prompts, safe-output traces,
+worker results, runtime interpretation, sponsor feedback, and role-owned
+documents.
 
 ## Decision Rights
 

@@ -59,6 +59,11 @@ states:
         target_role: research-analyst
         message_type: sdlc.consult.research
         purpose: Ask for discovery, comparative analysis, or product precedent research.
+      agent_behaviour:
+        target_state: product_definition
+        target_role: prompt-engineer
+        message_type: sdlc.consult.prompt_engineering
+        purpose: Ask for prompt, role-behaviour, safe-output, or conversational-agent guidance when product scope depends on reliable agent behaviour.
     gates:
       - gate_id: product_story_owner_review
         type: document_owner_review
@@ -272,6 +277,11 @@ states:
         target_role: technical-writer
         message_type: sdlc.consult.documentation_readiness
         purpose: Ask for documentation impact review while implementation is still planned.
+      prompt_contract:
+        target_state: implementation_planning
+        target_role: prompt-engineer
+        message_type: sdlc.consult.prompt_engineering
+        purpose: Ask for prompt, context-loading, safe-output, or agent-behaviour guidance before implementing agent-facing runtime changes.
     gates:
       - gate_id: implementation_plan_peer_review
         type: plan_review
@@ -318,6 +328,11 @@ states:
         target_role: ux-designer
         message_type: sdlc.consult.experience_design
         purpose: Clarify usability, accessibility, content, or interaction expectations for BDD scenarios.
+      prompt_behaviour:
+        target_state: quality_planning
+        target_role: prompt-engineer
+        message_type: sdlc.consult.prompt_engineering
+        purpose: Ask for agent-behaviour acceptance scenarios, prompt regression cases, or invalid-output failure expectations.
     gates:
       - gate_id: quality_plan_peer_review
         type: plan_review
@@ -377,6 +392,11 @@ states:
         target_role: qa-engineer
         message_type: sdlc.consult.quality_planning
         purpose: Clarify BDD scenarios, test strategy, fixtures, or evidence expectations.
+      prompt_contract:
+        target_state: implementation_planning
+        target_role: prompt-engineer
+        message_type: sdlc.consult.prompt_engineering
+        purpose: Clarify prompt components, tool-use instructions, context boundaries, or prompt trace evidence needed for implementation.
     gates:
       - gate_id: implementation_owner_review
         type: document_owner_review
@@ -414,6 +434,11 @@ states:
         target_role: ux-designer
         message_type: sdlc.consult.experience_design
         purpose: Clarify usability, accessibility, content, or interaction expectations.
+      prompt_behaviour:
+        target_state: quality_planning
+        target_role: prompt-engineer
+        message_type: sdlc.consult.prompt_engineering
+        purpose: Ask for prompt regression interpretation or invalid-output diagnosis when agent behaviour affects acceptance.
     gates:
       - gate_id: qa_owner_review
         type: document_owner_review
