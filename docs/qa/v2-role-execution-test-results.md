@@ -3277,3 +3277,65 @@ Results:
   blocker propagation, conversation-only behavior, explicit target handling,
   disallowed-state rejection, stale replay guard, and atomic transition plus
   marker recording. | accepted after rework 2026-06-12
+
+## PB-005 Story 38 - Release Manager Work-Item Reopen
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted after engineering rework
+
+### Scope Under Review
+
+- `src/agentic_mesh_v2/safe_outputs.py`
+- `src/agentic_mesh_v2/db.py`
+- `tests/test_v2_role_assignment_execution.py`
+
+### Commands Run By Engineering
+
+```text
+python -m pytest tests\test_v2_role_assignment_execution.py -q
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py -q
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+```
+
+Results:
+
+```text
+32 passed before QA review
+43 passed before QA review
+63 passed after DB-level replay hardening
+63 passed after QA-requested transaction rework
+```
+
+### Findings And Rework
+
+- QA found the database helper still updated work-item state before discovering
+  an existing deterministic assignment conflict. Engineering moved the helper
+  to return without transition when the assignment already exists.
+- QA found the state check was not enforced by the write itself. Engineering
+  changed the helper to perform a conditional state update and to roll back the
+  queued assignment if the work item is no longer in the expected state.
+
+### Acceptance Assessment
+
+- `work_item.reopen` is terminal and Release Manager scoped.
+- Reopen requires a blocked work item.
+- Reopen clears blocker attention, moves the item to active, and queues the
+  target role with useful context.
+- Replaying an already-applied reopen does not unblock a later blocker.
+- The database helper owns the idempotency and conditional state guarantee, not
+  only the safe-output service.
+
+### Review Log
+
+- QA-RL-060 | qa-engineer | review-pending | PB-005 Story 38 | Focused
+  release-manager work-item reopen implementation completed and engineering
+  tests passed. | pending QA review 2026-06-12
+- QA-RL-061 | qa-engineer | rework-request | PB-005 Story 38 | Found DB helper
+  idempotency and conditional-state gaps beneath the service-level guard. |
+  rework requested 2026-06-12
+- QA-RL-062 | qa-engineer | acceptance | PB-005 Story 38 | Verified
+  service-level reopen, stale replay guard, DB-level existing-assignment guard,
+  and conditional state update rework. | accepted after rework 2026-06-12

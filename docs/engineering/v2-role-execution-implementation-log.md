@@ -3458,3 +3458,55 @@ Results:
   blocker markers, explicit target/disallowed-state tests, and then moved the
   transition plus marker into one DB transaction after QA identified an
   atomicity gap.
+
+## PB-005 Story 38 - Release Manager Work-Item Reopen
+
+Date: 2026-06-12
+
+### Goal
+
+Make the existing Release Manager `work_item.reopen` safe-output tool perform
+real runtime work so a blocked item can be reopened and routed to the role that
+must continue the slice.
+
+### Changes
+
+- Marked `work_item.reopen` as a terminal safe-output tool.
+- Added blocked-state validation before recording a reopen request.
+- Added `SafeOutputService` processing for `work_item.reopen`.
+- Added an atomic database helper that transitions the work item from
+  `blocked` to `active`, clears blocker attention, and queues the target role
+  assignment in the same transaction.
+- Queued a deterministic `work_item_reopen` role assignment containing the
+  source safe-output ref, target role, reopen reason, source documents, target
+  outputs, current flow state, and target role safe-output tools.
+- Added replay protection so an already-applied reopen call cannot unblock a
+  later, unrelated blocker.
+- Hardened the database helper itself so an existing deterministic reopen
+  assignment prevents stale helper calls from changing state.
+- Reworked the helper after QA so the state transition is conditional on the
+  work item still being in the expected source state, and assignment insertion
+  rolls back if that condition fails.
+
+### Engineering Verification
+
+```text
+python -m pytest tests\test_v2_role_assignment_execution.py -q
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py -q
+python -m pytest tests\test_v2_role_assignment_execution.py tests\test_v2_state_machine.py tests\test_v2_safe_outputs.py tests\test_v2_status_dashboard.py tests\test_v2_end_to_end.py tests\test_v2_release_safe_outputs.py -q
+```
+
+Results:
+
+```text
+32 passed before QA review
+43 passed before QA review
+63 passed after DB-level replay hardening
+63 passed after QA-requested transaction rework
+```
+
+### Notes
+
+- This story implements `work_item.reopen` only. `work_item.override_blocker`,
+  `work_item.close`, and `work_item.supersede` remain follow-up release-manager
+  authority stories.

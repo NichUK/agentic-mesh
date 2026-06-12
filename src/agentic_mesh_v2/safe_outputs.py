@@ -36,6 +36,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "noop",
         "report.blocked",
         "report.incomplete",
+        "work_item.reopen",
     }
 )
 
@@ -227,6 +228,8 @@ class SafeOutputService:
             self._validate_release_activation_approval(call)
         if self.process_effects and call.tool_name == "report.blocked":
             self._validate_optional_work_item_target(run_id=run_id, call=call)
+        if self.process_effects and call.tool_name == "work_item.reopen":
+            self._validate_work_item_reopen_target(call)
         terminal = call.terminal or call.tool_name in TERMINAL_TOOLS
         call_id = f"call-{uuid4().hex}"
         self.db.record_safe_output(
@@ -276,6 +279,8 @@ class SafeOutputService:
             self._close_released_work(call)
         if call.tool_name == "report.blocked":
             self._block_linked_work_item(call_id=call_id, run_id=run_id, call=call)
+        if call.tool_name == "work_item.reopen":
+            self._reopen_work_item(call_id=call_id, run_id=run_id, call=call)
         return None
 
     def _publish_document_update(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
@@ -393,6 +398,13 @@ class SafeOutputService:
                     f"`report.blocked` cannot block work item state `{work_item.state}`"
                 )
 
+    def _validate_work_item_reopen_target(self, call: SafeOutputCall) -> None:
+        work_item = self.db.get_work_item(_required_text(call.payload, "work_item_id"))
+        if work_item.state != "blocked":
+            raise SafeOutputError(
+                f"`work_item.reopen` requires work item state `blocked`, found `{work_item.state}`"
+            )
+
     def _record_work_item_evidence(
         self,
         *,
@@ -509,6 +521,50 @@ class SafeOutputService:
             evidence_summary=_single_line_text(reason),
             evidence_role_id=call.role_id,
             safe_output_ref=call_id,
+        )
+
+    def _reopen_work_item(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        assignment_id = _work_item_reopen_assignment_id(call_id)
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state != "blocked":
+            raise SafeOutputError(
+                f"`work_item.reopen` requires work item state `blocked`, found `{work_item.state}`"
+            )
+        target_role = _required_text(call.payload, "target_role")
+        reason = _required_text(call.payload, "reason")
+        self.db.reopen_work_item_with_assignment(
+            request=TransitionRequest(
+                work_item_id=work_item_id,
+                from_state="blocked",
+                to_state="active",
+                actor_role=call.role_id,
+                reason=reason,
+                owner=target_role,
+            ),
+            assignment_id=assignment_id,
+            role_id=target_role,
+            source_ref=call_id,
+            title=_optional_text(call.payload.get("title")) or f"Reopened work for {target_role}",
+            summary=_single_line_text(reason),
+            assignment_type="work_item_reopen",
+            visibility_scope=_optional_text(call.payload.get("context_visibility")) or "project",
+            payload={
+                "safe_output_ref": call_id,
+                "source_run_id": run_id,
+                "source_role": call.role_id,
+                "target_role": target_role,
+                "reason": _single_line_text(reason),
+                "route_tool": call.tool_name,
+                "work_item_id": work_item_id,
+                "previous_flow_state": "blocked",
+                "current_flow_state": "active",
+                "source_documents": _string_list(call.payload.get("source_documents")),
+                "target_outputs": _string_list(call.payload.get("target_outputs")),
+                "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
+            },
         )
 
     def _validate_release_decision_target(self, call: SafeOutputCall) -> None:
@@ -1070,6 +1126,10 @@ def _release_decision_summary_field(summary: str, field_name: str) -> str | None
 
 def _release_rework_assignment_id(call_id: str) -> str:
     return f"assignment-{call_id}-release-rework"
+
+
+def _work_item_reopen_assignment_id(call_id: str) -> str:
+    return f"assignment-{call_id}-work-item-reopen"
 
 
 def _artifact_exists(db: V2Database, *, artifact_id: str) -> bool:

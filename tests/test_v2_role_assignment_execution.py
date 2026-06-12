@@ -115,6 +115,43 @@ def _work_db(tmp_path: Path) -> V2Database:
     return db
 
 
+def _blocked_work_db(tmp_path: Path) -> V2Database:
+    db = _work_db(tmp_path)
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="shaping",
+            to_state="ready",
+            actor_role="product-manager",
+            reason="Product definition is ready.",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="ready",
+            to_state="active",
+            actor_role="engineering",
+            reason="Engineering starts implementation.",
+            owner="engineering",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="active",
+            to_state="blocked",
+            actor_role="engineering",
+            reason="Deployment access is missing.",
+            owner="release-manager",
+            reason_class="deployment_access_missing",
+            next_action="Release Manager must reopen after confirming access.",
+            retryable=True,
+        )
+    )
+    return db
+
+
 def test_role_service_claims_connector_assignment_and_completes_with_safe_output(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()
@@ -772,6 +809,202 @@ def test_report_blocked_accepts_explicit_work_item_target(tmp_path: Path) -> Non
     snapshot = db.status_snapshot()
     assert snapshot["work_items"][0]["state"] == "blocked"
     assert snapshot["work_items"][0]["attention_owner"] == "solution-architect"
+
+
+def test_release_manager_reopen_blocked_work_item_routes_to_target_role(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-reopen",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+
+    call_id = service.record(
+        run_id="run-work-item-reopen",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="work_item.reopen",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "target_role": "engineering",
+                "reason": "Access confirmed; Engineering can continue.",
+                "source_documents": ["work-items/work-runtime-execution/120-release-record.md"],
+                "target_outputs": ["implementation update", "test rerun"],
+            },
+        ),
+    )
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    assignments = [
+        row
+        for row in db.list_role_assignments()
+        if row["source_ref"] == call_id and row["assignment_type"] == "work_item_reopen"
+    ]
+    calls = db.list_safe_output_calls_for_run("run-work-item-reopen")
+
+    assert work_item["state"] == "active"
+    assert work_item["current_role"] == "engineering"
+    assert work_item["attention_owner"] is None
+    assert len(assignments) == 1
+    assert assignments[0]["role_id"] == "engineering"
+    assert assignments[0]["status"] == "queued"
+    assert assignments[0]["work_item_id"] == "work-runtime-execution"
+    assert assignments[0]["payload"]["safe_output_ref"] == call_id
+    assert assignments[0]["payload"]["previous_flow_state"] == "blocked"
+    assert assignments[0]["payload"]["current_flow_state"] == "active"
+    assert "implementation.record_change" in assignments[0]["payload"]["allowed_tools"]
+    assert calls[0]["terminal"] is True
+
+
+def test_work_item_reopen_requires_blocked_state(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-reopen-not-blocked",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+
+    with pytest.raises(SafeOutputError, match="requires work item state `blocked`"):
+        SafeOutputService(db).record(
+            run_id="run-work-item-reopen-not-blocked",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="work_item.reopen",
+                payload={
+                    "work_item_id": "work-runtime-execution",
+                    "target_role": "engineering",
+                    "reason": "Try to reopen work that is not blocked.",
+                },
+            ),
+        )
+
+    assert db.list_safe_output_calls_for_run("run-work-item-reopen-not-blocked") == []
+
+
+def test_work_item_reopen_replay_does_not_unblock_later_blocker(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    db.create_run(
+        run_id="run-work-item-reopen-replay",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+    call = SafeOutputCall(
+        role_id="release-manager",
+        tool_name="work_item.reopen",
+        payload={
+            "work_item_id": "work-runtime-execution",
+            "target_role": "engineering",
+            "reason": "Access confirmed; Engineering can continue.",
+        },
+    )
+    call_id = service.record(run_id="run-work-item-reopen-replay", call=call)
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="active",
+            to_state="blocked",
+            actor_role="engineering",
+            reason="A new environment issue was found.",
+            owner="platform-engineer",
+            reason_class="environment_issue",
+            next_action="Platform Engineer must repair the environment.",
+            retryable=True,
+        )
+    )
+
+    service.process_recorded_call(call_id=call_id, run_id="run-work-item-reopen-replay", call=call)
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    assignments = [
+        row
+        for row in db.list_role_assignments()
+        if row["source_ref"] == call_id and row["assignment_type"] == "work_item_reopen"
+    ]
+    reopened_events = [
+        event
+        for event in db.list_events("work-runtime-execution")
+        if event["event_type"] == "work_item.transitioned"
+        and event["payload"]["to_state"] == "active"
+        and event["payload"]["actor_role"] == "release-manager"
+    ]
+
+    assert work_item["state"] == "blocked"
+    assert work_item["attention_owner"] == "platform-engineer"
+    assert len(assignments) == 1
+    assert len(reopened_events) == 1
+
+
+def test_reopen_db_helper_is_guarded_by_existing_assignment(tmp_path: Path) -> None:
+    db = _blocked_work_db(tmp_path)
+    service = SafeOutputService(db)
+    db.create_run(
+        run_id="run-work-item-reopen-db-guard",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    call_id = service.record(
+        run_id="run-work-item-reopen-db-guard",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="work_item.reopen",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "target_role": "engineering",
+                "reason": "Access confirmed; Engineering can continue.",
+            },
+        ),
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="active",
+            to_state="blocked",
+            actor_role="engineering",
+            reason="A later blocker should remain active.",
+            owner="platform-engineer",
+            reason_class="environment_issue",
+            next_action="Repair the later blocker.",
+            retryable=True,
+        )
+    )
+
+    db.reopen_work_item_with_assignment(
+        request=TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="blocked",
+            to_state="active",
+            actor_role="release-manager",
+            reason="Replay old reopen.",
+            owner="engineering",
+        ),
+        assignment_id=f"assignment-{call_id}-work-item-reopen",
+        role_id="engineering",
+        source_ref=call_id,
+        title="Replay old reopen",
+        summary="Replay old reopen.",
+        assignment_type="work_item_reopen",
+        visibility_scope="project",
+        payload={"safe_output_ref": call_id},
+    )
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    reopened_events = [
+        event
+        for event in db.list_events("work-runtime-execution")
+        if event["event_type"] == "work_item.transitioned"
+        and event["payload"]["to_state"] == "active"
+        and event["payload"]["actor_role"] == "release-manager"
+    ]
+
+    assert work_item["state"] == "blocked"
+    assert work_item["attention_owner"] == "platform-engineer"
+    assert len(reopened_events) == 1
 
 
 def test_report_blocked_rejects_invalid_explicit_work_item_before_recording(tmp_path: Path) -> None:
