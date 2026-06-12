@@ -357,6 +357,11 @@ class V2Database:
                   assignment_type TEXT NOT NULL,
                   visibility_scope TEXT NOT NULL,
                   payload_json TEXT NOT NULL,
+                  claimed_at TEXT,
+                  completed_at TEXT,
+                  run_id TEXT,
+                  terminal_tool TEXT,
+                  failure_reason TEXT,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -470,6 +475,11 @@ class V2Database:
                 (SCHEMA_VERSION,),
             )
             self._ensure_column("connector_participants", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column("role_assignments", "claimed_at", "TEXT")
+            self._ensure_column("role_assignments", "completed_at", "TEXT")
+            self._ensure_column("role_assignments", "run_id", "TEXT")
+            self._ensure_column("role_assignments", "terminal_tool", "TEXT")
+            self._ensure_column("role_assignments", "failure_reason", "TEXT")
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
@@ -1464,23 +1474,115 @@ class V2Database:
                 },
             )
 
-    def complete_role_assignment(self, assignment_id: str, *, role_instance_id: str | None = None) -> None:
+    def claim_role_assignment(self, *, role_id: str, role_instance_id: str) -> dict[str, Any] | None:
+        with self.connection:
+            row = self.connection.execute(
+                """
+                SELECT assignment_id
+                FROM role_assignments
+                WHERE role_id = ?
+                  AND status = 'queued'
+                ORDER BY created_at, assignment_id
+                LIMIT 1
+                """,
+                (role_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            assignment_id = str(row["assignment_id"])
+            result = self.connection.execute(
+                """
+                UPDATE role_assignments
+                SET status = 'claimed',
+                    role_instance_id = ?,
+                    claimed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE assignment_id = ?
+                  AND status = 'queued'
+                """,
+                (role_instance_id, assignment_id),
+            )
+            if result.rowcount != 1:
+                return None
+            self.append_event(
+                "role_assignment.claimed",
+                "role_assignment",
+                assignment_id,
+                {"role_id": role_id, "role_instance_id": role_instance_id},
+            )
+        return self.get_role_assignment(assignment_id)
+
+    def get_role_assignment(self, assignment_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM role_assignments WHERE assignment_id = ?",
+            (assignment_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
+    def complete_role_assignment(
+        self,
+        assignment_id: str,
+        *,
+        role_instance_id: str | None = None,
+        run_id: str | None = None,
+        terminal_tool: str | None = None,
+    ) -> None:
         with self.connection:
             self.connection.execute(
                 """
                 UPDATE role_assignments
                 SET status = 'completed',
                     role_instance_id = COALESCE(?, role_instance_id),
+                    run_id = COALESCE(?, run_id),
+                    terminal_tool = COALESCE(?, terminal_tool),
+                    completed_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE assignment_id = ?
                 """,
-                (role_instance_id, assignment_id),
+                (role_instance_id, run_id, terminal_tool, assignment_id),
             )
             self.append_event(
                 "role_assignment.completed",
                 "role_assignment",
                 assignment_id,
-                {"role_instance_id": role_instance_id},
+                {
+                    "role_instance_id": role_instance_id,
+                    "run_id": run_id,
+                    "terminal_tool": terminal_tool,
+                },
+            )
+
+    def fail_role_assignment(
+        self,
+        assignment_id: str,
+        *,
+        role_instance_id: str | None = None,
+        run_id: str | None = None,
+        reason: str,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE role_assignments
+                SET status = 'failed',
+                    role_instance_id = COALESCE(?, role_instance_id),
+                    run_id = COALESCE(?, run_id),
+                    failure_reason = ?,
+                    completed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE assignment_id = ?
+                """,
+                (role_instance_id, run_id, reason, assignment_id),
+            )
+            self.append_event(
+                "role_assignment.failed",
+                "role_assignment",
+                assignment_id,
+                {
+                    "role_instance_id": role_instance_id,
+                    "run_id": run_id,
+                    "reason": reason,
+                },
             )
 
     def record_relevance_check(
@@ -2394,6 +2496,10 @@ class V2Database:
         for record in delivery_records:
             status = str(record["status"])
             delivery_statuses[status] = delivery_statuses.get(status, 0) + 1
+        role_assignment_statuses: dict[str, int] = {}
+        for assignment in role_assignments:
+            status = str(assignment["status"])
+            role_assignment_statuses[status] = role_assignment_statuses.get(status, 0) + 1
         relevance_decisions: dict[str, int] = {}
         for record in relevance_checks:
             decision = str(record["decision"])
@@ -2470,6 +2576,7 @@ class V2Database:
             "work_item_states": states,
             "queue_statuses": queue_statuses,
             "delivery_statuses": delivery_statuses,
+            "role_assignment_statuses": role_assignment_statuses,
             "connector_metrics": connector_metrics,
             "queue_items": queue_items,
             "work_items": work_items,

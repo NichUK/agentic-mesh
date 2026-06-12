@@ -116,6 +116,10 @@ class V2StatusHandler(BaseHTTPRequestHandler):
       {self._role_identity_table(snapshot["connector_participants"])}
     </section>
     <section>
+      <h2>Role Assignments</h2>
+      {self._role_assignment_table(snapshot["role_assignments"])}
+    </section>
+    <section>
       <h2>Channel Bindings</h2>
       {self._channel_binding_table(snapshot["connectors"])}
     </section>
@@ -229,6 +233,24 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 "</tr>"
             )
         return "<table><tr><th>Role</th><th>External / Mention</th><th>Model / Alias</th><th>Enabled</th></tr>" + "".join(body) + "</table>"
+
+    def _role_assignment_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 role assignments.</p>'
+        body = []
+        for row in items[:30]:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['assignment_id'])}</code><br>{_e(row['assignment_type'])}</td>"
+                f"<td>{_e(row['role_id'])}<br>{_e(row.get('role_instance_id') or '')}</td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row.get('terminal_tool') or '')}</td>"
+                f"<td>{_e(row['title'])}<br><span class=\"muted\">{_e(row['summary'])}</span></td>"
+                f"<td>{_e(row.get('work_item_id') or '')}<br>{_e(row.get('source_ref') or '')}</td>"
+                f"<td>{_e(row.get('run_id') or '')}<br>{_e(row.get('failure_reason') or '')}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Assignment</th><th>Role / Instance</th><th>Status / Terminal</th><th>Summary</th><th>Work / Source</th><th>Run / Failure</th></tr>" + "".join(body) + "</table>"
 
     def _channel_binding_table(self, rows: object) -> str:
         connectors = list(rows) if isinstance(rows, list) else []
