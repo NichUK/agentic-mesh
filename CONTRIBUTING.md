@@ -21,7 +21,9 @@ From a clean checkout:
 ```powershell
 pip install -e .[dev]
 pytest -q
-python -m agentic_mesh.cli validate-config
+agentic-mesh --db .tmp/v2.sqlite3 init-db
+agentic-mesh --db .tmp/v2.sqlite3 demo-slice
+agentic-mesh --db .tmp/v2.sqlite3 status-json
 ```
 
 The project is local-first. Prefer small, testable slices, file-backed adapters,
@@ -43,13 +45,12 @@ clear configuration, and inspectable runtime state.
 
 Contributions should preserve these boundaries:
 
-- One container per role-agent instance.
-- Stable role templates with project-specific overrides.
-- Multiple instances of the same role in a project.
-- Durable role inboxes, connector outboxes, and append-only event journal.
-- Router routes messages; it does not make workflow decisions.
-- Control-plane supervises lifecycle; it does not make product, architecture,
-  implementation, QA, or release decisions.
+- Runtime state is canonical in the v2 database, with append-only events for
+  audit/replay.
+- Durable effects are recorded through safe-output tools, not inferred from
+  free-text agent responses.
+- Source repos, deployed runtime installs, runtime state, and project repos
+  must remain distinct unless a local-dev override is explicit.
 - Storage, collaboration connectors, worker/model providers, and deployment
   profiles remain adapter boundaries.
 - Every deployment should emit OpenTelemetry logs, traces, and metrics.

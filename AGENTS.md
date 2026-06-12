@@ -31,16 +31,21 @@ Committed architecture decisions:
 
 Core principles:
 
-- One container per role-agent instance.
+- The active implementation is v2. Do not add new code under
+  `src/agentic_mesh`; the v1 package has been removed. Active runtime code
+  lives under `src/agentic_mesh_v2`.
+- Runtime state is canonical in the v2 SQLite database first, with repository
+  interfaces kept suitable for Postgres later.
+- Role-agent work is recorded through safe-output calls and terminal run
+  status, not by parsing free-text or legacy JSON result envelopes.
+- Long-running role services are the target operating model.
 - Permanent role templates are stable and rarely updated.
 - Projects apply project-specific overrides to role templates.
 - A project can run multiple instances of the same role.
-- Agents own their inbox/outbox/journal and role-specific storage.
 - The document library is canonical project memory. Role memory is a concise,
   source-linked accelerator and must cite documents, work items, or events.
-- A router routes messages and handoffs but does not make workflow decisions.
-- A control-plane supervises lifecycle, health, hibernation, and wake-up but
-  does not make product/architecture/implementation/QA/release decisions.
+- Source repos, deployed runtime installs, runtime state, and project repos
+  must remain distinct unless a local-dev override is explicit.
 - Storage, collaboration connectors, worker/model providers, and deployment
   profiles are adapter boundaries.
 - Git owns configuration, documentation, decisions, stories, evidence, release
@@ -71,7 +76,8 @@ Current example files:
 - `examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`
 - `examples/projects/example-project/agentic-mesh/project.yaml`
 
-These are starter examples, not final canonical role templates.
+These are starter examples, not final canonical role templates. Runtime code
+should not depend on v1 file-backed queue/control-plane behavior.
 
 ## Product Positioning
 
@@ -213,8 +219,10 @@ Before committing:
 - Run `python scripts/check-pr-size.py --base origin/develop --committed-only` before pushing
   a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
-- Run `python -m agentic_mesh.cli validate-config` for config or project
-  boundary changes.
+- Run `agentic-mesh status-json --db .tmp/v2-check.sqlite3` for a basic v2
+  runtime read-model smoke.
+- Run `agentic-mesh validate-topology ...` for source/runtime/project boundary
+  changes.
 - Run `docker compose ... config --quiet` when Compose outputs change.
 - Update `MEMORY.md` when future agents need the context.
 - Update ADRs or implementation-slice docs when a design decision or accepted

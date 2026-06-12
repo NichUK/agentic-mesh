@@ -7,6 +7,8 @@ from pathlib import Path
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
 from agentic_mesh_v2.server import serve
+from agentic_mesh_v2.topology import ProjectRepo
+from agentic_mesh_v2.topology import RuntimeTopology
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,8 +29,59 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("demo-slice", help="Create one complete v2 end-to-end demo slice.")
     subparsers.add_parser("status-json", help="Print the v2 runtime status snapshot as JSON.")
 
+    topology_parser = subparsers.add_parser(
+        "validate-topology",
+        help="Validate v2 source/runtime/project repository boundaries.",
+    )
+    topology_parser.add_argument("--source-repo", required=True)
+    topology_parser.add_argument("--deployed-runtime", required=True)
+    topology_parser.add_argument("--runtime-state", required=True)
+    topology_parser.add_argument(
+        "--project-repo",
+        action="append",
+        default=[],
+        metavar="ID=PATH|DOCROOT",
+        help="Project repo and document library root. May be repeated.",
+    )
+    topology_parser.add_argument("--image-identity")
+    topology_parser.add_argument("--allow-local-dev-overlap", action="store_true")
+    topology_parser.add_argument("--local-dev-reason")
+
     args = parser.parse_args(argv)
     db_path = Path(args.db)
+
+    if args.command == "validate-topology":
+        topology = RuntimeTopology(
+            source_repo=Path(args.source_repo),
+            deployed_runtime=Path(args.deployed_runtime),
+            runtime_state=Path(args.runtime_state),
+            project_repos=tuple(_parse_project_repo(value) for value in args.project_repo),
+            image_identity=args.image_identity,
+            allow_local_dev_overlap=args.allow_local_dev_overlap,
+            local_dev_reason=args.local_dev_reason,
+        ).validate()
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "source_repo": str(topology.source_repo),
+                    "deployed_runtime": str(topology.deployed_runtime),
+                    "runtime_state": str(topology.runtime_state),
+                    "project_repos": [
+                        {
+                            "repo_id": project.repo_id,
+                            "path": str(project.path),
+                            "document_library_root": str(project.document_library_root),
+                        }
+                        for project in topology.project_repos
+                    ],
+                    "warnings": list(topology.warnings),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
 
     if args.command == "serve":
         serve(host=args.host, port=args.port, db_path=db_path)
@@ -51,6 +104,24 @@ def main(argv: list[str] | None = None) -> int:
         db.close()
 
     raise AssertionError(f"unhandled command: {args.command}")
+
+
+def _parse_project_repo(value: str) -> ProjectRepo:
+    if "=" not in value or "|" not in value:
+        raise argparse.ArgumentTypeError(
+            "--project-repo must use ID=PATH|DOCROOT"
+        )
+    repo_id, rest = value.split("=", 1)
+    path, docroot = rest.split("|", 1)
+    if not repo_id.strip() or not path.strip() or not docroot.strip():
+        raise argparse.ArgumentTypeError(
+            "--project-repo must include non-empty ID, PATH, and DOCROOT"
+        )
+    return ProjectRepo(
+        repo_id=repo_id,
+        path=Path(path),
+        document_library_root=Path(docroot),
+    )
 
 
 if __name__ == "__main__":

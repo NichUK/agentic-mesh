@@ -953,12 +953,12 @@ types.
 
 - Should the router be one container per project or a shared multi-project
   service?
-- Should the control-plane be combined with the router in v1, or kept as a
-  separate service from the start?
+- Should v2 connector routing and runtime supervision be separate services, or
+  one deployable module until multi-project scale requires separation?
 - Should each role-agent instance support multiple concurrent claims, or should
   horizontal scale be expressed only by adding more instances of the role?
-- Should the local profile support SQLite as an optional state backend, or
-  should it stay strictly file-first for transparency?
+- What is the right Postgres compatibility boundary for the SQLite-first v2
+  repository interfaces?
 - What minimum Teams permissions are required for channel messages, DMs,
   Adaptive Cards, and channel creation?
 - Should project Teams be created by Agentic Mesh, or should the first version

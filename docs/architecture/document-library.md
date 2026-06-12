@@ -28,10 +28,10 @@ document_library:
   versioning: backend
 ```
 
-Supported v1 backends are `git` and `filesystem`. `onedrive` and `sharepoint`
-are reserved adapter targets. Versioning belongs to the backend: Git history
-for Git-backed libraries and Microsoft version history for OneDrive or
-SharePoint.
+Supported v2 MVP backends are `git` and `filesystem`. `onedrive` and
+`sharepoint` are reserved adapter targets. Versioning belongs to the backend:
+Git history for Git-backed libraries and Microsoft version history for
+OneDrive or SharePoint.
 
 ## Organization
 
@@ -127,7 +127,7 @@ journal events, backend URLs, and review state.
 ## Review Logs
 
 Markdown has no universal hidden comment standard that works well for rendered
-documents. Agentic Mesh v1 uses visible same-document review logs.
+documents. Agentic Mesh uses visible same-document review logs.
 
 Every reviewable document should contain:
 

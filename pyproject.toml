@@ -23,8 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-agentic-mesh = "agentic_mesh.cli:main"
-agentic-mesh-safeoutputs-mcp = "agentic_mesh.safe_outputs_mcp:main"
+agentic-mesh = "agentic_mesh_v2.cli:main"
 
 [project.optional-dependencies]
 dev = [

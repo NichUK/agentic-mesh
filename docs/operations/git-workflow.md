@@ -76,7 +76,9 @@ When the slice is ready:
 
 ```powershell
 pytest -q
-python -m agentic_mesh.cli validate-config
+agentic-mesh --db .tmp/v2-pr.sqlite3 init-db
+agentic-mesh --db .tmp/v2-pr.sqlite3 demo-slice
+agentic-mesh --db .tmp/v2-pr.sqlite3 status-json
 git push -u origin codex/<slice-name>
 ```
 

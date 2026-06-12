@@ -3,179 +3,100 @@
 Agentic Mesh is an enterprise-oriented runtime for composing long-running AI
 role agents into project-scoped collaboration networks.
 
-The product is not tied to a single model provider, collaboration tool, queue
-service, database, or agent framework. It is designed around replaceable
-adapters for workers, storage, collaboration connectors, and deployment
-profiles.
+The active branch is the v2 runtime reset. V1 has been removed from the source
+package and the linuxch dogfood deployment now runs the v2 runtime service on
+port `8100`.
 
-Project documents:
+## Current Runtime
 
-- `LICENSE`: Apache License 2.0
-- `NOTICE`: project attribution notice
-- `CONTRIBUTING.md`: contribution workflow and DCO sign-off
-- `SECURITY.md`: vulnerability reporting and hardening notes
-- `CODE_OF_CONDUCT.md`: community conduct expectations
-- `GOVERNANCE.md`: maintainer and decision process
-- `TRADEMARKS.md`: project name and mark guidance
-- `THIRD_PARTY_NOTICES.md`: current third-party dependency notices
+V2 is SQLite-backed and uses explicit safe-output records as the durable source
+of truth for agent work. The current MVP proves:
 
-Current documentation:
+- queue item capture
+- work item promotion
+- product, engineering, QA, and release role runs
+- safe-output recording
+- artifact and release evidence
+- work item closure only after release evidence exists
+- a v2 status/reporting dashboard
 
-- `docs/configuration/project-configuration.md`: human-readable manual for
-  project YAML files and schema options
-- `docs/architecture/agentic-mesh-design.md`: main design document
-- `docs/architecture/repository-topology.md`: system repo and project repo
-  boundary
-- `docs/architecture/authentication.md`: provider-neutral worker and connector
-  auth model
-- `docs/architecture/document-lifecycle.md`: document accountability,
-  contribution events, and owner-review gates
-- `docs/architecture/document-library.md`: first-class document library,
-  review-log, role-memory, and cross-mesh document practices
-- `docs/architecture/role-charters.md`: expanded role charters and how
-  enterprise standards inform agent roles
-- `docs/architecture/flow-collaboration.md`: consult routes and
-  sponsor-initiated tracked work
-- `docs/architecture/human-response-gates.md`: structured human response gates
-  and reusable response type templates
-- `docs/architecture/risk-register.md`: open architecture and delivery risks
-  identified during dogfood recovery
-- `docs/architecture/decisions.md`: architecture decisions
-- `docs/architecture.md`: architecture overview
-- `docs/operations/codex-auth.md`: Codex auth strategy for role containers
-- `docs/operations/git-workflow.md`: daily `develop` branch and PR workflow
-- `docs/operations/teams-bot-identities.md`: one Teams bot identity per role
-  for the dogfood project
-- `docs/operations/linuxch-docker-deployment.md`: Docker deployment profile
-  and Teams bot ingress notes for the `linuxch` VM
-- `docs/operations/signoz-otel.md`: OpenTelemetry routing, naming, and SigNoz
-  trace search notes
-- `docs/operations/sdlc-teams-smoke-test.md`: latest SDLC lifecycle smoke test
-  through containers and Microsoft Teams
-- `docs/product/open-source-commercial-plan.md`: open source core,
-  commercial boundary, quick wins, and license recommendation
-- `docs/research/auth-methods-spike.md`: initial auth research spike
-- `docs/implementation-slices/local-runtime-skeleton-v0.md`: first
-  implementation slice and acceptance criteria
-- `docs/implementation-slices/local-messaging-v0.md`: local role inbox,
-  connector outbox, and human response message slice
-- `docs/implementation-slices/local-teams-connector-v0.md`: local Teams-style
-  connector adapter and Adaptive Card rendering slice
-- `docs/implementation-slices/project-build-outputs-v0.md`: backlog slice for
-  per-project Compose, Terraform, Helm, and future build outputs
+The dogfood status page is:
 
-Initial direction:
+```text
+http://linuxch:8100/status
+```
 
-- one container per role-agent instance
-- central organization defaults such as global language, documentation,
-  conversation, handoff, and security standards
-- permanent role templates with project-specific overrides
-- reusable flow templates with per-project flow references and overrides
-- reusable human response type templates for approvals, yes/no, numbers,
-  money, text, documents, and URLs
-- project configuration schemas for validation and future UI editing
-- support for multiple instances of the same role inside one project
-- Microsoft Teams as the first collaboration connector
-- one Teams bot identity per configured role for the dogfood Teams project
-- Slack-ready connector abstraction
-- file-first local storage with cloud-native storage backends
-- append-only event journal for audit and replay
-- OpenTelemetry logs, traces, and metrics
-- Git-backed configuration, documentation, decisions, and evidence
-- queue-aware agent hibernation and wake-up for resource efficiency
-- open source core with commercial enterprise support and extensions
+Useful local commands:
+
+```powershell
+pip install -e .[dev]
+pytest -q
+agentic-mesh --db .tmp/v2.sqlite3 init-db
+agentic-mesh --db .tmp/v2.sqlite3 demo-slice
+agentic-mesh --db .tmp/v2.sqlite3 status-json
+```
+
+Validate source/runtime/project boundaries:
+
+```powershell
+agentic-mesh validate-topology `
+  --source-repo C:\Dev\agentic-mesh `
+  --deployed-runtime C:\AgenticMesh\runtime `
+  --runtime-state C:\AgenticMesh\state `
+  --project-repo demo=C:\Projects\demo|C:\Projects\demo\docs
+```
+
+## Repository Layout
+
+- `src/agentic_mesh_v2/`: active v2 runtime package
+- `tests/test_v2_*.py`: active v2 regression tests
+- `examples/projects/agentic-mesh-dev/deploy/compose/`: dogfood compose
+  deployment, currently v2-only
+- `docs/architecture/v2-runtime-reset.md`: v2 reset plan and topology
+  direction
+- `docs/architecture/repository-topology.md`: source/runtime/project boundary
+  guidance
+- `docs/architecture/risk-register.md`: risks captured during dogfood
+  recovery
 
 ## Standards-Informed Roles And Flows
 
 Agentic Mesh adapts established enterprise and professional standards into
 configurable role templates, project flows, gates, and document
-accountabilities. The standards guide the defaults; they do not lock every
-project into one methodology.
+accountabilities. The standards guide defaults; they do not lock every project
+into one methodology.
 
 - BMAD informs specialist AI agent roles, named workflows, role-specific
   capabilities, and artifact-driven handoffs.
 - Scrum informs accountability boundaries, product ownership, developer
   planning ownership, flow transparency, and impediment handling.
-- SFIA informs focused professional skill profiles and keeps each role clear
-  about responsibility level and capability scope.
-- BABOK informs Business Analyst work such as stakeholder context,
-  elicitation, requirements lifecycle thinking, and separation of facts,
-  assumptions, and recommendations.
-- TOGAF informs Enterprise and Solution Architecture alignment, governance,
-  capability fit, architecture content, and decision traceability.
-- ISTQB and BDD practice inform QA planning, defect/evidence handling, and
-  Given/When/Then behaviour scenarios before implementation.
-- OWASP SAMM and NIST SSDF inform secure SDLC expectations, security review
-  gates, control evidence, and residual-risk recording.
-
-The stock SDLC pack uses these standards to shape role charters and flow gates.
-Projects can override role instructions, tools, document accountabilities,
-flows, and gates to match their operating model.
+- SFIA informs focused professional skill profiles.
+- BABOK informs Business Analyst work such as stakeholder context and
+  requirements lifecycle thinking.
+- TOGAF informs architecture alignment, governance, capability fit, and
+  decision traceability.
+- ISTQB and BDD practice inform QA planning and evidence handling.
+- OWASP SAMM and NIST SSDF inform secure SDLC expectations and residual-risk
+  recording.
 
 ## Product Positioning
 
-Agentic Mesh uses role discipline inspired by BMAD-style software delivery
-packs and enterprise role frameworks, but its runtime architecture is
-distributed, containerized, and enterprise-oriented.
+Agentic Mesh is intended to be open core.
 
-Credit: Agentic Mesh draws inspiration from the
-[BMad Method](https://docs.bmad-method.org/) and its role-guided software
-delivery workflows. Agentic Mesh does not copy BMAD's named-agent convention;
-role templates use functional titles such as Business Analyst, Product
-Manager, Solution Architect, Engineering, QA Engineer, and Release Manager.
+Open source core should remain useful on its own:
 
-The intended model is open core:
+- v2 runtime kernel
+- state machine and safe-output service
+- SQLite local backend
+- Docker Compose deployment profile
+- documentation framework primitives
+- status/reporting dashboard
+- starter role and flow templates
 
-- The core runtime, role template model, local storage adapters, Docker Compose
-  profile, worker adapter interface, collaboration connector interface, and
-  basic Teams connector should be open source.
-- Commercial offerings may add supported enterprise deployments, advanced
-  control-plane features, SSO and identity integrations, managed cloud
-  backends, policy packs, compliance reporting, premium support, and hosted or
-  assisted operations.
+Commercial offerings may add supported enterprise deployments, SSO/RBAC,
+managed storage/message backends, policy packs, compliance reporting, premium
+support, and assisted operations.
 
-The open source project should be useful on its own. Commercial features should
-pay for development by improving enterprise adoption, governance, reliability,
-and support rather than by locking away the basic agent network.
-
-## Local Runtime Skeleton
-
-The first development slice is a Python source-layout project. To run it
-directly from a checkout:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m agentic_mesh.cli validate-config
-python -m agentic_mesh.cli auth-plan --instance agentic-mesh-dev.security-architect.1
-python -m agentic_mesh.cli record-human-response --work-item-id slice-release --lifecycle-state release_review --gate-id release_decision_response --response-request-id human-response-example --responder release-sponsor --value '"approved"'
-python -m agentic_mesh.cli teams-connector-once --channel approvals
-python -m agentic_mesh.cli status
-pytest -q
-```
-
-Or install it in editable mode:
-
-```powershell
-pip install -e .[dev]
-python -m agentic_mesh.cli validate-config
-```
-
-The default local example project is `agentic-mesh-dev`. It references the
-stock SDLC flow template in `config/flows/sdlc.yaml`; role templates do not
-hard-code the handoff graph. Project YAML shape is documented in
-`config/schemas/project.schema.json`.
-
-The dogfood project lives under
-`examples/projects/agentic-mesh-dev/`. Its project overlay is
-`examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`, and its
-project-scoped Compose files live under
-`examples/projects/agentic-mesh-dev/deploy/compose/`.
-
-Each project YAML declares a `workspace` block with the mounted project root
-and repository entries agents can work in. Role `write_paths` and flow
-`artifact_path` values are relative to that workspace, so the shared runtime
-image can stay generic while each deployment mounts its own project repo,
-configuration, state, and secrets.
-
-Global defaults such as `global_language` live in `config/organization.yaml`.
-Reusable human response templates live in `config/response-types.yaml`.
+The open source project should not be crippleware. Commercial features should
+improve enterprise adoption, governance, reliability, and support rather than
+locking away the basic agent network.
