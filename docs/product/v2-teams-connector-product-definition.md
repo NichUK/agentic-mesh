@@ -1,12 +1,33 @@
 # V2 Teams Connector Product Definition
 
-Status: sponsor review
+Status: sponsor-shaped product definition
 
 Owner role: product-manager
 
 Date: 2026-06-12
 
 Source: sponsor request to design the new Teams connector for the v2 runtime.
+
+## Sponsor Decisions
+
+The sponsor provided product direction on 2026-06-12:
+
+- Role agents should be visible as separate agent/role identities in Teams.
+- Direct messages to a role are private to that human and role until promoted
+  into tracked work or summarized into a durable project artifact.
+- Project-channel messages are shared project context. They may be compacted,
+  but important points, decisions, risks, and instructions must be preserved.
+- Team-wide requests should reach every role for a lightweight relevance check.
+  A role should respond only when its relevance score and specialist judgment
+  indicate it has something important to add.
+- A project should have a Project Team with a default `project` channel. Larger
+  features, epics, or focused initiatives may create additional channels so
+  discussion and relevance stay focused.
+- Roles may proactively propose work from conversation when they can make a
+  good case for necessity and value.
+- Teams conversations inform, consult, and keep humans and agents updated. The
+  document library remains the primary source of truth for important decisions,
+  architecture, requirements, risks, and release records.
 
 ## Product Intent
 
@@ -37,6 +58,8 @@ The design must preserve these product qualities:
 - Durable work is created only through explicit safe-output intent.
 - Channel discussions become useful context without generating unnecessary
   replies.
+- Important decisions and durable knowledge move from Teams conversation into
+  the document library.
 - Sponsor questions and approvals are visible, actionable, and routed back to
   the correct conversation.
 - Agent replies are concise, role-authored, Markdown-formatted, and complete.
@@ -90,14 +113,33 @@ ask a sponsor question, propose durable work, or report that it cannot answer.
 No queue item or work item should be created merely because a direct message was
 sent.
 
-### Project Development Channel
+Direct messages are private to the human and the addressed role until the role
+or human explicitly promotes the conversation into tracked work, records a
+source-linked memory update, or writes a durable document update.
 
-Each project may configure one or more Teams channels as project rooms. A
-message in a project room is project context by default.
+### Project Team And Channels
+
+Each project may configure a Project Team. The default channel should be
+`project`, because the same organization may run multiple project teams with
+different human membership, governance needs, and confidentiality boundaries.
+
+Large features, epics, incidents, or focused initiatives may create additional
+channels under the same project team. Those channels should narrow context and
+improve relevance without changing the canonical project identity.
+
+### Project Channel Context
+
+Each configured project channel is a project room. A message in a project room
+is project context by default.
 
 Unmentioned channel messages should be stored as shared context and made
 available to future role runs according to project retention and visibility
 rules. They should not automatically wake every role.
+
+The connector may compact retained channel history, but must preserve important
+points, decisions, requirements, constraints, risks, and instructions with
+provenance. Durable decisions should be written into the document library rather
+than left only in Teams.
 
 ### Mentioned Role In Channel
 
@@ -110,12 +152,16 @@ available as shared context.
 
 ### Team-Wide Discussion
 
-When a human addresses the configured team-wide trigger, the runtime should run a
-relevance step before role replies are posted.
+When a human addresses the configured team-wide trigger, every role should
+perform a lightweight relevance check before role replies are posted.
 
 Relevant roles may answer, ask clarifying questions, propose work, consult
 another role, or no-op. Non-relevant roles should stay quiet, while the runtime
 records enough audit data to explain that relevance was considered.
+
+The runtime should support a configurable relevance threshold. A role may still
+respond below the threshold when it can justify that it has important specialist
+input, but the reason should be recorded.
 
 The product experience should be closer to asking a meeting room "does anyone
 have anything to add?" than instructing every person to produce a report.
@@ -135,6 +181,8 @@ V2 Teams connector MVP scope:
 - Teams inbound direct messages to configured role identities.
 - Teams inbound project-channel messages.
 - Teams inbound role mentions and configured team-wide triggers.
+- Project Team configuration with a default `project` channel and optional
+  feature, epic, or focused-work channels.
 - Conversation records in the v2 database.
 - Role reply routing through `status.reply`.
 - Sponsor question routing from `sponsor.ask_question`.
@@ -142,6 +190,7 @@ V2 Teams connector MVP scope:
 - Teams delivery records and visible delivery failures.
 - Markdown rendering for full agent replies.
 - Project-channel context capture.
+- Conversation compaction into source-linked context summaries.
 - Runtime status links using the configured external base URL.
 
 ## Non-Goals
@@ -160,15 +209,20 @@ V2 Teams connector MVP scope:
 
 - Configure Teams connectors per project, including channel bindings, allowed
   users or groups, role aliases, and team-wide triggers.
+- Configure a Project Team, default project channel, and optional feature or
+  epic channels.
 - Map Teams users to runtime people, sponsor candidates, and operator authority
   where configured.
 - Map Teams role identities or aliases to v2 role services.
 - Store inbound Teams messages as conversation events with source metadata.
 - Route direct messages to the addressed role without creating a work item by
   default.
+- Keep direct-message context private to the sender and role until it is
+  explicitly promoted into work or durable project knowledge.
 - Route mentioned channel messages to the mentioned role while preserving shared
   context.
-- Run team-wide relevance selection before waking roles for an all-team request.
+- Run lightweight relevance checks for every role on all-team requests.
+- Apply a configurable relevance threshold and record relevance decisions.
 - Send complete Markdown replies through Teams with no artificial truncation.
 - Suppress low-value acknowledgement and "started" messages for ordinary direct
   conversations.
@@ -178,6 +232,10 @@ V2 Teams connector MVP scope:
 - Record connector delivery status, failures, retries, and final message ids.
 - Ensure every durable state change comes from safe-output calls, not inferred
   connector text.
+- Allow roles to proactively propose work from conversation when they can record
+  a value-based rationale.
+- Compact channel history while preserving source-linked important decisions,
+  risks, requirements, and instructions in the document library or role memory.
 
 ## Acceptance Criteria
 
@@ -195,6 +253,12 @@ V2 Teams connector MVP scope:
   consults or hands off to another role.
 - Given a sponsor uses the team-wide trigger, when relevance is evaluated, then
   only roles with material input respond.
+- Given a role determines from conversation that durable work is necessary, when
+  it can explain the value and urgency, then it may propose a queue/work item
+  and reply with the rationale and link.
+- Given a channel discussion contains an important decision, when the connector
+  compacts or expires conversation history, then the decision remains preserved
+  in the document library or source-linked memory.
 - Given a sponsor replies in a Teams thread to a question or approval, when the
   connector processes the reply, then the runtime binds it to the original
   conversation/work item and continues the correct flow.
@@ -207,8 +271,12 @@ V2 Teams connector MVP scope:
 
 - Sponsor direct-message questions receive useful answers without creating work
   noise.
+- Separate role identities make the experience feel like working with a
+  specialist team.
 - Channel traffic falls compared with v1 because only relevant roles respond.
 - Queue items created from Teams carry clear source links and role rationale.
+- Important decisions are found in the document library rather than only in
+  Teams history.
 - Sponsor questions and approvals are answerable from Teams threads.
 - Connector failures are visible in the dashboard and recoverable.
 - The same conversation model can be reused by Slack and other connectors.
@@ -227,48 +295,40 @@ V2 Teams connector MVP scope:
 
 ## Product Recommendation
 
-Use one connector runtime with role-addressable conversation endpoints.
+Use one connector runtime with separate role-agent identities.
 
-For the user experience, support role-specific identities or aliases where the
-tenant allows it, but do not make the runtime depend on Teams bot-to-bot
-mentions or one bot per role as the orchestration primitive. The runtime should
-own the routing decision and store all conversation state.
+For the user experience, each configured role should appear as its own
+addressable specialist in Teams. Implementation may use one connector service
+behind those identities, but the runtime must not depend on Teams bot-to-bot
+mentions or Teams itself as the orchestration primitive. The runtime owns the
+routing decision and stores conversation state.
 
 For the MVP, prioritize:
 
 1. Direct messages to configured role agents.
 2. Project-channel role mentions.
-3. Team-wide relevance-filtered discussion.
+3. Team-wide relevance-checked discussion.
 4. Sponsor questions and approval replies bound to the originating thread.
 5. Complete Markdown replies and delivery status.
 
-## Sponsor Review Questions
+## Sponsor Review Questions And Disposition
 
-These questions affect scope and should be answered before this is handed to
-Architecture and Engineering:
+The original sponsor questions have been answered and incorporated into this
+document. The remaining product question is not a blocker:
 
-1. Should the v2 MVP present role agents as separate Teams identities
-   (`AM-Product Manager`, `AM-Release Manager`), or is a single `Agentic Mesh`
-   bot acceptable if it can route to role personas cleanly?
-2. Should direct messages to a role be private to that human and role unless
-   explicitly promoted into work, or should all role DMs become project context
-   by default?
-3. Should every project-channel message be retained as shared context, or only
-   messages in configured channels/threads that match capture rules?
-4. For a team-wide request, should a cheap relevance classifier decide which
-   roles wake, or should every role service receive a lightweight relevance task
-   and decide whether to reply?
-5. What should the default project channel be called in examples: `all-agents`,
-   `development`, or another name?
-6. Should role agents proactively propose work from a channel discussion when
-   they infer durable work is needed, or only when the human explicitly asks?
-7. What retention period should apply to Teams conversation context before it is
-   summarized or expired?
+- What specific retention durations should the default project templates use
+  for raw Teams messages, compacted summaries, and source-linked decisions?
+
+Product Manager recommendation: do not make raw Teams retention the product
+source of truth. Preserve raw Teams messages for operational traceability for a
+configurable short-to-medium period, compact useful context into summaries, and
+record durable decisions, requirements, risks, architecture choices, and release
+facts in the document library.
 
 ## Downstream Readiness
 
-The slice is not ready for implementation until the sponsor answers the review
-questions or explicitly accepts Product Manager defaults.
+This product definition is ready for downstream UX and Architecture shaping.
+Retention defaults may be finalized during architecture/security review.
 
 Likely downstream roles:
 
@@ -287,4 +347,7 @@ Likely downstream roles:
 - RL-001 | product-manager | sponsor-review | full document | The product
   definition needs sponsor answers on identity model, privacy, channel capture,
   relevance selection, default channel naming, proactive work proposal, and
-  retention before downstream handoff. | open
+  retention before downstream handoff. | answered 2026-06-12; identity,
+  privacy, channel capture, relevance, project channel, proactive work proposal,
+  and document-library truth decisions incorporated. Retention duration remains
+  an architecture/security defaulting question.
