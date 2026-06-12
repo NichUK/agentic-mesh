@@ -180,3 +180,64 @@ These are not blockers for PB-004 Story 3 because they are outside this story an
 ### Review Log
 
 - QA-RL-003 | qa-engineer | acceptance | PB-004 Story 3 | Verified terminal safe-output validation and assignment state mapping for completed, waiting-human, blocked, incomplete, and no-op outcomes with status snapshot visibility. | accepted 2026-06-12
+
+## PB-004 Story 4 - Bounded Role-Service Drain And Heartbeat
+
+Date: 2026-06-12
+
+QA role: QA Engineer
+
+Decision: accepted
+
+### Scope Reviewed
+
+- `src/agentic_mesh_v2/db.py`
+- `src/agentic_mesh_v2/role_service.py`
+- `src/agentic_mesh_v2/server.py`
+- `tests/test_v2_role_assignment_execution.py`
+- `docs/engineering/v2-role-execution-implementation-log.md`
+- Prior QA record in `docs/qa/v2-role-execution-test-results.md`
+
+### Commands Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+```
+
+Result:
+
+```text
+16 passed
+```
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+88 passed
+```
+
+### Acceptance Assessment
+
+- `role_instance_status` exists as a durable runtime table with role, instance, status, heartbeat, current assignment, last run, processed count, and detail fields.
+- `RoleService` initializes the role instance as `idle`.
+- `run_next_assignment()` marks the role instance `active` while processing claimed work, returns it to `idle` after terminal assignment completion, and marks it `failed` when worker or safe-output execution fails.
+- `drain_available_assignments(max_assignments=...)` respects the configured bound and records the processed batch count.
+- Status snapshots and the dashboard expose role instance state, current assignment, last run, processed count, heartbeat time, and detail.
+- The implementation log accurately limits this story to bounded in-process draining and heartbeat/status visibility; it does not claim a container supervisor, claim lease timeout, stale-claim recovery, or hibernation/hydration.
+
+### Residual Gaps
+
+These are not blockers for PB-004 Story 4 because they remain explicit later v2 runtime scope:
+
+- No container supervisor or persistent service process orchestration yet.
+- No lease timeout or stale-claim recovery scan yet.
+- No cooperative hibernation/hydration behavior yet.
+- `processed_count` is the latest drain batch count, not a lifetime processed metric.
+
+### Review Log
+
+- QA-RL-004 | qa-engineer | acceptance | PB-004 Story 4 | Verified bounded role-service draining, role-instance heartbeat/status records, processed-count visibility, failure-state handling, and dashboard/status exposure. | accepted 2026-06-12

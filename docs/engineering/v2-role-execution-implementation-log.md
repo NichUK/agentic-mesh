@@ -211,6 +211,66 @@ Results:
 - Continuous role-service loops, leases, heartbeat refresh, and hibernation
   remain later PB-004/PB-005 slices.
 
+## PB-004 Story 4 - Bounded Role-Service Drain And Heartbeat
+
+Status: implemented, awaiting QA review.
+
+Owner role: Engineering
+
+Date: 2026-06-12
+
+### Scope
+
+Add the first long-running role-service shape without introducing container
+hibernation or lease recovery yet. A role service can drain a bounded number of
+queued assignments for its role, update durable role-instance status, and expose
+heartbeat/last-run data to the dashboard.
+
+### Implementation Notes
+
+- Added `role_instance_status` runtime table.
+- Added `V2Database.update_role_instance_status()` and
+  `list_role_instance_statuses()`.
+- `RoleService` now records an idle status when initialized.
+- `run_next_assignment()` records:
+  - `idle` when no work is available
+  - `active` while processing a claimed assignment
+  - `failed` when worker/safe-output execution fails
+  - `idle` after a terminal assignment outcome is recorded
+- Added `RoleService.drain_available_assignments(max_assignments=...)` for a
+  bounded role-service loop.
+- Status snapshots expose `role_instance_statuses`.
+- The status dashboard renders role instance status, current assignment, last
+  run, processed count, heartbeat time, and detail.
+
+### Tests Added
+
+- role service drains two queued assignments and records idle heartbeat/status
+- drain respects `max_assignments`
+- dashboard renders role instance status and last-run details
+
+### Tests Run
+
+```text
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider tests\test_v2_role_assignment_execution.py tests\test_v2_status_dashboard.py
+$env:PYTHONDONTWRITEBYTECODE='1'; pytest -q -p no:cacheprovider
+```
+
+Results:
+
+```text
+16 passed
+88 passed
+```
+
+### Known Limitations
+
+- This is a bounded in-process drain loop, not a container supervisor.
+- There is no claim lease timeout, stale-claim recovery scan, or cooperative
+  hibernation/hydration yet.
+- `processed_count` records the latest drain batch size rather than a lifetime
+  metric.
+
 ## Review Log
 
 - RL-001 | engineering | implementation | PB-004 Story 1 | Added
@@ -222,4 +282,7 @@ Results:
   2026-06-12
 - RL-003 | engineering | implementation | PB-004 Story 3 | Added terminal
   assignment outcome states for human waits, blockers, incomplete runs, and
-  explicit no-op outcomes. | awaiting QA review 2026-06-12
+  explicit no-op outcomes. | QA accepted 2026-06-12
+- RL-004 | engineering | implementation | PB-004 Story 4 | Added bounded
+  role-service draining, role-instance heartbeat/status records, and dashboard
+  visibility. | awaiting QA review 2026-06-12

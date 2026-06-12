@@ -366,6 +366,19 @@ class V2Database:
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS role_instance_status (
+                  role_instance_id TEXT PRIMARY KEY,
+                  role_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  heartbeat_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  current_assignment_id TEXT,
+                  last_run_id TEXT,
+                  processed_count INTEGER NOT NULL DEFAULT 0,
+                  detail TEXT,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS relevance_checks (
                   relevance_check_id TEXT PRIMARY KEY,
                   conversation_event_id TEXT NOT NULL,
@@ -1587,6 +1600,61 @@ class V2Database:
                 },
             )
 
+    def update_role_instance_status(
+        self,
+        *,
+        role_id: str,
+        role_instance_id: str,
+        status: str,
+        current_assignment_id: str | None = None,
+        last_run_id: str | None = None,
+        processed_count: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO role_instance_status(
+                  role_instance_id, role_id, status, current_assignment_id,
+                  last_run_id, processed_count, detail
+                )
+                VALUES (?, ?, ?, ?, ?, COALESCE(?, 0), ?)
+                ON CONFLICT(role_instance_id) DO UPDATE SET
+                  role_id = excluded.role_id,
+                  status = excluded.status,
+                  heartbeat_at = CURRENT_TIMESTAMP,
+                  current_assignment_id = excluded.current_assignment_id,
+                  last_run_id = COALESCE(excluded.last_run_id, role_instance_status.last_run_id),
+                  processed_count = CASE
+                    WHEN ? IS NULL THEN role_instance_status.processed_count
+                    ELSE excluded.processed_count
+                  END,
+                  detail = excluded.detail,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    role_instance_id,
+                    role_id,
+                    status,
+                    current_assignment_id,
+                    last_run_id,
+                    processed_count,
+                    detail,
+                    processed_count,
+                ),
+            )
+            self.append_event(
+                "role_instance.status_updated",
+                "role_instance",
+                role_instance_id,
+                {
+                    "role_id": role_id,
+                    "status": status,
+                    "current_assignment_id": current_assignment_id,
+                    "last_run_id": last_run_id,
+                },
+            )
+
     def record_relevance_check(
         self,
         *,
@@ -2440,6 +2508,16 @@ class V2Database:
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
 
+    def list_role_instance_statuses(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM role_instance_status
+            ORDER BY updated_at DESC, role_instance_id
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
     def list_relevance_checks(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -2483,6 +2561,7 @@ class V2Database:
         connector_attention_items = self.list_connector_attention_items()
         connector_permission_checks = self.list_connector_permission_checks()
         role_assignments = self.list_role_assignments()
+        role_instance_statuses = self.list_role_instance_statuses()
         relevance_checks = self.list_relevance_checks()
         work_proposals = self.list_work_proposals()
         human_response_requests = self.list_human_response_requests()
@@ -2575,6 +2654,7 @@ class V2Database:
                 "connector_attention_items": len(connector_attention_items),
                 "connector_permission_checks": len(connector_permission_checks),
                 "role_assignments": len(role_assignments),
+                "role_instance_statuses": len(role_instance_statuses),
                 "relevance_checks": len(relevance_checks),
                 "work_proposals": len(work_proposals),
                 "human_response_requests": len(human_response_requests),
@@ -2607,6 +2687,7 @@ class V2Database:
             "connector_attention_items": connector_attention_items,
             "connector_permission_checks": connector_permission_checks,
             "role_assignments": role_assignments,
+            "role_instance_statuses": role_instance_statuses,
             "relevance_checks": relevance_checks,
             "work_proposals": work_proposals,
             "human_response_requests": redacted_human_response_requests,

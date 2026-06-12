@@ -418,6 +418,87 @@ def test_terminal_safe_outputs_map_to_visible_assignment_outcomes(
     assert db.status_snapshot()["role_assignment_statuses"] == {expected_status: 1}
 
 
+def test_role_service_drains_available_assignments_and_records_idle_heartbeat(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    for index in range(2):
+        db.create_role_assignment(
+            assignment_id=f"assignment-drain-{index}",
+            role_id="product-manager",
+            source_ref=f"msg-drain-{index}",
+            title=f"Drain assignment {index}",
+            summary="Process in bounded drain loop.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="status.complete",
+                    payload={"message": "Assignment processing complete."},
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    drain = service.drain_available_assignments(max_assignments=10)
+
+    snapshot = db.status_snapshot()
+    instance = snapshot["role_instance_statuses"][0]
+    assert drain.status == "idle"
+    assert drain.processed_count == 2
+    assert len(drain.receipts) == 2
+    assert snapshot["role_assignment_statuses"] == {"completed": 2}
+    assert instance["status"] == "idle"
+    assert instance["processed_count"] == 2
+    assert instance["current_assignment_id"] is None
+    assert instance["last_run_id"] == drain.receipts[-1].run_id
+    assert instance["heartbeat_at"]
+
+
+def test_role_service_drain_respects_max_assignments(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    for index in range(2):
+        db.create_role_assignment(
+            assignment_id=f"assignment-max-{index}",
+            role_id="product-manager",
+            source_ref=f"msg-max-{index}",
+            title=f"Max assignment {index}",
+            summary="Respect drain limit.",
+            assignment_type="direct_conversation",
+            visibility_scope="project",
+            payload={},
+        )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="status.complete",
+                    payload={"message": "One assignment complete."},
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    drain = service.drain_available_assignments(max_assignments=1)
+
+    assert drain.processed_count == 1
+    assert db.status_snapshot()["role_assignment_statuses"] == {"completed": 1, "queued": 1}
+
+
 def test_status_dashboard_shows_role_assignment_terminal_state(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()
@@ -450,3 +531,25 @@ def test_status_dashboard_shows_role_assignment_terminal_state(tmp_path: Path) -
     assert "Dashboard visible assignment" in html
     assert "status.reply" in html
     assert "run-dashboard" in html
+
+
+def test_status_dashboard_shows_role_instance_state(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.update_role_instance_status(
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        status="idle",
+        last_run_id="run-visible",
+        processed_count=3,
+        detail="Waiting for work.",
+    )
+
+    snapshot = db.status_snapshot()
+    html = _render(snapshot)
+
+    assert snapshot["counts"]["role_instance_statuses"] == 1
+    assert "Role Instances" in html
+    assert "agentic-mesh-dev.product-manager.1" in html
+    assert "Waiting for work." in html
+    assert "run-visible" in html

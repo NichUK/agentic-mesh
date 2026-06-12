@@ -40,6 +40,13 @@ class RoleRunReceipt:
     assignment_id: str | None = None
 
 
+@dataclass(frozen=True)
+class RoleDrainReceipt:
+    status: str
+    processed_count: int
+    receipts: tuple[RoleRunReceipt, ...]
+
+
 class RoleService:
     def __init__(
         self,
@@ -55,6 +62,12 @@ class RoleService:
         self.role_instance_id = role_instance_id
         self.worker = worker
         self.safe_outputs = safe_outputs or SafeOutputService(db)
+        self.db.update_role_instance_status(
+            role_id=self.role_id,
+            role_instance_id=self.role_instance_id,
+            status="idle",
+            detail="Role service initialized.",
+        )
 
     def run_assignment(self, assignment: RoleAssignment, *, run_id: str | None = None) -> RoleRunReceipt:
         if assignment.role_id != self.role_id:
@@ -112,8 +125,22 @@ class RoleService:
     def run_next_assignment(self) -> RoleRunReceipt | None:
         assignment = self.claim_next_assignment()
         if assignment is None:
+            self.db.update_role_instance_status(
+                role_id=self.role_id,
+                role_instance_id=self.role_instance_id,
+                status="idle",
+                detail="No queued assignment for role.",
+            )
             return None
         run_id = f"run-{uuid4().hex}"
+        self.db.update_role_instance_status(
+            role_id=self.role_id,
+            role_instance_id=self.role_instance_id,
+            status="active",
+            current_assignment_id=assignment.assignment_id,
+            last_run_id=run_id,
+            detail="Processing role assignment.",
+        )
         try:
             receipt = self.run_assignment(assignment, run_id=run_id)
         except Exception as exc:
@@ -123,6 +150,14 @@ class RoleService:
                 run_id=run_id,
                 reason=str(exc),
             )
+            self.db.update_role_instance_status(
+                role_id=self.role_id,
+                role_instance_id=self.role_instance_id,
+                status="failed",
+                current_assignment_id=assignment.assignment_id,
+                last_run_id=run_id,
+                detail=str(exc),
+            )
             raise
         self.db.complete_role_assignment(
             str(assignment.assignment_id),
@@ -131,7 +166,37 @@ class RoleService:
             terminal_tool=receipt.terminal_tool,
             status=_assignment_status_for_terminal_tool(receipt.terminal_tool),
         )
+        self.db.update_role_instance_status(
+            role_id=self.role_id,
+            role_instance_id=self.role_instance_id,
+            status="idle",
+            current_assignment_id=None,
+            last_run_id=receipt.run_id,
+            detail="Assignment completed.",
+        )
         return receipt
+
+    def drain_available_assignments(self, *, max_assignments: int = 10) -> RoleDrainReceipt:
+        if max_assignments < 1:
+            raise ValueError("max_assignments must be at least 1")
+        receipts: list[RoleRunReceipt] = []
+        while len(receipts) < max_assignments:
+            receipt = self.run_next_assignment()
+            if receipt is None:
+                break
+            receipts.append(receipt)
+        self.db.update_role_instance_status(
+            role_id=self.role_id,
+            role_instance_id=self.role_instance_id,
+            status="idle",
+            processed_count=len(receipts),
+            detail="Role service drained available assignments.",
+        )
+        return RoleDrainReceipt(
+            status="idle",
+            processed_count=len(receipts),
+            receipts=tuple(receipts),
+        )
 
 
 def _assignment_from_row(row: dict[str, Any], *, role_instance_id: str) -> RoleAssignment:

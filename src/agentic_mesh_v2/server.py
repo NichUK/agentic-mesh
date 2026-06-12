@@ -90,6 +90,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     {self._count_tile("Deployment runs", counts.get("deployment_runs", 0))}
     {self._count_tile("Connectors", counts["connectors"])}
     {self._count_tile("Role identities", counts["connector_participants"])}
+    {self._count_tile("Role instances", counts.get("role_instance_statuses", 0))}
     {self._count_tile("Conversation events", counts["conversation_events"])}
     {self._count_tile("Deliveries", counts["delivery_records"])}
     {self._count_tile("Relevance checks", counts["relevance_checks"])}
@@ -118,6 +119,10 @@ class V2StatusHandler(BaseHTTPRequestHandler):
     <section>
       <h2>Role Assignments</h2>
       {self._role_assignment_table(snapshot["role_assignments"])}
+    </section>
+    <section>
+      <h2>Role Instances</h2>
+      {self._role_instance_table(snapshot["role_instance_statuses"])}
     </section>
     <section>
       <h2>Channel Bindings</h2>
@@ -251,6 +256,23 @@ class V2StatusHandler(BaseHTTPRequestHandler):
                 "</tr>"
             )
         return "<table><tr><th>Assignment</th><th>Role / Instance</th><th>Status / Terminal</th><th>Summary</th><th>Work / Source</th><th>Run / Failure</th></tr>" + "".join(body) + "</table>"
+
+    def _role_instance_table(self, rows: object) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        if not items:
+            return '<p class="muted">No v2 role instance status.</p>'
+        body = []
+        for row in items[:30]:
+            body.append(
+                "<tr>"
+                f"<td><code>{_e(row['role_instance_id'])}</code><br>{_e(row['role_id'])}</td>"
+                f"<td><span class=\"status\">{_e(row['status'])}</span><br>{_e(row.get('detail') or '')}</td>"
+                f"<td>{_e(row.get('current_assignment_id') or '')}<br>{_e(row.get('last_run_id') or '')}</td>"
+                f"<td>{_e(row.get('processed_count') or 0)}</td>"
+                f"<td>{_e(row['heartbeat_at'])}</td>"
+                "</tr>"
+            )
+        return "<table><tr><th>Instance / Role</th><th>Status / Detail</th><th>Assignment / Run</th><th>Processed</th><th>Heartbeat</th></tr>" + "".join(body) + "</table>"
 
     def _channel_binding_table(self, rows: object) -> str:
         connectors = list(rows) if isinstance(rows, list) else []
