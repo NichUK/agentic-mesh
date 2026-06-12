@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -9,6 +10,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.observability import configure_observability
+from agentic_mesh_v2.observability import span
 
 
 class V2StatusHandler(BaseHTTPRequestHandler):
@@ -16,16 +19,17 @@ class V2StatusHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
-        if path in {"/", "/status"}:
-            self._send_html(self._render_status())
-            return
-        if path == "/status.json":
-            self._send_json(self._snapshot())
-            return
-        if path == "/healthz":
-            self._send_json({"status": "ok", "runtime": "agentic_mesh_v2"})
-            return
-        self.send_error(HTTPStatus.NOT_FOUND, "not found")
+        with span("v2.http_request", http_method="GET", http_route=path):
+            if path in {"/", "/status"}:
+                self._send_html(self._render_status())
+                return
+            if path == "/status.json":
+                self._send_json(self._snapshot())
+                return
+            if path == "/healthz":
+                self._send_json({"status": "ok", "runtime": "agentic_mesh_v2"})
+                return
+            self.send_error(HTTPStatus.NOT_FOUND, "not found")
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -67,7 +71,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   <p><a href="/status.json">Status JSON</a> · <a href="/healthz">Health</a></p>
   <div class="banner">
     <strong>Runtime:</strong> agentic_mesh_v2<br>
-    <strong>Database:</strong> {html.escape(str(snapshot["database"]))}
+    <strong>Database:</strong> {html.escape(str(snapshot["database"]))}<br>
+    <strong>OTEL:</strong> {html.escape(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "not configured"))}
   </div>
   <h2>Counts</h2>
   <div class="tiles">
@@ -174,6 +179,7 @@ class V2StatusHandler(BaseHTTPRequestHandler):
 
 
 def serve(*, host: str, port: int, db_path: Path) -> None:
+    configure_observability("agentic-mesh-v2-runtime")
     db = V2Database(db_path)
     try:
         db.migrate()

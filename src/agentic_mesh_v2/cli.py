@@ -6,6 +6,8 @@ from pathlib import Path
 
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
+from agentic_mesh_v2.observability import configure_observability
+from agentic_mesh_v2.observability import span
 from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.topology import ProjectRepo
 from agentic_mesh_v2.topology import RuntimeTopology
@@ -49,17 +51,19 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     db_path = Path(args.db)
+    configure_observability("agentic-mesh-v2-cli")
 
     if args.command == "validate-topology":
-        topology = RuntimeTopology(
-            source_repo=Path(args.source_repo),
-            deployed_runtime=Path(args.deployed_runtime),
-            runtime_state=Path(args.runtime_state),
-            project_repos=tuple(_parse_project_repo(value) for value in args.project_repo),
-            image_identity=args.image_identity,
-            allow_local_dev_overlap=args.allow_local_dev_overlap,
-            local_dev_reason=args.local_dev_reason,
-        ).validate()
+        with span("v2.cli.validate_topology", command=args.command):
+            topology = RuntimeTopology(
+                source_repo=Path(args.source_repo),
+                deployed_runtime=Path(args.deployed_runtime),
+                runtime_state=Path(args.runtime_state),
+                project_repos=tuple(_parse_project_repo(value) for value in args.project_repo),
+                image_identity=args.image_identity,
+                allow_local_dev_overlap=args.allow_local_dev_overlap,
+                local_dev_reason=args.local_dev_reason,
+            ).validate()
         print(
             json.dumps(
                 {
@@ -87,21 +91,22 @@ def main(argv: list[str] | None = None) -> int:
         serve(host=args.host, port=args.port, db_path=db_path)
         return 0
 
-    db = V2Database(db_path)
-    try:
-        db.migrate()
-        if args.command == "init-db":
-            print(json.dumps({"status": "ok", "database": str(db_path)}, sort_keys=True))
-            return 0
-        if args.command == "demo-slice":
-            work_id = run_demo_slice(db)
-            print(json.dumps({"status": "ok", "work_item_id": work_id}, sort_keys=True))
-            return 0
-        if args.command == "status-json":
-            print(json.dumps(db.status_snapshot(), indent=2, sort_keys=True))
-            return 0
-    finally:
-        db.close()
+    with span("v2.cli.command", command=args.command):
+        db = V2Database(db_path)
+        try:
+            db.migrate()
+            if args.command == "init-db":
+                print(json.dumps({"status": "ok", "database": str(db_path)}, sort_keys=True))
+                return 0
+            if args.command == "demo-slice":
+                work_id = run_demo_slice(db)
+                print(json.dumps({"status": "ok", "work_item_id": work_id}, sort_keys=True))
+                return 0
+            if args.command == "status-json":
+                print(json.dumps(db.status_snapshot(), indent=2, sort_keys=True))
+                return 0
+        finally:
+            db.close()
 
     raise AssertionError(f"unhandled command: {args.command}")
 
