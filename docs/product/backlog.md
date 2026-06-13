@@ -255,6 +255,73 @@ Acceptance criteria:
 - Process checkpoint/restore is documented as optional future research, not the
   default v2 baseline.
 
+### PB-006 Idempotent Project Installation Script
+
+Status: backlog
+
+Type: platform / connector setup feature
+
+Owner role: platform-engineer
+
+Supporting roles:
+
+- solution-architect
+- security-architect
+- engineering
+- qa-engineer
+- release-manager
+- technical-writer
+
+Intent:
+
+Build an idempotent project installation script that reads project connector
+configuration from `project.yaml` and organization defaults from
+`config/organization.yaml` or an equivalent external organization config, then
+reconciles the Microsoft Teams and Entra setup needed for a project.
+
+Rationale:
+
+V2 should not rely on manual Teams app cleanup, stale team/channel ids, or
+hand-created bot registrations. Operators need one repeatable command that can
+validate or create the project collaboration boundary, install the configured
+agent identities, and safely rerun without duplicating teams, channels, apps,
+members, credentials, or consent records.
+
+Source artifacts:
+
+- `docs/implementation-slices/pb-006-project-install-script.md`
+- `docs/architecture/v2-teams-connector-architecture.md`
+- `docs/security/v2-teams-connector-security.md`
+- `docs/operations/v2-teams-connector-release-profile.md`
+
+Acceptance criteria:
+
+- Script accepts explicit project config and organization config paths.
+- Script supports dry-run, plan, apply, and audit/report modes.
+- Script validates required Microsoft Graph, Teams, Bot Framework, and Entra
+  permissions before making changes, including app catalog and personal/team app
+  installation scopes where needed.
+- Script detects stale v1 `AM-*` role app installs for configured teams and
+  users where permissions allow, then uninstalls or reports exact missing scope.
+- Script can create or locate the configured project Team, default project
+  channel, optional focus channels, and approval/status surfaces.
+- Script can create or locate role bot/app registrations and the gateway bot
+  according to the configured identity model.
+- Script creates, rotates, or references credentials without printing or
+  writing secret values to repo-backed config.
+- Script installs configured role/gateway Teams apps into the project Team and
+  adds agent identities/members where required by Teams.
+- Script updates only external runtime/project configuration outputs approved
+  for mutation; it must not bake tenant-specific config into the product image.
+- Script emits an audit report covering created, reused, updated, skipped,
+  failed, and permission-blocked operations.
+- Script is idempotent: rerunning it with the same config produces no duplicate
+  teams, channels, app registrations, app installs, credentials, members, or
+  connector bindings.
+- Design keeps connector provider operations behind adapters so Slack, GitHub
+  Issues, Azure DevOps, other identity systems, and non-Teams install targets
+  can be added later without rewriting the project installer.
+
 ## Review Log
 
 - RL-001 | product-manager | initial | full document | Created initial backlog
@@ -275,3 +342,7 @@ Acceptance criteria:
   implementation plan and QA feature-story coverage review for the full Teams
   connector roadmap, correcting earlier MVP-only framing. | incorporated
   2026-06-12
+- RL-006 | product-manager | backlog-update | PB-006 | Added idempotent project
+  installation script slice for reconciling project Teams, channels, Entra app
+  registrations, credentials, role/gateway app installation, stale v1 cleanup,
+  audit reporting, and future connector adapters. | incorporated 2026-06-13

@@ -23,6 +23,8 @@ from agentic_mesh_v2.project_config import load_role_hibernation_config
 from agentic_mesh_v2.project_config import load_role_memory_config
 from agentic_mesh_v2.project_config import load_role_memory_context
 from agentic_mesh_v2.project_config import load_role_worker_config
+from agentic_mesh_v2.project_install import InstallOptions
+from agentic_mesh_v2.project_install import run_project_install
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.safe_outputs import SafeOutputError
@@ -337,6 +339,24 @@ def main(argv: list[str] | None = None) -> int:
     topology_parser.add_argument("--allow-local-dev-overlap", action="store_true")
     topology_parser.add_argument("--local-dev-reason")
 
+    install_parser = subparsers.add_parser(
+        "install-project",
+        help="Reconcile project connector resources such as Teams, Entra apps, channels, and role app installs.",
+    )
+    install_parser.add_argument("--project-file", type=Path, required=True)
+    install_parser.add_argument("--organization-file", type=Path)
+    install_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply allowed tenant mutations. Without this flag, only a plan/audit is produced.",
+    )
+    install_parser.add_argument("--allow-create-team", action="store_true")
+    install_parser.add_argument("--allow-create-channel", action="store_true")
+    install_parser.add_argument("--allow-register-apps", action="store_true")
+    install_parser.add_argument("--allow-install-apps", action="store_true")
+    install_parser.add_argument("--allow-uninstall-stale", action="store_true")
+    install_parser.add_argument("--allow-secret-rotation", action="store_true")
+
     args = parser.parse_args(argv)
     db_path = Path(args.db)
     configure_observability("agentic-mesh-v2-cli")
@@ -374,6 +394,24 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+
+    if args.command == "install-project":
+        with span("v2.cli.install_project", command=args.command):
+            result = run_project_install(
+                project_file=args.project_file,
+                organization_file=args.organization_file,
+                options=InstallOptions(
+                    apply=bool(args.apply),
+                    allow_create_team=bool(args.allow_create_team),
+                    allow_create_channel=bool(args.allow_create_channel),
+                    allow_register_apps=bool(args.allow_register_apps),
+                    allow_install_apps=bool(args.allow_install_apps),
+                    allow_uninstall_stale=bool(args.allow_uninstall_stale),
+                    allow_secret_rotation=bool(args.allow_secret_rotation),
+                ),
+            )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["status"] != "blocked" else 2
 
     if args.command == "serve":
         serve(host=args.host, port=args.port, db_path=db_path, project_file=args.project_file)

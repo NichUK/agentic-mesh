@@ -251,54 +251,12 @@ connectors:
         bot_id_ref: teams-bot-release-manager-app-id
         secret_ref: teams-bot-release-manager-secret
     team:
-      id: 37a58a51-c42b-417b-8733-608afda205fc
-      name: dev-team
+      id: e664f0d3-2d3f-4ef4-9102-2b99e1601169
+      name: dev-agentic-mesh
     channels:
-      all-agents:
-        id: 19:f8Jv56Jp0J1svuc4x89d4yyj3X--8SQLiCrCPYrgJTA1@thread.tacv2
-        name: all-agents
-      approvals:
-        id: 19:0aee6a530977440a9e063eba2153bdbf@thread.tacv2
-        name: approvals
-      business-analysis:
-        id: 19:0df460a94e064d0fbc9aabeece5be107@thread.tacv2
-        name: business-analysis
-      product:
-        id: 19:92b5e7c93838476cb4442ca2099d5ceb@thread.tacv2
-        name: product
-      ux:
-        id: 19:c3c5525c6d934b3b98c53a3d6d975cb8@thread.tacv2
-        name: ux
-      enterprise-architecture:
-        id: 19:a31823f688034986b4c7d476cbaf805a@thread.tacv2
-        name: enterprise-architecture
-      solution-architecture:
-        id: 19:769ef8c6305d4f839a42647f6631e1d9@thread.tacv2
-        name: solution-architecture
-      security:
-        id: 19:08f7f86b9ee04be1a40ae3a511b50c4a@thread.tacv2
-        name: security
-      platform:
-        id: 19:ef8409c0a8ac4ae885b1a73396f5a568@thread.tacv2
-        name: platform
-      engineering:
-        id: 19:0e7d391966254bd78a574222837c0def@thread.tacv2
-        name: engineering
-      qa:
-        id: 19:ca1ddf4932f1411696997e5fd17561f8@thread.tacv2
-        name: qa
-      technical-writing:
-        id: 19:924c83e2bdca4873be49765e4e6869b3@thread.tacv2
-        name: technical-writing
-      delivery:
-        id: 19:6e4f216142954b8db535b4b8c6ba4c88@thread.tacv2
-        name: delivery
-      research:
-        id: 19:c533aa99fb1445039f130130cb7d08e0@thread.tacv2
-        name: research
-      release:
-        id: 19:0abfe2b5e6a645438860c8ab22361fc1@thread.tacv2
-        name: release
+      project:
+        id: 19:fS0LN3jkUb5T7hMvueOm-o1PHRoIAk4lm_8MscXSCXE1@thread.tacv2
+        name: project
 gateways:
   agentic-mesh:
     enabled: true
@@ -310,10 +268,10 @@ gateways:
       connector: teams
       dm_enabled: true
       intake_channels:
-      - all-agents
+      - project
       process_role_channels_by_default: false
       fallback_surface: status_fallback
-      approvals_surface: approvals
+      approvals_surface: project
       bot:
         display_name: AM-Agentic Mesh
         bot_id_ref: teams-bot-agentic-mesh-app-id
@@ -328,15 +286,15 @@ notification_policy:
   surfaces:
     intake:
       connector: teams
-      route: all-agents
-      label: all-agents intake
+      route: project
+      label: project intake
     approvals:
       connector: teams
-      route: approvals
-      label: approvals
+      route: project
+      label: project approvals
     status_fallback:
       connector: teams
-      route: all-agents
+      route: project
       label: project status fallback
   event_overrides:
     lifecycle.handoff_requested:
