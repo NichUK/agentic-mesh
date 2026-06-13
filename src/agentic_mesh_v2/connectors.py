@@ -411,7 +411,10 @@ class LocalTeamsTestAdapter:
                             "conversation_event_id": conversation_event_id,
                             "receipt_id": receipt.receipt_id,
                             "message_id": message_id,
+                            "destination_ref": external_conversation_ref,
+                            "destination_type": source_type,
                             "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                            "context": [_conversation_context_line(source_type=source_type, sender_ref=sender_ref, body=body)],
                         },
                     )
             else:
@@ -446,7 +449,10 @@ class LocalTeamsTestAdapter:
                             "receipt_id": receipt.receipt_id,
                             "message_id": message_id,
                             "thread_ref": thread_ref,
+                            "destination_ref": external_conversation_ref,
+                            "destination_type": source_type,
                             "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                            "context": [_conversation_context_line(source_type=source_type, sender_ref=sender_ref, body=body)],
                         },
                     )
         if route_type == "team_wide_prompt":
@@ -470,7 +476,10 @@ class LocalTeamsTestAdapter:
                             "receipt_id": receipt.receipt_id,
                             "message_id": message_id,
                             "thread_ref": thread_ref,
+                            "destination_ref": external_conversation_ref,
+                            "destination_type": source_type,
                             "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                            "context": [_conversation_context_line(source_type=source_type, sender_ref=sender_ref, body=body)],
                             "threshold": 0.6,
                         },
                     )
@@ -1434,6 +1443,11 @@ def _normalize_response_value(value: str) -> str:
     if normalized not in {"approve", "reject", "request_changes"}:
         raise ValueError(f"unknown response value `{value}`")
     return normalized
+
+
+def _conversation_context_line(*, source_type: str, sender_ref: str, body: str) -> str:
+    surface = "Teams DM" if source_type == "dm" else "Teams channel"
+    return f"{surface} message from {sender_ref}: {body}".strip()
 
 
 def _permission_next_action(capability: str, status: str) -> str:

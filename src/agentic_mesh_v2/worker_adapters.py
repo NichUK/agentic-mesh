@@ -92,22 +92,22 @@ class CodexCliWorker:
         self.auth = dict(auth or {})
 
     def run(self, assignment: RoleAssignment) -> list[SafeOutputCall]:
-        prompt_payload = {
-            "prompt": assignment.generated_prompt,
-            "safe_outputs": assignment.safe_output_transport,
-            "assignment": _assignment_payload(assignment),
-            "worker": {
-                "adapter": "codex-cli",
-                "model": self.model,
-                "reasoning_effort": self.reasoning_effort,
-                "sandbox_mode": self.sandbox_mode,
-                "auth": self.auth,
-            },
-        }
+        prompt_payload = _codex_prompt_payload(assignment, worker=self)
+        input_text = (
+            _codex_prompt_text(prompt_payload)
+            if _is_codex_exec_command(self.command)
+            else json.dumps(prompt_payload, sort_keys=True)
+        )
+        command = _codex_command_with_options(
+            self.command,
+            model=self.model,
+            reasoning_effort=self.reasoning_effort,
+            sandbox_mode=self.sandbox_mode,
+        )
         try:
             result = subprocess.run(
-                list(self.command),
-                input=json.dumps(prompt_payload, sort_keys=True),
+                list(command),
+                input=input_text,
                 capture_output=True,
                 check=False,
                 encoding="utf-8",
@@ -130,6 +130,88 @@ class CodexCliWorker:
                 return []
             raise ValueError(f"codex-cli worker emitted invalid JSON: {exc.msg}") from exc
         return parse_safe_output_calls(raw, assignment=assignment, source="codex-cli worker")
+
+
+def _codex_prompt_payload(assignment: RoleAssignment, *, worker: CodexCliWorker) -> dict[str, Any]:
+    return {
+        "prompt": assignment.generated_prompt,
+        "safe_outputs": assignment.safe_output_transport,
+        "assignment": _assignment_payload(assignment),
+        "worker": {
+            "adapter": "codex-cli",
+            "model": worker.model,
+            "reasoning_effort": worker.reasoning_effort,
+            "sandbox_mode": worker.sandbox_mode,
+            "auth": worker.auth,
+        },
+    }
+
+
+def _codex_prompt_text(payload: dict[str, Any]) -> str:
+    assignment = payload["assignment"]
+    safe_outputs = payload.get("safe_outputs") if isinstance(payload.get("safe_outputs"), dict) else {}
+    record_command = safe_outputs.get("record_command") if isinstance(safe_outputs, dict) else None
+    record_command_text = " ".join(_shell_quote(str(item)) for item in record_command) if isinstance(record_command, list) else ""
+    destination_hint = ""
+    assignment_payload = assignment.get("payload") if isinstance(assignment.get("payload"), dict) else {}
+    if assignment_payload:
+        conversation_id = assignment_payload.get("conversation_id")
+        destination_ref = assignment_payload.get("destination_ref")
+        destination_type = assignment_payload.get("destination_type")
+        if conversation_id and destination_ref:
+            destination_hint = (
+                "\nFor status.reply to the source conversation, include these payload fields exactly: "
+                f"conversation_id={conversation_id!r}, destination_ref={destination_ref!r}, "
+                f"destination_type={destination_type or 'dm'!r}."
+            )
+    return "\n\n".join(
+        part
+        for part in [
+            str(payload.get("prompt") or ""),
+            "SAFE-OUTPUT TOOL CONTRACT\n"
+            "You MUST perform durable output by running the safe-output CLI command before finishing. "
+            "Do not rely on a final prose answer. If this is a simple conversational request, call "
+            "`status.reply` with a concise Markdown message and no work item. If there is genuinely "
+            "nothing to do, call `noop` with a reason."
+            f"{destination_hint}\n"
+            "Use this command pattern:\n"
+            f"{record_command_text} --tool-name status.reply --payload-json '<json payload>'\n"
+            "The command must exit successfully before you finish.",
+            "ASSIGNMENT JSON\n" + json.dumps(assignment, indent=2, sort_keys=True),
+        ]
+        if part
+    )
+
+
+def _is_codex_exec_command(command: tuple[str, ...]) -> bool:
+    return len(command) >= 2 and Path(command[0]).name == "codex" and command[1] == "exec"
+
+
+def _codex_command_with_options(
+    command: tuple[str, ...],
+    *,
+    model: str | None,
+    reasoning_effort: str | None,
+    sandbox_mode: str | None,
+) -> tuple[str, ...]:
+    if not _is_codex_exec_command(command):
+        return command
+    result = list(command)
+    if model and model != "codex":
+        result.extend(["--model", model])
+    if sandbox_mode:
+        result.extend(["--sandbox", sandbox_mode])
+    if reasoning_effort:
+        result.extend(["--config", f'model_reasoning_effort="{reasoning_effort}"'])
+    return tuple(result)
+
+
+def _shell_quote(value: str) -> str:
+    if not value:
+        return "''"
+    if all(ch.isalnum() or ch in "@%_+=:,./-" for ch in value):
+        return value
+    return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def parse_safe_output_calls(raw: Any, *, assignment: RoleAssignment, source: str) -> list[SafeOutputCall]:

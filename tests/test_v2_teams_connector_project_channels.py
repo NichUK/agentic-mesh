@@ -118,6 +118,11 @@ def test_configured_role_mentions_create_focused_assignments(tmp_path: Path) -> 
     snapshot = db.status_snapshot()
     assignments = snapshot["role_assignments"]
     assert snapshot["counts"]["role_assignments"] == 2
+    assert assignments[0]["payload"]["destination_ref"] == "channel-project"
+    assert assignments[0]["payload"]["destination_type"] == "channel"
+    assert assignments[0]["payload"]["context"] == [
+        "Teams channel message from nicholas: @AM-Product Manager @AM-QA please look at this."
+    ]
     assert {assignment["role_id"] for assignment in assignments} == {"product-manager", "qa-engineer"}
     assert {assignment["assignment_type"] for assignment in assignments} == {"channel_role_mention"}
     assert {assignment["visibility_scope"] for assignment in assignments} == {"project"}

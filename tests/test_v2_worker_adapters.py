@@ -9,6 +9,7 @@ from agentic_mesh_v2.worker_adapters import SafeOutputFileWorker
 from agentic_mesh_v2.worker_adapters import SafeOutputSubprocessWorker
 from agentic_mesh_v2.worker_adapters import build_worker_adapter
 from agentic_mesh_v2.worker_adapters import safe_output_file_payload
+from agentic_mesh_v2.worker_adapters import _codex_command_with_options
 
 
 def _assignment() -> RoleAssignment:
@@ -123,6 +124,26 @@ def test_build_worker_adapter_creates_default_codex_cli_worker() -> None:
     assert isinstance(worker, CodexCliWorker)
     assert worker.command == ("codex", "exec")
     assert worker.timeout_seconds == 14400
+
+
+def test_codex_cli_worker_applies_runtime_options_to_real_codex_exec_command() -> None:
+    command = _codex_command_with_options(
+        ("codex", "exec"),
+        model="gpt-5.5",
+        reasoning_effort="high",
+        sandbox_mode="danger-full-access",
+    )
+
+    assert command == (
+        "codex",
+        "exec",
+        "--model",
+        "gpt-5.5",
+        "--sandbox",
+        "danger-full-access",
+        "--config",
+        'model_reasoning_effort="high"',
+    )
 
 
 def test_codex_cli_worker_accepts_schema_reasoning_effort_values() -> None:
