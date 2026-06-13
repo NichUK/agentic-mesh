@@ -17,6 +17,7 @@ x-agentic-mesh-volumes: &agentic-mesh-volumes
 
 x-agentic-mesh-service: &agentic-mesh-service
   image: agentic-mesh:local
+  build: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
   environment: *agentic-mesh-env
   volumes: *agentic-mesh-volumes
   working_dir: /mesh/workspaces/agentic-mesh
@@ -28,8 +29,7 @@ x-agentic-mesh-role-service: &agentic-mesh-role-service
 
 services:
   runtime-image:
-    image: agentic-mesh:local
-    build: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
+    <<: *agentic-mesh-service
     command: python -m agentic_mesh_v2.cli init-db
     profiles:
       - build-image
