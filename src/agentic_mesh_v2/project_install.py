@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import uuid
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +77,31 @@ class AzureCliGraphClient:
             with urllib.request.urlopen(request) as response:
                 if response.status == 204:
                     return {}
-                return json.loads(response.read().decode("utf-8"))
+                payload = response.read().decode("utf-8")
+                if not payload.strip():
+                    return {}
+                return json.loads(payload)
+        except urllib.error.HTTPError as exc:
+            payload = exc.read().decode("utf-8", "replace")
+            raise GraphRequestError(exc.code, payload) from exc
+
+    def request_bytes(self, method: str, path: str, *, data: bytes, content_type: str) -> dict[str, Any]:
+        token = self._access_token()
+        request = urllib.request.Request(
+            f"{GRAPH_ROOT}{path}",
+            data=data,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": content_type,
+            },
+        )
+        try:
+            with urllib.request.urlopen(request) as response:
+                payload = response.read().decode("utf-8")
+                if not payload.strip():
+                    return {}
+                return json.loads(payload)
         except urllib.error.HTTPError as exc:
             payload = exc.read().decode("utf-8", "replace")
             raise GraphRequestError(exc.code, payload) from exc
@@ -97,20 +124,92 @@ class AzureCliGraphClient:
         return self._token
 
 
+class TokenGraphClient:
+    def __init__(self, *, access_token: str) -> None:
+        if not access_token.strip():
+            raise ValueError("access token must be non-empty")
+        self._token = access_token.strip()
+
+    @classmethod
+    def from_file(cls, path: Path) -> "TokenGraphClient":
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            token = raw.get("access_token") or raw.get("accessToken")
+            if isinstance(token, str):
+                return cls(access_token=token)
+        raise ValueError(f"{path} must contain an access_token field")
+
+    def request(self, method: str, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        request = urllib.request.Request(
+            f"{GRAPH_ROOT}{path}",
+            data=data,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request) as response:
+                if response.status == 204:
+                    return {}
+                payload = response.read().decode("utf-8")
+                if not payload.strip():
+                    return {}
+                return json.loads(payload)
+        except urllib.error.HTTPError as exc:
+            payload = exc.read().decode("utf-8", "replace")
+            raise GraphRequestError(exc.code, payload) from exc
+
+    def request_bytes(self, method: str, path: str, *, data: bytes, content_type: str) -> dict[str, Any]:
+        request = urllib.request.Request(
+            f"{GRAPH_ROOT}{path}",
+            data=data,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": content_type,
+            },
+        )
+        try:
+            with urllib.request.urlopen(request) as response:
+                payload = response.read().decode("utf-8")
+                if not payload.strip():
+                    return {}
+                return json.loads(payload)
+        except urllib.error.HTTPError as exc:
+            payload = exc.read().decode("utf-8", "replace")
+            raise GraphRequestError(exc.code, payload) from exc
+
+
+@dataclass(frozen=True)
+class TeamsAppPackage:
+    role_id: str
+    display_name: str
+    teams_app_id: str
+    package: str | None = None
+
+
 class ProjectInstaller:
     def __init__(
         self,
         *,
-        graph_client: AzureCliGraphClient,
+        graph_client: Any,
         project_config: dict[str, Any],
         organization_config: dict[str, Any] | None = None,
         options: InstallOptions,
+        teams_app_package_root: Path | None = None,
     ) -> None:
         self.graph = graph_client
         self.project_config = project_config
         self.organization_config = organization_config or {}
         self.options = options
+        self.teams_app_package_root = teams_app_package_root
+        self.teams_app_packages = _load_published_teams_apps(teams_app_package_root)
         self.operations: list[InstallOperation] = []
+        self.expected_team_app_names: set[str] = set()
+        self.expected_team_app_ids: set[str] = set()
 
     def run(self) -> dict[str, Any]:
         project_id = _required_string(self.project_config, "project_id")
@@ -123,6 +222,7 @@ class ProjectInstaller:
         channels = _mapping(teams.get("channels"), "connectors.teams.channels")
         role_bots = _mapping(teams.get("role_bots"), "connectors.teams.role_bots")
         gateway_bots = _gateway_bots(self.project_config)
+        self._record_expected_team_apps(role_bots=role_bots, gateway_bots=gateway_bots)
 
         self._check_graph_identity(tenant_id=tenant_id)
         resolved_team_id = self._ensure_team(
@@ -365,8 +465,10 @@ class ProjectInstaller:
         team_id: str | None,
     ) -> None:
         apps = self._find_applications_by_display_name(display_name)
+        app_id: str | None = None
         if apps:
             app = apps[0]
+            app_id = _optional_string(app.get("appId"))
             self.operations.append(
                 InstallOperation(
                     action="ensure_entra_app",
@@ -403,6 +505,7 @@ class ProjectInstaller:
                     "/applications",
                     body={"displayName": display_name, "signInAudience": "AzureADMyOrg"},
                 )
+                app_id = _optional_string(created.get("appId"))
                 self.operations.append(
                     InstallOperation(
                         action="ensure_entra_app",
@@ -443,31 +546,248 @@ class ProjectInstaller:
                 )
             )
 
+        self._ensure_team_app_install(
+            role_id=role_id,
+            display_name=display_name,
+            team_id=team_id,
+            bot_app_id=app_id,
+        )
+
+    def _record_expected_team_apps(
+        self,
+        *,
+        role_bots: dict[str, Any],
+        gateway_bots: dict[str, dict[str, Any]],
+    ) -> None:
+        for role_id, bot in role_bots.items():
+            if not isinstance(bot, dict):
+                continue
+            display_name = _optional_string(bot.get("display_name"))
+            if display_name:
+                self.expected_team_app_names.add(display_name)
+            package = self._package_for_role(str(role_id))
+            if package is not None:
+                self.expected_team_app_ids.add(package.teams_app_id)
+        for gateway_id, bot in gateway_bots.items():
+            display_name = _optional_string(bot.get("display_name"))
+            if display_name:
+                self.expected_team_app_names.add(display_name)
+            package = self._package_for_role(f"gateway:{gateway_id}")
+            if package is not None:
+                self.expected_team_app_ids.add(package.teams_app_id)
+
+    def _ensure_team_app_install(
+        self,
+        *,
+        role_id: str,
+        display_name: str,
+        team_id: str | None,
+        bot_app_id: str | None,
+    ) -> None:
         if team_id is None:
-            status = "blocked"
-            detail = "Cannot install Teams app until project Team is resolved."
-        elif not self.options.allow_install_apps:
-            status = "planned"
-            detail = "Teams app installation would run when --allow-install-apps is supplied."
-        elif not self.options.apply:
-            status = "planned"
-            detail = "Teams app installation planned; rerun with --apply to mutate tenant state."
-        else:
-            status = "blocked"
-            detail = (
-                "Teams app installation requires a Teams app catalog package id; "
-                "app catalog inspection/upload is blocked without AppCatalog permissions."
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_team",
+                    target=display_name,
+                    status="blocked",
+                    detail="Cannot install Teams app until project Team is resolved.",
+                )
             )
+            return
+        if not self.options.allow_install_apps:
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_team",
+                    target=display_name,
+                    status="planned",
+                    detail="Teams app installation would run when --allow-install-apps is supplied.",
+                    required_permission="TeamsAppInstallation.ReadWriteForTeam",
+                    external_id=team_id,
+                )
+            )
+            return
+        if not self.options.apply:
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_team",
+                    target=display_name,
+                    status="planned",
+                    detail="Teams app installation planned; rerun with --apply to mutate tenant state.",
+                    required_permission="TeamsAppInstallation.ReadWriteForTeam",
+                    external_id=team_id,
+                )
+            )
+            return
+
+        installed = self._list_installed_team_apps(team_id=team_id)
+        existing = _find_installed_team_app(
+            installed,
+            display_name=display_name,
+            teams_app_ids=self._package_ids_for_role(role_id),
+        )
+        if existing is not None:
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_team",
+                    target=display_name,
+                    status="reused",
+                    detail="Teams app is already installed in the project Team.",
+                    external_id=_optional_string(existing.get("id")),
+                )
+            )
+            return
+
+        package = self._package_for_role(role_id)
+        if package is None and bot_app_id is not None:
+            package = self._publish_generated_teams_app(
+                role_id=role_id,
+                display_name=display_name,
+                bot_app_id=bot_app_id,
+            )
+        if package is None:
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_team",
+                    target=display_name,
+                    status="blocked",
+                    detail=(
+                        "No published Teams app catalog id was found for this project agent. "
+                        "Provide build/teams-apps/published-apps.json, publish the app package first, "
+                        "or allow app registration creation so the installer can generate one."
+                    ),
+                    required_permission="AppCatalog.ReadWrite.All",
+                    external_id=team_id,
+                )
+            )
+            return
+
+        try:
+            self.graph.request(
+                "POST",
+                f"/teams/{team_id}/installedApps",
+                body={
+                    "teamsApp@odata.bind": (
+                        f"https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/{package.teams_app_id}"
+                    )
+                },
+            )
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_team",
+                    target=display_name,
+                    status="created",
+                    detail="Installed the published Teams app into the project Team.",
+                    required_permission="TeamsAppInstallation.ReadWriteForTeam",
+                    external_id=package.teams_app_id,
+                )
+            )
+        except GraphRequestError as exc:
+            if exc.status_code == 409:
+                self.operations.append(
+                    InstallOperation(
+                        action="install_agent_to_team",
+                        target=display_name,
+                        status="reused",
+                        detail="Graph reported the Teams app is already installed.",
+                        external_id=package.teams_app_id,
+                    )
+                )
+                return
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_team",
+                    target=display_name,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="TeamsAppInstallation.ReadWriteForTeam",
+                    external_id=package.teams_app_id,
+                )
+            )
+
+    def _package_for_role(self, role_id: str) -> TeamsAppPackage | None:
+        if role_id in self.teams_app_packages:
+            return self.teams_app_packages[role_id]
+        if role_id.startswith("gateway:"):
+            return self.teams_app_packages.get(role_id.removeprefix("gateway:"))
+        return None
+
+    def _package_ids_for_role(self, role_id: str) -> set[str]:
+        package = self._package_for_role(role_id)
+        return set() if package is None else {package.teams_app_id}
+
+    def _publish_generated_teams_app(
+        self,
+        *,
+        role_id: str,
+        display_name: str,
+        bot_app_id: str,
+    ) -> TeamsAppPackage | None:
+        if self.teams_app_packages.get(role_id) is not None:
+            return self.teams_app_packages[role_id]
+        if self.teams_app_package_root is None:
+            return None
+        self.teams_app_package_root.mkdir(parents=True, exist_ok=True)
+        package_name = f"{_safe_package_name(role_id)}.zip"
+        package_path = self.teams_app_package_root / package_name
+        package_bytes = _build_teams_app_package(
+            project_config=self.project_config,
+            role_id=role_id,
+            display_name=display_name,
+            bot_app_id=bot_app_id,
+            package_root=self.teams_app_package_root,
+        )
+        package_path.write_bytes(package_bytes)
+        try:
+            published = self.graph.request_bytes(
+                "POST",
+                "/appCatalogs/teamsApps",
+                data=package_bytes,
+                content_type="application/zip",
+            )
+        except GraphRequestError as exc:
+            self.operations.append(
+                InstallOperation(
+                    action="publish_teams_app",
+                    target=display_name,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="AppCatalog.ReadWrite.All",
+                )
+            )
+            return None
+        teams_app_id = _optional_string(published.get("id")) or _optional_string(published.get("teamsAppId"))
+        if teams_app_id is None:
+            self.operations.append(
+                InstallOperation(
+                    action="publish_teams_app",
+                    target=display_name,
+                    status="blocked",
+                    detail="Graph did not return a Teams app catalog id after publishing the package.",
+                    required_permission="AppCatalog.ReadWrite.All",
+                )
+            )
+            return None
+        package = TeamsAppPackage(
+            role_id=role_id,
+            display_name=display_name,
+            teams_app_id=teams_app_id,
+            package=package_name,
+        )
+        self.teams_app_packages[role_id] = package
+        self.expected_team_app_ids.add(teams_app_id)
+        self.expected_team_app_names.add(display_name)
+        _write_published_teams_apps(self.teams_app_package_root, self.teams_app_packages)
         self.operations.append(
             InstallOperation(
-                action="install_agent_to_team",
+                action="publish_teams_app",
                 target=display_name,
-                status=status,
-                detail=detail,
-                required_permission="TeamsAppInstallation.ReadWriteForTeam and AppCatalog.Read.All",
-                external_id=team_id,
+                status="created",
+                detail="Published a generated Teams app package to the organization app catalog.",
+                required_permission="AppCatalog.ReadWrite.All",
+                external_id=teams_app_id,
             )
         )
+        return package
 
     def _detect_stale_v1_installs(self, *, team_id: str | None) -> None:
         if team_id is None:
@@ -480,25 +800,17 @@ class ProjectInstaller:
                 )
             )
             return
-        try:
-            installed = self.graph.request("GET", f"/teams/{team_id}/installedApps?$expand=teamsAppDefinition")
-        except GraphRequestError as exc:
-            self.operations.append(
-                InstallOperation(
-                    action="uninstall_stale_v1_agents",
-                    target=team_id,
-                    status="blocked",
-                    detail=exc.message,
-                    required_permission="TeamsAppInstallation.ReadForTeam",
-                    external_id=team_id,
-                )
-            )
-            return
+        installed = self._list_installed_team_apps(team_id=team_id)
         matches = []
-        for item in installed.get("value", []):
+        for item in installed:
             definition = item.get("teamsAppDefinition") or {}
             name = str(definition.get("displayName") or "")
-            if name.startswith("AM-") or "Agentic" in name:
+            teams_app_id = _optional_string(definition.get("teamsAppId"))
+            is_agentic_app = name.startswith("AM-") or "Agentic" in name
+            is_expected = name in self.expected_team_app_names or (
+                teams_app_id is not None and teams_app_id in self.expected_team_app_ids
+            )
+            if is_agentic_app and not is_expected:
                 matches.append((str(item.get("id")), name))
         if not matches:
             self.operations.append(
@@ -561,7 +873,7 @@ class ProjectInstaller:
 
     def _check_personal_install_scope(self) -> None:
         try:
-            self.graph.request("GET", "/me/teamwork/installedApps?$top=1")
+            self.graph.request("GET", "/me/teamwork/installedApps")
         except GraphRequestError as exc:
             self.operations.append(
                 InstallOperation(
@@ -625,6 +937,26 @@ class ProjectInstaller:
             )
             return []
 
+    def _list_installed_team_apps(self, *, team_id: str) -> list[dict[str, Any]]:
+        try:
+            return list(
+                self.graph.request("GET", f"/teams/{team_id}/installedApps?$expand=teamsAppDefinition").get(
+                    "value", []
+                )
+            )
+        except GraphRequestError as exc:
+            self.operations.append(
+                InstallOperation(
+                    action="list_team_installs",
+                    target=team_id,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="TeamsAppInstallation.ReadForTeam",
+                    external_id=team_id,
+                )
+            )
+            return []
+
     def _find_applications_by_display_name(self, display_name: str) -> list[dict[str, Any]]:
         escaped = display_name.replace("'", "''")
         query = urllib.parse.urlencode(
@@ -650,15 +982,20 @@ def run_project_install(
     project_file: Path,
     organization_file: Path | None,
     options: InstallOptions,
-    graph_client: AzureCliGraphClient | None = None,
+    graph_client: Any | None = None,
+    graph_token_file: Path | None = None,
+    teams_app_package_root: Path | None = None,
 ) -> dict[str, Any]:
     project_config = _load_yaml(project_file)
     organization_config = _load_yaml(organization_file) if organization_file is not None else {}
+    if graph_client is None and graph_token_file is not None:
+        graph_client = TokenGraphClient.from_file(graph_token_file)
     installer = ProjectInstaller(
         graph_client=graph_client or AzureCliGraphClient(),
         project_config=project_config,
         organization_config=organization_config,
         options=options,
+        teams_app_package_root=teams_app_package_root,
     )
     return installer.run()
 
@@ -737,3 +1074,146 @@ def _resolve_az_path(az_path: str) -> str:
             if Path(candidate).exists():
                 return candidate
     return az_path
+
+
+def _load_published_teams_apps(package_root: Path | None) -> dict[str, TeamsAppPackage]:
+    if package_root is None:
+        return {}
+    published_path = package_root / "published-apps.json"
+    if not published_path.exists():
+        return {}
+    raw = json.loads(published_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError(f"{published_path} must contain a JSON list")
+    packages: dict[str, TeamsAppPackage] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role_id = _optional_string(item.get("role"))
+        display_name = _optional_string(item.get("displayName"))
+        teams_app_id = _optional_string(item.get("teamsAppId"))
+        if role_id is None or display_name is None or teams_app_id is None:
+            continue
+        packages[role_id] = TeamsAppPackage(
+            role_id=role_id,
+            display_name=display_name,
+            teams_app_id=teams_app_id,
+            package=_optional_string(item.get("package")),
+        )
+    return packages
+
+
+def _write_published_teams_apps(package_root: Path, packages: dict[str, TeamsAppPackage]) -> None:
+    records = [
+        {
+            "role": package.role_id,
+            "package": package.package,
+            "status": "published",
+            "teamsAppId": package.teams_app_id,
+            "displayName": package.display_name,
+        }
+        for package in sorted(packages.values(), key=lambda item: item.role_id)
+    ]
+    (package_root / "published-apps.json").write_text(
+        json.dumps(records, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _build_teams_app_package(
+    *,
+    project_config: dict[str, Any],
+    role_id: str,
+    display_name: str,
+    bot_app_id: str,
+    package_root: Path,
+) -> bytes:
+    project_id = _required_string(project_config, "project_id")
+    app_manifest_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"agentic-mesh:{project_id}:{role_id}:teams-app"))
+    endpoint = _teams_public_endpoint(project_config)
+    domain = urllib.parse.urlparse(endpoint).hostname or "agentic-mesh.local"
+    manifest = {
+        "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+        "manifestVersion": "1.17",
+        "version": "0.1.0",
+        "id": app_manifest_id,
+        "developer": {
+            "name": "Seerstone Systems Ltd",
+            "websiteUrl": "https://seerstone.systems",
+            "privacyUrl": "https://seerstone.systems/privacy",
+            "termsOfUseUrl": "https://seerstone.systems/terms",
+        },
+        "name": {"short": display_name[:30], "full": display_name},
+        "description": {
+            "short": f"{display_name} bot for Agentic Mesh.",
+            "full": f"{display_name} is the Microsoft Teams bot identity for {role_id} in {project_id}.",
+        },
+        "icons": {"outline": "outline.png", "color": "color.png"},
+        "accentColor": "#23579B",
+        "bots": [
+            {
+                "botId": bot_app_id,
+                "scopes": ["team", "personal"],
+                "supportsFiles": False,
+                "isNotificationOnly": False,
+            }
+        ],
+        "validDomains": [domain],
+    }
+    color_icon, outline_icon = _teams_app_icon_bytes(package_root)
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+        archive.writestr("color.png", color_icon)
+        archive.writestr("outline.png", outline_icon)
+    return output.getvalue()
+
+
+def _teams_public_endpoint(project_config: dict[str, Any]) -> str:
+    connectors = project_config.get("connectors")
+    if isinstance(connectors, dict):
+        teams = connectors.get("teams")
+        if isinstance(teams, dict):
+            ingress = teams.get("ingress")
+            if isinstance(ingress, dict):
+                endpoint = ingress.get("public_endpoint")
+                if isinstance(endpoint, str) and endpoint.strip():
+                    return endpoint.strip()
+    return "https://agentic-mesh.local/api/messages"
+
+
+def _teams_app_icon_bytes(package_root: Path) -> tuple[bytes, bytes]:
+    for child in package_root.iterdir() if package_root.exists() else []:
+        if not child.is_dir():
+            continue
+        color = child / "color.png"
+        outline = child / "outline.png"
+        if color.exists() and outline.exists():
+            return color.read_bytes(), outline.read_bytes()
+    raise ValueError(f"{package_root} must contain at least one Teams app icon set")
+
+
+def _safe_package_name(value: str) -> str:
+    safe = []
+    for character in value.lower():
+        if character.isalnum():
+            safe.append(character)
+        elif character in {":", "-", "_", " "}:
+            safe.append("-")
+    return "-".join("".join(safe).split("-"))
+
+
+def _find_installed_team_app(
+    installed: list[dict[str, Any]],
+    *,
+    display_name: str,
+    teams_app_ids: set[str],
+) -> dict[str, Any] | None:
+    for item in installed:
+        definition = item.get("teamsAppDefinition") or {}
+        if definition.get("displayName") == display_name:
+            return item
+        teams_app_id = _optional_string(definition.get("teamsAppId"))
+        if teams_app_id is not None and teams_app_id in teams_app_ids:
+            return item
+    return None

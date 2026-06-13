@@ -346,6 +346,16 @@ def main(argv: list[str] | None = None) -> int:
     install_parser.add_argument("--project-file", type=Path, required=True)
     install_parser.add_argument("--organization-file", type=Path)
     install_parser.add_argument(
+        "--graph-token-file",
+        type=Path,
+        help="JSON file containing a Graph access_token. Use when Azure CLI cannot request the needed Teams scopes.",
+    )
+    install_parser.add_argument(
+        "--teams-app-package-root",
+        type=Path,
+        help="Folder containing published-apps.json for project Teams app package ids.",
+    )
+    install_parser.add_argument(
         "--apply",
         action="store_true",
         help="Apply allowed tenant mutations. Without this flag, only a plan/audit is produced.",
@@ -409,6 +419,8 @@ def main(argv: list[str] | None = None) -> int:
                     allow_uninstall_stale=bool(args.allow_uninstall_stale),
                     allow_secret_rotation=bool(args.allow_secret_rotation),
                 ),
+                graph_token_file=args.graph_token_file,
+                teams_app_package_root=args.teams_app_package_root,
             )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["status"] != "blocked" else 2
