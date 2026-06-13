@@ -9,6 +9,8 @@ from agentic_mesh_v2.container_lifecycle import ComposeRoleLifecycleConfig
 from agentic_mesh_v2.container_lifecycle import ContainerLifecycleAction
 from agentic_mesh_v2.container_lifecycle import ContainerLifecycleExecutor
 from agentic_mesh_v2.container_lifecycle import plan_compose_lifecycle_action
+from agentic_mesh_v2.connectors import ConnectorSafeOutputService
+from agentic_mesh_v2.connectors import LocalTeamsTestAdapter
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
 from agentic_mesh_v2.hibernation import HibernationPolicy
@@ -23,6 +25,7 @@ from agentic_mesh_v2.project_config import load_role_hibernation_config
 from agentic_mesh_v2.project_config import load_role_memory_config
 from agentic_mesh_v2.project_config import load_role_memory_context
 from agentic_mesh_v2.project_config import load_role_worker_config
+from agentic_mesh_v2.project_config import load_teams_connector_config
 from agentic_mesh_v2.project_install import InstallOptions
 from agentic_mesh_v2.project_install import run_project_install
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
@@ -33,6 +36,7 @@ from agentic_mesh_v2.safe_output_mcp import run_safe_output_mcp_stdio
 from agentic_mesh_v2.safe_output_transport import parse_safe_output_payload_json
 from agentic_mesh_v2.safe_output_transport import record_safe_output_for_run
 from agentic_mesh_v2.server import serve
+from agentic_mesh_v2.teams_ingress import serve_teams_ingress
 from agentic_mesh_v2.topology import ProjectRepo
 from agentic_mesh_v2.topology import RuntimeTopology
 from agentic_mesh_v2.worker_adapters import build_worker_adapter
@@ -57,6 +61,16 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Optional project.yaml used to render copyable project supervisor commands.",
     )
+
+    teams_ingress_parser = subparsers.add_parser(
+        "serve-teams-ingress",
+        help="Run the v2 Microsoft Teams/Bot Framework ingress endpoint.",
+    )
+    teams_ingress_parser.add_argument("--host", default="127.0.0.1")
+    teams_ingress_parser.add_argument("--port", type=int, default=3978)
+    teams_ingress_parser.add_argument("--project-file", type=Path, required=True)
+    teams_ingress_parser.add_argument("--path", default="/api/messages")
+    teams_ingress_parser.add_argument("--external-base-url")
 
     subparsers.add_parser("demo-slice", help="Create one complete v2 end-to-end demo slice.")
     subparsers.add_parser("status-json", help="Print the v2 runtime status snapshot as JSON.")
@@ -428,6 +442,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         serve(host=args.host, port=args.port, db_path=db_path, project_file=args.project_file)
         return 0
+    if args.command == "serve-teams-ingress":
+        serve_teams_ingress(
+            host=args.host,
+            port=args.port,
+            db_path=db_path,
+            project_file=args.project_file,
+            ingress_path=args.path,
+            external_base_url=args.external_base_url,
+        )
+        return 0
 
     with span("v2.cli.command", command=args.command):
         db = V2Database(db_path)
@@ -608,17 +632,24 @@ def _safe_output_service(db: V2Database, project_file: Path | None) -> SafeOutpu
     document_library = load_document_library_config(project_file)
     project_id = load_project_id(project_file)
     memory_resolver = _role_memory_path_resolver(project_file)
-    if document_library is None:
-        return SafeOutputService(
-            db,
-            project_id=project_id,
-            role_memory_path_resolver=memory_resolver,
-        )
-    return SafeOutputService(
+    service_kwargs = {
+        "project_id": project_id,
+        "role_memory_path_resolver": memory_resolver,
+    }
+    if document_library is not None:
+        service_kwargs["document_library_root"] = document_library.root
+    try:
+        teams_config = load_teams_connector_config(project_file)
+    except ValueError:
+        teams_config = None
+    if teams_config is None:
+        return SafeOutputService(db, **service_kwargs)
+    adapter = LocalTeamsTestAdapter(db, teams_config)
+    adapter.install()
+    return ConnectorSafeOutputService(
         db,
-        document_library_root=document_library.root,
-        project_id=project_id,
-        role_memory_path_resolver=memory_resolver,
+        adapter=adapter,
+        **service_kwargs,
     )
 
 

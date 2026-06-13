@@ -40,6 +40,14 @@ services:
     ports:
       - "8100:8080"
 
+  v2-teams-ingress:
+    <<: *agentic-mesh-service
+    command: python -m agentic_mesh_v2.cli --db /mesh/project/state/v2/agentic-mesh-v2.sqlite3 serve-teams-ingress --host 0.0.0.0 --port 3978 --project-file /mesh/project/agentic-mesh/project.yaml --path /api/messages --external-base-url ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}
+    ports:
+      - "3978:3978"
+    depends_on:
+      - v2-runtime
+
   v2-supervisor:
     <<: *agentic-mesh-service
     command: python -m agentic_mesh_v2.cli --db /mesh/project/state/v2/agentic-mesh-v2.sqlite3 run-project-supervisor-service --project-file /mesh/project/agentic-mesh/project.yaml --continuous --poll-seconds ${AGENTIC_MESH_SUPERVISOR_POLL_SECONDS:-5} --execute

@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from agentic_mesh_v2.connectors import ConnectorConfig
+
 
 @dataclass(frozen=True)
 class ProjectRoleServiceConfig:
@@ -32,6 +34,102 @@ class DocumentLibraryConfig:
     structure_policy: str
 
 
+def load_teams_connector_config(project_file: Path, *, external_base_url: str | None = None) -> ConnectorConfig:
+    raw = _load_project_mapping(project_file)
+    project_id = _project_id_from_raw(raw)
+    connectors = raw.get("connectors")
+    if not isinstance(connectors, dict):
+        raise ValueError("project config must define connectors for Teams ingress")
+    teams = connectors.get("teams")
+    if not isinstance(teams, dict):
+        raise ValueError("project config must define connectors.teams for Teams ingress")
+    if teams.get("adapter") != "teams-bot-connector":
+        raise ValueError("Teams ingress requires connectors.teams.adapter `teams-bot-connector`")
+
+    team = teams.get("team")
+    if not isinstance(team, dict):
+        raise ValueError("connectors.teams.team must be a mapping")
+    channels = teams.get("channels")
+    if not isinstance(channels, dict):
+        raise ValueError("connectors.teams.channels must be a mapping")
+    project_channel = channels.get("project")
+    if not isinstance(project_channel, dict):
+        raise ValueError("connectors.teams.channels.project must be a mapping")
+    role_bots = teams.get("role_bots")
+    if not isinstance(role_bots, dict) or not role_bots:
+        raise ValueError("connectors.teams.role_bots must define at least one role bot")
+
+    team_ref = _non_empty_string(team.get("id"), default=_non_empty_string(team.get("name"), default="project-team"))
+    project_channel_ref = _non_empty_string(
+        project_channel.get("id"),
+        default=_non_empty_string(project_channel.get("name"), default="project"),
+    )
+    role_identities: dict[str, dict[str, object]] = {}
+    identity_model = str(teams.get("identity_model") or "role_bots")
+    normalized_identity_model = "separate_bot" if identity_model in {"role_bots", "role_instance_bots"} else "shared_gateway"
+    for role_id, bot in role_bots.items():
+        if not isinstance(role_id, str) or not role_id.strip():
+            raise ValueError("connectors.teams.role_bots keys must be role ids")
+        if not isinstance(bot, dict):
+            raise ValueError(f"connectors.teams.role_bots.{role_id} must be a mapping")
+        display_name = _non_empty_string(bot.get("display_name"), default=role_id.replace("-", " ").title())
+        role_identities[role_id] = {
+            "external_ref": _non_empty_string(bot.get("bot_id_ref"), default=f"bot-{role_id}"),
+            "display_name": display_name,
+            "alias": role_id,
+            "mention_handle": f"@{display_name}",
+            "identity_model": normalized_identity_model,
+            "enabled": bool(bot.get("enabled", True)),
+        }
+
+    channel_bindings: list[dict[str, object]] = []
+    for channel_name, channel in channels.items():
+        if channel_name == "project":
+            continue
+        if not isinstance(channel, dict):
+            continue
+        channel_ref = channel.get("id") or channel.get("name")
+        if not isinstance(channel_ref, str) or not channel_ref.strip():
+            continue
+        channel_bindings.append(
+            {
+                "channel_ref": channel_ref.strip(),
+                "scope_type": str(channel.get("scope_type") or "focused_work"),
+                "display_name": str(channel.get("name") or channel_name),
+                "visibility": str(channel.get("visibility") or "project"),
+                "work_scope": channel.get("work_scope"),
+                "private": bool(channel.get("private", False)),
+            }
+        )
+
+    return ConnectorConfig.from_dict(
+        {
+            "connector_id": f"teams-{project_id}",
+            "project_id": project_id,
+            "connector_type": "teams",
+            "display_name": f"{_non_empty_string(raw.get('name'), default=project_id)} Teams",
+            "project_team_ref": team_ref,
+            "default_project_channel_ref": project_channel_ref,
+            "external_base_url": external_base_url
+            or _non_empty_string(
+                (teams.get("ingress") or {}).get("public_endpoint") if isinstance(teams.get("ingress"), dict) else None,
+                default="http://localhost:3978",
+            ),
+            "role_identities": role_identities,
+            "channel_bindings": channel_bindings,
+            "human_authorities": {},
+            "retention": {
+                "private_dm_days": 30,
+                "project_channel_days": 90,
+                "compacted_summary_days": 365,
+                "delivery_record_days": 90,
+                "idempotency_receipt_days": 30,
+            },
+            "team_wide_trigger": "@all-agents",
+        }
+    )
+
+
 def load_role_worker_config(project_file: Path, *, role_id: str) -> dict[str, Any]:
     raw = _load_project_mapping(project_file)
     role = _role_mapping(raw, role_id=role_id)
@@ -40,6 +138,10 @@ def load_role_worker_config(project_file: Path, *, role_id: str) -> dict[str, An
 
 def load_project_id(project_file: Path) -> str:
     raw = _load_project_mapping(project_file)
+    return _project_id_from_raw(raw)
+
+
+def _project_id_from_raw(raw: dict[str, Any]) -> str:
     project_id = raw.get("project_id")
     if not isinstance(project_id, str) or not project_id.strip():
         raise ValueError("project config requires project_id")

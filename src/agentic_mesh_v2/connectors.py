@@ -1196,8 +1196,22 @@ class ConnectorSafeOutputService(SafeOutputService):
         adapter: LocalTeamsTestAdapter,
         policy: ToolPolicy | None = None,
         release_service: ReleaseService | None = None,
+        process_effects: bool = True,
+        document_library_root: Any | None = None,
+        document_framework: Any | None = None,
+        project_id: str | None = None,
+        role_memory_path_resolver: Any | None = None,
     ) -> None:
-        super().__init__(db, policy, release_service=release_service)
+        super().__init__(
+            db,
+            policy,
+            release_service=release_service,
+            process_effects=process_effects,
+            document_library_root=document_library_root,
+            document_framework=document_framework,
+            project_id=project_id,
+            role_memory_path_resolver=role_memory_path_resolver,
+        )
         self.adapter = adapter
 
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:

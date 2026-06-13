@@ -5,7 +5,11 @@ import pytest
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.project_config import load_role_memory_config
 from agentic_mesh_v2.project_config import load_role_memory_context
+from agentic_mesh_v2.project_config import load_teams_connector_config
 from agentic_mesh_v2.project_config import list_project_role_service_configs
+
+
+DOGFOOD_PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml")
 
 
 def test_load_role_worker_config_resolves_safe_output_file_path(tmp_path: Path) -> None:
@@ -27,6 +31,17 @@ roles:
 
     assert config["adapter"] == "safe-output-file"
     assert config["path"] == str(project_file.parent / "workers" / "product-manager-calls.json")
+
+
+def test_load_teams_connector_config_from_dogfood_project() -> None:
+    config = load_teams_connector_config(DOGFOOD_PROJECT_FILE, external_base_url="http://linuxch:8100")
+
+    assert config.connector_id == "teams-agentic-mesh-dev"
+    assert config.project_team_ref == "e664f0d3-2d3f-4ef4-9102-2b99e1601169"
+    assert config.default_project_channel_ref == "19:fS0LN3jkUb5T7hMvueOm-o1PHRoIAk4lm_8MscXSCXE1@thread.tacv2"
+    assert config.external_base_url == "http://linuxch:8100"
+    assert config.role_identities["product-manager"].display_name == "AM-Product Manager"
+    assert config.role_identities["product-manager"].mention_handle == "@AM-Product Manager"
 
 
 def test_load_role_worker_config_preserves_future_adapter_config(tmp_path: Path) -> None:

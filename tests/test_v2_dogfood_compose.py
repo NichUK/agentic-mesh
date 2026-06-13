@@ -40,10 +40,34 @@ def test_dogfood_compose_runs_project_supervisor_service() -> None:
     assert service["depends_on"] == ["v2-runtime"]
 
 
+def test_dogfood_compose_runs_teams_ingress_service() -> None:
+    compose = _load_dogfood_compose()
+    runtime_service = compose["services"]["v2-runtime"]
+    service = compose["services"]["v2-teams-ingress"]
+    command = service["command"]
+
+    assert service["image"] == runtime_service["image"]
+    assert service["environment"] == runtime_service["environment"]
+    assert service["volumes"] == runtime_service["volumes"]
+    assert service["working_dir"] == runtime_service["working_dir"]
+    assert "serve-teams-ingress --host 0.0.0.0 --port 3978" in command
+    assert "--project-file /mesh/project/agentic-mesh/project.yaml" in command
+    assert "--path /api/messages" in command
+    assert service["ports"] == ["3978:3978"]
+    assert service["depends_on"] == ["v2-runtime"]
+
+
 def test_linuxch_overlay_restarts_project_supervisor_service() -> None:
     overlay = _linuxch_overlay_text()
 
     assert "v2-supervisor:" in overlay
+    assert "restart: unless-stopped" in overlay
+
+
+def test_linuxch_overlay_restarts_teams_ingress_service() -> None:
+    overlay = _linuxch_overlay_text()
+
+    assert "v2-teams-ingress:" in overlay
     assert "restart: unless-stopped" in overlay
 
 
