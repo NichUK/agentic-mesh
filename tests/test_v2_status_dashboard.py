@@ -254,6 +254,25 @@ def test_status_json_contract_includes_connector_dashboard_sections(tmp_path: Pa
     assert metrics["compaction_count"] == 1
 
 
+def test_status_snapshot_uses_bounded_event_queries(tmp_path: Path, monkeypatch) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.append_event("connector.event_duplicate_suppressed", "connector", "teams", {})
+    db.append_event("runtime.started", "runtime", "v2", {})
+
+    def fail_full_event_load(*args, **kwargs):
+        raise AssertionError("status_snapshot must not load the full event journal")
+
+    monkeypatch.setattr(db, "list_events", fail_full_event_load)
+    snapshot = db.status_snapshot()
+
+    assert snapshot["connector_metrics"]["duplicates_suppressed"] == 1
+    assert [event["event_type"] for event in snapshot["recent_events"]] == [
+        "connector.event_duplicate_suppressed",
+        "runtime.started",
+    ]
+
+
 def test_status_html_smoke_shows_connector_sections_and_redacts_private_text(tmp_path: Path) -> None:
     html = _render(_rich_snapshot(tmp_path))
 

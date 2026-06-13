@@ -3270,6 +3270,37 @@ class V2Database:
             for row in rows
         ]
 
+    def count_events(self, *, event_type: str | None = None) -> int:
+        if event_type is None:
+            row = self.connection.execute("SELECT COUNT(*) AS count FROM events").fetchone()
+        else:
+            row = self.connection.execute(
+                "SELECT COUNT(*) AS count FROM events WHERE event_type = ?",
+                (event_type,),
+            ).fetchone()
+        return int(row["count"])
+
+    def list_recent_events(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM events
+            ORDER BY event_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                "event_id": row["event_id"],
+                "event_type": row["event_type"],
+                "aggregate_type": row["aggregate_type"],
+                "aggregate_id": row["aggregate_id"],
+                "payload": json.loads(row["payload_json"]),
+            }
+            for row in reversed(rows)
+        ]
+
     def list_queue_items(self) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -3776,11 +3807,7 @@ class V2Database:
         }
         connector_metrics = {
             "inbound_events": len(external_event_receipts),
-            "duplicates_suppressed": sum(
-                1
-                for event in self.list_events()
-                if event.get("event_type") == "connector.event_duplicate_suppressed"
-            ),
+            "duplicates_suppressed": self.count_events(event_type="connector.event_duplicate_suppressed"),
             "active_conversations": len(self.list_conversations()),
             "delivery_failures": sum(
                 1
@@ -3882,7 +3909,7 @@ class V2Database:
             "context_summaries": redacted_context_summaries,
             "retention_expiry_records": retention_expiry_records,
             "role_container_lifecycle_actions": role_container_lifecycle_actions,
-            "recent_events": self.list_events()[-50:],
+            "recent_events": self.list_recent_events(limit=50),
         }
 
 
