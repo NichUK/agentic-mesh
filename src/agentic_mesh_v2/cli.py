@@ -10,6 +10,7 @@ from agentic_mesh_v2.container_lifecycle import ContainerLifecycleAction
 from agentic_mesh_v2.container_lifecycle import ContainerLifecycleExecutor
 from agentic_mesh_v2.container_lifecycle import plan_compose_lifecycle_action
 from agentic_mesh_v2.connectors import ConnectorSafeOutputService
+from agentic_mesh_v2.connectors import BotFrameworkDeliveryClient
 from agentic_mesh_v2.connectors import LocalTeamsTestAdapter
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.demo import run_demo_slice
@@ -644,7 +645,9 @@ def _safe_output_service(db: V2Database, project_file: Path | None) -> SafeOutpu
         teams_config = None
     if teams_config is None:
         return SafeOutputService(db, **service_kwargs)
-    adapter = LocalTeamsTestAdapter(db, teams_config)
+    secret_root = _project_secret_root(project_file)
+    delivery_client = BotFrameworkDeliveryClient(config=teams_config, secret_root=secret_root) if secret_root.exists() else None
+    adapter = LocalTeamsTestAdapter(db, teams_config, delivery_client=delivery_client)
     adapter.install()
     return ConnectorSafeOutputService(
         db,
@@ -657,6 +660,10 @@ def _safe_output_service_or_none(db: V2Database, project_file: Path | None) -> S
     if project_file is None:
         return None
     return _safe_output_service(db, project_file)
+
+
+def _project_secret_root(project_file: Path) -> Path:
+    return project_file.parent.parent / "state" / "secrets"
 
 
 def _role_memory_path_resolver(project_file: Path):

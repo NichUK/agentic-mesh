@@ -75,6 +75,7 @@ def load_teams_connector_config(project_file: Path, *, external_base_url: str | 
         display_name = _non_empty_string(bot.get("display_name"), default=role_id.replace("-", " ").title())
         role_identities[role_id] = {
             "external_ref": _non_empty_string(bot.get("bot_id_ref"), default=f"bot-{role_id}"),
+            "secret_ref": _non_empty_string(bot.get("secret_ref"), default=""),
             "display_name": display_name,
             "alias": role_id,
             "mention_handle": f"@{display_name}",

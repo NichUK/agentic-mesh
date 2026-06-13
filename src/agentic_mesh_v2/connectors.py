@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from agentic_mesh_v2.db import V2Database
@@ -37,6 +43,7 @@ IDENTITY_MODELS = {"separate_bot", "shared_gateway", "hybrid"}
 class RoleIdentity:
     role_id: str
     external_ref: str
+    secret_ref: str | None
     display_name: str
     alias: str
     mention_handle: str
@@ -129,12 +136,172 @@ class ReplayedEvent:
     mentioned_roles: tuple[str, ...]
 
 
+class BotFrameworkDeliveryError(RuntimeError):
+    def __init__(self, message: str, *, outcome: str = "failed_transient", error_class: str = "bot_framework_delivery_error") -> None:
+        super().__init__(message)
+        self.outcome = outcome
+        self.error_class = error_class
+
+
+class BotFrameworkDeliveryClient:
+    def __init__(self, *, config: ConnectorConfig, secret_root: Path, timeout_seconds: int = 20) -> None:
+        self.config = config
+        self.secret_root = secret_root
+        self.timeout_seconds = timeout_seconds
+        self._token_cache: dict[str, tuple[str, float]] = {}
+
+    def send_message(
+        self,
+        *,
+        role_id: str,
+        service_url: str,
+        conversation_id: str,
+        body: str,
+        reply_to_id: str | None = None,
+    ) -> str:
+        identity = self.config.role_identities.get(role_id)
+        if identity is None:
+            raise BotFrameworkDeliveryError(
+                f"unknown role identity `{role_id}` for Bot Framework delivery",
+                outcome="failed_permanent",
+                error_class="unknown_role_identity",
+            )
+        app_id = self._read_secret(identity.external_ref)
+        if not identity.secret_ref:
+            raise BotFrameworkDeliveryError(
+                f"role identity `{role_id}` does not define a bot secret reference",
+                outcome="failed_permanent",
+                error_class="missing_bot_secret_ref",
+            )
+        app_secret = self._read_secret(identity.secret_ref)
+        token = self._token(app_id=app_id, app_secret=app_secret)
+        endpoint = service_url.rstrip("/") + f"/v3/conversations/{urllib.parse.quote(conversation_id, safe='')}/activities"
+        if reply_to_id:
+            endpoint += f"/{urllib.parse.quote(reply_to_id, safe='')}"
+        payload = {
+            "type": "message",
+            "text": body,
+            "textFormat": "markdown",
+        }
+        response = self._post_json(endpoint, payload, authorization=f"Bearer {token}")
+        if isinstance(response, dict):
+            for key in ("id", "activityId"):
+                value = response.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return f"bot-framework-message-{_stable_digest(endpoint + body)}"
+
+    def _read_secret(self, ref: str) -> str:
+        path = self.secret_root / ref
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError as exc:
+            raise BotFrameworkDeliveryError(
+                f"missing Teams bot secret file `{path}`",
+                outcome="failed_permanent",
+                error_class="missing_bot_secret",
+            ) from exc
+        if not value:
+            raise BotFrameworkDeliveryError(
+                f"Teams bot secret file `{path}` is empty",
+                outcome="failed_permanent",
+                error_class="empty_bot_secret",
+            )
+        return value
+
+    def _token(self, *, app_id: str, app_secret: str) -> str:
+        cached = self._token_cache.get(app_id)
+        now = time.time()
+        if cached is not None and cached[1] > now + 60:
+            return cached[0]
+        data = urllib.parse.urlencode(
+            {
+                "grant_type": "client_credentials",
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "scope": "https://api.botframework.com/.default",
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise BotFrameworkDeliveryError(
+                f"Bot Framework token request failed with HTTP {exc.code}: {detail}",
+                outcome="failed_permanent" if exc.code in {400, 401, 403} else "failed_transient",
+                error_class="bot_framework_token_http_error",
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise BotFrameworkDeliveryError(
+                f"Bot Framework token request failed: {exc.reason}",
+                error_class="bot_framework_token_unavailable",
+            ) from exc
+        token = raw.get("access_token")
+        if not isinstance(token, str) or not token.strip():
+            raise BotFrameworkDeliveryError(
+                "Bot Framework token response did not contain an access token",
+                outcome="failed_permanent",
+                error_class="bot_framework_token_missing",
+            )
+        expires_in = raw.get("expires_in")
+        try:
+            ttl = float(expires_in)
+        except (TypeError, ValueError):
+            ttl = 1800
+        self._token_cache[app_id] = (token.strip(), now + ttl)
+        return token.strip()
+
+    def _post_json(self, url: str, payload: dict[str, Any], *, authorization: str) -> dict[str, Any]:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": authorization,
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise BotFrameworkDeliveryError(
+                f"Bot Framework message send failed with HTTP {exc.code}: {detail}",
+                outcome="failed_permanent" if exc.code in {400, 401, 403, 404} else "failed_transient",
+                error_class="bot_framework_send_http_error",
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise BotFrameworkDeliveryError(
+                f"Bot Framework message send failed: {exc.reason}",
+                error_class="bot_framework_send_unavailable",
+            ) from exc
+        if not raw.strip():
+            return {}
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else {}
+
+
 class LocalTeamsTestAdapter:
     """Deterministic Teams-like adapter used by tests before real tenant wiring."""
 
-    def __init__(self, db: V2Database, config: ConnectorConfig) -> None:
+    def __init__(
+        self,
+        db: V2Database,
+        config: ConnectorConfig,
+        *,
+        delivery_client: BotFrameworkDeliveryClient | None = None,
+    ) -> None:
         self.db = db
         self.config = config
+        self.delivery_client = delivery_client
 
     def install(self) -> None:
         with span("v2.teams.install", connector_id=self.config.connector_id):
@@ -413,6 +580,8 @@ class LocalTeamsTestAdapter:
                             "message_id": message_id,
                             "destination_ref": external_conversation_ref,
                             "destination_type": source_type,
+                            "service_url": event.get("service_url"),
+                            "reply_to_id": event.get("reply_to_id") or message_id,
                             "channel_scope": channel_binding.__dict__ if channel_binding else None,
                             "context": [_conversation_context_line(source_type=source_type, sender_ref=sender_ref, body=body)],
                         },
@@ -451,6 +620,8 @@ class LocalTeamsTestAdapter:
                             "thread_ref": thread_ref,
                             "destination_ref": external_conversation_ref,
                             "destination_type": source_type,
+                            "service_url": event.get("service_url"),
+                            "reply_to_id": event.get("reply_to_id") or message_id,
                             "channel_scope": channel_binding.__dict__ if channel_binding else None,
                             "context": [_conversation_context_line(source_type=source_type, sender_ref=sender_ref, body=body)],
                         },
@@ -478,6 +649,8 @@ class LocalTeamsTestAdapter:
                             "thread_ref": thread_ref,
                             "destination_ref": external_conversation_ref,
                             "destination_type": source_type,
+                            "service_url": event.get("service_url"),
+                            "reply_to_id": event.get("reply_to_id") or message_id,
                             "channel_scope": channel_binding.__dict__ if channel_binding else None,
                             "context": [_conversation_context_line(source_type=source_type, sender_ref=sender_ref, body=body)],
                             "threshold": 0.6,
@@ -516,6 +689,8 @@ class LocalTeamsTestAdapter:
         role_id: str | None = None,
         fail: bool = False,
         outcome: str | None = None,
+        service_url: str | None = None,
+        reply_to_id: str | None = None,
     ) -> str:
         with span("v2.teams.delivery_prepare", connector_id=self.config.connector_id, purpose=purpose):
             self._ensure_runtime_capabilities(
@@ -550,11 +725,69 @@ class LocalTeamsTestAdapter:
             purpose=purpose,
             role_id=role_id,
             idempotency_key=idempotency_key,
-            payload={"body": body, "role_identity": self._delivery_role_identity(role_id)},
+            payload={
+                "body": body,
+                "role_identity": self._delivery_role_identity(role_id),
+                "service_url": service_url,
+                "reply_to_id": reply_to_id,
+            },
             status="pending",
         )
-        self._apply_delivery_outcome(delivery_id=delivery_id, outcome=requested_outcome)
+        if self.delivery_client is not None and service_url:
+            self._send_live_delivery(delivery_id=delivery_id)
+        else:
+            self._apply_delivery_outcome(delivery_id=delivery_id, outcome=requested_outcome)
         return delivery_id
+
+    def _send_live_delivery(self, *, delivery_id: str) -> None:
+        with span("v2.teams.delivery_live", connector_id=self.config.connector_id, delivery_id=delivery_id):
+            delivery = self.db.get_delivery_record(delivery_id)
+            if delivery is None:
+                raise ValueError(f"unknown delivery `{delivery_id}`")
+            payload = json.loads(str(delivery["payload_json"]))
+            self.db.update_delivery_record(delivery_id, status="sending")
+            attempt_number = self.db.count_delivery_attempts(delivery_id) + 1
+            external_message_id = None
+            error_class = None
+            error_detail = None
+            outcome = "sent"
+            try:
+                if self.delivery_client is None:
+                    raise RuntimeError("live Teams delivery client is not configured")
+                external_message_id = self.delivery_client.send_message(
+                    role_id=str(delivery["role_id"] or ""),
+                    service_url=_required_string(payload, "service_url"),
+                    conversation_id=str(delivery["destination_ref"]),
+                    body=_required_string(payload, "body"),
+                    reply_to_id=str(payload.get("reply_to_id") or "") or None,
+                )
+            except BotFrameworkDeliveryError as exc:
+                outcome = exc.outcome
+                error_class = exc.error_class
+                error_detail = str(exc)
+            except Exception as exc:
+                outcome = "failed_transient"
+                error_class = exc.__class__.__name__
+                error_detail = str(exc)
+            self.db.record_delivery_attempt(
+                attempt_id=f"delivery-attempt-{_stable_digest(f'{delivery_id}:{attempt_number}')}",
+                delivery_id=delivery_id,
+                connector_id=self.config.connector_id,
+                attempt_number=attempt_number,
+                status=outcome,
+                external_message_id=external_message_id,
+                error_class=error_class,
+                error_detail=error_detail,
+            )
+            self.db.update_delivery_record(
+                delivery_id,
+                status=outcome,
+                external_message_id=external_message_id,
+                error_class=error_class,
+                error_detail=error_detail,
+            )
+            if outcome != "sent":
+                self._delivery_attention(delivery_id=delivery_id, attempt_number=attempt_number, outcome=outcome)
 
     def schedule_delivery_retry(self, delivery_id: str) -> None:
         with span("v2.teams.delivery_retry_schedule", connector_id=self.config.connector_id, delivery_id=delivery_id):
@@ -621,22 +854,25 @@ class LocalTeamsTestAdapter:
                 error_detail=error_detail,
             )
             if outcome in {"failed_transient", "failed_permanent", "unknown"}:
-                retryable = outcome != "failed_permanent"
-                reason_class = f"delivery_{outcome}"
-                next_action = {
-                    "failed_transient": "Inspect connector delivery failure and retry when safe.",
-                    "failed_permanent": "Correct connector configuration or destination before retrying with a new delivery.",
-                    "unknown": "Check Teams for the message before retrying to avoid duplicate human-visible sends.",
-                }[outcome]
-                self.db.create_connector_attention_item(
-                    attention_id=f"attention-{_stable_digest(f'{delivery_id}:{attempt_number}:{outcome}')}",
-                    connector_id=self.config.connector_id,
-                    owner="operator",
-                    reason_class=reason_class,
-                    next_action=next_action,
-                    retryable=retryable,
-                    source_ref=delivery_id,
-                )
+                self._delivery_attention(delivery_id=delivery_id, attempt_number=attempt_number, outcome=outcome)
+
+    def _delivery_attention(self, *, delivery_id: str, attempt_number: int, outcome: str) -> None:
+        retryable = outcome != "failed_permanent"
+        reason_class = f"delivery_{outcome}"
+        next_action = {
+            "failed_transient": "Inspect connector delivery failure and retry when safe.",
+            "failed_permanent": "Correct connector configuration or destination before retrying with a new delivery.",
+            "unknown": "Check Teams for the message before retrying to avoid duplicate human-visible sends.",
+        }.get(outcome, "Inspect connector delivery failure before retrying.")
+        self.db.create_connector_attention_item(
+            attention_id=f"attention-{_stable_digest(f'{delivery_id}:{attempt_number}:{outcome}')}",
+            connector_id=self.config.connector_id,
+            owner="operator",
+            reason_class=reason_class,
+            next_action=next_action,
+            retryable=retryable,
+            source_ref=delivery_id,
+        )
 
     def deliver_status_reply(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
         message = str(payload.get("message") or "")
@@ -650,6 +886,8 @@ class LocalTeamsTestAdapter:
             purpose="status.reply",
             body=message,
             role_id=role_id,
+            service_url=str(payload.get("service_url") or "") or None,
+            reply_to_id=str(payload.get("reply_to_id") or "") or None,
         )
 
     def deliver_release_notification(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
@@ -1247,6 +1485,8 @@ class ConnectorSafeOutputService(SafeOutputService):
         if call.tool_name == "queue.propose_item":
             self._validate_work_proposal_source(call.payload)
             self._record_work_proposal(call_id=call_id, role_id=call.role_id, payload=call.payload)
+        if call.tool_name == "status.reply":
+            self._enrich_conversation_delivery_payload(run_id=run_id, payload=call.payload)
         if call.tool_name == "status.reply" and "conversation_id" in call.payload:
             self._reject_noop_relevance_reply(run_id=run_id, role_id=call.role_id)
             self._validate_reply_references(call.payload)
@@ -1304,6 +1544,26 @@ class ConnectorSafeOutputService(SafeOutputService):
                 self.db.get_work_item(str(work_item_id))
             except ValueError as exc:
                 raise ValueError(f"status.reply referenced unknown work item `{work_item_id}`") from exc
+
+    def _enrich_conversation_delivery_payload(self, *, run_id: str, payload: dict[str, Any]) -> None:
+        for assignment in self.db.list_role_assignments():
+            if assignment.get("run_id") != run_id:
+                continue
+            assignment_payload = assignment.get("payload")
+            if not isinstance(assignment_payload, dict):
+                raw_payload = assignment.get("payload_json")
+                if isinstance(raw_payload, str):
+                    try:
+                        assignment_payload = json.loads(raw_payload)
+                    except json.JSONDecodeError:
+                        assignment_payload = {}
+            if not isinstance(assignment_payload, dict):
+                return
+            for key in ("conversation_id", "destination_ref", "destination_type", "service_url", "reply_to_id"):
+                value = assignment_payload.get(key)
+                if value and not payload.get(key):
+                    payload[key] = value
+            return
 
     def _validate_work_proposal_source(self, payload: dict[str, Any]) -> None:
         conversation_event_id = payload.get("source_conversation_event_id")
@@ -1485,6 +1745,7 @@ def _role_identity_map(value: object) -> dict[str, RoleIdentity]:
         result[role_id] = RoleIdentity(
             role_id=role_id,
             external_ref=external_ref,
+            secret_ref=str(item["secret_ref"]).strip() if isinstance(item.get("secret_ref"), str) and item["secret_ref"].strip() else None,
             display_name=_required_string(item, "display_name"),
             alias=_required_string(item, "alias"),
             mention_handle=_required_string(item, "mention_handle"),

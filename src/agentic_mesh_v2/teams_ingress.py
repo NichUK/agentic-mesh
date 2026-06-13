@@ -128,6 +128,8 @@ def normalize_bot_activity(activity: dict[str, Any], *, role_display_names: dict
         "source_type": source_type,
         "body": body,
         "thread_ref": _first_non_empty(activity.get("replyToId"), message_id),
+        "reply_to_id": str(message_id),
+        "service_url": _first_non_empty(activity.get("serviceUrl")),
         "target_ref": _first_non_empty(recipient.get("id"), recipient.get("name")),
     }
     if mentioned_roles:

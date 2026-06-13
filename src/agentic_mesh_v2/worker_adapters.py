@@ -158,11 +158,18 @@ def _codex_prompt_text(payload: dict[str, Any]) -> str:
         conversation_id = assignment_payload.get("conversation_id")
         destination_ref = assignment_payload.get("destination_ref")
         destination_type = assignment_payload.get("destination_type")
+        service_url = assignment_payload.get("service_url")
+        reply_to_id = assignment_payload.get("reply_to_id")
         if conversation_id and destination_ref:
+            extra_fields = ""
+            if service_url:
+                extra_fields += f", service_url={service_url!r}"
+            if reply_to_id:
+                extra_fields += f", reply_to_id={reply_to_id!r}"
             destination_hint = (
                 "\nFor status.reply to the source conversation, include these payload fields exactly: "
                 f"conversation_id={conversation_id!r}, destination_ref={destination_ref!r}, "
-                f"destination_type={destination_type or 'dm'!r}."
+                f"destination_type={destination_type or 'dm'!r}{extra_fields}."
             )
     return "\n\n".join(
         part
