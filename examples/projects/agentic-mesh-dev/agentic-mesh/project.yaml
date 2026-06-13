@@ -257,6 +257,22 @@ connectors:
       project:
         id: 19:fS0LN3jkUb5T7hMvueOm-o1PHRoIAk4lm_8MscXSCXE1@thread.tacv2
         name: project
+    authority_groups:
+      sponsors:
+      - sponsor
+      release-board:
+      - release_approver
+      operators:
+      - operator
+    people:
+    - person_id: nicholas-overend
+      display_name: Nicholas Overend
+      external_refs:
+      - 2485de4b-4331-48f6-805d-68106b09be1b
+      groups:
+      - sponsors
+      - release-board
+      - operators
 gateways:
   agentic-mesh:
     enabled: true

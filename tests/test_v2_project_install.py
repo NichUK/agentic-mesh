@@ -17,9 +17,23 @@ class FakeGraphClient:
         *,
         fail_personal_installs: bool = True,
         installed_apps: list[dict[str, Any]] | None = None,
+        installed_personal_apps: dict[str, list[dict[str, Any]]] | None = None,
+        service_principals: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.fail_personal_installs = fail_personal_installs
         self.installed_apps = installed_apps or []
+        self.installed_personal_apps = installed_personal_apps or {}
+        self.service_principals = (
+            service_principals
+            if service_principals is not None
+            else {
+                "bot-product-manager-app-id": {
+                    "id": "sp-product-manager",
+                    "appId": "bot-product-manager-app-id",
+                    "displayName": "AM-Product Manager",
+                }
+            }
+        )
         self.requests: list[tuple[str, str, dict[str, Any] | None]] = []
 
     def request(self, method: str, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -59,6 +73,22 @@ class FakeGraphClient:
                     ]
                 }
             return {"value": []}
+        if path.startswith("/servicePrincipals?"):
+            if "appId+eq+" in path:
+                app_id = path.split("appId+eq+", 1)[1].split("&", 1)[0].strip("%27'")
+                app_id = app_id.replace("%27", "").replace("'", "")
+                principal = self.service_principals.get(app_id)
+                return {"value": [] if principal is None else [principal]}
+            return {"value": []}
+        if path == "/servicePrincipals" and method == "POST":
+            app_id = str((body or {}).get("appId") or "")
+            principal = {
+                "id": f"sp-{app_id}",
+                "appId": app_id,
+                "displayName": f"Service Principal {app_id}",
+            }
+            self.service_principals[app_id] = principal
+            return principal
         if path == "/applications" and method == "POST":
             return {
                 "id": "app-created",
@@ -84,6 +114,21 @@ class FakeGraphClient:
             if self.fail_personal_installs:
                 raise GraphRequestError(403, "Missing scope TeamsAppInstallation.ReadForUser")
             return {"value": []}
+        if path.startswith("/users/") and "/teamwork/installedApps" in path:
+            user_ref = path.split("/users/", 1)[1].split("/teamwork/", 1)[0]
+            if method == "POST":
+                app_id = str((body or {}).get("teamsApp@odata.bind", "")).rsplit("/", 1)[-1]
+                self.installed_personal_apps.setdefault(user_ref, []).append(
+                    {
+                        "id": f"personal-{user_ref}-{len(self.installed_personal_apps.get(user_ref, [])) + 1}",
+                        "teamsAppDefinition": {
+                            "displayName": "unknown",
+                            "teamsAppId": app_id,
+                        },
+                    }
+                )
+                return {}
+            return {"value": self.installed_personal_apps.get(user_ref, [])}
         raise AssertionError(f"unexpected Graph request {method} {path}")
 
     def request_bytes(self, method: str, path: str, *, data: bytes, content_type: str) -> dict[str, Any]:
@@ -129,6 +174,24 @@ def _project_config() -> dict[str, Any]:
     }
 
 
+def _project_config_with_people() -> dict[str, Any]:
+    config = _project_config()
+    teams = config["connectors"]["teams"]
+    teams["people"] = [
+        {
+            "person_id": "person-nicholas",
+            "display_name": "Nicholas Overend",
+            "external_refs": ["aad-nicholas"],
+            "groups": ["sponsors", "release-board"],
+        }
+    ]
+    teams["authority_groups"] = {
+        "sponsors": ["sponsor"],
+        "release-board": ["release_approver"],
+    }
+    return config
+
+
 def _package_root(tmp_path: Path) -> Path:
     root = tmp_path / "teams-apps"
     root.mkdir()
@@ -155,6 +218,21 @@ def _package_root(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
+    return root
+
+
+def _package_root_with_gateway(tmp_path: Path) -> Path:
+    root = _package_root(tmp_path)
+    records = json.loads((root / "published-apps.json").read_text(encoding="utf-8"))
+    records.append(
+        {
+            "role": "gateway:agentic-mesh",
+            "displayName": "AM-Agentic Mesh",
+            "teamsAppId": "teams-app-gateway-agentic-mesh",
+            "package": "gateway-agentic-mesh.zip",
+        }
+    )
+    (root / "published-apps.json").write_text(json.dumps(records), encoding="utf-8")
     return root
 
 
@@ -294,6 +372,118 @@ def test_project_installer_reuses_existing_team_app_install(tmp_path: Path) -> N
         if item["action"] == "install_agent_to_team" and item["target"] == "AM-Product Manager"
     )
     assert product["status"] == "reused"
+
+
+def test_project_installer_does_not_reuse_wrong_catalog_id_with_same_display_name(tmp_path: Path) -> None:
+    graph = FakeGraphClient(
+        fail_personal_installs=False,
+        installed_apps=[
+            {
+                "id": "installed-old-product",
+                "teamsAppDefinition": {
+                    "displayName": "AM-Product Manager",
+                    "teamsAppId": "teams-app-old-product-manager",
+                },
+            }
+        ],
+    )
+    ProjectInstaller(
+        graph_client=graph,
+        project_config=_project_config(),
+        organization_config={},
+        options=InstallOptions(apply=True, allow_install_apps=True),
+        teams_app_package_root=_package_root(tmp_path),
+    ).run()
+
+    assert any(
+        request[0] == "POST"
+        and request[1] == "/teams/team-dev-agentic-mesh/installedApps"
+        and request[2] == {
+            "teamsApp@odata.bind": "https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/teams-app-product-manager"
+        }
+        for request in graph.requests
+    )
+
+
+def test_project_installer_plans_personal_installs_for_configured_people(tmp_path: Path) -> None:
+    result = ProjectInstaller(
+        graph_client=FakeGraphClient(fail_personal_installs=False),
+        project_config=_project_config_with_people(),
+        organization_config={},
+        options=InstallOptions(),
+        teams_app_package_root=_package_root_with_gateway(tmp_path),
+    ).run()
+
+    personal_installs = [
+        item
+        for item in result["operations"]
+        if item["action"] == "install_agent_to_person"
+    ]
+    assert {item["target"] for item in personal_installs} == {
+        "Nicholas Overend: AM-Agentic Mesh",
+        "Nicholas Overend: AM-Engineering",
+        "Nicholas Overend: AM-Product Manager",
+    }
+    assert all(item["status"] == "planned" for item in personal_installs)
+
+
+def test_project_installer_installs_personal_apps_for_configured_people(tmp_path: Path) -> None:
+    graph = FakeGraphClient(fail_personal_installs=False)
+    result = ProjectInstaller(
+        graph_client=graph,
+        project_config=_project_config_with_people(),
+        organization_config={},
+        options=InstallOptions(apply=True, allow_install_apps=True),
+        teams_app_package_root=_package_root_with_gateway(tmp_path),
+    ).run()
+
+    personal_posts = [
+        request
+        for request in graph.requests
+        if request[0] == "POST" and request[1] == "/users/aad-nicholas/teamwork/installedApps"
+    ]
+    assert {
+        request[2]["teamsApp@odata.bind"].rsplit("/", 1)[-1]
+        for request in personal_posts
+        if request[2] is not None
+    } == {
+        "teams-app-gateway-agentic-mesh",
+        "teams-app-product-manager",
+        "teams-app-engineering",
+    }
+    assert any(
+        item["action"] == "install_agent_to_person"
+        and item["target"] == "Nicholas Overend: AM-Product Manager"
+        and item["status"] == "created"
+        for item in result["operations"]
+    )
+
+
+def test_project_installer_creates_missing_service_principal_before_install(tmp_path: Path) -> None:
+    graph = FakeGraphClient(
+        fail_personal_installs=False,
+        service_principals={},
+    )
+    result = ProjectInstaller(
+        graph_client=graph,
+        project_config=_project_config(),
+        organization_config={},
+        options=InstallOptions(apply=True, allow_register_apps=True, allow_install_apps=True),
+        teams_app_package_root=_package_root(tmp_path),
+    ).run()
+
+    assert any(
+        request[0] == "POST"
+        and request[1] == "/servicePrincipals"
+        and request[2] == {"appId": "bot-product-manager-app-id"}
+        for request in graph.requests
+    )
+    assert any(
+        item["action"] == "ensure_service_principal"
+        and item["target"] == "AM-Product Manager"
+        and item["status"] == "created"
+        for item in result["operations"]
+    )
 
 
 def test_project_installer_does_not_delete_expected_agentic_apps(tmp_path: Path) -> None:

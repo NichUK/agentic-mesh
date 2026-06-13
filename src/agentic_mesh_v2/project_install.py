@@ -221,6 +221,7 @@ class ProjectInstaller:
         configured_team_id = _optional_string(team.get("id"))
         channels = _mapping(teams.get("channels"), "connectors.teams.channels")
         role_bots = _mapping(teams.get("role_bots"), "connectors.teams.role_bots")
+        people = _people_list(teams.get("people"))
         gateway_bots = _gateway_bots(self.project_config)
         self._record_expected_team_apps(role_bots=role_bots, gateway_bots=gateway_bots)
 
@@ -252,6 +253,11 @@ class ProjectInstaller:
 
         self._detect_stale_v1_installs(team_id=resolved_team_id)
         self._check_personal_install_scope()
+        self._ensure_personal_app_installs(
+            people=people,
+            role_bots=role_bots,
+            gateway_bots=gateway_bots,
+        )
 
         return {
             "status": _summary_status(self.operations),
@@ -526,6 +532,9 @@ class ProjectInstaller:
                     )
                 )
 
+        if app_id is not None:
+            self._ensure_service_principal(app_id=app_id, display_name=display_name)
+
         if self.options.allow_secret_rotation:
             self.operations.append(
                 InstallOperation(
@@ -552,6 +561,78 @@ class ProjectInstaller:
             team_id=team_id,
             bot_app_id=app_id,
         )
+
+    def _ensure_service_principal(self, *, app_id: str, display_name: str) -> None:
+        matches = self._find_service_principals_by_app_id(app_id, display_name=display_name)
+        if matches:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_service_principal",
+                    target=display_name,
+                    status="reused",
+                    detail="Found existing service principal for the app registration.",
+                    external_id=_optional_string(matches[0].get("id")),
+                )
+            )
+            return
+        if not self.options.allow_register_apps:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_service_principal",
+                    target=display_name,
+                    status="planned",
+                    detail="Service principal would be created when --allow-register-apps is supplied.",
+                    required_permission="Application.ReadWrite.All",
+                    external_id=app_id,
+                )
+            )
+            return
+        if not self.options.apply:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_service_principal",
+                    target=display_name,
+                    status="planned",
+                    detail="Service principal creation planned; rerun with --apply to mutate tenant state.",
+                    required_permission="Application.ReadWrite.All",
+                    external_id=app_id,
+                )
+            )
+            return
+        try:
+            created = self.graph.request("POST", "/servicePrincipals", body={"appId": app_id})
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_service_principal",
+                    target=display_name,
+                    status="created",
+                    detail="Created service principal for the app registration.",
+                    required_permission="Application.ReadWrite.All",
+                    external_id=_optional_string(created.get("id")),
+                )
+            )
+        except GraphRequestError as exc:
+            if exc.status_code == 409:
+                self.operations.append(
+                    InstallOperation(
+                        action="ensure_service_principal",
+                        target=display_name,
+                        status="reused",
+                        detail="Graph reported the service principal already exists.",
+                        external_id=app_id,
+                    )
+                )
+                return
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_service_principal",
+                    target=display_name,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="Application.ReadWrite.All",
+                    external_id=app_id,
+                )
+            )
 
     def _record_expected_team_apps(
         self,
@@ -715,6 +796,168 @@ class ProjectInstaller:
         package = self._package_for_role(role_id)
         return set() if package is None else {package.teams_app_id}
 
+    def _ensure_personal_app_installs(
+        self,
+        *,
+        people: list[dict[str, Any]],
+        role_bots: dict[str, Any],
+        gateway_bots: dict[str, dict[str, Any]],
+    ) -> None:
+        targets: list[tuple[str, str]] = []
+        for role_id, bot in sorted(role_bots.items()):
+            if isinstance(bot, dict):
+                targets.append((str(role_id), _required_string(bot, "display_name")))
+        for gateway_id, bot in sorted(gateway_bots.items()):
+            targets.append((f"gateway:{gateway_id}", _required_string(bot, "display_name")))
+
+        if not people:
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_person",
+                    target="configured-people",
+                    status="planned",
+                    detail="No connectors.teams.people records are configured; personal DM installs cannot be reconciled.",
+                )
+            )
+            return
+
+        for person in people:
+            person_label = _person_label(person)
+            person_refs = _person_external_refs(person)
+            if not person_refs:
+                self.operations.append(
+                    InstallOperation(
+                        action="install_agent_to_person",
+                        target=person_label,
+                        status="blocked",
+                        detail="Person record has no usable external_refs for Graph user installation.",
+                    )
+                )
+                continue
+            user_ref = person_refs[0]
+            installed = self._list_installed_personal_apps(user_ref=user_ref, person_label=person_label)
+            for role_id, display_name in targets:
+                self._ensure_personal_app_install(
+                    role_id=role_id,
+                    display_name=display_name,
+                    user_ref=user_ref,
+                    person_label=person_label,
+                    installed=installed,
+                )
+
+    def _ensure_personal_app_install(
+        self,
+        *,
+        role_id: str,
+        display_name: str,
+        user_ref: str,
+        person_label: str,
+        installed: list[dict[str, Any]] | None,
+    ) -> None:
+        target = f"{person_label}: {display_name}"
+        if not self.options.allow_install_apps:
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_person",
+                    target=target,
+                    status="planned",
+                    detail="Personal Teams app installation would run when --allow-install-apps is supplied.",
+                    required_permission="TeamsAppInstallation.ReadWriteForUser",
+                    external_id=user_ref,
+                )
+            )
+            return
+        if not self.options.apply:
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_person",
+                    target=target,
+                    status="planned",
+                    detail="Personal Teams app installation planned; rerun with --apply to mutate tenant state.",
+                    required_permission="TeamsAppInstallation.ReadWriteForUser",
+                    external_id=user_ref,
+                )
+            )
+            return
+
+        package = self._package_for_role(role_id)
+        if package is None:
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_person",
+                    target=target,
+                    status="blocked",
+                    detail=(
+                        "No published Teams app catalog id was found for this project agent. "
+                        "Run app publication/registration before personal installation."
+                    ),
+                    required_permission="AppCatalog.ReadWrite.All",
+                    external_id=user_ref,
+                )
+            )
+            return
+
+        if installed is not None:
+            existing = _find_installed_team_app(
+                installed,
+                display_name=display_name,
+                teams_app_ids={package.teams_app_id},
+            )
+            if existing is not None:
+                self.operations.append(
+                    InstallOperation(
+                        action="install_agent_to_person",
+                        target=target,
+                        status="reused",
+                        detail="Teams app is already installed in the person's personal scope.",
+                        external_id=_optional_string(existing.get("id")),
+                    )
+                )
+                return
+
+        try:
+            self.graph.request(
+                "POST",
+                f"/users/{urllib.parse.quote(user_ref, safe='')}/teamwork/installedApps",
+                body={
+                    "teamsApp@odata.bind": (
+                        f"https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/{package.teams_app_id}"
+                    )
+                },
+            )
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_person",
+                    target=target,
+                    status="created",
+                    detail="Installed the published Teams app into the person's personal Teams scope.",
+                    required_permission="TeamsAppInstallation.ReadWriteForUser",
+                    external_id=package.teams_app_id,
+                )
+            )
+        except GraphRequestError as exc:
+            if exc.status_code == 409:
+                self.operations.append(
+                    InstallOperation(
+                        action="install_agent_to_person",
+                        target=target,
+                        status="reused",
+                        detail="Graph reported the Teams app is already installed in the person's personal scope.",
+                        external_id=package.teams_app_id,
+                    )
+                )
+                return
+            self.operations.append(
+                InstallOperation(
+                    action="install_agent_to_person",
+                    target=target,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="TeamsAppInstallation.ReadWriteForUser",
+                    external_id=package.teams_app_id,
+                )
+            )
+
     def _publish_generated_teams_app(
         self,
         *,
@@ -832,6 +1075,30 @@ class ProjectInstaller:
                     return _optional_string(item.get("id"))
         return None
 
+    def _find_service_principals_by_app_id(self, app_id: str, *, display_name: str) -> list[dict[str, Any]]:
+        escaped = app_id.replace("'", "''")
+        query = urllib.parse.urlencode(
+            {
+                "$filter": f"appId eq '{escaped}'",
+                "$select": "id,appId,displayName,accountEnabled,servicePrincipalType",
+            }
+        )
+        try:
+            result = self.graph.request("GET", f"/servicePrincipals?{query}")
+        except GraphRequestError as exc:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_service_principal",
+                    target=display_name,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="Application.Read.All or Application.ReadWrite.All",
+                    external_id=app_id,
+                )
+            )
+            return []
+        return list(result.get("value", []))
+
     def _detect_stale_v1_installs(self, *, team_id: str | None) -> None:
         if team_id is None:
             self.operations.append(
@@ -936,6 +1203,27 @@ class ProjectInstaller:
                 detail="Current token can inspect personal Teams app installs.",
             )
         )
+
+    def _list_installed_personal_apps(self, *, user_ref: str, person_label: str) -> list[dict[str, Any]] | None:
+        try:
+            return list(
+                self.graph.request(
+                    "GET",
+                    f"/users/{urllib.parse.quote(user_ref, safe='')}/teamwork/installedApps?$expand=teamsAppDefinition",
+                ).get("value", [])
+            )
+        except GraphRequestError as exc:
+            self.operations.append(
+                InstallOperation(
+                    action="list_personal_installs",
+                    target=person_label,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="TeamsAppInstallation.ReadForUser",
+                    external_id=user_ref,
+                )
+            )
+            return None
 
     def _find_teams_by_name(self, display_name: str) -> list[dict[str, Any]]:
         escaped = display_name.replace("'", "''")
@@ -1067,6 +1355,42 @@ def _gateway_bots(project_config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         bot = teams.get("bot")
         if isinstance(bot, dict):
             result[str(gateway_id)] = bot
+    return result
+
+
+def _people_list(value: object) -> list[dict[str, Any]]:
+    if value in (None, ()):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("connectors.teams.people must be a list")
+    result: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("connectors.teams.people entries must be mappings")
+        result.append(item)
+    return result
+
+
+def _person_label(person: dict[str, Any]) -> str:
+    return (
+        _optional_string(person.get("display_name"))
+        or _optional_string(person.get("person_id"))
+        or _optional_string(person.get("id"))
+        or "unnamed-person"
+    )
+
+
+def _person_external_refs(person: dict[str, Any]) -> list[str]:
+    refs = person.get("external_refs")
+    if refs in (None, ()):
+        return []
+    if not isinstance(refs, list):
+        raise ValueError("connectors.teams.people external_refs must be lists")
+    result: list[str] = []
+    for ref in refs:
+        text = str(ref).strip()
+        if text and text not in result:
+            result.append(text)
     return result
 
 
@@ -1252,11 +1576,15 @@ def _find_installed_team_app(
     display_name: str,
     teams_app_ids: set[str],
 ) -> dict[str, Any] | None:
+    if teams_app_ids:
+        for item in installed:
+            definition = item.get("teamsAppDefinition") or {}
+            teams_app_id = _optional_string(definition.get("teamsAppId"))
+            if teams_app_id is not None and teams_app_id in teams_app_ids:
+                return item
+        return None
     for item in installed:
         definition = item.get("teamsAppDefinition") or {}
         if definition.get("displayName") == display_name:
-            return item
-        teams_app_id = _optional_string(definition.get("teamsAppId"))
-        if teams_app_id is not None and teams_app_id in teams_app_ids:
             return item
     return None
