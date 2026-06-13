@@ -1679,6 +1679,8 @@ class ConnectorSafeOutputService(SafeOutputService):
 
     def _enrich_human_destination_payload(self, *, run_id: str, payload: dict[str, Any]) -> None:
         source_run = self.db.get_agent_run(run_id)
+        explicit_destination_type = str(payload.get("destination_type") or "").strip()
+        explicit_non_dm_route = explicit_destination_type not in {"", "runtime", "dm"}
         for assignment in self.db.list_role_assignments():
             if not _assignment_matches_run_context(assignment, run_id=run_id, source_run=source_run):
                 continue
@@ -1708,6 +1710,8 @@ class ConnectorSafeOutputService(SafeOutputService):
                 payload["destination_type"] = destination_type
             if not payload.get("connector_id"):
                 payload["connector_id"] = self.adapter.config.connector_id
+            if explicit_non_dm_route:
+                return
             self._prefer_human_dm_destination(
                 payload=payload,
                 assignment=assignment,
@@ -1779,6 +1783,18 @@ class ConnectorSafeOutputService(SafeOutputService):
                 raise ValueError(f"response request referenced unknown work item `{work_item_id}`") from exc
         if "conversation_id" in payload:
             _required_string(payload, "destination_ref")
+        destination_type = str(payload.get("destination_type") or "dm")
+        if destination_type != "dm":
+            reason = str(
+                payload.get("route_override_reason")
+                or payload.get("communication_route_override_reason")
+                or ""
+            ).strip()
+            if not reason:
+                raise ValueError(
+                    "non-DM human response cards require `route_override_reason` "
+                    "or `communication_route_override_reason`"
+                )
 
     def _validate_release_notification_payload(self, payload: dict[str, Any]) -> None:
         self.db.get_work_item(_required_string(payload, "work_item_id"))

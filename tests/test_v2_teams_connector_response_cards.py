@@ -108,6 +108,7 @@ def _request_release_approval(
         "conversation_id": conversation_id,
         "destination_ref": "channel-project",
         "destination_type": "channel",
+        "route_override_reason": "Release approval is being exercised in the project channel test fixture.",
         "thread_ref": "thread-release",
         "gate_id": "release_decision_response",
         "response_contract_id": "release-decision-v1",

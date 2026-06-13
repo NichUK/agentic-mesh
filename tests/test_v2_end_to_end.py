@@ -167,6 +167,7 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
                         "conversation_id": conversation.conversation_id,
                         "destination_ref": "channel-project",
                         "destination_type": "channel",
+                        "route_override_reason": "End-to-end fixture keeps release approval in the project channel thread.",
                         "thread_ref": "thread-release-approval",
                         "required_authority": "release_approver",
                         "gate_id": "release_decision_response",

@@ -244,3 +244,71 @@ def test_product_sponsor_ready_creates_dm_response_card_from_channel_source(tmp_
     assert raw_delivery["payload"]["body"].startswith("**Product sign-off:")
     assert raw_delivery["payload"]["recipient_ref"] == "nicholas"
     assert snapshot["counts"]["connector_attention_items"] == 0
+
+
+def test_product_sponsor_ready_preserves_agent_channel_override_with_reason(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_queue_item(
+        queue_item_id="queue-product-signoff-channel",
+        title="Product signoff channel override",
+        summary="Exercise product sign-off route override.",
+        owner_role="product-manager",
+    )
+    db.mark_queue_ready("queue-product-signoff-channel", actor_role="product-manager", reason="Ready to shape.")
+    db.promote_queue_item(
+        queue_item_id="queue-product-signoff-channel",
+        work_item_id="work-product-signoff-channel",
+        owner_role="product-manager",
+    )
+    adapter = LocalTeamsTestAdapter(db, _config())
+    adapter.install()
+    replayed = adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-product-signoff-channel-source",
+            "conversation_ref": "channel-project",
+            "sender_ref": "nicholas",
+            "source_type": "channel",
+            "body": "@AM-Product Manager keep this sign-off in the project thread.",
+            "mentioned_role_refs": ["@AM-Product Manager"],
+            "thread_ref": "thread-product-signoff-channel",
+            "service_url": "https://smba.trafficmanager.net/uk/tenant/",
+        }
+    )
+
+    role = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="product-manager-1",
+        safe_outputs=ConnectorSafeOutputService(db, adapter=adapter),
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="product.mark_sponsor_ready",
+                    payload={
+                        "work_item_id": "work-product-signoff-channel",
+                        "summary": "The product definition is ready for sponsor review.",
+                        "conversation_id": replayed.conversation_id,
+                        "destination_ref": "channel-project",
+                        "destination_type": "channel",
+                        "route_override_reason": "Sponsor explicitly asked to keep this sign-off in the project thread.",
+                    },
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+    receipt = role.run_next_assignment()
+
+    snapshot = db.status_snapshot()
+    request = snapshot["human_response_requests"][0]
+    delivery = snapshot["delivery_records"][0]
+    assert receipt is not None
+    assert request["destination_ref"] == "channel-project"
+    assert request["destination_type"] == "channel"
+    assert delivery["destination_ref"] == "channel-project"
+    assert delivery["destination_type"] == "channel"
+    assert delivery["payload"]["recipient_ref"] is None
+    assert snapshot["counts"]["connector_attention_items"] == 0
