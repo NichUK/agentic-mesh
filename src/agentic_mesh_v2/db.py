@@ -705,6 +705,13 @@ class V2Database:
                 },
             )
 
+    def get_work_proposal_by_safe_output_ref(self, safe_output_ref: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM work_proposals WHERE safe_output_ref = ?",
+            (safe_output_ref,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def create_human_response_request(
         self,
         *,
@@ -3914,19 +3921,29 @@ def _redact_private_role_assignments(rows: list[dict[str, Any]]) -> list[dict[st
     redacted: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
+        if item.get("visibility_scope") == "private":
+            payload = item.get("payload")
+            if isinstance(payload, dict):
+                scrubbed = dict(payload)
+                for key in (
+                    "context",
+                    "question",
+                    "submission_comment",
+                    "message_id",
+                    "receipt_id",
+                    "destination_ref",
+                    "service_url",
+                    "reply_to_id",
+                ):
+                    if key in scrubbed:
+                        scrubbed[key] = "[redacted private conversation]"
+                        scrubbed[f"{key}_redacted"] = True
+                item["payload"] = scrubbed
         if item.get("visibility_scope") == "private" and item.get("assignment_type") == "human_response_followup":
             item["title"] = "[redacted private conversation]"
             item["title_redacted"] = True
             item["summary"] = "[redacted private conversation]"
             item["summary_redacted"] = True
-            payload = item.get("payload")
-            if isinstance(payload, dict):
-                scrubbed = dict(payload)
-                for key in ("question", "submission_comment"):
-                    if key in scrubbed:
-                        scrubbed[key] = "[redacted private conversation]"
-                        scrubbed[f"{key}_redacted"] = True
-                item["payload"] = scrubbed
         redacted.append(item)
     return redacted
 

@@ -151,7 +151,7 @@ def test_memory_safe_output_dedupe_uses_exact_generated_memory_lines(tmp_path: P
     assert len(role_memory) == 1
 
 
-def test_cli_record_safe_output_project_file_updates_role_memory(tmp_path: Path) -> None:
+def test_cli_record_safe_output_project_file_records_memory_intent_without_immediate_effect(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     project_file = _project_file(tmp_path)
     memory_path = tmp_path / "demo-project" / "agentic-mesh" / "roles" / "product-manager" / "MEMORY.md"
@@ -193,16 +193,16 @@ def test_cli_record_safe_output_project_file_updates_role_memory(tmp_path: Path)
         )
         role_memory = db.list_role_memory()
         snapshot = db.status_snapshot()
+        safe_outputs = db.list_safe_output_calls_for_run("run-memory-cli")
     finally:
         db.close()
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert memory_path.exists()
-    assert "Sponsor prefers compact dashboard rows." in memory_path.read_text(encoding="utf-8")
-    assert len(role_memory) == 1
-    assert role_memory[0]["project_id"] == "test-project"
-    assert snapshot["counts"]["role_memory"] == 1
-    assert snapshot["role_memory"][0]["summary"] == "Sponsor prefers compact dashboard rows."
+    assert len(safe_outputs) == 1
+    assert safe_outputs[0]["tool_name"] == "memory.propose_update"
+    assert not memory_path.exists()
+    assert role_memory == []
+    assert snapshot["counts"]["role_memory"] == 0
 
 
 def _project_file(tmp_path: Path) -> Path:

@@ -378,7 +378,7 @@ def test_cli_recorded_document_safe_output_publishes_once_in_role_service(tmp_pa
     assert (document_root / artifacts[0]["path"]).exists()
 
 
-def test_cli_record_safe_output_project_file_publishes_document_immediately(tmp_path: Path) -> None:
+def test_cli_record_safe_output_project_file_records_document_intent_without_immediate_effect(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     document_root = tmp_path / "docs"
     project_file = _project_file(tmp_path, document_root=document_root)
@@ -421,12 +421,15 @@ def test_cli_record_safe_output_project_file_publishes_document_immediately(tmp_
             text=True,
         )
         artifacts = db.list_artifacts()
+        safe_outputs = db.list_safe_output_calls_for_run("run-document-cli-direct")
     finally:
         db.close()
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert len(artifacts) == 1
-    assert (document_root / "work-items" / "work-document-safe-output" / "020-product-definition.md").exists()
+    assert len(safe_outputs) == 1
+    assert safe_outputs[0]["tool_name"] == "document.propose_update"
+    assert artifacts == []
+    assert not (document_root / "work-items" / "work-document-safe-output" / "020-product-definition.md").exists()
 
 
 class CliDocumentWorker:

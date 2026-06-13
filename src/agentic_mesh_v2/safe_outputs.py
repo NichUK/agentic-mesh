@@ -29,6 +29,7 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
         "handoff.request",
         "consult.request",
         "queue.propose_item",
+        "queue.promote",
         "release.request_approval",
         "release.close",
         "quality.approve",
@@ -54,6 +55,7 @@ COMMON_TOOLS: frozenset[str] = frozenset(
         "handoff.request",
         "consult.request",
         "queue.propose_item",
+        "queue.promote",
         "document.propose_update",
         "document.add_review_comment",
         "memory.propose_update",
@@ -123,6 +125,7 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
         "classification",
         "initiated_by",
     ),
+    "queue.promote": ("queue_item_id", "reason"),
     "document.propose_update": ("path", "document_type", "content"),
     "document.add_review_comment": ("path", "comment"),
     "memory.propose_update": ("summary", "provenance_ref"),
@@ -226,6 +229,8 @@ class SafeOutputService:
             self._validate_work_item_evidence_target(call)
         if self.process_effects and call.tool_name == "work_item.mark_ready":
             self._validate_work_item_mark_ready_target(call)
+        if self.process_effects and call.tool_name == "queue.promote":
+            self._validate_queue_promote_target(call)
         if self.process_effects and call.tool_name in {"quality.approve", "quality.request_changes"}:
             self._validate_quality_decision_target(call)
         if self.process_effects and call.tool_name == "release.record_decision":
@@ -271,6 +276,8 @@ class SafeOutputService:
             self._publish_role_memory_update(call_id=call_id, call=call)
         if call.tool_name == "work_item.mark_ready":
             self._mark_work_item_ready(call_id=call_id, run_id=run_id, call=call)
+        if call.tool_name == "queue.promote":
+            self._promote_queue_item(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "implementation.record_change":
             self._record_work_item_evidence(call_id=call_id, call=call, evidence_type="implementation_change")
         if call.tool_name == "test_evidence.record":
@@ -532,6 +539,56 @@ class SafeOutputService:
                 "source_documents": _string_list(call.payload.get("source_documents")),
                 "target_outputs": _string_list(call.payload.get("target_outputs")),
                 "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
+            },
+        )
+
+    def _validate_queue_promote_target(self, call: SafeOutputCall) -> None:
+        queue_item_id = _required_text(call.payload, "queue_item_id")
+        row = self.db.get_queue_item(queue_item_id)
+        if row is None:
+            raise SafeOutputError(f"`queue.promote` referenced unknown queue item `{queue_item_id}`")
+        if row["status"] not in {"queued", "ready", "promoted"}:
+            raise SafeOutputError(
+                f"`queue.promote` requires queue item status queued, ready, or promoted; found `{row['status']}`"
+            )
+
+    def _promote_queue_item(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        queue_item_id = _required_text(call.payload, "queue_item_id")
+        row = self.db.get_queue_item(queue_item_id)
+        if row is None:
+            raise SafeOutputError(f"`queue.promote` referenced unknown queue item `{queue_item_id}`")
+        owner_role = _optional_text(call.payload.get("owner_role")) or str(row["owner_role"])
+        work_item_id = _optional_text(call.payload.get("work_item_id")) or f"work-{_stable_digest(queue_item_id)}"
+        if row.get("linked_work_item_id"):
+            work_item_id = str(row["linked_work_item_id"])
+        elif row["status"] == "queued":
+            self.db.mark_queue_ready(queue_item_id, actor_role=call.role_id, reason=_required_text(call.payload, "reason"))
+            self.db.promote_queue_item(queue_item_id=queue_item_id, work_item_id=work_item_id, owner_role=owner_role)
+        elif row["status"] == "ready":
+            self.db.promote_queue_item(queue_item_id=queue_item_id, work_item_id=work_item_id, owner_role=owner_role)
+
+        assignment_id = f"assignment-{call_id}-queue-promoted"
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        work_item = self.db.get_work_item(work_item_id)
+        self.db.create_role_assignment(
+            assignment_id=assignment_id,
+            role_id=owner_role,
+            work_item_id=work_item_id,
+            source_ref=call_id,
+            title=_optional_text(call.payload.get("title")) or f"Shape: {work_item.title}",
+            summary=_single_line_text(_required_text(call.payload, "reason")),
+            assignment_type="product_shaping",
+            visibility_scope=_optional_text(call.payload.get("context_visibility")) or "project",
+            payload={
+                "safe_output_ref": call_id,
+                "source_run_id": run_id,
+                "source_role": call.role_id,
+                "queue_item_id": queue_item_id,
+                "work_item_id": work_item_id,
+                "current_flow_state": "shaping",
+                "reason": _single_line_text(_required_text(call.payload, "reason")),
+                "allowed_tools": sorted(self.policy.tools_for_role(owner_role)),
             },
         )
 
@@ -1504,6 +1561,10 @@ def _optional_text(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _stable_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 def _string_list(value: object) -> list[str]:

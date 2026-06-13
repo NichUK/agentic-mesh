@@ -195,6 +195,48 @@ def test_product_mark_ready_transitions_work_and_queues_engineering(tmp_path: Pa
     assert "implementation.record_change" in assignments[0]["payload"]["allowed_tools"]
 
 
+def test_queue_promote_creates_shaping_work_and_owner_assignment(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        db.create_queue_item(
+            queue_item_id="queue-promote",
+            title="Promote queued work",
+            summary="Turn captured queue work into a shaping work item.",
+            owner_role="product-manager",
+        )
+        db.create_run(
+            run_id="run-queue-promote",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id=None,
+        )
+        service = SafeOutputService(db)
+        call = SafeOutputCall(
+            role_id="product-manager",
+            tool_name="queue.promote",
+            payload={"queue_item_id": "queue-promote", "reason": "Ready for product shaping."},
+            terminal=True,
+        )
+        call_id = service.record(run_id="run-queue-promote", call=call)
+        service.process_recorded_call(call_id=call_id, run_id="run-queue-promote", call=call)
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    queue_item = snapshot["queue_items"][0]
+    work_item = snapshot["work_items"][0]
+    assignments = snapshot["role_assignments"]
+    assert queue_item["status"] == "promoted"
+    assert queue_item["linked_work_item_id"] == work_item["work_item_id"]
+    assert work_item["state"] == "shaping"
+    assert work_item["owner_role"] == "product-manager"
+    assert len(assignments) == 1
+    assert assignments[0]["role_id"] == "product-manager"
+    assert assignments[0]["work_item_id"] == work_item["work_item_id"]
+    assert assignments[0]["assignment_type"] == "product_shaping"
+
+
 def test_product_mark_ready_rejects_non_shaping_work_before_recording(tmp_path: Path) -> None:
     db = _work_db(tmp_path)
     try:

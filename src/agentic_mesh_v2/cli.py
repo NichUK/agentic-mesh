@@ -554,7 +554,7 @@ def _record_safe_output_cli(db: V2Database, args: argparse.Namespace) -> dict[st
         tool_name=args.tool_name,
         payload=parse_safe_output_payload_json(args.payload_json),
         terminal=bool(args.terminal),
-        service=_safe_output_service_or_none(db, args.project_file),
+        service=_safe_output_service(db, args.project_file, process_effects=False),
     )
 
 
@@ -627,9 +627,14 @@ def _memory_context_loader(project_file: Path | None):
     return load
 
 
-def _safe_output_service(db: V2Database, project_file: Path | None) -> SafeOutputService:
+def _safe_output_service(
+    db: V2Database,
+    project_file: Path | None,
+    *,
+    process_effects: bool = True,
+) -> SafeOutputService:
     if project_file is None:
-        return SafeOutputService(db)
+        return SafeOutputService(db, process_effects=process_effects)
     document_library = load_document_library_config(project_file)
     project_id = load_project_id(project_file)
     memory_resolver = _role_memory_path_resolver(project_file)
@@ -644,7 +649,7 @@ def _safe_output_service(db: V2Database, project_file: Path | None) -> SafeOutpu
     except ValueError:
         teams_config = None
     if teams_config is None:
-        return SafeOutputService(db, **service_kwargs)
+        return SafeOutputService(db, process_effects=process_effects, **service_kwargs)
     secret_root = _project_secret_root(project_file)
     delivery_client = BotFrameworkDeliveryClient(config=teams_config, secret_root=secret_root) if secret_root.exists() else None
     adapter = LocalTeamsTestAdapter(db, teams_config, delivery_client=delivery_client)
@@ -652,6 +657,7 @@ def _safe_output_service(db: V2Database, project_file: Path | None) -> SafeOutpu
     return ConnectorSafeOutputService(
         db,
         adapter=adapter,
+        process_effects=process_effects,
         **service_kwargs,
     )
 

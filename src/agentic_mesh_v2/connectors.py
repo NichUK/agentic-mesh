@@ -1649,14 +1649,17 @@ class ConnectorSafeOutputService(SafeOutputService):
             )
         queue_item_id = f"queue-{_stable_digest(f'{call_id}:queue')}"
         owner_role = _required_string(payload, "suggested_owner")
-        self.db.create_queue_item(
-            queue_item_id=queue_item_id,
-            title=_required_string(payload, "title"),
-            summary=_required_string(payload, "summary"),
-            owner_role=owner_role,
-            source_kind="conversation",
-            source_ref=source_ref,
-        )
+        if self.db.get_queue_item(queue_item_id) is None:
+            self.db.create_queue_item(
+                queue_item_id=queue_item_id,
+                title=_required_string(payload, "title"),
+                summary=_required_string(payload, "summary"),
+                owner_role=owner_role,
+                source_kind="conversation",
+                source_ref=source_ref,
+            )
+        if self.db.get_work_proposal_by_safe_output_ref(call_id) is not None:
+            return
         self.db.record_work_proposal(
             proposal_id=f"proposal-{_stable_digest(f'{queue_item_id}:{call_id}')}",
             queue_item_id=queue_item_id,

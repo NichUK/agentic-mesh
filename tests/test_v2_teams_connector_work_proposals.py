@@ -123,6 +123,60 @@ def test_role_can_promote_private_dm_to_queue_proposal_without_leaking_body(tmp_
     assert "PRIVATE_SENTINEL" not in str(snapshot)
 
 
+def test_queue_proposal_effect_processing_is_idempotent(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    adapter = LocalTeamsTestAdapter(db, _config())
+    adapter.install()
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+
+    replayed = adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-private-proposal-replay",
+            "conversation_ref": "dm-nicholas-product",
+            "sender_ref": "nicholas",
+            "source_type": "dm",
+            "target_role_id": "product-manager",
+            "target_ref": "bot-product-manager",
+            "body": "Please make this tracked work.",
+        }
+    )
+    event = db.status_snapshot()["conversation_events"][0]
+    db.create_run(
+        run_id="run-product-proposal-replay",
+        role_id="product-manager",
+        role_instance_id="product-manager-1",
+        work_item_id=None,
+    )
+    call = SafeOutputCall(
+        role_id="product-manager",
+        tool_name="queue.propose_item",
+        payload={
+            "title": "Replay-safe queue proposal",
+            "summary": "Ensure proposal effects can be replayed safely.",
+            "source_ref": replayed.receipt_id,
+            "source_conversation_id": replayed.conversation_id,
+            "source_conversation_event_id": event["conversation_event_id"],
+            "rationale": "Role service finalization may replay recorded safe-output calls.",
+            "urgency": "normal",
+            "suggested_owner": "product-manager",
+            "work_type": "slice",
+            "classification": "runtime_correctness",
+            "initiated_by": "sponsor:nicholas",
+        },
+        terminal=True,
+    )
+    call_id = service.record(run_id="run-product-proposal-replay", call=call)
+
+    service.process_recorded_call(call_id=call_id, run_id="run-product-proposal-replay", call=call)
+    snapshot = db.status_snapshot()
+
+    assert snapshot["counts"]["queue_items"] == 1
+    assert snapshot["counts"]["work_proposals"] == 1
+    assert snapshot["work_proposals"][0]["safe_output_ref"] == call_id
+
+
 def test_project_channel_free_text_does_not_create_queue_item_by_inference(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()
