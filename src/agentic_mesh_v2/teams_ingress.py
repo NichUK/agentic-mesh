@@ -95,7 +95,7 @@ def serve_teams_ingress(
     ingress_path: str = "/api/messages",
     external_base_url: str | None = None,
 ) -> None:
-    configure_observability()
+    configure_observability("agentic-mesh-v2-teams-ingress")
     TeamsIngressHandler.db_path = db_path
     TeamsIngressHandler.project_file = project_file
     TeamsIngressHandler.ingress_path = ingress_path
