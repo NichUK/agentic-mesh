@@ -1393,6 +1393,14 @@ class LocalTeamsTestAdapter:
         explicit = [str(role) for role in event.get("mentioned_roles", ())]
         refs = [str(ref) for ref in event.get("mentioned_role_refs", ())]
         resolved = list(explicit)
+        target_role_id = event.get("target_role_id")
+        if isinstance(target_role_id, str) and target_role_id.strip():
+            resolved.append(target_role_id.strip())
+        target_ref = event.get("target_ref")
+        if isinstance(target_ref, str) and target_ref.strip():
+            role_id = self._role_for_mention_ref(target_ref.strip())
+            if role_id is not None:
+                resolved.append(role_id)
         for ref in refs:
             resolved.append(self._role_for_mention_ref(ref) or f"unknown:{ref}")
         return tuple(dict.fromkeys(resolved))
