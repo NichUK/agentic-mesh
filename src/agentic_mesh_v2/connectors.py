@@ -1015,6 +1015,8 @@ class LocalTeamsTestAdapter:
             purpose=f"{request_type}.card",
             card=card,
             role_id=role_id,
+            service_url=str(payload.get("service_url") or "") or None,
+            reply_to_id=str(payload.get("reply_to_id") or "") or None,
             outcome=str(payload.get("delivery_outcome") or "sent"),
         )
         self.db.update_human_response_request_delivery(
@@ -1032,6 +1034,8 @@ class LocalTeamsTestAdapter:
         purpose: str,
         card: dict[str, Any],
         role_id: str | None = None,
+        service_url: str | None = None,
+        reply_to_id: str | None = None,
         outcome: str = "sent",
     ) -> str:
         with span("v2.teams.delivery_prepare", connector_id=self.config.connector_id, purpose=purpose):
@@ -1066,10 +1070,19 @@ class LocalTeamsTestAdapter:
             purpose=purpose,
             role_id=role_id,
             idempotency_key=idempotency_key,
-            payload={"card": card, "role_identity": self._delivery_role_identity(role_id)},
+            payload={
+                "body": _card_markdown(card),
+                "card": card,
+                "role_identity": self._delivery_role_identity(role_id),
+                "service_url": service_url,
+                "reply_to_id": reply_to_id,
+            },
             status="pending",
         )
-        self._apply_delivery_outcome(delivery_id=delivery_id, outcome=outcome)
+        if self.delivery_client is not None and service_url:
+            self._send_live_delivery(delivery_id=delivery_id)
+        else:
+            self._apply_delivery_outcome(delivery_id=delivery_id, outcome=outcome)
         return delivery_id
 
     def submit_card_response(
@@ -1477,6 +1490,13 @@ class ConnectorSafeOutputService(SafeOutputService):
         self.adapter = adapter
 
     def record(self, *, run_id: str, call: SafeOutputCall) -> str:
+        if call.tool_name in {
+            "sponsor.ask_question",
+            "product.mark_sponsor_ready",
+            "human_response.request",
+            "release.request_approval",
+        }:
+            self._enrich_human_destination_payload(run_id=run_id, payload=call.payload)
         if call.tool_name == "status.reply":
             self._reject_noop_relevance_reply(run_id=run_id, role_id=call.role_id)
             self._validate_reply_references(call.payload)
@@ -1532,6 +1552,14 @@ class ConnectorSafeOutputService(SafeOutputService):
                 payload=call.payload,
                 request_type="release_approval",
             )
+        if call.tool_name == "product.mark_sponsor_ready" and "conversation_id" in call.payload:
+            self._validate_response_card_payload(call.payload)
+            self.adapter.deliver_response_card(
+                call_id=call_id,
+                role_id=call.role_id,
+                payload=self._product_signoff_card_payload(call),
+                request_type="product_signoff",
+            )
         if call.tool_name in {"release.close", "work_item.close"} and "conversation_id" in call.payload:
             self._validate_release_notification_payload(call.payload)
             close_post_state = self.db.get_work_item(_required_string(call.payload, "work_item_id")).state
@@ -1579,6 +1607,55 @@ class ConnectorSafeOutputService(SafeOutputService):
                 if value and not payload.get(key):
                     payload[key] = value
             return
+
+    def _enrich_human_destination_payload(self, *, run_id: str, payload: dict[str, Any]) -> None:
+        source_run = self.db.get_agent_run(run_id)
+        for assignment in self.db.list_role_assignments():
+            if not _assignment_matches_run_context(assignment, run_id=run_id, source_run=source_run):
+                continue
+            assignment_payload = assignment.get("payload")
+            if not isinstance(assignment_payload, dict):
+                raw_payload = assignment.get("payload_json")
+                if isinstance(raw_payload, str):
+                    try:
+                        assignment_payload = json.loads(raw_payload)
+                    except json.JSONDecodeError:
+                        assignment_payload = {}
+            if not isinstance(assignment_payload, dict):
+                return
+            for key in ("conversation_id", "service_url", "reply_to_id", "thread_ref"):
+                value = assignment_payload.get(key)
+                if value and not payload.get(key):
+                    payload[key] = value
+            destination_ref = assignment_payload.get("destination_ref")
+            if destination_ref and (
+                not payload.get("destination_ref") or str(payload.get("destination_ref")) == "sponsor"
+            ):
+                payload["destination_ref"] = destination_ref
+            destination_type = assignment_payload.get("destination_type")
+            if destination_type and (
+                not payload.get("destination_type") or str(payload.get("destination_type")) == "runtime"
+            ):
+                payload["destination_type"] = destination_type
+            if not payload.get("connector_id"):
+                payload["connector_id"] = self.adapter.config.connector_id
+            return
+
+    def _product_signoff_card_payload(self, call: SafeOutputCall) -> dict[str, Any]:
+        payload = dict(call.payload)
+        work_item_id = _required_string(payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        summary = str(payload.get("summary") or "").strip()
+        payload.setdefault("title", f"Product sign-off: {work_item.title}")
+        payload.setdefault(
+            "question",
+            f"Product shaping is ready for sponsor sign-off. {summary}",
+        )
+        payload.setdefault("response_contract_id", "product-signoff-v1")
+        payload.setdefault("required_authority", "sponsor")
+        payload.setdefault("gate_id", "product_signoff")
+        payload.setdefault("work_item_id", work_item_id)
+        return payload
 
     def _validate_work_proposal_source(self, payload: dict[str, Any]) -> None:
         conversation_event_id = payload.get("source_conversation_event_id")
@@ -1760,6 +1837,54 @@ def _teams_thread_conversation_id(conversation_id: str, reply_to_id: str | None)
     if "@thread.tacv2" not in conversation_id:
         return conversation_id
     return f"{conversation_id};messageid={reply_to_id}"
+
+
+def _card_markdown(card: dict[str, Any]) -> str:
+    lines: list[str] = []
+    title = str(card.get("title") or "").strip()
+    if title:
+        lines.append(f"**{title}**")
+    question = str(card.get("question") or "").strip()
+    if question:
+        if lines:
+            lines.append("")
+        lines.append(question)
+    work_item_id = str(card.get("work_item_id") or "").strip()
+    if work_item_id:
+        lines.append("")
+        lines.append(f"Work item: `{work_item_id}`")
+    request_id = str(card.get("request_id") or "").strip()
+    if request_id:
+        lines.append(f"Response request: `{request_id}`")
+    response_contract_id = str(card.get("response_contract_id") or "").strip()
+    if response_contract_id:
+        lines.append(f"Response contract: `{response_contract_id}`")
+    return "\n".join(lines).strip()
+
+
+def _assignment_matches_run_context(
+    assignment: dict[str, Any],
+    *,
+    run_id: str,
+    source_run: dict[str, Any] | None,
+) -> bool:
+    if assignment.get("run_id") == run_id:
+        return True
+    if source_run is None:
+        return False
+    if assignment.get("status") != "claimed":
+        return False
+    if assignment.get("role_id") != source_run.get("role_id"):
+        return False
+    if assignment.get("role_instance_id") != source_run.get("role_instance_id"):
+        return False
+    run_work_item_id = source_run.get("work_item_id")
+    assignment_work_item_id = assignment.get("work_item_id")
+    return (
+        run_work_item_id is None
+        or assignment_work_item_id is None
+        or assignment_work_item_id == run_work_item_id
+    )
 
 
 def _role_identity_map(value: object) -> dict[str, RoleIdentity]:

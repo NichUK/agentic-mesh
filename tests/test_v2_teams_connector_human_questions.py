@@ -168,3 +168,74 @@ def test_unbound_private_thread_reply_creates_attention(tmp_path: Path) -> None:
     assert snapshot["thread_bindings"][0]["binding_type"] == "teams_thread"
     assert snapshot["thread_bindings"][0]["target_ref"] == "bot-product-manager"
     assert snapshot["conversation_events"][0]["body_preview"] == "[redacted private conversation]"
+
+
+def test_product_sponsor_ready_creates_response_card_from_source_conversation(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_queue_item(
+        queue_item_id="queue-product-signoff",
+        title="Product signoff slice",
+        summary="Exercise product sign-off card delivery.",
+        owner_role="product-manager",
+    )
+    db.mark_queue_ready("queue-product-signoff", actor_role="product-manager", reason="Ready to shape.")
+    db.promote_queue_item(
+        queue_item_id="queue-product-signoff",
+        work_item_id="work-product-signoff",
+        owner_role="product-manager",
+    )
+    adapter = LocalTeamsTestAdapter(db, _config())
+    adapter.install()
+    adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-product-signoff-source",
+            "conversation_ref": "channel-project",
+            "sender_ref": "nicholas",
+            "source_type": "channel",
+            "body": "@AM-Product Manager shape this small dashboard feature.",
+            "mentioned_role_refs": ["@AM-Product Manager"],
+            "thread_ref": "thread-product-signoff",
+            "service_url": "https://smba.trafficmanager.net/uk/tenant/",
+        }
+    )
+
+    role = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="product-manager-1",
+        safe_outputs=ConnectorSafeOutputService(db, adapter=adapter),
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="product.mark_sponsor_ready",
+                    payload={
+                        "work_item_id": "work-product-signoff",
+                        "summary": "The product definition is ready for sponsor review.",
+                    },
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+    receipt = role.run_next_assignment()
+
+    snapshot = db.status_snapshot()
+    request = snapshot["human_response_requests"][0]
+    delivery = snapshot["delivery_records"][0]
+    work_item = db.get_work_item("work-product-signoff")
+    assert receipt is not None
+    assert receipt.terminal_tool == "product.mark_sponsor_ready"
+    assert work_item.state == "waiting_human"
+    assert request["connector_id"] == "teams-agentic-mesh-dev"
+    assert request["request_type"] == "product_signoff"
+    assert request["destination_ref"] == "channel-project"
+    assert request["destination_type"] == "channel"
+    assert request["thread_ref"] == "thread-product-signoff"
+    assert delivery["purpose"] == "product_signoff.card"
+    assert delivery["destination_ref"] == "channel-project"
+    assert delivery["payload"]["card"]["response_contract_id"] == "product-signoff-v1"
+    assert delivery["payload"]["body"].startswith("**Product sign-off:")
+    assert snapshot["counts"]["connector_attention_items"] == 0
