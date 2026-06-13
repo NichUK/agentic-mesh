@@ -177,14 +177,18 @@ class BotFrameworkDeliveryClient:
             )
         app_secret = self._read_secret(identity.secret_ref)
         token = self._token(app_id=app_id, app_secret=app_secret)
-        endpoint = service_url.rstrip("/") + f"/v3/conversations/{urllib.parse.quote(conversation_id, safe='')}/activities"
-        if reply_to_id:
-            endpoint += f"/{urllib.parse.quote(reply_to_id, safe='')}"
+        target_conversation_id = _teams_thread_conversation_id(conversation_id, reply_to_id)
+        target_reply_to_id = None if target_conversation_id != conversation_id else reply_to_id
+        endpoint = service_url.rstrip("/") + f"/v3/conversations/{urllib.parse.quote(target_conversation_id, safe='')}/activities"
+        if target_reply_to_id:
+            endpoint += f"/{urllib.parse.quote(target_reply_to_id, safe='')}"
         payload = {
             "type": "message",
             "text": body,
             "textFormat": "markdown",
         }
+        if reply_to_id:
+            payload["replyToId"] = reply_to_id
         response = self._post_json(endpoint, payload, authorization=f"Bearer {token}")
         if isinstance(response, dict):
             for key in ("id", "activityId"):
@@ -1743,6 +1747,16 @@ def _record_payload(record: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     return {}
+
+
+def _teams_thread_conversation_id(conversation_id: str, reply_to_id: str | None) -> str:
+    if not reply_to_id:
+        return conversation_id
+    if ";messageid=" in conversation_id.casefold():
+        return conversation_id
+    if "@thread.tacv2" not in conversation_id:
+        return conversation_id
+    return f"{conversation_id};messageid={reply_to_id}"
 
 
 def _role_identity_map(value: object) -> dict[str, RoleIdentity]:

@@ -4,6 +4,7 @@ import pytest
 
 from agentic_mesh_v2.connectors import ConnectorConfig
 from agentic_mesh_v2.connectors import ConnectorSafeOutputService
+from agentic_mesh_v2.connectors import BotFrameworkDeliveryClient
 from agentic_mesh_v2.connectors import LocalTeamsTestAdapter
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
@@ -117,6 +118,80 @@ def test_live_delivery_client_sends_and_updates_delivery_record(tmp_path: Path) 
             "reply_to_id": "activity-1",
         }
     ]
+
+
+def test_bot_framework_channel_replies_use_thread_conversation_and_markdown(tmp_path: Path) -> None:
+    config = ConnectorConfig.from_dict(
+        {
+            **{
+                "connector_id": "teams-agentic-mesh-dev",
+                "project_id": "agentic-mesh-dev",
+                "connector_type": "teams",
+                "display_name": "Agentic Mesh Dev Teams",
+                "tenant_id": "tenant-id",
+                "project_team_ref": "team-dev",
+                "default_project_channel_ref": "channel-project",
+                "external_base_url": "http://linuxch:8100",
+                "role_identities": {
+                    "product-manager": {
+                        "external_ref": "product-manager-app-id",
+                        "secret_ref": "product-manager-secret",
+                        "display_name": "AM-Product Manager",
+                        "alias": "product-manager",
+                        "mention_handle": "@AM-Product Manager",
+                        "identity_model": "separate_bot",
+                        "enabled": True,
+                    },
+                },
+                "retention": {
+                    "private_dm_days": 30,
+                    "project_channel_days": 90,
+                    "compacted_summary_days": 365,
+                    "delivery_record_days": 90,
+                    "idempotency_receipt_days": 30,
+                },
+                "team_wide_trigger": "@all-agents",
+            }
+        }
+    )
+    secret_root = tmp_path / "secrets"
+    secret_root.mkdir()
+    (secret_root / "product-manager-app-id").write_text("app-id", encoding="utf-8")
+    (secret_root / "product-manager-secret").write_text("secret", encoding="utf-8")
+
+    class InspectingClient(BotFrameworkDeliveryClient):
+        def __init__(self) -> None:
+            super().__init__(config=config, secret_root=secret_root)
+            self.posts: list[tuple[str, dict[str, object], str]] = []
+
+        def _token(self, *, app_id: str, app_secret: str) -> str:
+            return "token"
+
+        def _post_json(self, url: str, payload: dict[str, object], *, authorization: str) -> dict[str, object]:
+            self.posts.append((url, payload, authorization))
+            return {"id": "teams-message-1"}
+
+    client = InspectingClient()
+    message_id = client.send_message(
+        role_id="product-manager",
+        service_url="https://smba.trafficmanager.net/uk/tenant/",
+        conversation_id="19:channel@thread.tacv2",
+        body="**Markdown** reply.",
+        reply_to_id="1781352964382",
+    )
+
+    assert message_id == "teams-message-1"
+    assert len(client.posts) == 1
+    url, payload, authorization = client.posts[0]
+    assert authorization == "Bearer token"
+    assert "19%3Achannel%40thread.tacv2%3Bmessageid%3D1781352964382/activities" in url
+    assert not url.endswith("/1781352964382")
+    assert payload == {
+        "type": "message",
+        "text": "**Markdown** reply.",
+        "textFormat": "markdown",
+        "replyToId": "1781352964382",
+    }
 
 
 def test_transient_failure_can_retry_to_sent_without_duplicate_success(tmp_path: Path) -> None:
