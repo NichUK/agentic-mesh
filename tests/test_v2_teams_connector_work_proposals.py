@@ -8,6 +8,7 @@ from agentic_mesh_v2.connectors import LocalTeamsTestAdapter
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputError
+from agentic_mesh_v2.safe_outputs import SafeOutputService
 
 
 def _config() -> ConnectorConfig:
@@ -175,6 +176,122 @@ def test_queue_proposal_effect_processing_is_idempotent(tmp_path: Path) -> None:
     assert snapshot["counts"]["queue_items"] == 1
     assert snapshot["counts"]["work_proposals"] == 1
     assert snapshot["work_proposals"][0]["safe_output_ref"] == call_id
+
+
+def test_queue_promote_preserves_source_conversation_for_sponsor_dm_signoff(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    adapter = LocalTeamsTestAdapter(db, _config())
+    adapter.install()
+    connector_outputs = ConnectorSafeOutputService(db, adapter=adapter)
+
+    replayed = adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-promote-from-channel",
+            "conversation_ref": "channel-project",
+            "sender_ref": "nicholas",
+            "source_type": "channel",
+            "body": "@AM-Product Manager please shape this feature.",
+            "mentioned_role_refs": ["@AM-Product Manager"],
+            "thread_ref": "thread-promote",
+            "service_url": "https://smba.trafficmanager.net/uk/tenant/",
+        }
+    )
+    event = db.status_snapshot()["conversation_events"][0]
+    db.create_run(
+        run_id="run-propose-queue",
+        role_id="product-manager",
+        role_instance_id="product-manager-1",
+        work_item_id=None,
+    )
+    connector_outputs.record(
+        run_id="run-propose-queue",
+        call=SafeOutputCall(
+            role_id="product-manager",
+            tool_name="queue.propose_item",
+            payload={
+                "title": "Preserve sponsor route",
+                "summary": "Keep sponsor routing after queue promotion.",
+                "source_ref": replayed.receipt_id,
+                "source_conversation_id": replayed.conversation_id,
+                "source_conversation_event_id": event["conversation_event_id"],
+                "rationale": "Sponsor approvals should be sent as DMs even after queue promotion.",
+                "urgency": "normal",
+                "suggested_owner": "product-manager",
+                "work_type": "slice",
+                "classification": "runtime_fix",
+                "initiated_by": "sponsor:nicholas",
+            },
+            terminal=True,
+        ),
+    )
+    queue_item = db.status_snapshot()["queue_items"][0]
+
+    db.create_run(
+        run_id="run-promote-queue",
+        role_id="delivery-manager",
+        role_instance_id="delivery-manager-1",
+        work_item_id=None,
+    )
+    core_outputs = SafeOutputService(db)
+    promote_call = SafeOutputCall(
+        role_id="delivery-manager",
+        tool_name="queue.promote",
+        payload={"queue_item_id": queue_item["queue_item_id"], "reason": "Ready for product shaping."},
+        terminal=True,
+    )
+    promote_call_id = core_outputs.record(run_id="run-promote-queue", call=promote_call)
+    core_outputs.process_recorded_call(call_id=promote_call_id, run_id="run-promote-queue", call=promote_call)
+    assignment = next(
+        item
+        for item in db.status_snapshot()["role_assignments"]
+        if item["assignment_type"] == "product_shaping"
+    )
+    payload = assignment["payload"]
+
+    assert payload["conversation_id"] == replayed.conversation_id
+    assert payload["conversation_event_id"] == event["conversation_event_id"]
+    assert payload["service_url"] == "https://smba.trafficmanager.net/uk/tenant/"
+    assert payload["destination_ref"] == "channel-project"
+    assert payload["destination_type"] == "channel"
+
+    with db.connection:
+        db.connection.execute(
+            """
+            UPDATE role_assignments
+            SET status = 'claimed',
+                role_instance_id = 'product-manager-1'
+            WHERE assignment_id = ?
+            """,
+            (assignment["assignment_id"],),
+        )
+    db.create_run(
+        run_id="run-product-signoff",
+        role_id="product-manager",
+        role_instance_id="product-manager-1",
+        work_item_id=assignment["work_item_id"],
+    )
+    connector_outputs.record(
+        run_id="run-product-signoff",
+        call=SafeOutputCall(
+            role_id="product-manager",
+            tool_name="product.mark_sponsor_ready",
+            payload={
+                "work_item_id": assignment["work_item_id"],
+                "summary": "Product shaping is ready for sponsor sign-off.",
+            },
+            terminal=True,
+        ),
+    )
+
+    request = db.status_snapshot()["human_response_requests"][0]
+    delivery = db.get_delivery_record(str(request["delivery_ref"]))
+    assert request["destination_type"] == "dm"
+    assert request["destination_ref"].startswith("dm-")
+    assert delivery is not None
+    assert delivery["destination_type"] == "dm"
+    assert delivery["payload"]["recipient_ref"] == "nicholas"
 
 
 def test_project_channel_free_text_does_not_create_queue_item_by_inference(tmp_path: Path) -> None:

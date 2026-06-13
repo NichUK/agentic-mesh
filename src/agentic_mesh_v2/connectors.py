@@ -609,6 +609,10 @@ class LocalTeamsTestAdapter:
                 payload={
                     "source_type": source_type,
                     "message_id": message_id,
+                    "service_url": event.get("service_url"),
+                    "destination_ref": external_conversation_ref,
+                    "destination_type": source_type,
+                    "reply_to_id": event.get("reply_to_id") or message_id,
                     "mentioned_roles": list(mentioned_roles),
                     "route_type": route_type,
                     "channel_scope": channel_binding.__dict__ if channel_binding else None,
@@ -1719,6 +1723,18 @@ class ConnectorSafeOutputService(SafeOutputService):
         assignment_payload: dict[str, Any],
     ) -> None:
         if str(payload.get("destination_type") or "") == "dm":
+            if payload.get("recipient_ref"):
+                return
+            recipient_ref = _sponsor_ref_from_assignment_payload(self.db, assignment_payload)
+            if recipient_ref:
+                payload["recipient_ref"] = recipient_ref
+                if not payload.get("destination_ref") or str(payload.get("destination_ref")) in {"sponsor", "runtime"}:
+                    payload["destination_ref"] = _logical_dm_ref(
+                        connector_id=self.adapter.config.connector_id,
+                        role_id=str(assignment.get("role_id") or assignment_payload.get("target_role") or ""),
+                        recipient_ref=recipient_ref,
+                    )
+                payload.pop("reply_to_id", None)
             return
         recipient_ref = _sponsor_ref_from_assignment_payload(self.db, assignment_payload)
         if not recipient_ref:

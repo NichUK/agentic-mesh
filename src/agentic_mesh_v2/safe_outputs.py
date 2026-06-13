@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -698,10 +699,29 @@ class SafeOutputService:
         if self.db.get_role_assignment(assignment_id) is not None:
             return
         work_item = self.db.get_work_item(work_item_id)
+        proposal = self.db.get_latest_work_proposal_for_queue_item(queue_item_id)
+        source_conversation_event_id = proposal.get("source_conversation_event_id") if proposal else None
+        source_conversation_id = proposal.get("source_conversation_id") if proposal else None
+        source_receipt_id = proposal.get("source_receipt_id") if proposal else None
+        source_event_payload: dict[str, object] = {}
+        if source_conversation_event_id:
+            source_event = self.db.get_conversation_event(str(source_conversation_event_id))
+            if source_event is not None:
+                raw_payload = source_event.get("payload")
+                if isinstance(raw_payload, dict):
+                    source_event_payload = raw_payload
+                elif isinstance(source_event.get("payload_json"), str):
+                    try:
+                        decoded = json.loads(str(source_event["payload_json"]))
+                    except json.JSONDecodeError:
+                        decoded = {}
+                    if isinstance(decoded, dict):
+                        source_event_payload = decoded
         self.db.create_role_assignment(
             assignment_id=assignment_id,
             role_id=owner_role,
             work_item_id=work_item_id,
+            conversation_id=str(source_conversation_id) if source_conversation_id else None,
             source_ref=call_id,
             title=_optional_text(call.payload.get("title")) or f"Shape: {work_item.title}",
             summary=_single_line_text(_required_text(call.payload, "reason")),
@@ -715,6 +735,14 @@ class SafeOutputService:
                 "work_item_id": work_item_id,
                 "current_flow_state": "shaping",
                 "reason": _single_line_text(_required_text(call.payload, "reason")),
+                "conversation_id": str(source_conversation_id) if source_conversation_id else None,
+                "conversation_event_id": str(source_conversation_event_id) if source_conversation_event_id else None,
+                "receipt_id": str(source_receipt_id) if source_receipt_id else None,
+                "source_conversation_event_id": str(source_conversation_event_id) if source_conversation_event_id else None,
+                "service_url": source_event_payload.get("service_url"),
+                "destination_ref": source_event_payload.get("destination_ref"),
+                "destination_type": source_event_payload.get("destination_type"),
+                "reply_to_id": source_event_payload.get("reply_to_id"),
                 "allowed_tools": sorted(self.policy.tools_for_role(owner_role)),
             },
         )

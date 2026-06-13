@@ -712,6 +712,19 @@ class V2Database:
         ).fetchone()
         return _row_to_dict(row) if row is not None else None
 
+    def get_latest_work_proposal_for_queue_item(self, queue_item_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM work_proposals
+            WHERE queue_item_id = ?
+            ORDER BY created_at DESC, proposal_id DESC
+            LIMIT 1
+            """,
+            (queue_item_id,),
+        ).fetchone()
+        return _row_to_dict(row) if row is not None else None
+
     def create_human_response_request(
         self,
         *,
