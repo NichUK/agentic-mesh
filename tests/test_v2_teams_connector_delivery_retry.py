@@ -76,6 +76,49 @@ def test_duplicate_outbound_send_reuses_delivery_without_new_attempt(tmp_path: P
     assert snapshot["delivery_attempts"][0]["status"] == "sent"
 
 
+def test_live_delivery_client_sends_and_updates_delivery_record(tmp_path: Path) -> None:
+    class FakeLiveDeliveryClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def send_message(self, **kwargs: object) -> str:
+            self.calls.append(dict(kwargs))
+            return "real-teams-message-1"
+
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    client = FakeLiveDeliveryClient()
+    adapter = LocalTeamsTestAdapter(db, _config(), delivery_client=client)  # type: ignore[arg-type]
+    adapter.install()
+
+    delivery_id = adapter.send_message(
+        source_ref="safe-output-call-live",
+        destination_ref="channel-project",
+        destination_type="channel",
+        purpose="status.reply",
+        body="Live reply.",
+        role_id="product-manager",
+        service_url="https://smba.trafficmanager.net/uk/tenant/",
+        reply_to_id="activity-1",
+    )
+
+    snapshot = db.status_snapshot()
+    delivery = db.get_delivery_record(delivery_id)
+    assert delivery is not None
+    assert delivery["status"] == "sent"
+    assert delivery["external_message_id"] == "real-teams-message-1"
+    assert snapshot["counts"]["delivery_attempts"] == 1
+    assert client.calls == [
+        {
+            "role_id": "product-manager",
+            "service_url": "https://smba.trafficmanager.net/uk/tenant/",
+            "conversation_id": "channel-project",
+            "body": "Live reply.",
+            "reply_to_id": "activity-1",
+        }
+    ]
+
+
 def test_transient_failure_can_retry_to_sent_without_duplicate_success(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()

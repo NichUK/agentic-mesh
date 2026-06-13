@@ -744,7 +744,7 @@ class LocalTeamsTestAdapter:
             delivery = self.db.get_delivery_record(delivery_id)
             if delivery is None:
                 raise ValueError(f"unknown delivery `{delivery_id}`")
-            payload = json.loads(str(delivery["payload_json"]))
+            payload = _record_payload(delivery)
             self.db.update_delivery_record(delivery_id, status="sending")
             attempt_number = self.db.count_delivery_attempts(delivery_id) + 1
             external_message_id = None
@@ -1728,6 +1728,18 @@ def _permission_next_action(capability: str, status: str) -> str:
         f"Connector capability `{capability}` is missing. Complete setup/admin consent "
         "or correct the project/team/channel/role binding before retrying."
     )
+
+
+def _record_payload(record: dict[str, Any]) -> dict[str, Any]:
+    payload = record.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    payload_json = record.get("payload_json")
+    if isinstance(payload_json, str) and payload_json.strip():
+        value = json.loads(payload_json)
+        if isinstance(value, dict):
+            return value
+    return {}
 
 
 def _role_identity_map(value: object) -> dict[str, RoleIdentity]:
