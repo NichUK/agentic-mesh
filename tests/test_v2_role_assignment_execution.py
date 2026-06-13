@@ -195,6 +195,117 @@ def test_product_mark_ready_transitions_work_and_queues_engineering(tmp_path: Pa
     assert "implementation.record_change" in assignments[0]["payload"]["allowed_tools"]
 
 
+def test_product_mark_sponsor_ready_waits_for_sponsor_signoff(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.create_run(
+            run_id="run-product-sponsor-ready",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-runtime-execution",
+        )
+        call_id = SafeOutputService(db).record(
+            run_id="run-product-sponsor-ready",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="product.mark_sponsor_ready",
+                payload={
+                    "work_item_id": "work-runtime-execution",
+                    "summary": "Product shaping is complete and ready for sponsor sign-off.",
+                },
+            ),
+        )
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    work_item = snapshot["work_items"][0]
+    human_request = snapshot["human_response_requests"][0]
+    assert work_item["state"] == "waiting_human"
+    assert work_item["current_role"] == "sponsor"
+    assert work_item["attention_owner"] == "sponsor"
+    assert work_item["reason_class"] == "product_signoff_required"
+    assert work_item["next_action"] == "Sponsor sign-off is required before downstream implementation starts."
+    assert human_request["source_ref"] == call_id
+    assert human_request["work_item_id"] == "work-runtime-execution"
+    assert human_request["request_type"] == "product_signoff"
+    assert human_request["response_contract_id"] == "product-signoff-v1"
+
+
+def test_sponsor_question_waits_linked_work_item_for_human_answer(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.create_run(
+            run_id="run-sponsor-question",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-runtime-execution",
+        )
+        call_id = SafeOutputService(db).record(
+            run_id="run-sponsor-question",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="sponsor.ask_question",
+                payload={
+                    "question": "Should the dashboard redesign include compact data rows?",
+                    "reason": "Product scope needs sponsor clarification.",
+                },
+                terminal=True,
+            ),
+        )
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    work_item = snapshot["work_items"][0]
+    human_request = snapshot["human_response_requests"][0]
+    assert work_item["state"] == "waiting_human"
+    assert work_item["attention_owner"] == "sponsor"
+    assert work_item["reason_class"] == "sponsor_question"
+    assert work_item["next_action"] == "Should the dashboard redesign include compact data rows?"
+    assert human_request["source_ref"] == call_id
+    assert human_request["work_item_id"] == "work-runtime-execution"
+    assert human_request["request_type"] == "sponsor_question"
+
+
+def test_product_mark_sponsor_ready_replay_is_idempotent(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.create_run(
+            run_id="run-product-sponsor-ready-replay",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-runtime-execution",
+        )
+        call = SafeOutputCall(
+            role_id="product-manager",
+            tool_name="product.mark_sponsor_ready",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "summary": "Product shaping is complete and ready for sponsor sign-off.",
+            },
+        )
+        call_id = SafeOutputService(db, process_effects=False).record(
+            run_id="run-product-sponsor-ready-replay",
+            call=call,
+        )
+        service = SafeOutputService(db)
+        service.process_recorded_call(call_id=call_id, run_id="run-product-sponsor-ready-replay", call=call)
+        service.process_recorded_call(call_id=call_id, run_id="run-product-sponsor-ready-replay", call=call)
+        snapshot = db.status_snapshot()
+        transition_events = [
+            event
+            for event in db.list_events("work-runtime-execution")
+            if event["event_type"] == "work_item.transitioned"
+        ]
+    finally:
+        db.close()
+
+    assert snapshot["work_items"][0]["state"] == "waiting_human"
+    assert len(snapshot["human_response_requests"]) == 1
+    assert sum(1 for event in transition_events if event["payload"]["to_state"] == "waiting_human") == 1
+
+
 def test_queue_promote_creates_shaping_work_and_owner_assignment(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     try:

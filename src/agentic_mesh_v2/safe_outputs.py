@@ -241,6 +241,8 @@ class SafeOutputService:
             self._validate_work_item_close_target(call)
         if self.process_effects and call.tool_name == "report.blocked":
             self._validate_optional_work_item_target(run_id=run_id, call=call)
+        if self.process_effects and call.tool_name == "product.mark_sponsor_ready":
+            self._validate_product_sponsor_ready_target(call)
         if self.process_effects and call.tool_name == "work_item.reopen":
             self._validate_work_item_reopen_target(call)
         if self.process_effects and call.tool_name == "work_item.supersede":
@@ -286,10 +288,24 @@ class SafeOutputService:
             self._approve_quality(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "quality.request_changes":
             self._request_quality_changes(call)
+        if call.tool_name == "sponsor.ask_question":
+            self._ask_sponsor_question(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "human_response.request":
-            self._record_human_response_request(call_id=call_id, call=call, request_type="human_response")
+            self._record_human_response_request(
+                call_id=call_id,
+                run_id=run_id,
+                call=call,
+                request_type="human_response",
+            )
+        if call.tool_name == "product.mark_sponsor_ready":
+            self._mark_product_sponsor_ready(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "release.request_approval":
-            self._record_human_response_request(call_id=call_id, call=call, request_type="release_approval")
+            self._record_human_response_request(
+                call_id=call_id,
+                run_id=run_id,
+                call=call,
+                request_type="release_approval",
+            )
         if call.tool_name == "release.record_decision":
             self._record_release_decision(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "release.record_no_deployment":
@@ -421,6 +437,13 @@ class SafeOutputService:
                 f"`work_item.mark_ready` requires work item state `shaping`, found `{work_item.state}`"
             )
 
+    def _validate_product_sponsor_ready_target(self, call: SafeOutputCall) -> None:
+        work_item = self.db.get_work_item(_required_text(call.payload, "work_item_id"))
+        if work_item.state not in {"shaping", "waiting_human"}:
+            raise SafeOutputError(
+                f"`product.mark_sponsor_ready` requires work item state `shaping` or `waiting_human`, found `{work_item.state}`"
+            )
+
     def _validate_optional_work_item_target(self, *, run_id: str, call: SafeOutputCall) -> None:
         work_item_id = _work_item_id_from_payload_or_run(self.db, run_id=run_id, call=call)
         if work_item_id is None:
@@ -540,6 +563,103 @@ class SafeOutputService:
                 "target_outputs": _string_list(call.payload.get("target_outputs")),
                 "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
             },
+        )
+
+    def _mark_product_sponsor_ready(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        work_item_id = _required_text(call.payload, "work_item_id")
+        work_item = self.db.get_work_item(work_item_id)
+        summary = _single_line_text(_required_text(call.payload, "summary"))
+        sponsor_call = SafeOutputCall(
+            role_id=call.role_id,
+            tool_name="human_response.request",
+            payload={
+                **call.payload,
+                "title": _optional_text(call.payload.get("title")) or f"Product sign-off: {work_item.title}",
+                "question": _optional_text(call.payload.get("question"))
+                or f"Product shaping is ready for sponsor sign-off. {summary}",
+                "response_contract_id": _optional_text(call.payload.get("response_contract_id"))
+                or "product-signoff-v1",
+                "required_authority": _optional_text(call.payload.get("required_authority")) or "sponsor",
+                "destination_ref": _optional_text(call.payload.get("destination_ref")) or "sponsor",
+                "destination_type": _optional_text(call.payload.get("destination_type")) or "runtime",
+                "gate_id": _optional_text(call.payload.get("gate_id")) or "product_signoff",
+            },
+        )
+        self._record_human_response_request(
+            call_id=call_id,
+            run_id=run_id,
+            call=sponsor_call,
+            request_type="product_signoff",
+        )
+        self._transition_work_item_waiting_human(
+            work_item_id=work_item_id,
+            actor_role=call.role_id,
+            reason=summary,
+            reason_class="product_signoff_required",
+            next_action="Sponsor sign-off is required before downstream implementation starts.",
+        )
+
+    def _ask_sponsor_question(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        sponsor_call = SafeOutputCall(
+            role_id=call.role_id,
+            tool_name="human_response.request",
+            payload={
+                **call.payload,
+                "title": _optional_text(call.payload.get("title")) or "Sponsor question",
+                "response_contract_id": _optional_text(call.payload.get("response_contract_id"))
+                or "sponsor-question-v1",
+                "required_authority": _optional_text(call.payload.get("required_authority")) or "sponsor",
+                "destination_ref": _optional_text(call.payload.get("destination_ref")) or "sponsor",
+                "destination_type": _optional_text(call.payload.get("destination_type")) or "runtime",
+                "gate_id": _optional_text(call.payload.get("gate_id")) or "sponsor_question",
+            },
+        )
+        self._record_human_response_request(
+            call_id=call_id,
+            run_id=run_id,
+            call=sponsor_call,
+            request_type="sponsor_question",
+        )
+        work_item_id = _work_item_id_from_payload_or_run(self.db, run_id=run_id, call=call)
+        if work_item_id is None:
+            return
+        self._transition_work_item_waiting_human(
+            work_item_id=work_item_id,
+            actor_role=call.role_id,
+            reason=_required_text(call.payload, "reason"),
+            reason_class="sponsor_question",
+            next_action=_required_text(call.payload, "question"),
+        )
+
+    def _transition_work_item_waiting_human(
+        self,
+        *,
+        work_item_id: str,
+        actor_role: str,
+        reason: str,
+        reason_class: str,
+        next_action: str,
+    ) -> None:
+        try:
+            work_item = self.db.get_work_item(work_item_id)
+        except ValueError:
+            return
+        if work_item.state == "waiting_human":
+            return
+        if "waiting_human" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
+            return
+        self.db.transition_work_item(
+            TransitionRequest(
+                work_item_id=work_item_id,
+                from_state=work_item.state,
+                to_state="waiting_human",
+                actor_role=actor_role,
+                reason=reason,
+                owner="sponsor",
+                reason_class=reason_class,
+                next_action=next_action,
+                retryable=False,
+            )
         )
 
     def _validate_queue_promote_target(self, call: SafeOutputCall) -> None:
@@ -936,13 +1056,14 @@ class SafeOutputService:
         self,
         *,
         call_id: str,
+        run_id: str,
         call: SafeOutputCall,
         request_type: str,
     ) -> None:
         request_id = _human_response_request_id(call_id)
         if self.db.get_human_response_request(request_id) is not None:
             return
-        work_item_id = _optional_text(call.payload.get("work_item_id"))
+        work_item_id = _work_item_id_from_payload_or_run(self.db, run_id=run_id, call=call)
         title = _optional_text(call.payload.get("title")) or (
             "Release approval requested"
             if request_type == "release_approval"
