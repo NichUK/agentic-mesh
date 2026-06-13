@@ -645,6 +645,13 @@ class SafeOutputService:
         except ValueError:
             return
         if work_item.state == "waiting_human":
+            self.db.set_work_item_attention(
+                work_item_id=work_item_id,
+                owner="sponsor",
+                reason_class=reason_class,
+                next_action=next_action,
+                retryable=False,
+            )
             return
         if "waiting_human" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
             return

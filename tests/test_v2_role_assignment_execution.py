@@ -268,6 +268,50 @@ def test_sponsor_question_waits_linked_work_item_for_human_answer(tmp_path: Path
     assert human_request["request_type"] == "sponsor_question"
 
 
+def test_sponsor_question_refreshes_existing_human_wait_next_action(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    try:
+        db.create_run(
+            run_id="run-sponsor-question-refresh",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-runtime-execution",
+        )
+        service = SafeOutputService(db)
+        service.record(
+            run_id="run-sponsor-question-refresh",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="product.mark_sponsor_ready",
+                payload={
+                    "work_item_id": "work-runtime-execution",
+                    "summary": "Product shaping is complete and ready for sponsor sign-off.",
+                },
+            ),
+        )
+        service.record(
+            run_id="run-sponsor-question-refresh",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="sponsor.ask_question",
+                payload={
+                    "question": "Should the dashboard redesign include compact data rows?",
+                    "reason": "Product scope needs sponsor clarification.",
+                },
+                terminal=True,
+            ),
+        )
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    work_item = snapshot["work_items"][0]
+    assert work_item["state"] == "waiting_human"
+    assert work_item["reason_class"] == "sponsor_question"
+    assert work_item["next_action"] == "Should the dashboard redesign include compact data rows?"
+    assert len(snapshot["human_response_requests"]) == 2
+
+
 def test_product_mark_sponsor_ready_replay_is_idempotent(tmp_path: Path) -> None:
     db = _work_db(tmp_path)
     try:

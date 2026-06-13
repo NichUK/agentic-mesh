@@ -2366,6 +2366,50 @@ class V2Database:
             )
         return self.get_work_item(request.work_item_id)
 
+    def set_work_item_attention(
+        self,
+        *,
+        work_item_id: str,
+        owner: str,
+        reason_class: str,
+        next_action: str,
+        retryable: bool,
+    ) -> None:
+        self.get_work_item(work_item_id)
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE work_items
+                SET current_role = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE work_item_id = ?
+                """,
+                (owner, work_item_id),
+            )
+            self.connection.execute(
+                """
+                INSERT INTO work_item_attention(work_item_id, owner, reason_class, next_action, retryable)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(work_item_id) DO UPDATE SET
+                  owner = excluded.owner,
+                  reason_class = excluded.reason_class,
+                  next_action = excluded.next_action,
+                  retryable = excluded.retryable,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (work_item_id, owner, reason_class, next_action, 1 if retryable else 0),
+            )
+            self.append_event(
+                "work_item.attention_updated",
+                "work_item",
+                work_item_id,
+                {
+                    "owner": owner,
+                    "reason_class": reason_class,
+                    "retryable": retryable,
+                },
+            )
+
     def block_work_item_with_evidence(
         self,
         *,
