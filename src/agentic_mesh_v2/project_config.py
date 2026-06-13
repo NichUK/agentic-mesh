@@ -109,6 +109,7 @@ def load_teams_connector_config(project_file: Path, *, external_base_url: str | 
             "project_id": project_id,
             "connector_type": "teams",
             "display_name": f"{_non_empty_string(raw.get('name'), default=project_id)} Teams",
+            "tenant_id": _non_empty_string(teams.get("tenant_id"), default=""),
             "project_team_ref": team_ref,
             "default_project_channel_ref": project_channel_ref,
             "external_base_url": external_base_url

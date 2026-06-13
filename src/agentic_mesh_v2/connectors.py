@@ -67,6 +67,7 @@ class ConnectorConfig:
     project_id: str
     connector_type: str
     display_name: str
+    tenant_id: str | None
     project_team_ref: str
     default_project_channel_ref: str
     external_base_url: str
@@ -111,6 +112,7 @@ class ConnectorConfig:
             project_id=_required_string(raw, "project_id"),
             connector_type=_required_string(raw, "connector_type"),
             display_name=_required_string(raw, "display_name"),
+            tenant_id=str(raw["tenant_id"]).strip() if isinstance(raw.get("tenant_id"), str) and raw["tenant_id"].strip() else None,
             project_team_ref=_required_string(raw, "project_team_ref"),
             default_project_channel_ref=default_channel_ref,
             external_base_url=_required_string(raw, "external_base_url"),
@@ -222,8 +224,9 @@ class BotFrameworkDeliveryClient:
                 "scope": "https://api.botframework.com/.default",
             }
         ).encode("utf-8")
+        authority = self.config.tenant_id or "botframework.com"
         request = urllib.request.Request(
-            "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
+            f"https://login.microsoftonline.com/{urllib.parse.quote(authority, safe='')}/oauth2/v2.0/token",
             data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
