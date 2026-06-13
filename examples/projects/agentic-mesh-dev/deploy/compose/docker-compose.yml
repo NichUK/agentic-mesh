@@ -5,6 +5,7 @@ x-agentic-mesh-env: &agentic-mesh-env
   AGENTIC_MESH_STATE_ROOT: /mesh/project/state/v2
   AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
   AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}
+  CODEX_HOME: /mesh/worker-auth/codex
   OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
   OTEL_EXPORTER_OTLP_INSECURE: "true"
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc
@@ -14,6 +15,7 @@ x-agentic-mesh-volumes: &agentic-mesh-volumes
   - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
   - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
   - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
+  - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
 
 x-agentic-mesh-service: &agentic-mesh-service
   image: agentic-mesh:local

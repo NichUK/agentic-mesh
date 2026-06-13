@@ -18,7 +18,9 @@ def test_dogfood_compose_runs_status_server_with_project_file() -> None:
     assert "serve --host 0.0.0.0 --port 8080" in command
     assert "--project-file /mesh/project/agentic-mesh/project.yaml" in command
     assert service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project.yaml"
+    assert service["environment"]["CODEX_HOME"] == "/mesh/worker-auth/codex"
     assert "/mesh/project" in "\n".join(service["volumes"])
+    assert "/mesh/worker-auth/codex" in "\n".join(service["volumes"])
 
 
 def test_dogfood_compose_runs_project_supervisor_service() -> None:

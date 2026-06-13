@@ -8,6 +8,7 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 : "${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:=/home/nich/agentic-mesh}"
 : "${AGENTIC_MESH_SYSTEM_HOST_PATH:=/home/nich/agentic-mesh}"
 : "${AGENTIC_MESH_PROJECT_HOST_PATH:=/home/nich/agentic-mesh/examples/projects/agentic-mesh-dev}"
+: "${AGENTIC_MESH_CODEX_HOME_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/worker_mounts/codex-agentic-mesh-dev-team-home-q}"
 : "${AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH:=/home/nich/agentic-mesh/config/otel/collector.yaml}"
 : "${AGENTIC_MESH_URL_ROOT:=http://linuxch:8100}"
 
@@ -15,6 +16,7 @@ export AGENTIC_MESH_WORKSPACE_HOST_PATH
 export AGENTIC_MESH_RUNTIME_BUILD_CONTEXT
 export AGENTIC_MESH_SYSTEM_HOST_PATH
 export AGENTIC_MESH_PROJECT_HOST_PATH
+export AGENTIC_MESH_CODEX_HOME_HOST_PATH
 export AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH
 export AGENTIC_MESH_URL_ROOT
 
