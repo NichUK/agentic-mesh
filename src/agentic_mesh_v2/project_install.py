@@ -724,6 +724,29 @@ class ProjectInstaller:
     ) -> TeamsAppPackage | None:
         if self.teams_app_packages.get(role_id) is not None:
             return self.teams_app_packages[role_id]
+        existing = self._find_published_teams_app_by_display_name(display_name)
+        if existing is not None:
+            package = TeamsAppPackage(
+                role_id=role_id,
+                display_name=display_name,
+                teams_app_id=existing,
+            )
+            self.teams_app_packages[role_id] = package
+            self.expected_team_app_ids.add(existing)
+            self.expected_team_app_names.add(display_name)
+            if self.teams_app_package_root is not None:
+                self.teams_app_package_root.mkdir(parents=True, exist_ok=True)
+                _write_published_teams_apps(self.teams_app_package_root, self.teams_app_packages)
+            self.operations.append(
+                InstallOperation(
+                    action="publish_teams_app",
+                    target=display_name,
+                    status="reused",
+                    detail="Found an existing published Teams app in the organization app catalog.",
+                    external_id=existing,
+                )
+            )
+            return package
         if self.teams_app_package_root is None:
             return None
         self.teams_app_package_root.mkdir(parents=True, exist_ok=True)
@@ -788,6 +811,26 @@ class ProjectInstaller:
             )
         )
         return package
+
+    def _find_published_teams_app_by_display_name(self, display_name: str) -> str | None:
+        query = urllib.parse.urlencode(
+            {
+                "$filter": "distributionMethod eq 'organization'",
+                "$expand": "appDefinitions",
+            }
+        )
+        try:
+            catalog = self.graph.request("GET", f"/appCatalogs/teamsApps?{query}")
+        except GraphRequestError:
+            return None
+        for item in catalog.get("value", []):
+            definitions = item.get("appDefinitions")
+            if not isinstance(definitions, list):
+                continue
+            for definition in definitions:
+                if isinstance(definition, dict) and definition.get("displayName") == display_name:
+                    return _optional_string(item.get("id"))
+        return None
 
     def _detect_stale_v1_installs(self, *, team_id: str | None) -> None:
         if team_id is None:

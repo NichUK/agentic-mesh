@@ -65,6 +65,8 @@ class FakeGraphClient:
                 "appId": "bot-created-app-id",
                 "displayName": body["displayName"] if body is not None else "created",
             }
+        if path.startswith("/appCatalogs/teamsApps?"):
+            return {"value": []}
         if path.startswith("/teams/team-dev-agentic-mesh/installedApps"):
             if method == "POST":
                 self.installed_apps.append(
@@ -346,3 +348,41 @@ def test_project_installer_can_generate_and_publish_missing_gateway_package(tmp_
         for item in result["operations"]
     )
     assert (tmp_path / "teams-apps" / "gateway-agentic-mesh.zip").exists()
+
+
+def test_project_installer_reuses_published_gateway_when_package_manifest_is_missing(tmp_path: Path) -> None:
+    class CatalogGraphClient(FakeGraphClient):
+        def request(self, method: str, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
+            if path.startswith("/appCatalogs/teamsApps?"):
+                self.requests.append((method, path, body))
+                return {
+                    "value": [
+                        {
+                            "id": "teams-app-existing-gateway",
+                            "appDefinitions": [{"displayName": "AM-Agentic Mesh"}],
+                        }
+                    ]
+                }
+            return super().request(method, path, body=body)
+
+    graph = CatalogGraphClient(fail_personal_installs=False)
+    root = _package_root(tmp_path)
+    result = ProjectInstaller(
+        graph_client=graph,
+        project_config=_project_config(),
+        organization_config={},
+        options=InstallOptions(apply=True, allow_register_apps=True, allow_install_apps=True),
+        teams_app_package_root=root,
+    ).run()
+
+    assert not any(
+        request[0] == "POST" and request[1] == "/appCatalogs/teamsApps"
+        for request in graph.requests
+    )
+    assert any(
+        item["action"] == "publish_teams_app"
+        and item["target"] == "AM-Agentic Mesh"
+        and item["status"] == "reused"
+        and item["external_id"] == "teams-app-existing-gateway"
+        for item in result["operations"]
+    )
