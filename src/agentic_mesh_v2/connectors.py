@@ -197,6 +197,54 @@ class BotFrameworkDeliveryClient:
                     return value.strip()
         return f"bot-framework-message-{_stable_digest(endpoint + body)}"
 
+    def send_personal_message(
+        self,
+        *,
+        role_id: str,
+        service_url: str,
+        recipient_ref: str,
+        body: str,
+    ) -> str:
+        identity = self.config.role_identities.get(role_id)
+        if identity is None:
+            raise BotFrameworkDeliveryError(
+                f"unknown role identity `{role_id}` for Bot Framework delivery",
+                outcome="failed_permanent",
+                error_class="unknown_role_identity",
+            )
+        app_id = self._read_secret(identity.external_ref)
+        if not identity.secret_ref:
+            raise BotFrameworkDeliveryError(
+                f"role identity `{role_id}` does not define a bot secret reference",
+                outcome="failed_permanent",
+                error_class="missing_bot_secret_ref",
+            )
+        app_secret = self._read_secret(identity.secret_ref)
+        token = self._token(app_id=app_id, app_secret=app_secret)
+        endpoint = service_url.rstrip("/") + "/v3/conversations"
+        member = {"id": recipient_ref}
+        if _looks_like_aad_object_id(recipient_ref):
+            member["aadObjectId"] = recipient_ref
+        payload: dict[str, Any] = {
+            "isGroup": False,
+            "bot": {"id": app_id, "name": identity.display_name},
+            "members": [member],
+            "activity": {
+                "type": "message",
+                "text": body,
+                "textFormat": "markdown",
+            },
+        }
+        if self.config.tenant_id:
+            payload["channelData"] = {"tenant": {"id": self.config.tenant_id}}
+        response = self._post_json(endpoint, payload, authorization=f"Bearer {token}")
+        if isinstance(response, dict):
+            for key in ("activityId", "id"):
+                value = response.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return f"bot-framework-personal-message-{_stable_digest(endpoint + recipient_ref + body)}"
+
     def _read_secret(self, ref: str) -> str:
         path = self.secret_root / ref
         try:
@@ -698,6 +746,7 @@ class LocalTeamsTestAdapter:
         outcome: str | None = None,
         service_url: str | None = None,
         reply_to_id: str | None = None,
+        recipient_ref: str | None = None,
     ) -> str:
         with span("v2.teams.delivery_prepare", connector_id=self.config.connector_id, purpose=purpose):
             self._ensure_runtime_capabilities(
@@ -737,6 +786,7 @@ class LocalTeamsTestAdapter:
                 "role_identity": self._delivery_role_identity(role_id),
                 "service_url": service_url,
                 "reply_to_id": reply_to_id,
+                "recipient_ref": recipient_ref,
             },
             status="pending",
         )
@@ -761,13 +811,22 @@ class LocalTeamsTestAdapter:
             try:
                 if self.delivery_client is None:
                     raise RuntimeError("live Teams delivery client is not configured")
-                external_message_id = self.delivery_client.send_message(
-                    role_id=str(delivery["role_id"] or ""),
-                    service_url=_required_string(payload, "service_url"),
-                    conversation_id=str(delivery["destination_ref"]),
-                    body=_required_string(payload, "body"),
-                    reply_to_id=str(payload.get("reply_to_id") or "") or None,
-                )
+                recipient_ref = str(payload.get("recipient_ref") or "").strip()
+                if str(delivery["destination_type"]) == "dm" and recipient_ref:
+                    external_message_id = self.delivery_client.send_personal_message(
+                        role_id=str(delivery["role_id"] or ""),
+                        service_url=_required_string(payload, "service_url"),
+                        recipient_ref=recipient_ref,
+                        body=_required_string(payload, "body"),
+                    )
+                else:
+                    external_message_id = self.delivery_client.send_message(
+                        role_id=str(delivery["role_id"] or ""),
+                        service_url=_required_string(payload, "service_url"),
+                        conversation_id=str(delivery["destination_ref"]),
+                        body=_required_string(payload, "body"),
+                        reply_to_id=str(payload.get("reply_to_id") or "") or None,
+                    )
             except BotFrameworkDeliveryError as exc:
                 outcome = exc.outcome
                 error_class = exc.error_class
@@ -895,6 +954,7 @@ class LocalTeamsTestAdapter:
             role_id=role_id,
             service_url=str(payload.get("service_url") or "") or None,
             reply_to_id=str(payload.get("reply_to_id") or "") or None,
+            recipient_ref=str(payload.get("recipient_ref") or "") or None,
         )
 
     def deliver_release_notification(self, *, call_id: str, role_id: str, payload: dict[str, Any]) -> str:
@@ -939,6 +999,8 @@ class LocalTeamsTestAdapter:
             purpose="sponsor.ask_question",
             body=body,
             role_id=role_id,
+            service_url=str(payload.get("service_url") or "") or None,
+            recipient_ref=str(payload.get("recipient_ref") or "") or None,
         )
 
     def deliver_response_card(
@@ -1017,6 +1079,7 @@ class LocalTeamsTestAdapter:
             role_id=role_id,
             service_url=str(payload.get("service_url") or "") or None,
             reply_to_id=str(payload.get("reply_to_id") or "") or None,
+            recipient_ref=str(payload.get("recipient_ref") or "") or None,
             outcome=str(payload.get("delivery_outcome") or "sent"),
         )
         self.db.update_human_response_request_delivery(
@@ -1036,6 +1099,7 @@ class LocalTeamsTestAdapter:
         role_id: str | None = None,
         service_url: str | None = None,
         reply_to_id: str | None = None,
+        recipient_ref: str | None = None,
         outcome: str = "sent",
     ) -> str:
         with span("v2.teams.delivery_prepare", connector_id=self.config.connector_id, purpose=purpose):
@@ -1076,6 +1140,7 @@ class LocalTeamsTestAdapter:
                 "role_identity": self._delivery_role_identity(role_id),
                 "service_url": service_url,
                 "reply_to_id": reply_to_id,
+                "recipient_ref": recipient_ref,
             },
             status="pending",
         )
@@ -1639,7 +1704,33 @@ class ConnectorSafeOutputService(SafeOutputService):
                 payload["destination_type"] = destination_type
             if not payload.get("connector_id"):
                 payload["connector_id"] = self.adapter.config.connector_id
+            self._prefer_human_dm_destination(
+                payload=payload,
+                assignment=assignment,
+                assignment_payload=assignment_payload,
+            )
             return
+
+    def _prefer_human_dm_destination(
+        self,
+        *,
+        payload: dict[str, Any],
+        assignment: dict[str, Any],
+        assignment_payload: dict[str, Any],
+    ) -> None:
+        if str(payload.get("destination_type") or "") == "dm":
+            return
+        recipient_ref = _sponsor_ref_from_assignment_payload(self.db, assignment_payload)
+        if not recipient_ref:
+            return
+        payload["recipient_ref"] = recipient_ref
+        payload["destination_type"] = "dm"
+        payload["destination_ref"] = _logical_dm_ref(
+            connector_id=self.adapter.config.connector_id,
+            role_id=str(assignment.get("role_id") or assignment_payload.get("target_role") or ""),
+            recipient_ref=recipient_ref,
+        )
+        payload.pop("reply_to_id", None)
 
     def _product_signoff_card_payload(self, call: SafeOutputCall) -> dict[str, Any]:
         payload = dict(call.payload)
@@ -1885,6 +1976,30 @@ def _assignment_matches_run_context(
         or assignment_work_item_id is None
         or assignment_work_item_id == run_work_item_id
     )
+
+
+def _sponsor_ref_from_assignment_payload(db: V2Database, assignment_payload: dict[str, Any]) -> str | None:
+    conversation_event_id = assignment_payload.get("conversation_event_id")
+    if not isinstance(conversation_event_id, str) or not conversation_event_id.strip():
+        return None
+    event = db.get_conversation_event(conversation_event_id.strip())
+    if event is None:
+        return None
+    sender = str(event.get("sender_participant_id") or "")
+    marker = ":human:"
+    if marker not in sender:
+        return None
+    sponsor_ref = sender.split(marker, 1)[1].strip()
+    return sponsor_ref or None
+
+
+def _logical_dm_ref(*, connector_id: str, role_id: str, recipient_ref: str) -> str:
+    return f"dm-{_stable_digest(f'{connector_id}:{role_id}:{recipient_ref}')}"
+
+
+def _looks_like_aad_object_id(value: str) -> bool:
+    parts = value.split("-")
+    return len(parts) == 5 and all(part for part in parts)
 
 
 def _role_identity_map(value: object) -> dict[str, RoleIdentity]:

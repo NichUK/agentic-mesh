@@ -119,7 +119,9 @@ def load_teams_connector_config(project_file: Path, *, external_base_url: str | 
             ),
             "role_identities": role_identities,
             "channel_bindings": channel_bindings,
-            "human_authorities": {},
+            "human_authorities": teams.get("human_authorities", {}),
+            "people": teams.get("people", ()),
+            "authority_groups": teams.get("authority_groups", {}),
             "retention": {
                 "private_dm_days": 30,
                 "project_channel_days": 90,

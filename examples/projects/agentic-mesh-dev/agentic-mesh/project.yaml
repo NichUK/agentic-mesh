@@ -271,7 +271,7 @@ gateways:
       - project
       process_role_channels_by_default: false
       fallback_surface: status_fallback
-      approvals_surface: project
+      approvals_surface: sponsor_dm
       bot:
         display_name: AM-Agentic Mesh
         bot_id_ref: teams-bot-agentic-mesh-app-id
@@ -290,8 +290,8 @@ notification_policy:
       label: project intake
     approvals:
       connector: teams
-      route: project
-      label: project approvals
+      route: sponsor_dm
+      label: sponsor direct messages
     status_fallback:
       connector: teams
       route: project

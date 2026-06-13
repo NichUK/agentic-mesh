@@ -174,6 +174,59 @@ def test_live_card_delivery_uses_markdown_body_and_updates_delivery_record(tmp_p
     ]
 
 
+def test_live_dm_card_delivery_creates_personal_message_when_recipient_ref_is_present(tmp_path: Path) -> None:
+    class FakeLiveDeliveryClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def send_personal_message(self, **kwargs: object) -> str:
+            self.calls.append(dict(kwargs))
+            return "real-teams-personal-card-message-1"
+
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    client = FakeLiveDeliveryClient()
+    adapter = LocalTeamsTestAdapter(db, _config(), delivery_client=client)  # type: ignore[arg-type]
+    adapter.install()
+
+    delivery_id = adapter.send_card(
+        source_ref="safe-output-personal-card-live",
+        destination_ref="dm-sponsor-product",
+        destination_type="dm",
+        purpose="product_signoff.card",
+        card={
+            "type": "AdaptiveCard",
+            "title": "Product sign-off: Runtime build info",
+            "question": "Please approve the product definition before implementation starts.",
+            "request_id": "human-response-personal-card-live",
+            "response_contract_id": "product-signoff-v1",
+            "work_item_id": "work-runtime-build-info",
+        },
+        role_id="product-manager",
+        service_url="https://smba.trafficmanager.net/uk/tenant/",
+        recipient_ref="sponsor-aad-id",
+    )
+
+    delivery = db.get_delivery_record(delivery_id)
+    assert delivery is not None
+    assert delivery["status"] == "sent"
+    assert delivery["external_message_id"] == "real-teams-personal-card-message-1"
+    assert client.calls == [
+        {
+            "role_id": "product-manager",
+            "service_url": "https://smba.trafficmanager.net/uk/tenant/",
+            "recipient_ref": "sponsor-aad-id",
+            "body": (
+                "**Product sign-off: Runtime build info**\n\n"
+                "Please approve the product definition before implementation starts.\n\n"
+                "Work item: `work-runtime-build-info`\n"
+                "Response request: `human-response-personal-card-live`\n"
+                "Response contract: `product-signoff-v1`"
+            ),
+        }
+    ]
+
+
 def test_bot_framework_channel_replies_use_thread_conversation_and_markdown(tmp_path: Path) -> None:
     config = ConnectorConfig.from_dict(
         {

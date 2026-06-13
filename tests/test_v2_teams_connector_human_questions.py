@@ -170,7 +170,7 @@ def test_unbound_private_thread_reply_creates_attention(tmp_path: Path) -> None:
     assert snapshot["conversation_events"][0]["body_preview"] == "[redacted private conversation]"
 
 
-def test_product_sponsor_ready_creates_response_card_from_source_conversation(tmp_path: Path) -> None:
+def test_product_sponsor_ready_creates_dm_response_card_from_channel_source(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()
     db.create_queue_item(
@@ -225,17 +225,22 @@ def test_product_sponsor_ready_creates_response_card_from_source_conversation(tm
     snapshot = db.status_snapshot()
     request = snapshot["human_response_requests"][0]
     delivery = snapshot["delivery_records"][0]
+    raw_delivery = db.get_delivery_record(str(delivery["delivery_id"]))
     work_item = db.get_work_item("work-product-signoff")
     assert receipt is not None
     assert receipt.terminal_tool == "product.mark_sponsor_ready"
     assert work_item.state == "waiting_human"
     assert request["connector_id"] == "teams-agentic-mesh-dev"
     assert request["request_type"] == "product_signoff"
-    assert request["destination_ref"] == "channel-project"
-    assert request["destination_type"] == "channel"
+    assert request["destination_ref"].startswith("dm-")
+    assert request["destination_type"] == "dm"
     assert request["thread_ref"] == "thread-product-signoff"
     assert delivery["purpose"] == "product_signoff.card"
-    assert delivery["destination_ref"] == "channel-project"
+    assert delivery["destination_ref"].startswith("dm-")
+    assert delivery["destination_type"] == "dm"
     assert delivery["payload"]["card"]["response_contract_id"] == "product-signoff-v1"
-    assert delivery["payload"]["body"].startswith("**Product sign-off:")
+    assert delivery["payload"]["body"] == "[redacted private conversation]"
+    assert raw_delivery is not None
+    assert raw_delivery["payload"]["body"].startswith("**Product sign-off:")
+    assert raw_delivery["payload"]["recipient_ref"] == "nicholas"
     assert snapshot["counts"]["connector_attention_items"] == 0
