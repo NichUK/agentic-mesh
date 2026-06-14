@@ -52,6 +52,53 @@ def _config() -> ConnectorConfig:
     )
 
 
+def _create_product_signoff_request(
+    tmp_path: Path,
+    *,
+    work_item_id: str = "work-product-signoff-gate",
+) -> tuple[V2Database, LocalTeamsTestAdapter, str]:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    queue_item_id = f"queue-{work_item_id}"
+    db.create_queue_item(
+        queue_item_id=queue_item_id,
+        title="Product signoff gate slice",
+        summary="Exercise product sign-off gate behavior.",
+        owner_role="product-manager",
+    )
+    db.mark_queue_ready(queue_item_id, actor_role="product-manager", reason="Ready to shape.")
+    db.promote_queue_item(
+        queue_item_id=queue_item_id,
+        work_item_id=work_item_id,
+        owner_role="product-manager",
+    )
+    adapter = LocalTeamsTestAdapter(db, _config())
+    adapter.install()
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    db.create_run(
+        run_id=f"run-{work_item_id}-signoff",
+        role_id="product-manager",
+        role_instance_id="product-manager-1",
+        work_item_id=work_item_id,
+    )
+    service.record(
+        run_id=f"run-{work_item_id}-signoff",
+        call=SafeOutputCall(
+            role_id="product-manager",
+            tool_name="product.mark_sponsor_ready",
+            payload={
+                "work_item_id": work_item_id,
+                "summary": "The product definition is ready for sponsor review.",
+                "connector_id": "teams-agentic-mesh-dev",
+                "destination_ref": "dm-nicholas",
+                "destination_type": "dm",
+            },
+            terminal=True,
+        ),
+    )
+    return db, adapter, str(db.status_snapshot()["human_response_requests"][0]["request_id"])
+
+
 def test_agent_initiated_human_question_creates_delivery_and_thread_binding(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()
@@ -287,6 +334,69 @@ def test_product_sponsor_ready_creates_dm_response_card_from_channel_source(tmp_
         and assignment["payload"]["human_response_request_id"] == request["request_id"]
         for assignment in assignments
     )
+
+
+def test_product_signoff_approval_advances_work_to_implementation(tmp_path: Path) -> None:
+    db, adapter, request_id = _create_product_signoff_request(tmp_path)
+
+    submission_id = adapter.submit_card_response(
+        request_id=request_id,
+        responder_ref="nicholas",
+        response_value="approved",
+        comment="Approved for build.",
+    )
+
+    snapshot = db.status_snapshot()
+    work_item = db.get_work_item("work-product-signoff-gate")
+    implementation_assignments = [
+        assignment
+        for assignment in snapshot["role_assignments"]
+        if assignment["assignment_type"] == "implementation"
+    ]
+    followups = [
+        assignment
+        for assignment in snapshot["role_assignments"]
+        if assignment["assignment_type"] == "human_response_followup"
+    ]
+    assert work_item.state == "ready"
+    assert snapshot["work_items"][0]["current_role"] == "engineering"
+    assert len(implementation_assignments) == 1
+    assert implementation_assignments[0]["role_id"] == "engineering"
+    assert implementation_assignments[0]["source_ref"] == submission_id
+    assert implementation_assignments[0]["payload"]["request_id"] == request_id
+    assert implementation_assignments[0]["payload"]["response_value"] == "approve"
+    assert followups == []
+
+
+def test_product_signoff_request_changes_returns_work_to_product_rework(tmp_path: Path) -> None:
+    db, adapter, request_id = _create_product_signoff_request(
+        tmp_path,
+        work_item_id="work-product-signoff-rework",
+    )
+
+    submission_id = adapter.submit_card_response(
+        request_id=request_id,
+        responder_ref="nicholas",
+        response_value="request changes",
+        comment="Tighten the acceptance criteria.",
+    )
+
+    snapshot = db.status_snapshot()
+    work_item = db.get_work_item("work-product-signoff-rework")
+    rework_assignments = [
+        assignment
+        for assignment in snapshot["role_assignments"]
+        if assignment["assignment_type"] == "product_rework"
+    ]
+    raw_rework_assignment = db.get_role_assignment(rework_assignments[0]["assignment_id"])
+    assert work_item.state == "shaping"
+    assert snapshot["work_items"][0]["current_role"] == "product-manager"
+    assert len(rework_assignments) == 1
+    assert rework_assignments[0]["role_id"] == "product-manager"
+    assert rework_assignments[0]["source_ref"] == submission_id
+    assert rework_assignments[0]["payload"]["response_value"] == "request_changes"
+    assert raw_rework_assignment is not None
+    assert raw_rework_assignment["payload"]["submission_comment"] == "Tighten the acceptance criteria."
 
 
 def test_product_sponsor_ready_preserves_agent_channel_override_with_reason(tmp_path: Path) -> None:

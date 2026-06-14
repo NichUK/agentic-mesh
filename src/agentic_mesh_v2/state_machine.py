@@ -46,7 +46,7 @@ ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
             "failed_terminal",
         }
     ),
-    "waiting_human": frozenset({"shaping", "active", "release_review", "blocked", "canceled", "superseded"}),
+    "waiting_human": frozenset({"shaping", "ready", "active", "release_review", "blocked", "canceled", "superseded"}),
     "waiting_agent": frozenset({"active", "blocked", "recovering", "canceled", "superseded"}),
     "waiting_external": frozenset({"active", "blocked", "recovering", "canceled", "superseded"}),
     "blocked": frozenset({"recovering", "waiting_human", "active", "canceled", "superseded"}),

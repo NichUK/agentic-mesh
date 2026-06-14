@@ -24,6 +24,8 @@ from agentic_mesh_v2.release import ReleaseService
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.safe_outputs import ToolPolicy
+from agentic_mesh_v2.state_machine import ALLOWED_TRANSITIONS
+from agentic_mesh_v2.state_machine import TransitionRequest
 
 
 VALID_RETENTION_KEYS = {
@@ -1376,13 +1378,21 @@ class LocalTeamsTestAdapter:
             response_value=normalized_value,
             responder_ref=responder_ref,
         )
-        self._create_human_response_followup_assignment(
+        gate_handled = self._apply_human_response_gate(
             request=request,
             submission_id=resolved_submission_id,
             responder_ref=responder_ref,
             normalized_value=normalized_value,
             comment=comment,
         )
+        if not gate_handled:
+            self._create_human_response_followup_assignment(
+                request=request,
+                submission_id=resolved_submission_id,
+                responder_ref=responder_ref,
+                normalized_value=normalized_value,
+                comment=comment,
+            )
         card = {
             "type": "AdaptiveCard",
             "version": "1.5",
@@ -1406,6 +1416,159 @@ class LocalTeamsTestAdapter:
             card_update_ref=update_ref,
         )
         return resolved_submission_id
+
+    def _apply_human_response_gate(
+        self,
+        *,
+        request: dict[str, Any],
+        submission_id: str,
+        responder_ref: str,
+        normalized_value: str,
+        comment: str | None,
+    ) -> bool:
+        request_type = str(request["request_type"])
+        if request_type != "product_signoff":
+            return False
+        work_item_id = str(request.get("work_item_id") or "").strip()
+        if not work_item_id:
+            return False
+        if normalized_value == "approve":
+            self._apply_product_signoff_approval(
+                request=request,
+                submission_id=submission_id,
+                responder_ref=responder_ref,
+                work_item_id=work_item_id,
+            )
+            return True
+        if normalized_value in {"reject", "request_changes"}:
+            self._apply_product_signoff_rework(
+                request=request,
+                submission_id=submission_id,
+                responder_ref=responder_ref,
+                normalized_value=normalized_value,
+                comment=comment,
+                work_item_id=work_item_id,
+            )
+            return True
+        return False
+
+    def _apply_product_signoff_approval(
+        self,
+        *,
+        request: dict[str, Any],
+        submission_id: str,
+        responder_ref: str,
+        work_item_id: str,
+    ) -> None:
+        assignment_id = f"assignment-{_stable_digest(f'{submission_id}:product-signoff-approved')}"
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        work_item = self.db.get_work_item(work_item_id)
+        target_role = "engineering"
+        if work_item.state == "waiting_human":
+            self.db.transition_work_item(
+                TransitionRequest(
+                    work_item_id=work_item_id,
+                    from_state="waiting_human",
+                    to_state="ready",
+                    actor_role="sponsor",
+                    reason=f"Product sign-off approved by {responder_ref}.",
+                    owner=target_role,
+                )
+            )
+        elif work_item.state not in {"ready", "active", "release_review", "deploying", "released", "closed"}:
+            if "ready" not in ALLOWED_TRANSITIONS.get(work_item.state, frozenset()):
+                return
+            self.db.transition_work_item(
+                TransitionRequest(
+                    work_item_id=work_item_id,
+                    from_state=work_item.state,
+                    to_state="ready",
+                    actor_role="sponsor",
+                    reason=f"Product sign-off approved by {responder_ref}.",
+                    owner=target_role,
+                )
+            )
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state != "ready":
+            return
+        self.db.create_role_assignment(
+            assignment_id=assignment_id,
+            role_id=target_role,
+            work_item_id=work_item_id,
+            source_ref=submission_id,
+            title=f"Implement: {work_item.title}",
+            summary=f"Sponsor approved product sign-off request {request['request_id']}.",
+            assignment_type="implementation",
+            visibility_scope="project",
+            payload={
+                "source_ref": submission_id,
+                "request_id": request["request_id"],
+                "request_type": request["request_type"],
+                "response_contract_id": request["response_contract_id"],
+                "response_value": "approve",
+                "responder_ref": responder_ref,
+                "required_authority": request["required_authority"],
+                "work_item_id": work_item_id,
+                "gate_id": request.get("gate_id"),
+                "current_flow_state": "ready",
+                "target_role": target_role,
+                "allowed_tools": sorted(SafeOutputService(self.db).policy.tools_for_role(target_role)),
+            },
+        )
+
+    def _apply_product_signoff_rework(
+        self,
+        *,
+        request: dict[str, Any],
+        submission_id: str,
+        responder_ref: str,
+        normalized_value: str,
+        comment: str | None,
+        work_item_id: str,
+    ) -> None:
+        assignment_id = f"assignment-{_stable_digest(f'{submission_id}:product-signoff-rework')}"
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        work_item = self.db.get_work_item(work_item_id)
+        if work_item.state == "waiting_human":
+            self.db.transition_work_item(
+                TransitionRequest(
+                    work_item_id=work_item_id,
+                    from_state="waiting_human",
+                    to_state="shaping",
+                    actor_role="sponsor",
+                    reason=f"Product sign-off response `{normalized_value}` from {responder_ref}.",
+                    owner="product-manager",
+                )
+            )
+        self.db.create_role_assignment(
+            assignment_id=assignment_id,
+            role_id="product-manager",
+            work_item_id=work_item_id,
+            source_ref=submission_id,
+            title=f"Rework product definition: {work_item.title}",
+            summary=f"Sponsor responded `{normalized_value}` to product sign-off request {request['request_id']}.",
+            assignment_type="product_rework",
+            visibility_scope="private" if request.get("destination_type") == "dm" else "project",
+            payload={
+                "source_ref": submission_id,
+                "request_id": request["request_id"],
+                "request_type": request["request_type"],
+                "question": request["question"],
+                "response_contract_id": request["response_contract_id"],
+                "response_value": normalized_value,
+                "submission_comment": comment,
+                "responder_ref": responder_ref,
+                "required_authority": request["required_authority"],
+                "work_item_id": work_item_id,
+                "gate_id": request.get("gate_id"),
+                "current_flow_state": "shaping",
+                "allowed_tools": sorted(SafeOutputService(self.db).policy.tools_for_role("product-manager")),
+            },
+        )
 
     def _create_human_response_followup_assignment(
         self,
