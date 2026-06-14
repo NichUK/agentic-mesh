@@ -229,21 +229,24 @@ class BotFrameworkDeliveryClient:
             "isGroup": False,
             "bot": {"id": app_id, "name": identity.display_name},
             "members": [member],
-            "activity": {
-                "type": "message",
-                "text": body,
-                "textFormat": "markdown",
-            },
         }
         if self.config.tenant_id:
             payload["channelData"] = {"tenant": {"id": self.config.tenant_id}}
         response = self._post_json(endpoint, payload, authorization=f"Bearer {token}")
         if isinstance(response, dict):
-            for key in ("activityId", "id"):
-                value = response.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-        return f"bot-framework-personal-message-{_stable_digest(endpoint + recipient_ref + body)}"
+            conversation_id = response.get("id")
+            if isinstance(conversation_id, str) and conversation_id.strip():
+                return self.send_message(
+                    role_id=role_id,
+                    service_url=service_url,
+                    conversation_id=conversation_id.strip(),
+                    body=body,
+                )
+        raise BotFrameworkDeliveryError(
+            "Bot Framework personal conversation create did not return a conversation id",
+            outcome="failed_transient",
+            error_class="missing_personal_conversation_id",
+        )
 
     def _read_secret(self, ref: str) -> str:
         path = self.secret_root / ref

@@ -301,6 +301,91 @@ def test_bot_framework_channel_replies_use_thread_conversation_and_markdown(tmp_
     }
 
 
+def test_bot_framework_personal_delivery_posts_after_creating_conversation(tmp_path: Path) -> None:
+    config = ConnectorConfig.from_dict(
+        {
+            "connector_id": "teams-agentic-mesh-dev",
+            "project_id": "agentic-mesh-dev",
+            "connector_type": "teams",
+            "display_name": "Agentic Mesh Dev Teams",
+            "tenant_id": "tenant-id",
+            "project_team_ref": "team-dev",
+            "default_project_channel_ref": "channel-project",
+            "external_base_url": "http://linuxch:8100",
+            "role_identities": {
+                "product-manager": {
+                    "external_ref": "product-manager-app-id",
+                    "secret_ref": "product-manager-secret",
+                    "display_name": "AM-Product Manager",
+                    "alias": "product-manager",
+                    "mention_handle": "@AM-Product Manager",
+                    "identity_model": "separate_bot",
+                    "enabled": True,
+                },
+            },
+            "retention": {
+                "private_dm_days": 30,
+                "project_channel_days": 90,
+                "compacted_summary_days": 365,
+                "delivery_record_days": 90,
+                "idempotency_receipt_days": 30,
+            },
+            "team_wide_trigger": "@all-agents",
+        }
+    )
+    secret_root = tmp_path / "secrets"
+    secret_root.mkdir()
+    (secret_root / "product-manager-app-id").write_text("app-id", encoding="utf-8")
+    (secret_root / "product-manager-secret").write_text("secret", encoding="utf-8")
+
+    class InspectingClient(BotFrameworkDeliveryClient):
+        def __init__(self) -> None:
+            super().__init__(config=config, secret_root=secret_root)
+            self.posts: list[tuple[str, dict[str, object], str]] = []
+
+        def _token(self, *, app_id: str, app_secret: str) -> str:
+            return "token"
+
+        def _post_json(self, url: str, payload: dict[str, object], *, authorization: str) -> dict[str, object]:
+            self.posts.append((url, payload, authorization))
+            if url.endswith("/v3/conversations"):
+                return {"id": "a:personal-conversation-id"}
+            return {"id": "activity-personal-message-1"}
+
+    client = InspectingClient()
+    message_id = client.send_personal_message(
+        role_id="product-manager",
+        service_url="https://smba.trafficmanager.net/uk/tenant/",
+        recipient_ref="2485de4b-4331-48f6-805d-68106b09be1b",
+        body="**Please review** the product definition.",
+    )
+
+    assert message_id == "activity-personal-message-1"
+    assert len(client.posts) == 2
+    create_url, create_payload, create_auth = client.posts[0]
+    message_url, message_payload, message_auth = client.posts[1]
+    assert create_auth == "Bearer token"
+    assert message_auth == "Bearer token"
+    assert create_url.endswith("/v3/conversations")
+    assert create_payload == {
+        "isGroup": False,
+        "bot": {"id": "app-id", "name": "AM-Product Manager"},
+        "members": [
+            {
+                "id": "2485de4b-4331-48f6-805d-68106b09be1b",
+                "aadObjectId": "2485de4b-4331-48f6-805d-68106b09be1b",
+            }
+        ],
+        "channelData": {"tenant": {"id": "tenant-id"}},
+    }
+    assert "a%3Apersonal-conversation-id/activities" in message_url
+    assert message_payload == {
+        "type": "message",
+        "text": "**Please review** the product definition.",
+        "textFormat": "markdown",
+    }
+
+
 def test_transient_failure_can_retry_to_sent_without_duplicate_success(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()
