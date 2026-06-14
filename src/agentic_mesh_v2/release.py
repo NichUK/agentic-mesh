@@ -41,6 +41,23 @@ class ComposeDeploymentTarget:
 
 
 @dataclass(frozen=True)
+class CommandDeploymentTarget:
+    target_id: str
+    project_id: str
+    command: tuple[str, ...]
+    working_directory: Path | None = None
+    timeout_seconds: int = 300
+    connector_id: str | None = None
+    external_base_url: str | None = None
+    description: str = "Configured command deployment target."
+    impact_categories: tuple[str, ...] = ()
+    activation_paths: tuple[str, ...] = ()
+    smoke: dict[str, Any] | None = None
+    rollback_summary: str = "Use the target-specific rollback procedure."
+    disablement_path: str = "Disable the configured target or revert the active runtime artifact."
+
+
+@dataclass(frozen=True)
 class ReleaseEvidenceLink:
     artifact_ref: str
     artifact_type: str
@@ -98,6 +115,63 @@ class ReleaseService:
             },
         )
 
+    def register_command_target(self, target: CommandDeploymentTarget) -> None:
+        if not target.command:
+            raise ReleaseError("command deployment target requires a command")
+        if target.timeout_seconds < 1:
+            raise ReleaseError("command deployment target requires a positive timeout")
+        self.db.upsert_deployment_target(
+            target_id=target.target_id,
+            connector_id=target.connector_id,
+            project_id=target.project_id,
+            target_type="command",
+            service_name=target.target_id,
+            compose_files=[],
+            external_base_url=target.external_base_url,
+            status="active",
+            disable_reason=None,
+            metadata={
+                "command": list(target.command),
+                "working_directory": str(target.working_directory) if target.working_directory is not None else None,
+                "timeout_seconds": target.timeout_seconds,
+                "description": target.description,
+                "impact_categories": list(target.impact_categories),
+                "activation_paths": list(target.activation_paths),
+                "smoke": target.smoke or {},
+                "rollback_summary": target.rollback_summary,
+                "disablement_path": target.disablement_path,
+            },
+        )
+
+    def deploy_configured_release(
+        self,
+        evidence: ReleaseEvidence,
+        *,
+        target_id: str,
+        smoke_checks: dict[str, str],
+        evidence_links: tuple[ReleaseEvidenceLink, ...],
+        timeout_seconds: int | None = None,
+    ) -> str:
+        target = self.db.get_deployment_target(target_id)
+        if target is None:
+            raise ReleaseError(f"unknown deployment target `{target_id}`")
+        target_type = target.get("target_type")
+        if target_type == "command":
+            return self.deploy_command_release(
+                evidence,
+                target_id=target_id,
+                smoke_checks=smoke_checks,
+                evidence_links=evidence_links,
+                timeout_seconds=timeout_seconds,
+            )
+        return self.deploy_compose_release(
+            evidence,
+            target_id=target_id,
+            smoke_checks=smoke_checks,
+            evidence_links=evidence_links,
+            timeout_seconds=timeout_seconds or 300,
+        )
+
     def record_compose_deployment(
         self,
         evidence: ReleaseEvidence,
@@ -125,7 +199,7 @@ class ReleaseService:
             commit_ref=evidence.commit_ref,
             approval_ref=evidence.approval_ref,
             deployment_result=evidence.deployment_result
-            or f"compose target `{target_id}` validated for service `{target['service_name']}`",
+            or _deployment_result_summary(target),
             smoke_result=smoke_result,
         )
         self.record_deployment(complete_evidence)
@@ -213,6 +287,64 @@ class ReleaseService:
             smoke_checks=smoke_checks,
             evidence_links=evidence_links,
             command=deploy_command,
+        )
+
+    def deploy_command_release(
+        self,
+        evidence: ReleaseEvidence,
+        *,
+        target_id: str,
+        smoke_checks: dict[str, str],
+        evidence_links: tuple[ReleaseEvidenceLink, ...],
+        timeout_seconds: int | None = None,
+    ) -> str:
+        target = self.db.get_deployment_target(target_id)
+        if target is None:
+            raise ReleaseError(f"unknown deployment target `{target_id}`")
+        if target.get("status") != "active":
+            raise ReleaseError(f"deployment target `{target_id}` is not active")
+        if target.get("target_type") != "command":
+            raise ReleaseError(f"deployment target `{target_id}` is not a command target")
+        _require_release_evidence_links(evidence_links)
+        if not smoke_checks:
+            raise ReleaseError("release deployment requires smoke checks")
+        metadata = target.get("metadata") if isinstance(target.get("metadata"), dict) else {}
+        command = metadata.get("command")
+        if not isinstance(command, list) or not all(isinstance(part, str) and part.strip() for part in command):
+            raise ReleaseError(f"deployment target `{target_id}` has no configured command")
+        cwd_value = metadata.get("working_directory")
+        cwd = Path(cwd_value) if isinstance(cwd_value, str) and cwd_value.strip() else None
+        configured_timeout = metadata.get("timeout_seconds")
+        effective_timeout = timeout_seconds if timeout_seconds is not None else configured_timeout
+        if isinstance(effective_timeout, bool) or not isinstance(effective_timeout, int) or effective_timeout < 1:
+            effective_timeout = 300
+        result = self._compose_runner(list(command), cwd=cwd, timeout_seconds=effective_timeout)
+        if result.exit_code != 0:
+            run_id = f"deployment-{_short_hash(f'{target_id}:{evidence.release_id}:{evidence.work_item_id}:failed')}"
+            self.db.record_deployment_run(
+                run_id=run_id,
+                target_id=target_id,
+                work_item_id=evidence.work_item_id,
+                release_id=evidence.release_id,
+                status="failed",
+                command=list(command),
+                smoke_result="not_run: deployment command failed",
+                rollback_plan=evidence.rollback_plan or "Deployment failed before activation; preserve runtime state and inspect command output.",
+                evidence={
+                    "target_id": target_id,
+                    "external_base_url": target.get("external_base_url"),
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                },
+            )
+            raise ReleaseError(f"deployment command failed with exit code {result.exit_code}")
+        return self.record_compose_deployment(
+            evidence,
+            target_id=target_id,
+            smoke_checks=smoke_checks,
+            evidence_links=evidence_links,
+            command=list(command),
         )
 
     def disable_deployment_target(self, *, target_id: str, reason: str) -> None:
@@ -426,6 +558,13 @@ def _compose_up_command(target: dict[str, Any]) -> list[str]:
         "-d",
         str(target["service_name"]),
     ]
+
+
+def _deployment_result_summary(target: dict[str, Any]) -> str:
+    target_id = str(target["target_id"])
+    if target.get("target_type") == "command":
+        return f"command target `{target_id}` executed"
+    return f"compose target `{target_id}` validated for service `{target['service_name']}`"
 
 
 def _run_compose_command(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ComposeCommandResult:

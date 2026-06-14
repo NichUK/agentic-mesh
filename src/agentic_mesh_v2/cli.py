@@ -19,6 +19,7 @@ from agentic_mesh_v2.hibernation import HibernationService
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
 from agentic_mesh_v2.project_config import list_project_role_service_configs
+from agentic_mesh_v2.project_config import list_release_deployment_target_configs
 from agentic_mesh_v2.project_config import load_document_library_config
 from agentic_mesh_v2.project_config import load_project_id
 from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
@@ -33,6 +34,8 @@ from agentic_mesh_v2.project_install import GraphRequestError
 from agentic_mesh_v2.project_install import TokenGraphClient
 from agentic_mesh_v2.project_install import run_project_install
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
+from agentic_mesh_v2.release import CommandDeploymentTarget
+from agentic_mesh_v2.release import ReleaseService
 from agentic_mesh_v2.role_service import RoleService
 from agentic_mesh_v2.safe_outputs import SafeOutputError
 from agentic_mesh_v2.safe_outputs import SafeOutputService
@@ -462,9 +465,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result["status"] != "blocked" else 2
 
     if args.command == "serve":
+        _initialize_project_runtime_state(db_path, args.project_file)
         serve(host=args.host, port=args.port, db_path=db_path, project_file=args.project_file)
         return 0
     if args.command == "serve-teams-ingress":
+        _initialize_project_runtime_state(db_path, args.project_file)
         serve_teams_ingress(
             host=args.host,
             port=args.port,
@@ -479,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
         db = V2Database(db_path)
         try:
             db.migrate()
+            _sync_project_runtime_state(db, getattr(args, "project_file", None))
             if args.command == "init-db":
                 print(json.dumps({"status": "ok", "database": str(db_path)}, sort_keys=True))
                 return 0
@@ -777,6 +783,39 @@ def _safe_output_service_or_none(db: V2Database, project_file: Path | None) -> S
     if project_file is None:
         return None
     return _safe_output_service(db, project_file)
+
+
+def _initialize_project_runtime_state(db_path: Path, project_file: Path | None) -> None:
+    if project_file is None:
+        return
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        _sync_project_runtime_state(db, project_file)
+    finally:
+        db.close()
+
+
+def _sync_project_runtime_state(db: V2Database, project_file: Path | None) -> None:
+    if project_file is None:
+        return
+    release_service = ReleaseService(db)
+    for target in list_release_deployment_target_configs(project_file):
+        if target.target_type == "command":
+            release_service.register_command_target(
+                CommandDeploymentTarget(
+                    target_id=target.target_id,
+                    project_id=target.project_id,
+                    command=target.command,
+                    working_directory=target.working_directory,
+                    timeout_seconds=target.timeout_seconds,
+                    description=target.description,
+                    impact_categories=target.impact_categories,
+                    activation_paths=target.activation_paths,
+                    smoke=target.smoke,
+                    rollback_summary=target.rollback_summary,
+                )
+            )
 
 
 def _project_secret_root(project_file: Path) -> Path:

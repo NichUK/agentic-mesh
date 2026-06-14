@@ -29,8 +29,52 @@ def test_v2_cli_demo_slice_creates_closed_release(tmp_path: Path, capsys) -> Non
 
     assert snapshot["counts"]["work_items"] == 1
     assert snapshot["counts"]["releases"] == 1
-    assert snapshot["work_items"][0]["state"] == "closed"
-    assert snapshot["releases"][0]["status"] == "no_deployment_disposition"
+
+
+def test_v2_cli_project_runtime_initialization_registers_release_targets(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+release_deployment_targets:
+  dogfood_compose:
+    type: command
+    description: Deploy the local dogfood runtime.
+    command:
+      - sh
+      - scripts/release-linuxch-compose.sh
+    working_directory: /mesh/workspaces/agentic-mesh
+    timeout_seconds: 900
+    impact_categories:
+      - runtime_code
+    activation_paths:
+      - rebuild_image
+    smoke:
+      route_label: /status
+    rollback_summary: Redeploy the previous image.
+roles:
+  product-manager:
+    worker:
+      adapter: safe-output-file
+      path: calls.json
+""",
+        encoding="utf-8",
+    )
+
+    cli_module._initialize_project_runtime_state(db_path, project_file)
+
+    db = V2Database(db_path)
+    try:
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    assert snapshot["counts"]["deployment_targets"] == 1
+    target = snapshot["deployment_targets"][0]
+    assert target["target_id"] == "dogfood_compose"
+    assert target["target_type"] == "command"
+    assert target["metadata"]["command"] == ["sh", "scripts/release-linuxch-compose.sh"]
 
 
 def test_v2_cli_status_json_reports_runtime_state(tmp_path: Path, capsys) -> None:

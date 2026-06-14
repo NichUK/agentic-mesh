@@ -34,6 +34,21 @@ class DocumentLibraryConfig:
     structure_policy: str
 
 
+@dataclass(frozen=True)
+class ReleaseDeploymentTargetConfig:
+    target_id: str
+    project_id: str
+    target_type: str
+    command: tuple[str, ...]
+    working_directory: Path | None
+    timeout_seconds: int
+    description: str
+    impact_categories: tuple[str, ...]
+    activation_paths: tuple[str, ...]
+    smoke: dict[str, Any]
+    rollback_summary: str
+
+
 def load_teams_connector_config(project_file: Path, *, external_base_url: str | None = None) -> ConnectorConfig:
     raw = _load_project_mapping(project_file)
     project_id = _project_id_from_raw(raw)
@@ -211,6 +226,54 @@ def load_document_library_config(project_file: Path) -> DocumentLibraryConfig | 
     )
 
 
+def list_release_deployment_target_configs(project_file: Path) -> list[ReleaseDeploymentTargetConfig]:
+    raw = _load_project_mapping(project_file)
+    project_id = _project_id_from_raw(raw)
+    targets = raw.get("release_deployment_targets")
+    if targets is None:
+        return []
+    if not isinstance(targets, dict):
+        raise ValueError("release_deployment_targets must be a mapping")
+
+    configs: list[ReleaseDeploymentTargetConfig] = []
+    for target_id, target in sorted(targets.items()):
+        if not isinstance(target_id, str) or not target_id.strip():
+            raise ValueError("release_deployment_targets keys must be non-empty target ids")
+        if not isinstance(target, dict):
+            raise ValueError(f"release_deployment_targets.{target_id} must be a mapping")
+        target_type = _non_empty_string(target.get("type"), default="command")
+        if target_type != "command":
+            raise ValueError(f"release_deployment_targets.{target_id}.type `{target_type}` is not supported yet")
+        command = target.get("command")
+        if not isinstance(command, list) or not command:
+            raise ValueError(f"release_deployment_targets.{target_id}.command must be a non-empty list")
+        command_parts: list[str] = []
+        for index, item in enumerate(command):
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"release_deployment_targets.{target_id}.command item {index} must be a non-empty string")
+            command_parts.append(item.strip())
+        working_directory = _optional_project_path(project_file, target.get("working_directory"))
+        timeout_seconds = target.get("timeout_seconds", 300)
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or timeout_seconds < 1:
+            raise ValueError(f"release_deployment_targets.{target_id}.timeout_seconds must be a positive integer")
+        configs.append(
+            ReleaseDeploymentTargetConfig(
+                target_id=target_id.strip(),
+                project_id=project_id,
+                target_type=target_type,
+                command=tuple(command_parts),
+                working_directory=working_directory,
+                timeout_seconds=timeout_seconds,
+                description=_non_empty_string(target.get("description"), default="Configured command deployment target."),
+                impact_categories=_string_tuple(target.get("impact_categories"), field=f"release_deployment_targets.{target_id}.impact_categories"),
+                activation_paths=_string_tuple(target.get("activation_paths"), field=f"release_deployment_targets.{target_id}.activation_paths"),
+                smoke=dict(target.get("smoke") if isinstance(target.get("smoke"), dict) else {}),
+                rollback_summary=_non_empty_string(target.get("rollback_summary"), default="Use the target-specific rollback procedure."),
+            )
+        )
+    return configs
+
+
 def load_role_memory_config(project_file: Path, *, role_id: str) -> RoleMemoryConfig:
     raw = _load_project_mapping(project_file)
     project_root = _project_root(project_file)
@@ -360,6 +423,28 @@ def _contained_project_path(project_root: Path, project_file: Path, value: str, 
     else:
         candidate = _project_root(project_file) / path
     return _ensure_contained(candidate, project_root, field=field)
+
+
+def _optional_project_path(project_file: Path, value: object) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value.strip())
+    if path.is_absolute():
+        return path
+    return (project_file.parent / path).resolve(strict=False)
+
+
+def _string_tuple(value: object, *, field: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list")
+    result: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{field} item {index} must be a non-empty string")
+        result.append(item.strip())
+    return tuple(result)
 
 
 def _contained_child_path(root: Path, value: str, *, field: str) -> Path:

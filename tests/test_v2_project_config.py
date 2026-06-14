@@ -7,6 +7,7 @@ from agentic_mesh_v2.project_config import load_role_memory_config
 from agentic_mesh_v2.project_config import load_role_memory_context
 from agentic_mesh_v2.project_config import load_teams_connector_config
 from agentic_mesh_v2.project_config import list_project_role_service_configs
+from agentic_mesh_v2.project_config import list_release_deployment_target_configs
 
 
 DOGFOOD_PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml")
@@ -42,6 +43,22 @@ def test_load_teams_connector_config_from_dogfood_project() -> None:
     assert config.external_base_url == "http://linuxch:8100"
     assert config.role_identities["product-manager"].display_name == "AM-Product Manager"
     assert config.role_identities["product-manager"].mention_handle == "@AM-Product Manager"
+
+
+def test_load_release_deployment_targets_from_dogfood_project() -> None:
+    targets = list_release_deployment_target_configs(DOGFOOD_PROJECT_FILE)
+
+    assert len(targets) == 1
+    target = targets[0]
+    assert target.target_id == "dogfood_compose"
+    assert target.project_id == "agentic-mesh-dev"
+    assert target.target_type == "command"
+    assert target.command == ("sh", "scripts/release-linuxch-compose.sh")
+    assert target.working_directory is not None
+    assert target.working_directory.as_posix().endswith("/mesh/workspaces/agentic-mesh")
+    assert target.timeout_seconds == 900
+    assert "runtime_code" in target.impact_categories
+    assert target.smoke["route_label"] == "/status"
 
 
 def test_load_role_worker_config_preserves_future_adapter_config(tmp_path: Path) -> None:

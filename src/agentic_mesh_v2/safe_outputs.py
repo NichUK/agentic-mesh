@@ -1260,12 +1260,12 @@ class SafeOutputService:
         evidence = _release_evidence_from_payload(call.payload)
         if _has_successful_deployment(self.db, release_id=evidence.release_id, work_item_id=evidence.work_item_id):
             return
-        self.release_service.deploy_compose_release(
+        self.release_service.deploy_configured_release(
             evidence,
             target_id=_required_text(call.payload, "target_id"),
             smoke_checks=_smoke_checks(call.payload.get("smoke_checks")),
             evidence_links=_release_evidence_links(call.payload.get("evidence_links")),
-            timeout_seconds=_optional_int(call.payload.get("timeout_seconds"), default=300),
+            timeout_seconds=_optional_int_or_none(call.payload.get("timeout_seconds")),
         )
 
     def _close_released_work(self, call: SafeOutputCall) -> None:
@@ -1608,6 +1608,14 @@ def _release_evidence_links(value: object) -> tuple[ReleaseEvidenceLink, ...]:
 def _optional_int(value: object, *, default: int) -> int:
     if value is None:
         return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise SafeOutputError("timeout_seconds must be a positive integer when provided")
+    return value
+
+
+def _optional_int_or_none(value: object) -> int | None:
+    if value is None:
+        return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise SafeOutputError("timeout_seconds must be a positive integer when provided")
     return value

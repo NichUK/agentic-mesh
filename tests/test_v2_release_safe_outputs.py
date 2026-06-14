@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.release import CommandDeploymentTarget
 from agentic_mesh_v2.release import ComposeCommandResult
 from agentic_mesh_v2.release import ComposeDeploymentTarget
 from agentic_mesh_v2.release import ReleaseEvidence
@@ -994,6 +995,78 @@ def test_release_manager_safe_output_executes_compose_deployment(tmp_path: Path)
     assert snapshot["deployment_runs"][0]["status"] == "succeeded"
     assert snapshot["deployment_runs"][0]["target_id"] == "target-compose-safe-output"
     assert len(snapshot["release_evidence_links"]) == 7
+
+
+def test_release_manager_safe_output_executes_configured_command_deployment(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    executed: list[tuple[list[str], Path | None, int]] = []
+
+    def command_runner(command: list[str], *, cwd: Path | None, timeout_seconds: int) -> ComposeCommandResult:
+        executed.append((command, cwd, timeout_seconds))
+        return ComposeCommandResult(exit_code=0, stdout="released")
+
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-command-deploy",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        release = ReleaseService(db, compose_runner=command_runner)
+        release.register_command_target(
+            CommandDeploymentTarget(
+                target_id="dogfood-command",
+                project_id="test-project",
+                command=("sh", "scripts/release-linuxch-compose.sh"),
+                working_directory=tmp_path,
+                timeout_seconds=900,
+                external_base_url="http://linuxch:8100",
+                impact_categories=("runtime_code",),
+                activation_paths=("rebuild_image", "recreate_container"),
+                smoke={"route_label": "/status"},
+                rollback_summary="Redeploy the previous image.",
+            )
+        )
+        service = SafeOutputService(db, release_service=release)
+        approval_ref = _record_approved_release_decision(
+            service,
+            run_id="run-release-command-deploy",
+        )
+
+        service.record(
+            run_id="run-release-command-deploy",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.deploy",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "release_id": "release-safe-output-command-deploy",
+                    "target_id": "dogfood-command",
+                    "reason": "Deploy the approved slice through the configured dogfood command target.",
+                    "scope": "Activate the command-target release deployment path.",
+                    "commit_ref": "commit-safe-output",
+                    "approval_ref": approval_ref,
+                    "rollback_plan": "Redeploy the previous image.",
+                    "residual_risks": "Local command target only.",
+                    "smoke_checks": {
+                        "status": "passed",
+                    },
+                    "evidence_links": _evidence_links(),
+                },
+            ),
+        )
+
+        snapshot = db.status_snapshot()
+    finally:
+        db.close()
+
+    assert executed == [(["sh", "scripts/release-linuxch-compose.sh"], tmp_path, 900)]
+    assert snapshot["deployment_runs"][0]["status"] == "succeeded"
+    assert snapshot["deployment_runs"][0]["command"] == ["sh", "scripts/release-linuxch-compose.sh"]
+    assert snapshot["releases"][0]["status"] == "deployed"
+    assert snapshot["releases"][0]["deployment_result"] == "command target `dogfood-command` executed"
 
 
 def test_release_deploy_rejects_non_accepted_evidence_links_before_recording(tmp_path: Path) -> None:
