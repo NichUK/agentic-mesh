@@ -2617,9 +2617,9 @@ class V2Database:
         conversation_id: str | None = None,
         role_instance_id: str | None = None,
     ) -> WorkItem:
-        if request.from_state not in {"superseded", "canceled", "failed_terminal"}:
+        if request.from_state not in {"superseded", "canceled", "failed_terminal", "closed"}:
             raise ValueError(f"work item restore cannot start from `{request.from_state}`")
-        if request.to_state not in {"shaping", "ready", "active"}:
+        if request.to_state not in {"shaping", "ready", "active", "release_review"}:
             raise ValueError(f"work item restore cannot target `{request.to_state}`")
         current = self.get_work_item(request.work_item_id)
         if current.state != request.from_state:

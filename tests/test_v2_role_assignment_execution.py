@@ -1556,6 +1556,86 @@ def test_product_manager_reopens_incorrectly_superseded_product_work(tmp_path: P
     assert "work_item.terminal_restored" in event_types
 
 
+def test_release_manager_reopens_incorrectly_closed_release_to_release_review(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="shaping",
+            to_state="ready",
+            actor_role="product-manager",
+            reason="Product ready.",
+            owner="engineering",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="ready",
+            to_state="active",
+            actor_role="engineering",
+            reason="Implementation done.",
+            owner="qa-engineer",
+        )
+    )
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="active",
+            to_state="release_review",
+            actor_role="qa-engineer",
+            reason="QA passed.",
+            owner="release-manager",
+        )
+    )
+    db.connection.execute(
+        """
+        UPDATE work_items
+        SET state = 'closed',
+            current_role = 'release-manager'
+        WHERE work_item_id = 'work-runtime-execution'
+        """
+    )
+    db.create_run(
+        run_id="run-release-reopen-closed",
+        role_id="release-manager",
+        role_instance_id="agentic-mesh-dev.release-manager.1",
+        work_item_id="work-runtime-execution",
+    )
+    service = SafeOutputService(db)
+
+    call_id = service.record(
+        run_id="run-release-reopen-closed",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="work_item.reopen",
+            payload={
+                "work_item_id": "work-runtime-execution",
+                "target_role": "release-manager",
+                "target_state": "release_review",
+                "reason": "Prior closure recorded no deployment for a runtime-impacting slice.",
+                "target_outputs": ["deployment run or explicit release blocker"],
+            },
+        ),
+    )
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    reopen_assignment = next(
+        row
+        for row in db.list_role_assignments()
+        if row["source_ref"] == call_id and row["assignment_type"] == "work_item_reopen"
+    )
+    event_types = [event["event_type"] for event in db.list_events("work-runtime-execution")]
+    assert work_item["state"] == "release_review"
+    assert work_item["current_role"] == "release-manager"
+    assert reopen_assignment["role_id"] == "release-manager"
+    assert reopen_assignment["status"] == "queued"
+    assert reopen_assignment["payload"]["previous_flow_state"] == "closed"
+    assert reopen_assignment["payload"]["current_flow_state"] == "release_review"
+    assert "release.deploy" in reopen_assignment["payload"]["allowed_tools"]
+    assert "work_item.terminal_restored" in event_types
+
+
 def test_work_item_reopen_requires_blocked_state(tmp_path: Path) -> None:
     db = _work_db(tmp_path)
     db.create_run(

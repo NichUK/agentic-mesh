@@ -1511,11 +1511,11 @@ def _work_item_reopen_target_state(call: SafeOutputCall, *, current_state: str) 
         if target_state != "active":
             raise SafeOutputError("`work_item.reopen` can only move blocked work to `active`")
         return target_state
-    if current_state in {"superseded", "canceled", "failed_terminal"}:
+    if current_state in {"superseded", "canceled", "failed_terminal", "closed"}:
         target_state = raw_target_state or "shaping"
-        if target_state not in {"shaping", "ready", "active"}:
+        if target_state not in {"shaping", "ready", "active", "release_review"}:
             raise SafeOutputError(
-                "`work_item.reopen` terminal restore target_state must be `shaping`, `ready`, or `active`"
+                "`work_item.reopen` terminal restore target_state must be `shaping`, `ready`, `active`, or `release_review`"
             )
         return target_state
     raise SafeOutputError(
