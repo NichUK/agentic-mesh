@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import json
 import sqlite3
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -11,6 +13,14 @@ from agentic_mesh_v2.state_machine import validate_transition
 
 
 SCHEMA_VERSION = 1
+
+SAFE_BUILD_ENV_FIELDS = {
+    "image_tag": ("AGENTIC_MESH_IMAGE_TAG", "AGENTIC_MESH_V2_IMAGE_TAG"),
+    "source_commit": ("AGENTIC_MESH_SOURCE_COMMIT", "AGENTIC_MESH_COMMIT_SHA", "AGENTIC_MESH_GIT_SHA"),
+    "build_ref": ("AGENTIC_MESH_BUILD_REF", "AGENTIC_MESH_RELEASE"),
+    "build_time": ("AGENTIC_MESH_BUILD_TIME",),
+    "environment": ("AGENTIC_MESH_ENVIRONMENT",),
+}
 
 
 @dataclass(frozen=True)
@@ -36,6 +46,63 @@ class WorkItem:
 class ExternalEventReceipt:
     receipt_id: str
     duplicate: bool
+
+
+def _runtime_package_version() -> str:
+    try:
+        return metadata.version("agentic-mesh")
+    except metadata.PackageNotFoundError:
+        return "Not configured"
+
+
+def _first_configured_env(names: Iterable[str]) -> tuple[str | None, str | None]:
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return name, value
+    return None, None
+
+
+def _is_unsafe_build_value(value: str) -> bool:
+    lowered = value.casefold()
+    if any(marker in lowered for marker in ("secret", "token", "password", "credential", "activity@")):
+        return True
+    if "://" in value or value.startswith(("/", "\\\\")):
+        return True
+    if len(value) >= 32 and value.count("-") >= 4:
+        return True
+    return False
+
+
+def _safe_build_value(value: str | None) -> tuple[str, bool]:
+    if not value:
+        return "Not configured", False
+    if _is_unsafe_build_value(value):
+        return "Redacted", True
+    return value, False
+
+
+def runtime_build_info(*, schema_version: int = SCHEMA_VERSION) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "runtime_name": "agentic_mesh_v2",
+        "package_name": "agentic-mesh",
+        "package_version": _runtime_package_version(),
+        "database_schema_version": str(schema_version),
+        "metadata_source": "not_configured",
+        "configured_fields": [],
+        "redacted_fields": [],
+        "read_only": True,
+    }
+    for field, env_names in SAFE_BUILD_ENV_FIELDS.items():
+        configured_name, raw_value = _first_configured_env(env_names)
+        value, redacted = _safe_build_value(raw_value)
+        info[field] = value
+        if configured_name:
+            info["configured_fields"].append(configured_name)
+            info["metadata_source"] = "environment"
+        if redacted:
+            info["redacted_fields"].append(field)
+    return info
 
 
 class V2Database:
@@ -3932,6 +3999,7 @@ class V2Database:
         }
         return {
             "database": str(self.path),
+            "runtime_build_info": runtime_build_info(schema_version=SCHEMA_VERSION),
             "counts": {
                 "queue_items": len(queue_items),
                 "work_items": len(work_items),

@@ -96,6 +96,11 @@ class V2StatusHandler(BaseHTTPRequestHandler):
             if project_file is not None
             else ""
         )
+        runtime_build_info = (
+            snapshot.get("runtime_build_info")
+            if isinstance(snapshot.get("runtime_build_info"), dict)
+            else {}
+        )
         return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -126,7 +131,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   <div class="banner">
     <strong>Runtime:</strong> agentic_mesh_v2<br>
     <strong>Database:</strong> {html.escape(str(snapshot["database"]))}<br>
-    <strong>OTEL:</strong> {html.escape(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "not configured"))}{project_line}
+    <strong>OTEL:</strong> {html.escape(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "not configured"))}<br>
+    {_runtime_build_info_line(runtime_build_info)}{project_line}
   </div>
   <h2>Counts</h2>
   <div class="tiles">
@@ -849,6 +855,22 @@ def _artifact_page(*, relative_path: str, content: str) -> str:
   </main>
 </body>
 </html>"""
+
+
+def _runtime_build_info_line(info: dict[str, object]) -> str:
+    fields = [
+        ("image", info.get("image_tag")),
+        ("commit", info.get("source_commit")),
+        ("env", info.get("environment")),
+        ("build", info.get("build_ref")),
+        ("built", info.get("build_time")),
+        ("schema", info.get("database_schema_version")),
+    ]
+    rendered = " · ".join(
+        f"{html.escape(label)}={html.escape(str(value or 'Not configured'))}"
+        for label, value in fields
+    )
+    return f"<strong>Runtime Build Info:</strong> {rendered}<br>"
 
 
 def _sanitize_artifact_html(content: str) -> str:
