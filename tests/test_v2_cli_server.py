@@ -870,6 +870,67 @@ def test_v2_cli_record_safe_output_records_tool_call_for_running_role_run(tmp_pa
     assert calls[0]["terminal"] is True
 
 
+def test_v2_cli_record_safe_output_processes_effects_immediately(tmp_path: Path) -> None:
+    db_path = tmp_path / "v2.sqlite3"
+    db = V2Database(db_path)
+    try:
+        db.migrate()
+        db.create_queue_item(
+            queue_item_id="queue-cli-ready",
+            title="CLI ready effect",
+            summary="Prove CLI safe-output calls apply effects immediately.",
+            owner_role="product-manager",
+        )
+        db.mark_queue_ready(
+            "queue-cli-ready",
+            actor_role="product-manager",
+            reason="Ready for CLI effect test.",
+        )
+        db.promote_queue_item(
+            queue_item_id="queue-cli-ready",
+            work_item_id="work-cli-ready",
+            owner_role="product-manager",
+        )
+        db.create_run(
+            run_id="run-safe-output-cli-effect",
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            work_item_id="work-cli-ready",
+        )
+    finally:
+        db.close()
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "record-safe-output",
+                "--run-id",
+                "run-safe-output-cli-effect",
+                "--role-id",
+                "product-manager",
+                "--tool-name",
+                "work_item.mark_ready",
+                "--payload-json",
+                '{"work_item_id":"work-cli-ready","reason":"Product shaping is complete."}',
+            ]
+        )
+        == 0
+    )
+
+    db = V2Database(db_path)
+    try:
+        work = db.get_work_item("work-cli-ready")
+        calls = db.list_safe_output_calls_for_run("run-safe-output-cli-effect")
+    finally:
+        db.close()
+
+    assert work.state == "ready"
+    assert len(calls) == 1
+    assert calls[0]["tool_name"] == "work_item.mark_ready"
+
+
 def test_v2_cli_record_safe_output_rejects_wrong_role_for_run(tmp_path: Path) -> None:
     db_path = tmp_path / "v2.sqlite3"
     db = V2Database(db_path)

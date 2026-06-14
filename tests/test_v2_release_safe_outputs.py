@@ -1265,7 +1265,7 @@ def test_release_manager_cli_transport_release_outputs_apply_once_in_role_servic
     assert len(releases) == 1
 
 
-def test_release_manager_mcp_transport_records_without_immediate_release_effects(tmp_path: Path) -> None:
+def test_release_manager_mcp_transport_processes_release_effects_immediately(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     try:
         db.migrate()
@@ -1275,6 +1275,11 @@ def test_release_manager_mcp_transport_records_without_immediate_release_effects
             role_id="release-manager",
             role_instance_id="test-project.release-manager.1",
             work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        approval_ref = _record_approved_release_decision(
+            service,
+            run_id="run-release-mcp-transport",
         )
 
         response = handle_safe_output_mcp_request(
@@ -1296,7 +1301,7 @@ def test_release_manager_mcp_transport_records_without_immediate_release_effects
                             "reason": "Documentation-only release; no runtime activation required.",
                             "scope": "Record MCP transport release intent.",
                             "commit_ref": "commit-safe-output",
-                            "approval_ref": "approval-safe-output",
+                            "approval_ref": approval_ref,
                             "rollback_plan": "No deployment was performed; reopen if needed.",
                             "residual_risks": "None beyond accepting a no-deployment disposition.",
                         },
@@ -1312,8 +1317,9 @@ def test_release_manager_mcp_transport_records_without_immediate_release_effects
 
     assert response is not None
     assert response["result"]["structuredContent"]["status"] == "ok"
-    assert len(calls) == 1
-    assert releases == []
+    assert len(calls) == 2
+    assert len(releases) == 1
+    assert releases[0]["status"] == "no_deployment_disposition"
     assert work.state == "release_review"
 
 

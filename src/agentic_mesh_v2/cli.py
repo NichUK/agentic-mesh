@@ -585,7 +585,7 @@ def _record_safe_output_cli(db: V2Database, args: argparse.Namespace) -> dict[st
         tool_name=args.tool_name,
         payload=parse_safe_output_payload_json(args.payload_json),
         terminal=bool(args.terminal),
-        service=_safe_output_service(db, args.project_file, process_effects=False),
+        service=_safe_output_service(db, args.project_file, process_effects=True),
     )
 
 

@@ -43,7 +43,7 @@ def record_safe_output_for_run(
     if not isinstance(payload, dict):
         raise ValueError("safe-output payload must be a JSON object")
 
-    safe_outputs = service or SafeOutputService(db, process_effects=False)
+    safe_outputs = service or SafeOutputService(db, process_effects=True)
     call = SafeOutputCall(
         role_id=role_id,
         tool_name=tool_name,
