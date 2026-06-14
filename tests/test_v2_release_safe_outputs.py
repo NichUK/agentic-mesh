@@ -559,6 +559,96 @@ def test_release_record_decision_records_release_decision_evidence(tmp_path: Pat
     assert [row for row in assignments if row["assignment_type"] == "release_rework"] == []
 
 
+def test_release_record_decision_binds_authorized_direct_conversation_approval(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.upsert_connector(
+            connector_id="teams-agentic-mesh-dev",
+            project_id="agentic-mesh-dev",
+            connector_type="teams",
+            display_name="Agentic Mesh Dev Teams",
+        )
+        db.create_human_response_request(
+            request_id="human-response-release-approval",
+            connector_id="teams-agentic-mesh-dev",
+            source_ref="call-release-approval-request",
+            request_type="release_approval",
+            title="Approve runtime release",
+            question="Approve release of work-release-safe-output?",
+            required_authority="release_approver",
+            response_contract_id="release-decision-v1",
+            created_by_role="release-manager",
+            destination_ref="nicholas",
+            destination_type="dm",
+            work_item_id="work-release-safe-output",
+            gate_id="release_decision_response",
+        )
+        db.create_role_assignment(
+            assignment_id="assignment-release-approval-dm",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+            conversation_id="conversation-release-approval-dm",
+            source_ref="msg-release-approval",
+            title="Direct Teams conversation",
+            summary="Sponsor approved a release request in a direct message.",
+            assignment_type="direct_conversation",
+            visibility_scope="private",
+            payload={
+                "sender_ref": "nicholas",
+                "sender_authority": ["sponsor", "release_approver"],
+                "human_response_request_id": "human-response-release-approval",
+            },
+        )
+        claimed = db.claim_role_assignment(
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+        )
+        assert claimed is not None
+        db.create_run(
+            run_id="run-release-approval-dm",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+
+        decision_call_id = service.record(
+            run_id="run-release-approval-dm",
+            call=SafeOutputCall(
+                role_id="release-manager",
+                tool_name="release.record_decision",
+                payload={
+                    "work_item_id": "work-release-safe-output",
+                    "decision": "approve",
+                    "approval_ref": "human-response-release-approval",
+                    "reason": "Sponsor approved release in a direct conversation.",
+                },
+                terminal=False,
+            ),
+        )
+        request = db.get_human_response_request("human-response-release-approval")
+        submissions = db.list_human_response_submissions()
+        evidence = db.list_work_item_evidence()
+    finally:
+        db.close()
+
+    assert request is not None
+    assert request["status"] == "responded"
+    assert request["response_value"] == "approve"
+    assert request["responder_ref"] == "nicholas"
+    assert len(submissions) == 1
+    assert submissions[0]["status"] == "accepted"
+    assert submissions[0]["authority"] == "release_approver"
+    assert any(
+        item["safe_output_ref"] == decision_call_id
+        and item["evidence_type"] == "release_decision"
+        for item in evidence
+    )
+
+
 def test_release_record_decision_rejects_mismatched_approval_response(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     try:

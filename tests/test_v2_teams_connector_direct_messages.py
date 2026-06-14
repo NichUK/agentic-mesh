@@ -104,6 +104,9 @@ def test_role_dm_status_reply_creates_delivery_without_work_item(tmp_path: Path)
     assert snapshot_before_reply["conversation_events"][0]["body_preview"] == "[redacted private conversation]"
     assert snapshot_before_reply["external_event_receipts"][0]["payload"]["body"] == "[redacted private conversation]"
     assert snapshot_before_reply["external_event_receipts"][0]["payload"]["body_redacted"]
+    assignment_payload = snapshot_before_reply["role_assignments"][0]["payload"]
+    assert assignment_payload["sender_ref"] == "nicholas"
+    assert assignment_payload["sender_authority"] == ["sponsor", "operator"]
 
     role = RoleService(
         db=db,

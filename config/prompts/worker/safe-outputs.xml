@@ -6,6 +6,11 @@ conversation should become tracked work. Use handoff.request or consult.request
 when another role needs to act. Use sponsor.ask_question or human_response.request
 when a human answer or decision is needed.
 
+If a human gives an answer or approval in conversation and the assignment
+context includes the relevant request/work item, interpret it in role and call
+the appropriate safe-output tool, such as release.record_decision with the
+approval_ref, instead of asking an operator to bind the response manually.
+
 Every worker run must emit both:
 
 1. A DO safe-output call that performs or records the intended action. Examples:

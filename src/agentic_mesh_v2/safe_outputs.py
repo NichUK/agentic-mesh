@@ -288,7 +288,7 @@ class SafeOutputService:
         if self.process_effects and call.tool_name in {"quality.approve", "quality.request_changes"}:
             self._validate_quality_decision_target(call)
         if self.process_effects and call.tool_name == "release.record_decision":
-            self._validate_release_decision_target(call)
+            self._validate_release_decision_target(call, run_id=run_id)
         if self.process_effects and call.tool_name in {"release.deploy", "release.record_no_deployment"}:
             self._validate_release_activation_approval(call)
         if self.process_effects and call.tool_name in {"release.close", "work_item.close"}:
@@ -1053,7 +1053,7 @@ class SafeOutputService:
             safe_output_ref=call_id,
         )
 
-    def _validate_release_decision_target(self, call: SafeOutputCall) -> None:
+    def _validate_release_decision_target(self, call: SafeOutputCall, *, run_id: str | None = None) -> None:
         work_item_id = _required_text(call.payload, "work_item_id")
         work_item = self.db.get_work_item(work_item_id)
         if work_item.state != "release_review":
@@ -1071,6 +1071,9 @@ class SafeOutputService:
             raise SafeOutputError("release.record_decision approval_ref must reference a release_approval request")
         if request.get("work_item_id") != work_item_id:
             raise SafeOutputError("release.record_decision approval_ref belongs to a different work item")
+        if request.get("status") == "awaiting_response" and run_id is not None:
+            self._assert_run_can_bind_human_response(run_id=run_id, request=request)
+            return
         if request.get("status") != "responded":
             raise SafeOutputError("release.record_decision approval_ref has not been answered")
         response_value = _normalize_release_decision(str(request.get("response_value") or ""))
@@ -1082,7 +1085,8 @@ class SafeOutputService:
     def _record_release_decision(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
         decision = _normalize_release_decision(_required_text(call.payload, "decision"))
         if not _has_work_item_evidence_ref(self.db, safe_output_ref=call_id):
-            self._validate_release_decision_target(call)
+            self._bind_pending_release_approval_from_run(call_id=call_id, run_id=run_id, call=call)
+            self._validate_release_decision_target(call, run_id=run_id)
             self.db.add_work_item_evidence(
                 evidence_id=f"evidence-{call_id}",
                 work_item_id=_required_text(call.payload, "work_item_id"),
@@ -1093,6 +1097,51 @@ class SafeOutputService:
             )
         if decision == "request_changes":
             self._route_release_changes_requested(call_id=call_id, run_id=run_id, call=call)
+
+    def _bind_pending_release_approval_from_run(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        approval_ref = _release_approval_ref(call.payload)
+        if approval_ref is None:
+            return
+        request = self.db.get_human_response_request(approval_ref)
+        if request is None or request.get("status") != "awaiting_response":
+            return
+        actor = self._assert_run_can_bind_human_response(run_id=run_id, request=request)
+        decision = _normalize_release_decision(_required_text(call.payload, "decision"))
+        submission_id = f"human-response-submission-{call_id}"
+        if self.db.get_human_response_submission(submission_id) is None:
+            self.db.record_human_response_submission(
+                submission_id=submission_id,
+                request_id=approval_ref,
+                responder_ref=actor["sender_ref"],
+                response_value=decision,
+                normalized_value=decision,
+                status="accepted",
+                authority=actor["matched_authority"],
+                comment=_optional_text(call.payload.get("reason")),
+            )
+        self.db.complete_human_response_request(
+            request_id=approval_ref,
+            response_value=decision,
+            responder_ref=actor["sender_ref"],
+        )
+
+    def _assert_run_can_bind_human_response(self, *, run_id: str, request: dict[str, Any]) -> dict[str, str]:
+        assignment = _claimed_or_completed_assignment_for_run(self.db, run_id=run_id)
+        if assignment is None:
+            raise SafeOutputError("release.record_decision cannot bind approval without a current role assignment")
+        payload = assignment.get("payload")
+        if not isinstance(payload, dict):
+            raise SafeOutputError("release.record_decision cannot bind approval without assignment context")
+        sender_ref = _optional_text(payload.get("sender_ref"))
+        if sender_ref is None:
+            raise SafeOutputError("release.record_decision cannot bind approval without a human sender reference")
+        authorities = set(_string_list(payload.get("sender_authority")))
+        required = str(request.get("required_authority") or "").strip()
+        if required and required not in authorities:
+            raise SafeOutputError(
+                f"release.record_decision requires `{required}` authority from the conversation sender"
+            )
+        return {"sender_ref": sender_ref, "matched_authority": required or "human"}
 
     def _validate_release_activation_approval(self, call: SafeOutputCall) -> None:
         work_item_id = _required_text(call.payload, "work_item_id")
@@ -1648,6 +1697,26 @@ def _work_item_id_from_payload_or_run(
     if source_run is None:
         return None
     return _optional_text(source_run.get("work_item_id"))
+
+
+def _claimed_or_completed_assignment_for_run(db: V2Database, *, run_id: str) -> dict[str, Any] | None:
+    source_run = db.get_agent_run(run_id)
+    if source_run is None:
+        return None
+    role_id = str(source_run.get("role_id") or "")
+    role_instance_id = str(source_run.get("role_instance_id") or "")
+    assignments = db.list_role_assignments()
+    for assignment in assignments:
+        if assignment.get("run_id") == run_id:
+            return assignment
+    for assignment in assignments:
+        if assignment.get("role_id") != role_id:
+            continue
+        if assignment.get("role_instance_id") != role_instance_id:
+            continue
+        if assignment.get("status") == "claimed":
+            return assignment
+    return None
 
 
 def _has_successful_deployment(db: V2Database, *, release_id: str, work_item_id: str) -> bool:
