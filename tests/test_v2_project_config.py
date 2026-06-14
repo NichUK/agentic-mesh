@@ -55,7 +55,7 @@ def test_load_release_deployment_targets_from_dogfood_project() -> None:
     assert target.target_type == "command"
     assert target.command == ("sh", "scripts/release-linuxch-compose.sh")
     assert target.working_directory is not None
-    assert target.working_directory.as_posix().endswith("/mesh/workspaces/agentic-mesh")
+    assert target.working_directory.as_posix().endswith("/mesh/system")
     assert target.timeout_seconds == 900
     assert "runtime_code" in target.impact_categories
     assert target.smoke["route_label"] == "/status"

@@ -22,4 +22,4 @@ export AGENTIC_MESH_URL_ROOT
 
 cd "$REPO_ROOT"
 sh scripts/deploy-linuxch-compose.sh --profile build-image build runtime-image
-sh scripts/deploy-linuxch-compose.sh up -d
+sh scripts/deploy-linuxch-compose.sh up -d ${AGENTIC_MESH_RELEASE_SERVICES:-v2-runtime v2-teams-ingress v2-supervisor}

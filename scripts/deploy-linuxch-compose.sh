@@ -48,8 +48,21 @@ if [ "$#" -eq 0 ]; then
   set -- up -d
 fi
 
-exec docker compose \
-  --env-file "$STAGE_DIR/.env" \
-  -f "$STAGE_DIR/docker-compose.yml" \
-  -f "$STAGE_DIR/docker-compose.linuxch.yml" \
-  "$@"
+if docker compose version >/dev/null 2>&1; then
+  exec docker compose \
+    --env-file "$STAGE_DIR/.env" \
+    -f "$STAGE_DIR/docker-compose.yml" \
+    -f "$STAGE_DIR/docker-compose.linuxch.yml" \
+    "$@"
+fi
+
+if command -v docker-compose >/dev/null 2>&1; then
+  exec docker-compose \
+    --env-file "$STAGE_DIR/.env" \
+    -f "$STAGE_DIR/docker-compose.yml" \
+    -f "$STAGE_DIR/docker-compose.linuxch.yml" \
+    "$@"
+fi
+
+echo "Docker Compose CLI is required for linuxch deployment." >&2
+exit 127

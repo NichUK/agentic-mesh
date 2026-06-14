@@ -62,7 +62,7 @@ release_deployment_targets:
     command:
     - sh
     - scripts/release-linuxch-compose.sh
-    working_directory: /mesh/workspaces/agentic-mesh
+    working_directory: /mesh/system
     timeout_seconds: 900
     impact_categories:
     - runtime_code
