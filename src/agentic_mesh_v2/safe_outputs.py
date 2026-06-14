@@ -340,7 +340,7 @@ class SafeOutputService:
         if call.tool_name == "quality.approve":
             self._approve_quality(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "quality.request_changes":
-            self._request_quality_changes(call)
+            self._request_quality_changes(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "sponsor.ask_question":
             self._ask_sponsor_question(call_id=call_id, run_id=run_id, call=call)
         if call.tool_name == "human_response.request":
@@ -834,10 +834,11 @@ class SafeOutputService:
             work_item=work_item,
         )
 
-    def _request_quality_changes(self, call: SafeOutputCall) -> None:
+    def _request_quality_changes(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
         work_item_id = _required_text(call.payload, "work_item_id")
         work_item = self.db.get_work_item(work_item_id)
         if work_item.state == "waiting_agent":
+            self._create_quality_rework_assignment(call_id=call_id, run_id=run_id, call=call)
             return
         self._validate_quality_decision_target(call)
         reason = _required_text(call.payload, "reason")
@@ -853,6 +854,38 @@ class SafeOutputService:
                 next_action=reason,
                 retryable=True,
             )
+        )
+        self._create_quality_rework_assignment(call_id=call_id, run_id=run_id, call=call)
+
+    def _create_quality_rework_assignment(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
+        assignment_id = _quality_rework_assignment_id(call_id)
+        if self.db.get_role_assignment(assignment_id) is not None:
+            return
+        work_item_id = _required_text(call.payload, "work_item_id")
+        reason = _required_text(call.payload, "reason")
+        work_item = self.db.get_work_item(work_item_id)
+        self.db.create_role_assignment(
+            assignment_id=assignment_id,
+            role_id="engineering",
+            work_item_id=work_item_id,
+            source_ref=call_id,
+            title=f"QA changes: {work_item.title}",
+            summary=_single_line_text(reason),
+            assignment_type="quality_rework",
+            visibility_scope="project",
+            payload={
+                "safe_output_ref": call_id,
+                "source_run_id": run_id,
+                "source_role": call.role_id,
+                "target_role": "engineering",
+                "reason": _single_line_text(reason),
+                "route_tool": call.tool_name,
+                "work_item_id": work_item_id,
+                "current_flow_state": "waiting_agent",
+                "source_documents": _string_list(call.payload.get("source_documents")),
+                "target_outputs": _string_list(call.payload.get("target_outputs")),
+                "allowed_tools": sorted(self.policy.tools_for_role("engineering")),
+            },
         )
 
     def _block_linked_work_item(self, *, call_id: str, run_id: str, call: SafeOutputCall) -> None:
@@ -1655,6 +1688,10 @@ def _release_decision_summary_field(summary: str, field_name: str) -> str | None
 
 def _release_rework_assignment_id(call_id: str) -> str:
     return f"assignment-{call_id}-release-rework"
+
+
+def _quality_rework_assignment_id(call_id: str) -> str:
+    return f"assignment-{call_id}-quality-rework"
 
 
 def _work_item_ready_assignment_id(call_id: str) -> str:

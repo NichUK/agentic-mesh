@@ -1121,8 +1121,8 @@ class LocalTeamsTestAdapter:
             or ("Release approval requested" if request_type == "release_approval" else "Human response requested")
         ).strip()
         question = _required_string(payload, "question")
-        conversation_id = _required_string(payload, "conversation_id")
         destination_ref = _required_string(payload, "destination_ref")
+        conversation_id = str(payload.get("conversation_id") or f"conversation-{destination_ref}")
         destination_type = str(payload.get("destination_type") or "dm")
         thread_ref = str(payload.get("thread_ref") or f"thread-{call_id}")
         request_id = f"human-response-{_stable_digest(call_id)}"
@@ -1837,7 +1837,7 @@ class ConnectorSafeOutputService(SafeOutputService):
             "human_response.request",
             "release.request_approval",
         }:
-            self._enrich_human_destination_payload(run_id=run_id, payload=call.payload)
+            self._enrich_human_destination_payload(run_id=run_id, role_id=call.role_id, payload=call.payload)
         if call.tool_name == "status.reply":
             self._reject_noop_relevance_reply(run_id=run_id, role_id=call.role_id)
             self._validate_reply_references(call.payload)
@@ -1877,7 +1877,7 @@ class ConnectorSafeOutputService(SafeOutputService):
                 role_id=call.role_id,
                 payload=call.payload,
             )
-        if call.tool_name == "human_response.request" and "conversation_id" in call.payload:
+        if call.tool_name == "human_response.request" and self._should_deliver_response_card(call.payload):
             self._validate_response_card_payload(call.payload)
             self.adapter.deliver_response_card(
                 call_id=call_id,
@@ -1885,7 +1885,7 @@ class ConnectorSafeOutputService(SafeOutputService):
                 payload=call.payload,
                 request_type="human_response",
             )
-        if call.tool_name == "release.request_approval" and "conversation_id" in call.payload:
+        if call.tool_name == "release.request_approval" and self._should_deliver_response_card(call.payload):
             self._validate_response_card_payload(call.payload)
             self.adapter.deliver_response_card(
                 call_id=call_id,
@@ -1893,7 +1893,7 @@ class ConnectorSafeOutputService(SafeOutputService):
                 payload=call.payload,
                 request_type="release_approval",
             )
-        if call.tool_name == "product.mark_sponsor_ready" and "conversation_id" in call.payload:
+        if call.tool_name == "product.mark_sponsor_ready" and self._should_deliver_response_card(call.payload):
             self._validate_response_card_payload(call.payload)
             self.adapter.deliver_response_card(
                 call_id=call_id,
@@ -1949,10 +1949,11 @@ class ConnectorSafeOutputService(SafeOutputService):
                     payload[key] = value
             return
 
-    def _enrich_human_destination_payload(self, *, run_id: str, payload: dict[str, Any]) -> None:
+    def _enrich_human_destination_payload(self, *, run_id: str, role_id: str, payload: dict[str, Any]) -> None:
         source_run = self.db.get_agent_run(run_id)
         explicit_destination_type = str(payload.get("destination_type") or "").strip()
         explicit_non_dm_route = explicit_destination_type not in {"", "runtime", "dm"}
+        payload.setdefault("connector_id", self.adapter.config.connector_id)
         for assignment in self.db.list_role_assignments():
             if not _assignment_matches_run_context(assignment, run_id=run_id, source_run=source_run):
                 continue
@@ -1980,8 +1981,6 @@ class ConnectorSafeOutputService(SafeOutputService):
                 not payload.get("destination_type") or str(payload.get("destination_type")) == "runtime"
             ):
                 payload["destination_type"] = destination_type
-            if not payload.get("connector_id"):
-                payload["connector_id"] = self.adapter.config.connector_id
             if explicit_non_dm_route:
                 return
             self._prefer_human_dm_destination(
@@ -1989,7 +1988,16 @@ class ConnectorSafeOutputService(SafeOutputService):
                 assignment=assignment,
                 assignment_payload=assignment_payload,
             )
+            if str(payload.get("destination_type") or "") != "dm" or not payload.get("recipient_ref"):
+                self._prefer_default_human_dm_destination(payload=payload, role_id=role_id)
             return
+        if not explicit_non_dm_route:
+            self._prefer_default_human_dm_destination(payload=payload, role_id=role_id)
+
+    def _should_deliver_response_card(self, payload: dict[str, Any]) -> bool:
+        connector_id = str(payload.get("connector_id") or self.adapter.config.connector_id)
+        destination_type = str(payload.get("destination_type") or "dm")
+        return connector_id == self.adapter.config.connector_id and destination_type != "runtime"
 
     def _prefer_human_dm_destination(
         self,
@@ -2023,6 +2031,28 @@ class ConnectorSafeOutputService(SafeOutputService):
             recipient_ref=recipient_ref,
         )
         payload.pop("reply_to_id", None)
+
+    def _prefer_default_human_dm_destination(self, *, payload: dict[str, Any], role_id: str) -> None:
+        if str(payload.get("destination_type") or "") == "dm" and payload.get("recipient_ref"):
+            return
+        required_authority = str(payload.get("required_authority") or "sponsor")
+        recipient_ref = self._human_ref_for_authority(required_authority) or self._human_ref_for_authority("sponsor")
+        if not recipient_ref:
+            return
+        payload["recipient_ref"] = recipient_ref
+        payload["destination_type"] = "dm"
+        payload["destination_ref"] = _logical_dm_ref(
+            connector_id=self.adapter.config.connector_id,
+            role_id=role_id,
+            recipient_ref=recipient_ref,
+        )
+        payload.pop("reply_to_id", None)
+
+    def _human_ref_for_authority(self, authority: str) -> str | None:
+        for human_ref, authorities in self.adapter.config.human_authorities.items():
+            if authority in authorities:
+                return human_ref
+        return None
 
     def _product_signoff_card_payload(self, call: SafeOutputCall) -> dict[str, Any]:
         payload = dict(call.payload)

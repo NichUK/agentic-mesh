@@ -228,6 +228,51 @@ def test_release_approval_card_delivery_and_authorized_submission(tmp_path: Path
     assert snapshot["counts"]["connector_attention_items"] == 0
 
 
+def test_release_approval_without_source_conversation_routes_to_sponsor_dm(tmp_path: Path) -> None:
+    db, adapter, _conversation_id = _db_with_work_item(tmp_path)
+    _move_release_card_to_release_review(db)
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    db.create_run(
+        run_id="run-release-card-no-conversation",
+        role_id="release-manager",
+        role_instance_id="release-manager-1",
+        work_item_id="work-release-card",
+    )
+
+    service.record(
+        run_id="run-release-card-no-conversation",
+        call=SafeOutputCall(
+            role_id="release-manager",
+            tool_name="release.request_approval",
+            payload={
+                "work_item_id": "work-release-card",
+                "title": "Approve release of release card slice",
+                "question": "Approve release of work-release-card?",
+                "gate_id": "release_decision_response",
+                "response_contract_id": "release-decision-v1",
+                "required_authority": "release_approver",
+            },
+            terminal=True,
+        ),
+    )
+
+    snapshot = db.status_snapshot()
+    request = snapshot["human_response_requests"][0]
+    deliveries = {record["purpose"]: record for record in snapshot["delivery_records"]}
+    bindings = snapshot["thread_bindings"]
+    assert request["connector_id"] == "teams-agentic-mesh-dev"
+    assert request["destination_type"] == "dm"
+    assert str(request["destination_ref"]).startswith("dm-")
+    assert request["delivery_ref"] == deliveries["release_approval.card"]["delivery_id"]
+    assert deliveries["release_approval.card"]["destination_type"] == "dm"
+    assert deliveries["release_approval.card"]["payload"]["recipient_ref"] == "nicholas"
+    assert deliveries["release_approval.card"]["status"] == "sent"
+    assert deliveries["release_approval.card"]["payload"]["card"]["links"][0]["url"].startswith(
+        "http://linuxch:8100/work-items/work-release-card"
+    )
+    assert any(binding["binding_type"] == "human_response" for binding in bindings)
+
+
 def test_direct_message_inline_response_submissions_record_approvals_and_still_reach_agent(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     db.migrate()

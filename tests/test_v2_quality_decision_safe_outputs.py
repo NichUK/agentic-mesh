@@ -186,6 +186,7 @@ def test_quality_request_changes_moves_to_waiting_agent_with_engineering_attenti
         )
         work_item = db.list_work_items()[0]
         calls = db.list_safe_output_calls_for_run("run-quality-changes")
+        assignments = db.list_role_assignments()
     finally:
         db.close()
 
@@ -196,6 +197,12 @@ def test_quality_request_changes_moves_to_waiting_agent_with_engineering_attenti
     assert work_item["reason_class"] == "quality_changes_requested"
     assert work_item["retryable"] is True
     assert "wrap incorrectly" in work_item["next_action"]
+    assert len(assignments) == 1
+    assert assignments[0]["role_id"] == "engineering"
+    assert assignments[0]["assignment_type"] == "quality_rework"
+    assert assignments[0]["status"] == "queued"
+    assert assignments[0]["payload"]["safe_output_ref"] == call_id
+    assert "implementation.record_change" in assignments[0]["payload"]["allowed_tools"]
 
 
 def test_quality_decision_rejects_non_active_work_before_recording(tmp_path: Path) -> None:
