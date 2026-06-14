@@ -861,6 +861,7 @@ def _runtime_build_info_line(info: dict[str, object]) -> str:
     fields = [
         ("image", info.get("image_tag")),
         ("commit", info.get("source_commit")),
+        ("branch", info.get("source_branch")),
         ("env", info.get("environment")),
         ("build", info.get("build_ref")),
         ("built", info.get("build_time")),

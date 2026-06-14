@@ -48,6 +48,7 @@ def test_runtime_build_info_defaults_when_metadata_is_missing(tmp_path: Path, mo
     assert info["runtime_name"] == "agentic_mesh_v2"
     assert info["image_tag"] == "Not configured"
     assert info["source_commit"] == "Not configured"
+    assert info["source_branch"] == "Not configured"
     assert info["environment"] == "Not configured"
     assert info["database_schema_version"] == "1"
     assert info["metadata_source"] == "not_configured"
@@ -56,6 +57,7 @@ def test_runtime_build_info_defaults_when_metadata_is_missing(tmp_path: Path, mo
 def test_status_json_and_html_expose_runtime_build_info(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("AGENTIC_MESH_IMAGE_TAG", "agentic-mesh-v2:2026.06.14")
     monkeypatch.setenv("AGENTIC_MESH_SOURCE_COMMIT", "abc1234")
+    monkeypatch.setenv("AGENTIC_MESH_SOURCE_BRANCH", "codex/v2-runtime-reset")
     monkeypatch.setenv("AGENTIC_MESH_BUILD_REF", "release-2026.06.14")
     monkeypatch.setenv("AGENTIC_MESH_BUILD_TIME", "2026-06-14T13:00:00Z")
     monkeypatch.setenv("AGENTIC_MESH_ENVIRONMENT", "linuxch")
@@ -66,12 +68,14 @@ def test_status_json_and_html_expose_runtime_build_info(tmp_path: Path, monkeypa
 
     assert info["image_tag"] == "agentic-mesh-v2:2026.06.14"
     assert info["source_commit"] == "abc1234"
+    assert info["source_branch"] == "codex/v2-runtime-reset"
     assert info["build_ref"] == "release-2026.06.14"
     assert info["build_time"] == "2026-06-14T13:00:00Z"
     assert info["environment"] == "linuxch"
     assert "Runtime Build Info:" in html
     assert "image=agentic-mesh-v2:2026.06.14" in html
     assert "commit=abc1234" in html
+    assert "branch=codex/v2-runtime-reset" in html
     assert "env=linuxch" in html
 
 
