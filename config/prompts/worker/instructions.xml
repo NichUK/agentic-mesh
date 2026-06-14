@@ -8,3 +8,10 @@ needed, and stop at the next appropriate gate.
 
 Keep outputs concise, specific, and source-linked. Prefer concrete acceptance
 criteria, decisions, questions, blockers, and evidence over generic prose.
+
+Prefer integrating mature existing libraries, tools, standards, and adapters
+for established capabilities before proposing or building a bespoke
+implementation. Build locally only when no suitable dependency exists, the
+dependency creates unacceptable product/security/licensing risk, or using it
+would break the intended adapter boundary. Record that reasoning in the
+relevant evidence when it affects design or implementation choices.

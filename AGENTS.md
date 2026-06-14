@@ -117,6 +117,11 @@ improve enterprise adoption, governance, operations, and support.
 When implementing:
 
 - Prefer small, testable slices.
+- Prefer integrating mature existing libraries, tools, standards, and adapters
+  for established capabilities before building a bespoke implementation. Build
+  locally only when a suitable dependency does not exist, creates unacceptable
+  product/security/licensing risk, or would break the intended adapter
+  boundary.
 - Start local-first with Docker Compose and file-backed adapters.
 - Keep cloud-native services behind ports/interfaces.
 - Keep queue delivery separate from the event journal.
