@@ -16,6 +16,8 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
+  "bleach>=6.1",
+  "Markdown>=3.7",
   "opentelemetry-api==1.42.1",
   "opentelemetry-exporter-otlp-proto-grpc==1.42.1",
   "opentelemetry-sdk==1.42.1",

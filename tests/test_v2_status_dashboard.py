@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from agentic_mesh_v2.connectors import ConnectorConfig
 from agentic_mesh_v2.connectors import ConnectorSafeOutputService
@@ -232,6 +235,80 @@ def _render(
     return handler._render_status()
 
 
+def _render_artifact(project_file: Path, encoded_path: str) -> str:
+    handler = object.__new__(V2StatusHandler)
+    handler.project_file = project_file
+    return handler._render_artifact(encoded_path)
+
+
+def test_artifact_viewer_renders_document_library_markdown(tmp_path: Path) -> None:
+    document_root = tmp_path / "document-library"
+    artifact = document_root / "work-items" / "work-artifact" / "020-product-definition.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text(
+        """# Product Definition
+
+See [status](/status).
+
+| Field | Value |
+| --- | --- |
+| State | ready |
+
+```mermaid
+graph TD
+  A-->B
+```
+
+<script>alert("nope")</script>
+""",
+        encoding="utf-8",
+    )
+    project_dir = tmp_path / "project" / "agentic-mesh"
+    project_dir.mkdir(parents=True)
+    project_file = project_dir / "project.yaml"
+    project_file.write_text(
+        "\n".join(
+            [
+                "project_id: artifact-test",
+                "document_library:",
+                "  backend: filesystem",
+                f"  root: {json.dumps(document_root.as_posix())}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    rendered = _render_artifact(project_file, "work-items%2Fwork-artifact%2F020-product-definition.md")
+
+    assert "Product Definition" in rendered
+    assert "<table>" in rendered
+    assert "language-mermaid" in rendered
+    assert "graph TD" in rendered
+    assert "/status" in rendered
+    assert "<script>" not in rendered
+    assert "alert" not in rendered
+
+
+def test_artifact_viewer_rejects_paths_outside_document_library(tmp_path: Path) -> None:
+    document_root = tmp_path / "document-library"
+    document_root.mkdir()
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        "\n".join(
+            [
+                "project_id: artifact-test",
+                "document_library:",
+                "  backend: filesystem",
+                f"  root: {json.dumps(document_root.as_posix())}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PermissionError):
+        _render_artifact(project_file, "..%2Fsecret.md")
+
+
 def test_status_json_contract_includes_connector_dashboard_sections(tmp_path: Path) -> None:
     snapshot = _rich_snapshot(tmp_path)
 
@@ -420,6 +497,41 @@ def test_status_html_defaults_to_current_queue_and_work_items_with_show_all_over
     assert "queue-closed" in all_queue_section
     assert "work-closed" in all_work_section
     assert "Show current only" in all_html
+
+
+def test_status_html_links_recorded_artifacts_to_viewer(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_queue_item(
+        queue_item_id="queue-artifact",
+        title="Artifact work",
+        summary="Produces readable documents.",
+        owner_role="product-manager",
+    )
+    db.mark_queue_ready("queue-artifact", actor_role="product-manager", reason="Ready.")
+    db.promote_queue_item(
+        queue_item_id="queue-artifact",
+        work_item_id="work-artifact",
+        owner_role="product-manager",
+    )
+    db.add_artifact(
+        artifact_id="artifact-product",
+        work_item_id="work-artifact",
+        path="work-items/work-artifact/020-product-definition.md",
+        document_type="product",
+        status="accepted",
+        created_by_role="product-manager",
+    )
+    snapshot = db.status_snapshot()
+    db.close()
+
+    rendered = _render(snapshot)
+
+    assert "Artifacts" in rendered
+    assert "work-items/work-artifact/020-product-definition.md" in rendered
+    assert "/artifact-viewer/work-items%2Fwork-artifact%2F020-product-definition.md" in rendered
+    assert 'target="_blank"' in rendered
+    assert 'rel="noopener"' in rendered
 
 
 def test_bound_private_channel_is_redacted_in_status_json_and_html(tmp_path: Path) -> None:

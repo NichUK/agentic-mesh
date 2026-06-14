@@ -3,16 +3,23 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
+from urllib.parse import quote
+from urllib.parse import unquote
 from urllib.parse import urlparse
+
+import bleach
+import markdown
 
 from agentic_mesh_v2.db import V2Database
 from agentic_mesh_v2.observability import configure_observability
 from agentic_mesh_v2.observability import span
+from agentic_mesh_v2.project_config import load_document_library_config
 
 
 DEFAULT_TABLE_LIMIT = 25
@@ -35,6 +42,14 @@ class V2StatusHandler(BaseHTTPRequestHandler):
             if path == "/healthz":
                 self._send_json({"status": "ok", "runtime": "agentic_mesh_v2"})
                 return
+            if path.startswith("/artifact-viewer/"):
+                try:
+                    self._send_html(self._render_artifact(path.removeprefix("/artifact-viewer/")))
+                except PermissionError as exc:
+                    self.send_error(HTTPStatus.FORBIDDEN, str(exc))
+                except FileNotFoundError as exc:
+                    self.send_error(HTTPStatus.NOT_FOUND, str(exc))
+                return
             self.send_error(HTTPStatus.NOT_FOUND, "not found")
 
     def log_message(self, format: str, *args: object) -> None:
@@ -47,6 +62,27 @@ class V2StatusHandler(BaseHTTPRequestHandler):
             return db.status_snapshot()
         finally:
             db.close()
+
+    def _render_artifact(self, encoded_path: str) -> str:
+        project_file = getattr(self, "project_file", None)
+        if project_file is None:
+            raise FileNotFoundError("artifact viewer requires the status server to start with --project-file")
+        document_library = load_document_library_config(project_file)
+        if document_library is None:
+            raise FileNotFoundError("project has no configured document_library")
+        relative_path = unquote(encoded_path).replace("\\", "/").lstrip("/")
+        if not relative_path or "\x00" in relative_path:
+            raise FileNotFoundError("invalid artifact path")
+        root = document_library.root.resolve(strict=False)
+        target = (root / relative_path).resolve(strict=False)
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise PermissionError("artifact path escapes the document library root") from exc
+        if not target.is_file():
+            raise FileNotFoundError(f"artifact not found: {relative_path}")
+        content = target.read_text(encoding="utf-8", errors="replace")
+        return _artifact_page(relative_path=relative_path, content=content)
 
     def _render_status(self) -> str:
         snapshot = self._snapshot()
@@ -171,6 +207,8 @@ class V2StatusHandler(BaseHTTPRequestHandler):
   {self._supervisor_commands()}
   <h2>Work Items</h2>
   {self._work_items_table(snapshot["work_items"], show_all=show_all)}
+  <h2>Artifacts</h2>
+  {self._artifact_table(snapshot["artifacts"])}
   <h2>Queue</h2>
   {self._queue_table(snapshot["queue_items"], show_all=show_all)}
   <h2>Releases</h2>
@@ -620,6 +658,32 @@ class V2StatusHandler(BaseHTTPRequestHandler):
         )
         return note + "<table><tr><th>Queue Item</th><th>Summary</th><th>Status</th><th>Owner</th><th>Linked Work</th></tr>" + "".join(body) + "</table>"
 
+    def _artifact_table(self, rows: object, limit: int = DEFAULT_TABLE_LIMIT) -> str:
+        items = list(rows) if isinstance(rows, list) else []
+        total = len(items)
+        if not items:
+            return '<p class="muted">No v2 artifacts.</p>'
+        body = []
+        for row in items[:limit]:
+            path = str(row.get("path") or "")
+            href = f"/artifact-viewer/{quote(path, safe='')}"
+            body.append(
+                "<tr>"
+                f"<td><a href=\"{_e(href)}\" target=\"_blank\" rel=\"noopener\"><code>{_e(path)}</code></a></td>"
+                f"<td>{_e(row.get('document_type') or '')}<br><span class=\"muted\">{_e(row.get('status') or '')}</span></td>"
+                f"<td>{_e(row.get('work_item_id') or '')}</td>"
+                f"<td>{_e(row.get('created_by_role') or '')}</td>"
+                f"<td>{_e(row.get('created_at') or '')}</td>"
+                "</tr>"
+            )
+        cap = f" Showing latest {limit}." if total > limit else ""
+        return (
+            f'<p class="muted small">Showing {min(total, limit)} of {total} artifacts.{cap}</p>'
+            "<table><tr><th>Artifact</th><th>Type / Status</th><th>Work Item</th><th>Role</th><th>Created</th></tr>"
+            + "".join(body)
+            + "</table>"
+        )
+
     def _release_table(self, rows: object) -> str:
         items = list(rows) if isinstance(rows, list) else []
         if not items:
@@ -731,6 +795,119 @@ def serve(*, host: str, port: int, db_path: Path, project_file: Path | None = No
 
 def _e(value: object) -> str:
     return html.escape("" if value is None else str(value))
+
+
+def _artifact_page(*, relative_path: str, content: str) -> str:
+    safe_title = _e(relative_path)
+    if relative_path.lower().endswith((".md", ".markdown")):
+        safe_content = re.sub(
+            r"<(script|style)\b[^>]*>.*?</\1>",
+            "",
+            content,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        rendered = markdown.markdown(
+            safe_content,
+            extensions=[
+                "fenced_code",
+                "tables",
+                "toc",
+                "sane_lists",
+                "nl2br",
+            ],
+            output_format="html5",
+        )
+        body = _sanitize_artifact_html(rendered)
+    else:
+        body = f"<pre>{_e(content)}</pre>"
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{safe_title} - Agentic Mesh Artifact</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; line-height: 1.45; color: #111827; max-width: 72rem; }}
+    a {{ color: #1d4ed8; }}
+    .banner {{ border: 1px solid #cbd5e1; background: #f8fafc; padding: 0.8rem 1rem; margin: 1rem 0 1.5rem; }}
+    .content {{ overflow-wrap: anywhere; }}
+    pre {{ background: #0f172a; color: #e5e7eb; padding: 1rem; overflow-x: auto; border-radius: 0.25rem; }}
+    code {{ background: #f3f4f6; border: 1px solid #e5e7eb; padding: 0.05rem 0.2rem; }}
+    pre code {{ background: transparent; border: 0; padding: 0; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 0.8rem 0 1.5rem; }}
+    th, td {{ border: 1px solid #d1d5db; padding: 0.38rem 0.5rem; vertical-align: top; }}
+    th {{ background: #f3f4f6; text-align: left; }}
+    blockquote {{ border-left: 0.25rem solid #cbd5e1; margin-left: 0; padding-left: 1rem; color: #4b5563; }}
+  </style>
+</head>
+<body>
+  <p><a href="/status">Status</a></p>
+  <div class="banner">
+    <strong>Artifact:</strong> <code>{safe_title}</code>
+  </div>
+  <main class="content">
+    {body}
+  </main>
+</body>
+</html>"""
+
+
+def _sanitize_artifact_html(content: str) -> str:
+    allowed_tags = {
+        "a",
+        "abbr",
+        "blockquote",
+        "br",
+        "code",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "em",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "img",
+        "li",
+        "ol",
+        "p",
+        "pre",
+        "span",
+        "strong",
+        "table",
+        "tbody",
+        "td",
+        "th",
+        "thead",
+        "tr",
+        "ul",
+    }
+    allowed_attributes = {
+        "a": ["href", "title"],
+        "code": ["class"],
+        "div": ["class", "id"],
+        "h1": ["id"],
+        "h2": ["id"],
+        "h3": ["id"],
+        "h4": ["id"],
+        "h5": ["id"],
+        "h6": ["id"],
+        "img": ["alt", "src", "title"],
+        "pre": ["class"],
+        "span": ["class"],
+        "th": ["align"],
+        "td": ["align"],
+    }
+    return bleach.clean(
+        content,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        protocols=["http", "https", "mailto"],
+        strip=True,
+    )
 
 
 def _table_filter_note(
