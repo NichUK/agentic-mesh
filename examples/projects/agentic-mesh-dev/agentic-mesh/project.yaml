@@ -34,7 +34,7 @@ workspace:
       default_branch: develop
 document_library:
   backend: git
-  root: ../../..
+  root: ..
   structure_policy: togaf-sdlc-v1
   index_path: docs/00-index/document-library-manifest.json
   review_log_standard: same-document-review-log-v1
