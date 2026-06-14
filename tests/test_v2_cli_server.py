@@ -2372,6 +2372,41 @@ def test_v2_cli_role_service_loop_reports_interrupt(monkeypatch, tmp_path: Path)
     assert result["processed_count"] == 2
 
 
+def test_v2_cli_continuous_role_loop_records_failed_cycle_without_exiting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    def fake_tick(db: object, args: Namespace) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("document update duplicates existing content")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_module, "_run_role_service_tick", fake_tick)
+
+    result = cli_module._run_role_service_loop(
+        object(),  # type: ignore[arg-type]
+        Namespace(
+            role_id="product-manager",
+            role_instance_id="test-project.product-manager.1",
+            project_file=tmp_path / "project.yaml",
+            cycles=None,
+            continuous=True,
+            poll_seconds=0,
+        ),
+    )
+
+    assert result["status"] == "interrupted"
+    assert result["service_mode"] == "continuous"
+    assert result["cycles_requested"] is None
+    assert result["cycles_completed"] == 1
+    assert result["cycles"][0]["status"] == "failed"
+    assert result["cycles"][0]["error"] == "document update duplicates existing content"
+
+
 def test_v2_cli_validate_topology_accepts_distinct_roots(tmp_path: Path, capsys) -> None:
     source = tmp_path / "source"
     deployed = tmp_path / "deployed"

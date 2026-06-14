@@ -845,7 +845,18 @@ def _run_role_service_loop(db: V2Database, args: argparse.Namespace) -> dict[str
     try:
         while cycles_requested is None or index < cycles_requested:
             index += 1
-            cycle = _run_role_service_tick(db, args)
+            try:
+                cycle = _run_role_service_tick(db, args)
+            except Exception as exc:
+                if not continuous:
+                    raise
+                status = "degraded"
+                cycle = {
+                    "status": "failed",
+                    "error": str(exc),
+                    "processed_count": 0,
+                    "recovered_count": 0,
+                }
             cycle["cycle"] = index
             cycles.append(cycle)
             totals["processed_count"] += int(cycle["processed_count"])
