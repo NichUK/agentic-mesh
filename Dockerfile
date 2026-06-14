@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /workspace
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends docker-compose docker.io git nodejs npm ripgrep \
+  && apt-get install -y --no-install-recommends docker-cli docker-compose docker.io git nodejs npm ripgrep \
   && npm install -g @openai/codex@0.135.0 \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
