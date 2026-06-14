@@ -28,6 +28,9 @@ from agentic_mesh_v2.project_config import load_role_memory_context
 from agentic_mesh_v2.project_config import load_role_worker_config
 from agentic_mesh_v2.project_config import load_teams_connector_config
 from agentic_mesh_v2.project_install import InstallOptions
+from agentic_mesh_v2.project_install import AzureCliGraphClient
+from agentic_mesh_v2.project_install import GraphRequestError
+from agentic_mesh_v2.project_install import TokenGraphClient
 from agentic_mesh_v2.project_install import run_project_install
 from agentic_mesh_v2.prompt_builder import build_prompt_assembler_for_project
 from agentic_mesh_v2.role_service import RoleService
@@ -38,6 +41,7 @@ from agentic_mesh_v2.safe_output_transport import parse_safe_output_payload_json
 from agentic_mesh_v2.safe_output_transport import record_safe_output_for_run
 from agentic_mesh_v2.server import serve
 from agentic_mesh_v2.teams_ingress import serve_teams_ingress
+from agentic_mesh_v2.teams_sync import sync_project_channel_messages
 from agentic_mesh_v2.topology import ProjectRepo
 from agentic_mesh_v2.topology import RuntimeTopology
 from agentic_mesh_v2.worker_adapters import build_worker_adapter
@@ -72,6 +76,23 @@ def main(argv: list[str] | None = None) -> int:
     teams_ingress_parser.add_argument("--project-file", type=Path, required=True)
     teams_ingress_parser.add_argument("--path", default="/api/messages")
     teams_ingress_parser.add_argument("--external-base-url")
+
+    teams_sync_parser = subparsers.add_parser(
+        "sync-teams-conversations",
+        help="Poll configured Teams project channels through Graph and replay missed messages/replies.",
+    )
+    teams_sync_parser.add_argument("--project-file", type=Path, required=True)
+    teams_sync_parser.add_argument(
+        "--graph-token-file",
+        type=Path,
+        help="JSON file containing a Graph access_token. Defaults to Azure CLI Graph auth when omitted.",
+    )
+    teams_sync_parser.add_argument("--max-messages", type=int, default=25)
+    teams_sync_parser.add_argument("--skip-replies", action="store_true")
+    teams_sync_mode = teams_sync_parser.add_mutually_exclusive_group()
+    teams_sync_mode.add_argument("--cycles", type=int, default=1)
+    teams_sync_mode.add_argument("--continuous", action="store_true")
+    teams_sync_parser.add_argument("--poll-seconds", type=float, default=30.0)
 
     subparsers.add_parser("demo-slice", help="Create one complete v2 end-to-end demo slice.")
     subparsers.add_parser("status-json", help="Print the v2 runtime status snapshot as JSON.")
@@ -468,6 +489,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "status-json":
                 print(json.dumps(db.status_snapshot(), indent=2, sort_keys=True))
                 return 0
+            if args.command == "sync-teams-conversations":
+                result = _sync_teams_conversations(db, args)
+                print(json.dumps(result, sort_keys=True))
+                return 0 if result["status"] != "blocked" else 2
             if args.command == "record-safe-output":
                 try:
                     result = _record_safe_output_cli(db, args)
@@ -556,6 +581,92 @@ def _record_safe_output_cli(db: V2Database, args: argparse.Namespace) -> dict[st
         terminal=bool(args.terminal),
         service=_safe_output_service(db, args.project_file, process_effects=False),
     )
+
+
+def _sync_teams_conversations(db: V2Database, args: argparse.Namespace) -> dict[str, object]:
+    if args.max_messages < 1:
+        raise ValueError("--max-messages must be at least 1")
+    if args.poll_seconds < 0:
+        raise ValueError("--poll-seconds must be zero or greater")
+    if args.cycles is not None and args.cycles < 1:
+        raise ValueError("--cycles must be at least 1")
+
+    config = load_teams_connector_config(args.project_file)
+    graph_client = TokenGraphClient.from_file(args.graph_token_file) if args.graph_token_file else AzureCliGraphClient()
+    continuous = bool(args.continuous)
+    cycles_requested = None if continuous else int(args.cycles or 1)
+    cycles: list[dict[str, object]] = []
+    totals = {
+        "channels_checked": 0,
+        "messages_seen": 0,
+        "messages_replayed": 0,
+        "duplicates": 0,
+        "skipped_bot_messages": 0,
+    }
+    index = 0
+    status = "ok"
+    try:
+        while cycles_requested is None or index < cycles_requested:
+            index += 1
+            try:
+                result = sync_project_channel_messages(
+                    db=db,
+                    config=config,
+                    graph_client=graph_client,
+                    max_messages=args.max_messages,
+                    include_replies=not bool(args.skip_replies),
+                )
+            except GraphRequestError as exc:
+                attention_id = f"attention-teams-graph-sync-{config.connector_id}"
+                db.create_connector_attention_item(
+                    attention_id=attention_id,
+                    connector_id=config.connector_id,
+                    owner="operator",
+                    reason_class="teams_graph_sync_failed",
+                    next_action=(
+                        "Grant the Teams Graph read scope required for connector-owned message sync, "
+                        "then rerun sync-teams-conversations."
+                    ),
+                    retryable=True,
+                    source_ref="sync-teams-conversations",
+                )
+                return {
+                    "status": "blocked",
+                    "service_mode": "continuous" if continuous else "bounded",
+                    "project_file": str(args.project_file),
+                    "cycles_requested": cycles_requested,
+                    "cycles_completed": len(cycles),
+                    "include_replies": not bool(args.skip_replies),
+                    "attention_id": attention_id,
+                    "error": exc.message,
+                    "totals": totals,
+                    "cycles": cycles,
+                }
+            cycle = {
+                "cycle": index,
+                "channels_checked": result.channels_checked,
+                "messages_seen": result.messages_seen,
+                "messages_replayed": result.messages_replayed,
+                "duplicates": result.duplicates,
+                "skipped_bot_messages": result.skipped_bot_messages,
+            }
+            cycles.append(cycle)
+            for key in totals:
+                totals[key] += int(cycle[key])
+            if (cycles_requested is None or index < cycles_requested) and args.poll_seconds:
+                time.sleep(args.poll_seconds)
+    except KeyboardInterrupt:
+        status = "interrupted"
+    return {
+        "status": status,
+        "service_mode": "continuous" if continuous else "bounded",
+        "project_file": str(args.project_file),
+        "cycles_requested": cycles_requested,
+        "cycles_completed": len(cycles),
+        "include_replies": not bool(args.skip_replies),
+        "totals": totals,
+        "cycles": cycles,
+    }
 
 
 def _parse_project_repo(value: str) -> ProjectRepo:

@@ -3607,8 +3607,9 @@ class V2Database:
                 ORDER BY
                   CASE binding_type
                     WHEN 'human_question' THEN 0
-                    WHEN 'teams_thread' THEN 1
-                    ELSE 2
+                    WHEN 'human_response' THEN 1
+                    WHEN 'teams_thread' THEN 2
+                    ELSE 3
                   END,
                   created_at DESC
                 LIMIT 1

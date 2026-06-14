@@ -185,6 +185,14 @@ def test_product_sponsor_ready_creates_dm_response_card_from_channel_source(tmp_
         work_item_id="work-product-signoff",
         owner_role="product-manager",
     )
+    db.add_artifact(
+        artifact_id="artifact-product-definition",
+        work_item_id="work-product-signoff",
+        path="work-items/work-product-signoff/020-product-definition.md",
+        document_type="product_definition",
+        status="drafted",
+        created_by_role="product-manager",
+    )
     adapter = LocalTeamsTestAdapter(db, _config())
     adapter.install()
     adapter.replay_event(
@@ -242,8 +250,43 @@ def test_product_sponsor_ready_creates_dm_response_card_from_channel_source(tmp_
     assert delivery["payload"]["body"] == "[redacted private conversation]"
     assert raw_delivery is not None
     assert raw_delivery["payload"]["body"].startswith("**Product sign-off:")
+    assert "[Open work item](http://linuxch:8100/work-items/work-product-signoff)" in raw_delivery["payload"]["body"]
+    assert (
+        "[Open product definition]"
+        "(http://linuxch:8100/artifact-viewer/work-items%2Fwork-product-signoff%2F020-product-definition.md)"
+        in raw_delivery["payload"]["body"]
+    )
+    assert raw_delivery["payload"]["card"]["links"] == [
+        {"title": "Open work item", "url": "http://linuxch:8100/work-items/work-product-signoff"},
+        {
+            "title": "Open product definition",
+            "url": "http://linuxch:8100/artifact-viewer/work-items%2Fwork-product-signoff%2F020-product-definition.md",
+        },
+    ]
+    assert raw_delivery["payload"]["card"]["actions"][0]["type"] == "Action.OpenUrl"
     assert raw_delivery["payload"]["recipient_ref"] == "nicholas"
     assert snapshot["counts"]["connector_attention_items"] == 0
+
+    adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-product-signoff-thread-reply",
+            "conversation_ref": "channel-project",
+            "sender_ref": "nicholas",
+            "source_type": "channel",
+            "body": "Please send this approval to me as a direct message.",
+            "thread_ref": "thread-product-signoff",
+            "reply_to_id": "msg-product-signoff-thread-reply",
+            "service_url": "https://smba.trafficmanager.net/uk/tenant/",
+        }
+    )
+    assignments = db.status_snapshot()["role_assignments"]
+    assert any(
+        assignment["assignment_type"] == "bound_thread_reply"
+        and assignment["role_id"] == "product-manager"
+        and assignment["payload"]["human_response_request_id"] == request["request_id"]
+        for assignment in assignments
+    )
 
 
 def test_product_sponsor_ready_preserves_agent_channel_override_with_reason(tmp_path: Path) -> None:

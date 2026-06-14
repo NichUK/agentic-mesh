@@ -559,11 +559,13 @@ class LocalTeamsTestAdapter:
             authority=self._authority_for_human(sender_ref),
         )
         thread_ref = event.get("thread_ref")
+        bound_thread_binding: dict[str, Any] | None = None
         if thread_ref:
             existing_thread_binding = self.db.find_thread_binding(
                 connector_id=connector_id,
                 external_thread_ref=str(thread_ref),
             )
+            bound_thread_binding = existing_thread_binding
             if (
                 source_type == "dm"
                 and existing_thread_binding is None
@@ -617,6 +619,22 @@ class LocalTeamsTestAdapter:
                     "route_type": route_type,
                     "channel_scope": channel_binding.__dict__ if channel_binding else None,
                 },
+            )
+        if route_type == "project_channel_context" and bound_thread_binding is not None:
+            self._wake_bound_thread_owner(
+                binding=bound_thread_binding,
+                receipt_id=receipt.receipt_id,
+                conversation_id=conversation_id,
+                conversation_event_id=conversation_event_id,
+                message_id=message_id,
+                thread_ref=str(thread_ref) if thread_ref else None,
+                source_type=source_type,
+                visibility_scope=visibility_scope,
+                external_conversation_ref=external_conversation_ref,
+                event=event,
+                channel_binding=channel_binding,
+                sender_ref=sender_ref,
+                body=body,
             )
         if route_type == "role_direct_message":
             role_id = self._role_for_direct_message(event)
@@ -736,6 +754,59 @@ class LocalTeamsTestAdapter:
                 source_ref=receipt.receipt_id,
             )
         return ReplayedEvent(receipt.receipt_id, conversation_id, False, route_type, mentioned_roles)
+
+    def _wake_bound_thread_owner(
+        self,
+        *,
+        binding: dict[str, Any],
+        receipt_id: str,
+        conversation_id: str,
+        conversation_event_id: str,
+        message_id: str,
+        thread_ref: str | None,
+        source_type: str,
+        visibility_scope: str,
+        external_conversation_ref: str,
+        event: dict[str, Any],
+        channel_binding: ChannelBinding | None,
+        sender_ref: str,
+        body: str,
+    ) -> None:
+        binding_type = str(binding.get("binding_type") or "")
+        target_ref = str(binding.get("target_ref") or "").strip()
+        if binding_type not in {"human_question", "human_response"} or not target_ref:
+            return
+        request = self.db.get_human_response_request(target_ref)
+        if request is None:
+            return
+        role_id = str(request.get("created_by_role") or "").strip()
+        if not role_id or not self._role_enabled(role_id):
+            return
+        self.db.create_role_assignment(
+            assignment_id=f"assignment-{_stable_digest(f'{receipt_id}:{role_id}:bound-thread-reply')}",
+            role_id=role_id,
+            conversation_id=conversation_id,
+            source_ref=receipt_id,
+            title="Bound Teams thread reply",
+            summary="Human replied in a Teams thread bound to an active agent request.",
+            assignment_type="bound_thread_reply",
+            visibility_scope=visibility_scope,
+            payload={
+                "connector_id": self.config.connector_id,
+                "conversation_id": conversation_id,
+                "conversation_event_id": conversation_event_id,
+                "receipt_id": receipt_id,
+                "message_id": message_id,
+                "thread_ref": thread_ref,
+                "destination_ref": external_conversation_ref,
+                "destination_type": source_type,
+                "service_url": event.get("service_url"),
+                "reply_to_id": event.get("reply_to_id") or message_id,
+                "channel_scope": channel_binding.__dict__ if channel_binding else None,
+                "human_response_request_id": target_ref,
+                "context": [_conversation_context_line(source_type=source_type, sender_ref=sender_ref, body=body)],
+            },
+        )
 
     def send_message(
         self,
@@ -1041,12 +1112,22 @@ class LocalTeamsTestAdapter:
             "required_authority": required_authority,
             "work_item_id": payload.get("work_item_id"),
             "gate_id": payload.get("gate_id"),
-            "actions": [
-                {"type": "Action.Submit", "title": "Approve", "data": {"value": "approve"}},
-                {"type": "Action.Submit", "title": "Reject", "data": {"value": "reject"}},
-                {"type": "Action.Submit", "title": "Request changes", "data": {"value": "request_changes"}},
-            ],
+            "links": _response_card_links(
+                db=self.db,
+                external_base_url=self.config.external_base_url,
+                work_item_id=str(payload["work_item_id"]) if payload.get("work_item_id") else None,
+                extra_links=payload.get("links"),
+            ),
         }
+        card["actions"] = [
+            *[
+                {"type": "Action.OpenUrl", "title": str(link["title"]), "url": str(link["url"])}
+                for link in card["links"]
+            ],
+            {"type": "Action.Submit", "title": "Approve", "data": {"value": "approve"}},
+            {"type": "Action.Submit", "title": "Reject", "data": {"value": "reject"}},
+            {"type": "Action.Submit", "title": "Request changes", "data": {"value": "request_changes"}},
+        ]
         self.db.bind_thread(
             thread_binding_id=f"thread-{_stable_digest(f'{self.config.connector_id}:{thread_ref}:human-response')}",
             connector_id=self.config.connector_id,
@@ -1976,6 +2057,17 @@ def _card_markdown(card: dict[str, Any]) -> str:
     if work_item_id:
         lines.append("")
         lines.append(f"Work item: `{work_item_id}`")
+    links = card.get("links")
+    if isinstance(links, list) and links:
+        lines.append("")
+        lines.append("Links:")
+        for link in links:
+            if not isinstance(link, dict):
+                continue
+            title = str(link.get("title") or "").strip()
+            url = str(link.get("url") or "").strip()
+            if title and url:
+                lines.append(f"- [{title}]({url})")
     request_id = str(card.get("request_id") or "").strip()
     if request_id:
         lines.append(f"Response request: `{request_id}`")
@@ -1983,6 +2075,50 @@ def _card_markdown(card: dict[str, Any]) -> str:
     if response_contract_id:
         lines.append(f"Response contract: `{response_contract_id}`")
     return "\n".join(lines).strip()
+
+
+def _response_card_links(
+    *,
+    db: V2Database,
+    external_base_url: str,
+    work_item_id: str | None,
+    extra_links: object,
+) -> list[dict[str, str]]:
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(title: str, url: str) -> None:
+        clean_title = title.strip()
+        clean_url = url.strip()
+        if not clean_title or not clean_url or clean_url in seen:
+            return
+        seen.add(clean_url)
+        links.append({"title": clean_title, "url": clean_url})
+
+    base_url = external_base_url.rstrip("/")
+    if work_item_id:
+        add("Open work item", f"{base_url}/work-items/{urllib.parse.quote(work_item_id, safe='')}")
+        artifacts = [item for item in db.list_artifacts() if str(item.get("work_item_id") or "") == work_item_id]
+        product_docs = [
+            item
+            for item in artifacts
+            if str(item.get("document_type") or "") in {"product_definition", "product_signoff", "product"}
+            or "product-definition" in str(item.get("path") or "")
+        ]
+        selected = product_docs or artifacts
+        for artifact in selected[:5]:
+            path = str(artifact.get("path") or "").strip()
+            if not path:
+                continue
+            document_type = str(artifact.get("document_type") or "").replace("_", " ").strip()
+            title = f"Open {document_type}" if document_type else "Open artifact"
+            add(title, f"{base_url}/artifact-viewer/{urllib.parse.quote(path, safe='')}")
+
+    if isinstance(extra_links, list):
+        for link in extra_links:
+            if isinstance(link, dict):
+                add(str(link.get("title") or link.get("label") or "Open link"), str(link.get("url") or ""))
+    return links
 
 
 def _assignment_matches_run_context(
