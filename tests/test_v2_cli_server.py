@@ -177,6 +177,10 @@ def test_v2_cli_run_role_service_tick_processes_assignment_from_safe_output_file
         {
           "calls": [
             {
+              "tool_name": "noop",
+              "payload": {"reason": "File worker fixture has no durable action."}
+            },
+            {
               "tool_name": "status.complete",
               "payload": {"message": "Assignment complete from file worker."},
               "terminal": true
@@ -367,6 +371,10 @@ assert assignment["assignment_id"] == "assignment-cli-subprocess"
 print(json.dumps({
     "calls": [
         {
+            "tool_name": "noop",
+            "payload": {"reason": "Subprocess worker fixture has no durable action."},
+        },
+        {
             "tool_name": "status.complete",
             "payload": {"message": f"Processed {assignment['title']}"},
             "terminal": True,
@@ -423,7 +431,8 @@ print(json.dumps({
 
     assert assignment is not None
     assert assignment["status"] == "completed"
-    assert safe_outputs[0]["payload"]["message"] == "Processed CLI subprocess assignment"
+    reply = next(call for call in safe_outputs if call["tool_name"] == "status.complete")
+    assert reply["payload"]["message"] == "Processed CLI subprocess assignment"
 
 
 def test_v2_cli_run_role_service_tick_records_subprocess_failure(
@@ -563,6 +572,10 @@ memory:
         {
           "calls": [
             {
+              "tool_name": "noop",
+              "payload": {"reason": "Project-configured file worker fixture has no durable action."}
+            },
+            {
               "tool_name": "status.complete",
               "payload": {"message": "Project-configured worker complete."},
               "terminal": true
@@ -641,7 +654,8 @@ roles:
     assert "Role memory file:" in prompts[0]["prompt_text"]
     assert "Remember compact dashboard scope." in prompts[0]["prompt_text"]
     assert prompts[0]["component_manifest"]["memory_context_count"] == 1
-    assert safe_outputs[0]["payload"]["message"] == "Project-configured worker complete."
+    reply = next(call for call in safe_outputs if call["tool_name"] == "status.complete")
+    assert reply["payload"]["message"] == "Project-configured worker complete."
 
 
 def test_v2_cli_project_file_runs_configured_codex_cli_adapter(tmp_path: Path, capsys) -> None:
@@ -658,7 +672,7 @@ roles:
       command:
         - "{python_executable}"
         - "-c"
-        - "import json, sys; payload=json.load(sys.stdin); assert payload['worker']['adapter'] == 'codex-cli'; assert payload['prompt'] and '<agentic-mesh-worker-prompt' in payload['prompt']; print(json.dumps({{'calls':[{{'tool_name':'status.complete','payload':{{'message':'Project Codex worker complete.'}},'terminal':True}}]}}))"
+        - "import json, sys; payload=json.load(sys.stdin); assert payload['worker']['adapter'] == 'codex-cli'; assert payload['prompt'] and '<agentic-mesh-worker-prompt' in payload['prompt']; print(json.dumps({{'calls':[{{'tool_name':'noop','payload':{{'reason':'Project Codex worker fixture has no durable action.'}}}},{{'tool_name':'status.complete','payload':{{'message':'Project Codex worker complete.'}},'terminal':True}}]}}))"
       timeout_seconds: 5
       model: gpt-test
       reasoning_effort: high
@@ -715,7 +729,8 @@ roles:
     assert assignment["status"] == "completed"
     assert len(prompts) == 1
     assert prompts[0]["assignment_id"] == "assignment-cli-project-codex-worker"
-    assert safe_outputs[0]["payload"]["message"] == "Project Codex worker complete."
+    reply = next(call for call in safe_outputs if call["tool_name"] == "status.complete")
+    assert reply["payload"]["message"] == "Project Codex worker complete."
 
 
 def test_v2_cli_codex_worker_override_preserves_adapter_timeout_default() -> None:
@@ -1068,6 +1083,10 @@ def test_v2_cli_runs_project_role_services_once_for_configured_instances(
         {
           "calls": [
             {
+              "tool_name": "noop",
+              "payload": {"reason": "Project role-service fixture has no durable action."}
+            },
+            {
               "tool_name": "status.complete",
               "payload": {"message": "Project role service complete."},
               "terminal": true
@@ -1168,6 +1187,10 @@ def test_v2_cli_project_role_services_can_skip_unsupported_adapters(
         {
           "calls": [
             {
+              "tool_name": "noop",
+              "payload": {"reason": "Supported worker fixture has no durable action."}
+            },
+            {
               "tool_name": "status.complete",
               "payload": {"message": "Supported worker complete."},
               "terminal": true
@@ -1241,6 +1264,10 @@ def test_v2_cli_runs_project_role_services_loop_for_bounded_cycles(
         """
         {
           "calls": [
+            {
+              "tool_name": "noop",
+              "payload": {"reason": "Loop worker fixture has no durable action."}
+            },
             {
               "tool_name": "status.complete",
               "payload": {"message": "Loop worker complete."},
@@ -1323,6 +1350,10 @@ def test_v2_cli_runs_role_service_loop_for_bounded_cycles(
         """
         {
           "calls": [
+            {
+              "tool_name": "noop",
+              "payload": {"reason": "Single role loop fixture has no durable action."}
+            },
             {
               "tool_name": "status.complete",
               "payload": {"message": "Single role loop complete."},

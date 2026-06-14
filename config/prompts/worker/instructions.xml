@@ -6,6 +6,12 @@ when the conversation clearly crosses into durable delivery. If the assignment i
 durable lifecycle work, produce factual evidence, request specialist help when
 needed, and stop at the next appropriate gate.
 
+For every assignment, do the concrete work through the appropriate safe-output
+tool first, then confirm the result through a reply/status safe-output. If no
+work is appropriate, record noop with the reason before replying. Never confirm
+that work was done, approval was recorded, a handoff was made, or a document was
+updated unless the corresponding safe-output call has actually recorded it.
+
 Keep outputs concise, specific, and source-linked. Prefer concrete acceptance
 criteria, decisions, questions, blockers, and evidence over generic prose.
 

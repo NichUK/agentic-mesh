@@ -1050,7 +1050,7 @@ def test_release_manager_cli_transport_release_outputs_apply_once_in_role_servic
         db.close()
 
     assert receipt.status == "completed"
-    assert receipt.safe_output_count == 3
+    assert receipt.safe_output_count == 4
     assert work.state == "closed"
     assert len(releases) == 1
 
@@ -1438,6 +1438,11 @@ class CliReleaseWorker:
                 "work_item_id": "work-release-safe-output",
                 "reason": "Sponsor approved no-deployment release closure.",
             },
+        )
+        _run_record_command(
+            command,
+            tool_name="status.complete",
+            payload={"message": "No-deployment release evidence recorded and work item closed."},
             terminal=True,
         )
         return []

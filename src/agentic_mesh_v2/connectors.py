@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -623,6 +624,11 @@ class LocalTeamsTestAdapter:
                     "channel_scope": channel_binding.__dict__ if channel_binding else None,
                 },
             )
+        self._record_inline_human_response_submissions(
+            receipt_id=receipt.receipt_id,
+            sender_ref=sender_ref,
+            body=body,
+        )
         if route_type == "project_channel_context" and bound_thread_binding is not None:
             self._wake_bound_thread_owner(
                 binding=bound_thread_binding,
@@ -757,6 +763,25 @@ class LocalTeamsTestAdapter:
                 source_ref=receipt.receipt_id,
             )
         return ReplayedEvent(receipt.receipt_id, conversation_id, False, route_type, mentioned_roles)
+
+    def _record_inline_human_response_submissions(
+        self,
+        *,
+        receipt_id: str,
+        sender_ref: str,
+        body: str,
+    ) -> None:
+        for request_id, response_value in _inline_human_response_submissions(body):
+            try:
+                self.submit_card_response(
+                    request_id=request_id,
+                    responder_ref=sender_ref,
+                    response_value=response_value,
+                    comment="Submitted as explicit message text.",
+                    submission_id=f"human-response-submission-{_stable_digest(f'{receipt_id}:{request_id}:{response_value}')}",
+                )
+            except ValueError:
+                continue
 
     def _wake_bound_thread_owner(
         self,
@@ -2005,6 +2030,20 @@ def _normalize_response_value(value: str) -> str:
     if normalized not in {"approve", "reject", "request_changes"}:
         raise ValueError(f"unknown response value `{value}`")
     return normalized
+
+
+def _inline_human_response_submissions(body: str) -> list[tuple[str, str]]:
+    submissions: list[tuple[str, str]] = []
+    for line in str(body or "").splitlines():
+        match = re.match(
+            r"^\s*(human-response-[A-Za-z0-9_-]+)\s*:\s*(approve|approved|approval|yes|reject|rejected|no|request[-_\s]?changes?|changes?)\s*$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            continue
+        submissions.append((match.group(1), match.group(2)))
+    return submissions
 
 
 def _conversation_context_line(*, source_type: str, sender_ref: str, body: str) -> str:

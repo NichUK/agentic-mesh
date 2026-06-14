@@ -114,6 +114,11 @@ def test_role_dm_status_reply_creates_delivery_without_work_item(tmp_path: Path)
             [
                 SafeOutputCall(
                     role_id="product-manager",
+                    tool_name="noop",
+                    payload={"reason": "The sponsor asked for an in-role status reply only; no tracked work is appropriate."},
+                ),
+                SafeOutputCall(
+                    role_id="product-manager",
                     tool_name="status.reply",
                     payload={
                         "message": "The Product Manager view is that this should be shaped first.",
@@ -144,7 +149,7 @@ def test_role_dm_status_reply_creates_delivery_without_work_item(tmp_path: Path)
     snapshot = db.status_snapshot()
     assert snapshot["counts"]["queue_items"] == 0
     assert snapshot["counts"]["work_items"] == 0
-    assert snapshot["counts"]["safe_output_calls"] == 1
+    assert snapshot["counts"]["safe_output_calls"] == 2
     assert snapshot["counts"]["delivery_records"] == 1
     assert snapshot["counts"]["role_assignments"] == 1
     assert snapshot["role_assignments"][0]["status"] == "completed"
@@ -179,6 +184,11 @@ def test_cli_recorded_dm_status_reply_is_delivered_by_connector_safe_output_serv
         "import json, subprocess, sys; "
         "payload=json.load(sys.stdin); "
         "command=payload['safe_output_transport']['record_command']; "
+        "noop={'reason':'The sponsor asked for an in-role reply only; no tracked work is appropriate.'}; "
+        "subprocess.run(command + ["
+        "'--tool-name','noop',"
+        "'--payload-json',json.dumps(noop)"
+        "], check=True, capture_output=True); "
         "reply={"
         "'message':'Product Manager reply through CLI transport.',"
         f"'conversation_id':'{replayed.conversation_id}',"
@@ -203,10 +213,11 @@ def test_cli_recorded_dm_status_reply_is_delivered_by_connector_safe_output_serv
     assert receipt is not None
     assert receipt.terminal_tool == "status.reply"
     snapshot = db.status_snapshot()
-    assert snapshot["counts"]["safe_output_calls"] == 1
+    assert snapshot["counts"]["safe_output_calls"] == 2
     assert snapshot["counts"]["delivery_records"] == 1
     assert snapshot["delivery_statuses"] == {"sent": 1}
     delivery = snapshot["delivery_records"][0]
     assert delivery["purpose"] == "status.reply"
-    assert delivery["source_ref"] == snapshot["safe_output_calls"][0]["call_id"]
+    reply_call = next(call for call in snapshot["safe_output_calls"] if call["tool_name"] == "status.reply")
+    assert delivery["source_ref"] == reply_call["call_id"]
     assert delivery["destination_ref"] == "dm-nicholas-product"

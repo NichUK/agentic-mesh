@@ -45,6 +45,23 @@ class StaticPromptAssembler:
         )()
 
 
+def _noop_call(role_id: str, reason: str = "No durable state change is needed for this assignment.") -> SafeOutputCall:
+    return SafeOutputCall(
+        role_id=role_id,
+        tool_name="noop",
+        payload={"reason": reason},
+    )
+
+
+def _status_complete_call(role_id: str, message: str) -> SafeOutputCall:
+    return SafeOutputCall(
+        role_id=role_id,
+        tool_name="status.complete",
+        payload={"message": message},
+        terminal=True,
+    )
+
+
 class FailingPromptAssembler:
     def render(self, assignment: RoleAssignment):
         raise ValueError("prompt component missing")
@@ -584,8 +601,8 @@ def test_engineering_claiming_implementation_assignment_activates_ready_work(tmp
                             "work_item_id": "work-runtime-execution",
                             "reason": "Implementation is ready for QA.",
                         },
-                        terminal=True,
                     ),
+                    _status_complete_call("engineering", "Implementation change recorded and handed off to QA."),
                 ]
             ),
         )
@@ -606,7 +623,7 @@ def test_engineering_claiming_implementation_assignment_activates_ready_work(tmp
     assert work.state == "active"
     assert implementation_assignment is not None
     assert implementation_assignment["status"] == "completed"
-    assert implementation_assignment["terminal_tool"] == "handoff.request"
+    assert implementation_assignment["terminal_tool"] == "status.complete"
     assert any(row["role_id"] == "qa-engineer" and row["status"] == "queued" for row in assignments)
     assert any(
         event["payload"]["from_state"] == "ready"
@@ -656,12 +673,8 @@ def test_engineering_implementation_assignment_is_idempotent_for_active_work(tmp
             role_instance_id="test-project.engineering.1",
             worker=StaticWorker(
                 [
-                    SafeOutputCall(
-                        role_id="engineering",
-                        tool_name="status.complete",
-                        payload={"message": "Active implementation assignment checked."},
-                        terminal=True,
-                    )
+                    _noop_call("engineering", "Active implementation assignment was already active; no transition needed."),
+                    _status_complete_call("engineering", "Active implementation assignment checked."),
                 ]
             ),
         )
@@ -753,6 +766,7 @@ def test_role_service_claims_connector_assignment_and_completes_with_safe_output
 
     worker = StaticWorker(
         [
+            _noop_call("product-manager", "This direct status request only needs an in-role reply."),
             SafeOutputCall(
                 role_id="product-manager",
                 tool_name="status.reply",
@@ -794,7 +808,7 @@ def test_role_service_claims_connector_assignment_and_completes_with_safe_output
     assert assignment_after["role_instance_id"] == "agentic-mesh-dev.product-manager.1"
     assert assignment_after["run_id"] == receipt.run_id
     assert assignment_after["terminal_tool"] == "status.reply"
-    assert snapshot["counts"]["safe_output_calls"] == 1
+    assert snapshot["counts"]["safe_output_calls"] == 2
     assert snapshot["delivery_statuses"] == {"sent": 1}
     event_types = [event["event_type"] for event in db.list_events()]
     assert "role_assignment.claimed" in event_types
@@ -816,12 +830,8 @@ def test_role_service_records_prompt_audit_and_passes_prompt_to_worker(tmp_path:
     )
     worker = StaticWorker(
         [
-            SafeOutputCall(
-                role_id="product-manager",
-                tool_name="status.complete",
-                payload={"message": "Prompt audit complete."},
-                terminal=True,
-            )
+            _noop_call("product-manager", "Prompt audit records the generated prompt before the reply."),
+            _status_complete_call("product-manager", "Prompt audit complete."),
         ]
     )
     service = RoleService(
@@ -866,6 +876,10 @@ def test_role_service_collects_safe_outputs_recorded_by_worker_cli_transport(tmp
         "payload=json.load(sys.stdin); "
         "command=payload['safe_output_transport']['record_command']; "
         "subprocess.run(command + ["
+        "'--tool-name','noop',"
+        "'--payload-json',json.dumps({'reason':'CLI transport worker has no durable change for this fixture.'})"
+        "], check=True, capture_output=True); "
+        "subprocess.run(command + ["
         "'--tool-name','status.complete',"
         "'--payload-json',json.dumps({'message':'Recorded through CLI transport.'})"
         "], check=True, capture_output=True)"
@@ -881,14 +895,14 @@ def test_role_service_collects_safe_outputs_recorded_by_worker_cli_transport(tmp
 
     assert receipt is not None
     assert receipt.terminal_tool == "status.complete"
-    assert receipt.safe_output_count == 1
+    assert receipt.safe_output_count == 2
     assignment = db.get_role_assignment("assignment-cli-transport")
     calls = db.list_safe_output_calls_for_run(receipt.run_id)
     assert assignment is not None
     assert assignment["status"] == "completed"
-    assert calls[0]["tool_name"] == "status.complete"
-    assert calls[0]["payload"]["message"] == "Recorded through CLI transport."
-    assert calls[0]["terminal"] is True
+    assert [call["tool_name"] for call in calls] == ["noop", "status.complete"]
+    assert calls[1]["payload"]["message"] == "Recorded through CLI transport."
+    assert calls[1]["terminal"] is True
 
 
 def test_role_service_marks_run_failed_when_prompt_assembly_fails(tmp_path: Path) -> None:
@@ -995,6 +1009,43 @@ def test_role_service_marks_claimed_assignment_failed_when_worker_emits_no_termi
     assert "role_assignment.failed" in event_types
 
 
+def test_role_service_rejects_reply_without_do_safe_output(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    db.create_role_assignment(
+        assignment_id="assignment-reply-only",
+        role_id="product-manager",
+        source_ref="msg-reply-only",
+        title="Reply only",
+        summary="A worker must record a DO safe-output before replying.",
+        assignment_type="direct_conversation",
+        visibility_scope="private",
+        payload={},
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="status.reply",
+                    payload={"message": "I did it."},
+                    terminal=True,
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="did not emit a DO safe-output"):
+        service.run_next_assignment()
+
+    assignment = db.status_snapshot()["role_assignments"][0]
+    assert assignment["status"] == "failed"
+    assert "did not emit a DO safe-output" in assignment["failure_reason"]
+
+
 def test_handoff_safe_output_creates_downstream_role_assignment_without_teams_delivery(tmp_path: Path) -> None:
     db = _work_db(tmp_path)
     db.create_role_assignment(
@@ -1033,8 +1084,8 @@ def test_handoff_safe_output_creates_downstream_role_assignment_without_teams_de
                             "focused tests",
                         ],
                     },
-                    terminal=True,
-                )
+                ),
+                _status_complete_call("product-manager", "Product definition handed off to Engineering."),
             ]
         ),
     )
@@ -1161,20 +1212,21 @@ def test_terminal_safe_outputs_map_to_visible_assignment_outcomes(
         visibility_scope="project",
         payload={},
     )
+    calls = [
+        SafeOutputCall(
+            role_id="product-manager",
+            tool_name=tool_name,
+            payload=payload,
+            terminal=tool_name != "noop",
+        )
+    ]
+    if tool_name == "noop":
+        calls.append(_status_complete_call("product-manager", "No material specialist input is needed."))
     service = RoleService(
         db=db,
         role_id="product-manager",
         role_instance_id="agentic-mesh-dev.product-manager.1",
-        worker=StaticWorker(
-            [
-                SafeOutputCall(
-                    role_id="product-manager",
-                    tool_name=tool_name,
-                    payload=payload,
-                    terminal=True,
-                )
-            ]
-        ),
+        worker=StaticWorker(calls),
     )
 
     receipt = service.run_next_assignment()
@@ -1182,7 +1234,7 @@ def test_terminal_safe_outputs_map_to_visible_assignment_outcomes(
     assert receipt is not None
     assignment = db.status_snapshot()["role_assignments"][0]
     assert assignment["status"] == expected_status
-    assert assignment["terminal_tool"] == tool_name
+    assert assignment["terminal_tool"] == ("status.complete" if tool_name == "noop" else tool_name)
     assert assignment["run_id"] == receipt.run_id
     assert db.status_snapshot()["role_assignment_statuses"] == {expected_status: 1}
 
@@ -2146,12 +2198,8 @@ def test_role_service_drains_available_assignments_and_records_idle_heartbeat(tm
         role_instance_id="agentic-mesh-dev.product-manager.1",
         worker=StaticWorker(
             [
-                SafeOutputCall(
-                    role_id="product-manager",
-                    tool_name="status.complete",
-                    payload={"message": "Assignment processing complete."},
-                    terminal=True,
-                )
+                _noop_call("product-manager", "Drain-loop fixture has no durable state change."),
+                _status_complete_call("product-manager", "Assignment processing complete."),
             ]
         ),
     )
@@ -2191,12 +2239,8 @@ def test_role_service_drain_respects_max_assignments(tmp_path: Path) -> None:
         role_instance_id="agentic-mesh-dev.product-manager.1",
         worker=StaticWorker(
             [
-                SafeOutputCall(
-                    role_id="product-manager",
-                    tool_name="status.complete",
-                    payload={"message": "One assignment complete."},
-                    terminal=True,
-                )
+                _noop_call("product-manager", "Max-drain fixture has no durable state change."),
+                _status_complete_call("product-manager", "One assignment complete."),
             ]
         ),
     )
@@ -2227,12 +2271,8 @@ def test_claim_sets_lease_and_terminal_completion_clears_it(tmp_path: Path) -> N
         assignment_lease_seconds=120,
         worker=StaticWorker(
             [
-                SafeOutputCall(
-                    role_id="product-manager",
-                    tool_name="status.complete",
-                    payload={"message": "Lease-clearing assignment complete."},
-                    terminal=True,
-                )
+                _noop_call("product-manager", "Lease fixture has no durable state change."),
+                _status_complete_call("product-manager", "Lease-clearing assignment complete."),
             ]
         ),
     )
@@ -2455,12 +2495,8 @@ def test_role_service_tick_recovers_stale_role_assignment_then_processes_it(tmp_
         role_instance_id="agentic-mesh-dev.product-manager.1",
         worker=StaticWorker(
             [
-                SafeOutputCall(
-                    role_id="product-manager",
-                    tool_name="status.complete",
-                    payload={"message": "Recovered assignment processed."},
-                    terminal=True,
-                )
+                _noop_call("product-manager", "Recovered assignment fixture has no durable state change."),
+                _status_complete_call("product-manager", "Recovered assignment processed."),
             ]
         ),
     )

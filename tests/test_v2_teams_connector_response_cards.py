@@ -228,6 +228,65 @@ def test_release_approval_card_delivery_and_authorized_submission(tmp_path: Path
     assert snapshot["counts"]["connector_attention_items"] == 0
 
 
+def test_direct_message_inline_response_submissions_record_approvals_and_still_reach_agent(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    adapter = LocalTeamsTestAdapter(db, _config())
+    adapter.install()
+    service = ConnectorSafeOutputService(db, adapter=adapter)
+    for index in range(2):
+        db.create_run(
+            run_id=f"run-product-signoff-{index}",
+            role_id="product-manager",
+            role_instance_id="product-manager-1",
+            work_item_id=None,
+        )
+        service.record(
+            run_id=f"run-product-signoff-{index}",
+            call=SafeOutputCall(
+                role_id="product-manager",
+                tool_name="human_response.request",
+                payload={
+                    "title": f"Product sign-off {index}",
+                    "question": "Approve the product definition?",
+                    "response_contract_id": "product-signoff-v1",
+                    "required_authority": "sponsor",
+                    "conversation_id": "conversation-dm-nicholas-product",
+                    "destination_ref": "dm-nicholas-product",
+                    "destination_type": "dm",
+                },
+                terminal=True,
+            ),
+        )
+    request_ids = [str(row["request_id"]) for row in db.list_human_response_requests()]
+
+    replayed = adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-inline-approvals",
+            "conversation_ref": "dm-nicholas-product",
+            "sender_ref": "nicholas",
+            "source_type": "dm",
+            "target_role_id": "product-manager",
+            "target_ref": "bot-product-manager",
+            "body": f"{request_ids[0]}: approved\n{request_ids[1]}: approved",
+        }
+    )
+
+    snapshot = db.status_snapshot()
+    requests = {row["request_id"]: row for row in snapshot["human_response_requests"]}
+    submissions = snapshot["human_response_submissions"]
+    direct_assignments = [
+        row for row in snapshot["role_assignments"] if row["assignment_type"] == "direct_conversation"
+    ]
+    assert replayed.route_type == "role_direct_message"
+    assert {requests[request_id]["status"] for request_id in request_ids} == {"responded"}
+    assert {requests[request_id]["response_value"] for request_id in request_ids} == {"approve"}
+    assert len([row for row in submissions if row["status"] == "accepted"]) == 2
+    assert len(direct_assignments) == 1
+    assert direct_assignments[0]["role_id"] == "product-manager"
+
+
 def test_release_notification_is_not_sent_when_close_validation_fails(tmp_path: Path) -> None:
     db, adapter, conversation_id = _db_with_work_item(tmp_path)
     service = ConnectorSafeOutputService(db, adapter=adapter)

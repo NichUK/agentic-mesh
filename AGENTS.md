@@ -143,6 +143,11 @@ When a human or another agent gives an instruction:
 
 - Acknowledge receipt promptly.
 - Confirm the interpreted intent in plain language.
+- Do the concrete work through the appropriate tool or safe-output path before
+  confirming completion. If no work is appropriate, record or state the no-op
+  reason. Never say that an approval, handoff, document update, queue change,
+  release, deployment, or closure has happened unless the corresponding system
+  action has actually been recorded.
 - If the instruction starts long-running work, send an initial confirmation
   before or as the work begins so the sender knows the mesh heard them.
 - Keep the sender updated during long-running work, especially across handoffs,

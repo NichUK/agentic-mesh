@@ -10,6 +10,8 @@ from typing import Protocol
 from uuid import uuid4
 
 from agentic_mesh_v2.db import V2Database
+from agentic_mesh_v2.safe_outputs import ACTION_TOOLS
+from agentic_mesh_v2.safe_outputs import REPLY_TOOLS
 from agentic_mesh_v2.safe_outputs import SafeOutputCall
 from agentic_mesh_v2.safe_outputs import SafeOutputService
 from agentic_mesh_v2.state_machine import TransitionRequest
@@ -171,6 +173,7 @@ class RoleService:
                 raise ValueError("role worker did not emit any safe-output calls")
             if not terminal_calls:
                 raise ValueError("role worker did not emit a terminal safe-output call")
+            _validate_action_and_reply_outputs(recorded_calls)
         except Exception:
             self.db.complete_run(run_id, status="failed", terminal_tool=None)
             raise
@@ -395,6 +398,14 @@ def _assignment_status_for_terminal_tool(terminal_tool: str) -> str:
     if terminal_tool == "report.incomplete":
         return "incomplete"
     return "completed"
+
+
+def _validate_action_and_reply_outputs(recorded_calls: list[dict[str, Any]]) -> None:
+    tool_names = {str(call.get("tool_name") or "") for call in recorded_calls}
+    if not tool_names & ACTION_TOOLS:
+        raise ValueError("role worker did not emit a DO safe-output call")
+    if not tool_names & REPLY_TOOLS:
+        raise ValueError("role worker did not emit a REPLY safe-output call")
 
 
 def _dedupe_context(values: tuple[str, ...]) -> tuple[str, ...]:

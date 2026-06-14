@@ -46,6 +46,55 @@ TERMINAL_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+ACTION_TOOLS: frozenset[str] = frozenset(
+    {
+        "sponsor.ask_question",
+        "human_response.request",
+        "handoff.request",
+        "consult.request",
+        "queue.propose_item",
+        "queue.promote",
+        "document.propose_update",
+        "document.add_review_comment",
+        "memory.propose_update",
+        "risk.register",
+        "decision.record",
+        "relevance.record",
+        "noop",
+        "report.blocked",
+        "report.incomplete",
+        "product.mark_sponsor_ready",
+        "work_item.mark_ready",
+        "test_evidence.record",
+        "implementation.record_change",
+        "quality.approve",
+        "quality.request_changes",
+        "release.request_approval",
+        "release.record_decision",
+        "release.deploy",
+        "release.record_no_deployment",
+        "release.rollback_plan",
+        "release.close",
+        "work_item.close",
+        "work_item.supersede",
+        "work_item.reopen",
+        "work_item.override_blocker",
+    }
+)
+
+REPLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "status.reply",
+        "status.complete",
+        "sponsor.ask_question",
+        "human_response.request",
+        "product.mark_sponsor_ready",
+        "release.request_approval",
+        "report.blocked",
+        "report.incomplete",
+    }
+)
+
 COMMON_TOOLS: frozenset[str] = frozenset(
     {
         "status.reply",

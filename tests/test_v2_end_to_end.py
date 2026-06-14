@@ -73,6 +73,11 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
                         "source_documents": ["work-items/work-1/020-product-definition.md"],
                         "target_outputs": ["implementation_change", "test_evidence", "release"],
                     },
+                ),
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="status.complete",
+                    payload={"message": "Product definition recorded and work marked ready for Engineering."},
                     terminal=True,
                 ),
             ]
@@ -80,7 +85,7 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
     )
     pm_receipt = pm.run_next_assignment()
     assert pm_receipt is not None
-    assert pm_receipt.terminal_tool == "work_item.mark_ready"
+    assert pm_receipt.terminal_tool == "status.complete"
     assert db.get_work_item("work-1").state == "ready"
 
     engineering = RoleService(
@@ -102,6 +107,11 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
                         "target_role": "qa-engineer",
                         "reason": "Implementation ready for QA.",
                     },
+                ),
+                SafeOutputCall(
+                    role_id="engineering",
+                    tool_name="status.complete",
+                    payload={"message": "Implementation change recorded and handed off to QA."},
                     terminal=True,
                 ),
             ]
@@ -109,7 +119,7 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
     )
     eng_receipt = engineering.run_next_assignment()
     assert eng_receipt is not None
-    assert eng_receipt.terminal_tool == "handoff.request"
+    assert eng_receipt.terminal_tool == "status.complete"
     assert db.get_work_item("work-1").state == "active"
 
     qa = RoleService(
@@ -127,6 +137,11 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
                     role_id="qa-engineer",
                     tool_name="quality.approve",
                     payload={"work_item_id": "work-1", "summary": "QA passed."},
+                ),
+                SafeOutputCall(
+                    role_id="qa-engineer",
+                    tool_name="status.complete",
+                    payload={"message": "QA evidence recorded and release review requested."},
                     terminal=True,
                 ),
             ]
@@ -134,7 +149,7 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
     )
     qa_receipt = qa.run_next_assignment()
     assert qa_receipt is not None
-    assert qa_receipt.terminal_tool == "quality.approve"
+    assert qa_receipt.terminal_tool == "status.complete"
     assert db.get_work_item("work-1").state == "release_review"
 
     adapter = LocalTeamsTestAdapter(db, _connector_config())
@@ -258,6 +273,11 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
                         "thread_ref": "thread-release-approval",
                         "notification_message": "Released and closed `work-1` after sponsor approval.",
                     },
+                ),
+                SafeOutputCall(
+                    role_id="release-manager",
+                    tool_name="status.complete",
+                    payload={"message": "Release finalization complete; see recorded release evidence."},
                     terminal=True,
                 ),
             ]
@@ -266,7 +286,7 @@ def test_v2_one_real_slice_release_happy_path(tmp_path: Path) -> None:
     release_receipt = release_manager.run_next_assignment()
 
     assert release_receipt is not None
-    assert release_receipt.terminal_tool == "work_item.close"
+    assert release_receipt.terminal_tool == "status.complete"
     assert executed
     assert db.get_work_item("work-1").state == "closed"
     snapshot = db.status_snapshot()

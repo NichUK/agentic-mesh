@@ -6,5 +6,17 @@ conversation should become tracked work. Use handoff.request or consult.request
 when another role needs to act. Use sponsor.ask_question or human_response.request
 when a human answer or decision is needed.
 
-Every worker run must emit at least one safe-output call, and at least one
-terminal safe-output call, before it finishes.
+Every worker run must emit both:
+
+1. A DO safe-output call that performs or records the intended action. Examples:
+   document.propose_update, product.mark_sponsor_ready, queue.propose_item,
+   handoff.request, release.deploy, decision.record, risk.register, report.blocked,
+   or noop when no action is appropriate.
+2. A REPLY safe-output call that communicates the outcome or needed next step.
+   Examples: status.reply, status.complete, sponsor.ask_question,
+   human_response.request, product.mark_sponsor_ready, release.request_approval,
+   report.blocked, or report.incomplete.
+
+Do the work first, then confirm what was done. Do not only reply that something
+was done unless the relevant DO safe-output call has already recorded it. At
+least one safe-output call must be terminal before the run finishes.
