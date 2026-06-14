@@ -876,6 +876,7 @@ class LocalTeamsTestAdapter:
         existing = self.db.get_delivery_record_by_idempotency_key(idempotency_key)
         if existing is not None:
             return str(existing["delivery_id"])
+        resolved_service_url = service_url or self._latest_service_url()
         delivery_id = f"delivery-{_stable_digest(idempotency_key)}"
         self.db.create_delivery_record(
             delivery_id=delivery_id,
@@ -889,13 +890,13 @@ class LocalTeamsTestAdapter:
             payload={
                 "body": body,
                 "role_identity": self._delivery_role_identity(role_id),
-                "service_url": service_url,
+                "service_url": resolved_service_url,
                 "reply_to_id": reply_to_id,
                 "recipient_ref": recipient_ref,
             },
             status="pending",
         )
-        if self.delivery_client is not None and service_url:
+        if self.delivery_client is not None and resolved_service_url:
             self._send_live_delivery(delivery_id=delivery_id)
         else:
             self._apply_delivery_outcome(delivery_id=delivery_id, outcome=requested_outcome)
@@ -1239,6 +1240,7 @@ class LocalTeamsTestAdapter:
         existing = self.db.get_delivery_record_by_idempotency_key(idempotency_key)
         if existing is not None:
             return str(existing["delivery_id"])
+        resolved_service_url = service_url or self._latest_service_url()
         delivery_id = f"delivery-{_stable_digest(idempotency_key)}"
         self.db.create_delivery_record(
             delivery_id=delivery_id,
@@ -1253,17 +1255,29 @@ class LocalTeamsTestAdapter:
                 "body": _card_markdown(card),
                 "card": card,
                 "role_identity": self._delivery_role_identity(role_id),
-                "service_url": service_url,
+                "service_url": resolved_service_url,
                 "reply_to_id": reply_to_id,
                 "recipient_ref": recipient_ref,
             },
             status="pending",
         )
-        if self.delivery_client is not None and service_url:
+        if self.delivery_client is not None and resolved_service_url:
             self._send_live_delivery(delivery_id=delivery_id)
         else:
             self._apply_delivery_outcome(delivery_id=delivery_id, outcome=outcome)
         return delivery_id
+
+    def _latest_service_url(self) -> str | None:
+        for event in self.db.list_conversation_events():
+            if event.get("connector_id") != self.config.connector_id:
+                continue
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            service_url = str(payload.get("service_url") or "").strip()
+            if service_url:
+                return service_url
+        return None
 
     def submit_card_response(
         self,

@@ -227,6 +227,58 @@ def test_live_dm_card_delivery_creates_personal_message_when_recipient_ref_is_pr
     ]
 
 
+def test_live_dm_card_delivery_reuses_latest_connector_service_url(tmp_path: Path) -> None:
+    class FakeLiveDeliveryClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def send_personal_message(self, **kwargs: object) -> str:
+            self.calls.append(dict(kwargs))
+            return "real-teams-personal-card-message-1"
+
+    db = V2Database(tmp_path / "v2.sqlite3")
+    db.migrate()
+    client = FakeLiveDeliveryClient()
+    adapter = LocalTeamsTestAdapter(db, _config(), delivery_client=client)  # type: ignore[arg-type]
+    adapter.install()
+    adapter.replay_event(
+        {
+            "event_type": "message.created",
+            "message_id": "msg-service-url-seed",
+            "conversation_ref": "channel-project",
+            "sender_ref": "nicholas",
+            "source_type": "channel",
+            "body": "@AM-Product Manager seed service URL.",
+            "mentioned_role_refs": ["@AM-Product Manager"],
+            "service_url": "https://smba.trafficmanager.net/uk/tenant/",
+        }
+    )
+
+    delivery_id = adapter.send_card(
+        source_ref="safe-output-personal-card-fallback-service-url",
+        destination_ref="dm-sponsor-product",
+        destination_type="dm",
+        purpose="release_approval.card",
+        card={
+            "type": "AdaptiveCard",
+            "title": "Release approval requested",
+            "question": "Please approve the release.",
+            "request_id": "human-response-release-card-live",
+            "response_contract_id": "release-decision-v1",
+            "work_item_id": "work-runtime-build-info",
+        },
+        role_id="product-manager",
+        recipient_ref="sponsor-aad-id",
+    )
+
+    delivery = db.get_delivery_record(delivery_id)
+    assert delivery is not None
+    assert delivery["status"] == "sent"
+    assert delivery["external_message_id"] == "real-teams-personal-card-message-1"
+    assert client.calls[0]["service_url"] == "https://smba.trafficmanager.net/uk/tenant/"
+    assert client.calls[0]["recipient_ref"] == "sponsor-aad-id"
+
+
 def test_bot_framework_channel_replies_use_thread_conversation_and_markdown(tmp_path: Path) -> None:
     config = ConnectorConfig.from_dict(
         {
