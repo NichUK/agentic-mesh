@@ -384,7 +384,8 @@ def test_release_notification_is_not_duplicated_for_already_closed_work(tmp_path
             payload={
                 "work_item_id": "work-release-card",
                 "release_id": "release-card-no-deployment",
-                "reason": "No deployment needed for notification regression.",
+                "no_deployment_kind": "no_runtime_change",
+                "reason": "No runtime change needed for notification regression.",
                 "scope": "Release notification regression.",
                 "rollback_plan": "Reopen the work item if the evidence is wrong.",
                 "residual_risks": "None known.",

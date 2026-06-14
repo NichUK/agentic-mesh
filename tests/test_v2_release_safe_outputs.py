@@ -47,6 +47,7 @@ def test_release_manager_safe_outputs_record_no_deployment_and_close_work(tmp_pa
                 payload={
                     "work_item_id": "work-release-safe-output",
                     "release_id": "release-safe-output-no-deployment",
+                    "no_deployment_kind": "documentation_only",
                     "reason": "Documentation-only release; no runtime activation required.",
                     "scope": "Close documentation-only release evidence.",
                     "rollback_plan": "No deployment was performed; reopen the work item if the evidence is wrong.",
@@ -82,6 +83,49 @@ def test_release_manager_safe_outputs_record_no_deployment_and_close_work(tmp_pa
     assert releases[0]["deployment_result"].startswith("not_required:")
 
 
+def test_release_no_deployment_rejects_development_slice_disposition(tmp_path: Path) -> None:
+    db = V2Database(tmp_path / "v2.sqlite3")
+    try:
+        db.migrate()
+        _work_in_release_review(db)
+        db.create_run(
+            run_id="run-release-development-no-deployment",
+            role_id="release-manager",
+            role_instance_id="test-project.release-manager.1",
+            work_item_id="work-release-safe-output",
+        )
+        service = SafeOutputService(db)
+        approval_ref = _record_approved_release_decision(
+            service,
+            run_id="run-release-development-no-deployment",
+        )
+
+        with pytest.raises(SafeOutputError, match="development slices must be deployed"):
+            service.record(
+                run_id="run-release-development-no-deployment",
+                call=SafeOutputCall(
+                    role_id="release-manager",
+                    tool_name="release.record_no_deployment",
+                    payload={
+                        "work_item_id": "work-release-safe-output",
+                        "release_id": "release-safe-output-development-no-deployment",
+                        "no_deployment_kind": "development",
+                        "reason": "Runtime code changed but deployment is being deferred.",
+                        "scope": "Development slice touching runtime behavior.",
+                        "rollback_plan": "Reopen and deploy properly.",
+                        "residual_risks": "Runtime users will not receive the change.",
+                        "approval_ref": approval_ref,
+                        "commit_ref": "commit-safe-output",
+                    },
+                ),
+            )
+        releases = db.list_releases()
+    finally:
+        db.close()
+
+    assert releases == []
+
+
 def test_release_manager_work_item_close_closes_no_deployment_work(tmp_path: Path) -> None:
     db = V2Database(tmp_path / "v2.sqlite3")
     try:
@@ -107,6 +151,7 @@ def test_release_manager_work_item_close_closes_no_deployment_work(tmp_path: Pat
                 payload={
                     "work_item_id": "work-release-safe-output",
                     "release_id": "release-work-item-close",
+                    "no_deployment_kind": "documentation_only",
                     "reason": "Documentation-only release; no runtime activation required.",
                     "scope": "Close through work_item.close with no-deployment evidence.",
                     "rollback_plan": "No deployment was performed; reopen the work item if the evidence is wrong.",
@@ -161,6 +206,7 @@ def test_work_item_close_closes_already_released_work(tmp_path: Path) -> None:
                 payload={
                     "work_item_id": "work-release-safe-output",
                     "release_id": "release-work-item-close-released",
+                    "no_deployment_kind": "documentation_only",
                     "reason": "Documentation-only release; no runtime activation required.",
                     "scope": "Close already released work through work_item.close.",
                     "rollback_plan": "No deployment was performed; reopen the work item if the evidence is wrong.",
@@ -304,6 +350,7 @@ def test_deferred_work_item_close_can_be_replayed_once(tmp_path: Path) -> None:
                 payload={
                     "work_item_id": "work-release-safe-output",
                     "release_id": "release-work-item-close-deferred",
+                    "no_deployment_kind": "documentation_only",
                     "reason": "Documentation-only release; no runtime activation required.",
                     "scope": "Close through deferred work_item.close replay.",
                     "rollback_plan": "No deployment was performed; reopen the work item if the evidence is wrong.",
@@ -1082,6 +1129,7 @@ def test_release_manager_mcp_transport_records_without_immediate_release_effects
                         "payload": {
                             "work_item_id": "work-release-safe-output",
                             "release_id": "release-safe-output-mcp",
+                            "no_deployment_kind": "documentation_only",
                             "reason": "Documentation-only release; no runtime activation required.",
                             "scope": "Record MCP transport release intent.",
                             "commit_ref": "commit-safe-output",
@@ -1200,6 +1248,7 @@ def test_release_no_deployment_safe_output_requires_approval_and_commit(tmp_path
                     tool_name="release.record_no_deployment",
                     payload={
                         "work_item_id": "work-release-safe-output",
+                        "no_deployment_kind": "documentation_only",
                         "reason": "No deployment.",
                         "scope": "No-deployment release.",
                         "rollback_plan": "No deployment performed.",
@@ -1235,6 +1284,7 @@ def test_release_activation_rejects_unrecorded_approval_ref(tmp_path: Path) -> N
                     payload={
                         "work_item_id": "work-release-safe-output",
                         "release_id": "release-safe-output-unapproved",
+                        "no_deployment_kind": "documentation_only",
                         "reason": "Try to close without a recorded release decision.",
                         "scope": "Bad no-deployment release.",
                         "rollback_plan": "No deployment performed.",
@@ -1287,6 +1337,7 @@ def test_release_activation_rejects_rejected_release_decision(tmp_path: Path) ->
                     payload={
                         "work_item_id": "work-release-safe-output",
                         "release_id": "release-safe-output-rejected",
+                        "no_deployment_kind": "documentation_only",
                         "reason": "Try to close after rejected release decision.",
                         "scope": "Bad no-deployment release.",
                         "rollback_plan": "No deployment performed.",
@@ -1325,6 +1376,7 @@ def test_release_activation_rejects_deferred_unrecorded_approval_ref(tmp_path: P
             payload={
                 "work_item_id": "work-release-safe-output",
                 "release_id": "release-safe-output-deferred-unapproved",
+                "no_deployment_kind": "documentation_only",
                 "reason": "Try to close without a recorded release decision.",
                 "scope": "Bad deferred no-deployment release.",
                 "rollback_plan": "No deployment performed.",
@@ -1382,6 +1434,7 @@ def test_release_activation_rejects_deferred_wrong_work_item_decision_ref(tmp_pa
             payload={
                 "work_item_id": "work-release-safe-output",
                 "release_id": "release-safe-output-deferred-wrong-work",
+                "no_deployment_kind": "documentation_only",
                 "reason": "Try to close with a decision for another work item.",
                 "scope": "Bad deferred no-deployment release.",
                 "rollback_plan": "No deployment performed.",
@@ -1423,6 +1476,7 @@ class CliReleaseWorker:
             payload={
                 "work_item_id": "work-release-safe-output",
                 "release_id": "release-safe-output-cli",
+                "no_deployment_kind": "documentation_only",
                 "reason": "Documentation-only release; no runtime activation required.",
                 "scope": "Close documentation-only release evidence.",
                 "commit_ref": "commit-safe-output",

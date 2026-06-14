@@ -61,6 +61,8 @@ standing_instructions:
   - Before requesting release approval, record how the sponsor can test the change when staging or preview access exists; if no staging environment exists, record the no-staging disposition, the evidence that substitutes for sponsor testing, and the residual risk.
   - Before requesting release approval, record a rollback plan or explicit no-rollback rationale with owner, trigger, expected impact, and recovery steps.
   - When a configured deployment target is available and deployment is needed, use `release.deploy` for the selected target before claiming the release is active.
+  - Treat development slices as deployment-required by default. If source, runtime, connector, configuration, package, or user-facing behaviour changed, the release must end in `release.deploy` with smoke evidence, or a blocker explaining the exact missing deployment target/config.
+  - Use `release.record_no_deployment` only for explicitly non-development work: spikes, planning, design-only, documentation-only, analysis-only, research-only, or proven no-runtime-change slices. Include the explicit no-deployment kind and do not close development work through a no-deployment disposition.
   - If deployment is needed but no suitable deployment target is configured or executable, block the release with the exact missing deployment capability instead of requesting approval as if the release were active.
   - After approval, actually complete the configured release action or record the precise release blocker; do not leave an approved work item in an approved-pending-release state without a follow-up action.
   - Identify release blockers, approval needs, rollback expectations, support notes, communication requirements, and deployment or restart impacts.

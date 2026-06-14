@@ -208,6 +208,7 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "release.record_no_deployment": (
         "work_item_id",
+        "no_deployment_kind",
         "reason",
         "scope",
         "rollback_plan",
@@ -1245,9 +1246,13 @@ class SafeOutputService:
 
     def _record_no_deployment(self, call: SafeOutputCall) -> None:
         self._validate_release_activation_approval(call)
+        _validate_no_deployment_kind(call.payload)
         self.release_service.record_no_deployment(
             _release_evidence_from_payload(call.payload),
-            reason=_required_text(call.payload, "reason"),
+            reason=(
+                f"{_no_deployment_kind_label(_required_text(call.payload, 'no_deployment_kind'))}: "
+                f"{_required_text(call.payload, 'reason')}"
+            ),
         )
 
     def _deploy_release(self, call: SafeOutputCall) -> None:
@@ -1521,6 +1526,33 @@ def _work_item_reopen_target_state(call: SafeOutputCall, *, current_state: str) 
     raise SafeOutputError(
         f"`work_item.reopen` requires work item state `blocked`, `superseded`, `canceled`, or `failed_terminal`, found `{current_state}`"
     )
+
+
+NO_DEPLOYMENT_KINDS: frozenset[str] = frozenset(
+    {
+        "spike",
+        "planning",
+        "design_only",
+        "documentation_only",
+        "analysis_only",
+        "research_only",
+        "no_runtime_change",
+    }
+)
+
+
+def _validate_no_deployment_kind(payload: dict[str, Any]) -> None:
+    kind = _required_text(payload, "no_deployment_kind")
+    if kind not in NO_DEPLOYMENT_KINDS:
+        allowed = ", ".join(sorted(NO_DEPLOYMENT_KINDS))
+        raise SafeOutputError(
+            "development slices must be deployed before release closure; "
+            f"`release.record_no_deployment` requires no_deployment_kind in: {allowed}"
+        )
+
+
+def _no_deployment_kind_label(kind: str) -> str:
+    return kind.replace("_", "-")
 
 
 def _work_item_override_summary(payload: dict[str, Any]) -> str:
