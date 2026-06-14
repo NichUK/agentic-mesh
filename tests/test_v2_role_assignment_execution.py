@@ -1488,6 +1488,74 @@ def test_release_manager_reopen_blocked_work_item_routes_to_target_role(tmp_path
     assert calls[0]["terminal"] is True
 
 
+def test_product_manager_reopens_incorrectly_superseded_product_work(tmp_path: Path) -> None:
+    db = _work_db(tmp_path)
+    db.transition_work_item(
+        TransitionRequest(
+            work_item_id="work-runtime-execution",
+            from_state="shaping",
+            to_state="superseded",
+            actor_role="product-manager",
+            reason="Initial duplicate disposition was later corrected by sponsor.",
+            owner="product-manager",
+        )
+    )
+    db.create_role_assignment(
+        assignment_id="assignment-product-reopen",
+        role_id="product-manager",
+        work_item_id="work-runtime-execution",
+        source_ref="msg-product-reopen",
+        title="Reopen product work",
+        summary="Product Manager should correct the product-flow disposition.",
+        assignment_type="direct_conversation",
+        visibility_scope="private",
+        payload={},
+    )
+    service = RoleService(
+        db=db,
+        role_id="product-manager",
+        role_instance_id="agentic-mesh-dev.product-manager.1",
+        worker=StaticWorker(
+            [
+                SafeOutputCall(
+                    role_id="product-manager",
+                    tool_name="work_item.reopen",
+                    payload={
+                        "work_item_id": "work-runtime-execution",
+                        "target_role": "product-manager",
+                        "target_state": "shaping",
+                        "reason": "Sponsor corrected the product decision; continue product shaping.",
+                        "target_outputs": ["updated product definition", "sponsor sign-off request"],
+                    },
+                ),
+                _status_complete_call("product-manager", "Product-flow correction recorded and shaping reopened."),
+            ]
+        ),
+    )
+
+    receipt = service.run_next_assignment()
+
+    work_item = next(row for row in db.list_work_items() if row["work_item_id"] == "work-runtime-execution")
+    assignments = db.list_role_assignments()
+    reopen_assignment = next(
+        row
+        for row in assignments
+        if row["assignment_type"] == "work_item_reopen"
+        and row["source_ref"] != "msg-product-reopen"
+    )
+    event_types = [event["event_type"] for event in db.list_events("work-runtime-execution")]
+    assert receipt is not None
+    assert receipt.terminal_tool == "status.complete"
+    assert work_item["state"] == "shaping"
+    assert work_item["current_role"] == "product-manager"
+    assert reopen_assignment["role_id"] == "product-manager"
+    assert reopen_assignment["status"] == "queued"
+    assert reopen_assignment["payload"]["previous_flow_state"] == "superseded"
+    assert reopen_assignment["payload"]["current_flow_state"] == "shaping"
+    assert "work_item.reopen" in reopen_assignment["payload"]["allowed_tools"]
+    assert "work_item.terminal_restored" in event_types
+
+
 def test_work_item_reopen_requires_blocked_state(tmp_path: Path) -> None:
     db = _work_db(tmp_path)
     db.create_run(
@@ -1497,7 +1565,7 @@ def test_work_item_reopen_requires_blocked_state(tmp_path: Path) -> None:
         work_item_id="work-runtime-execution",
     )
 
-    with pytest.raises(SafeOutputError, match="requires work item state `blocked`"):
+    with pytest.raises(SafeOutputError, match="requires work item state `blocked`, `superseded`, `canceled`, or `failed_terminal`"):
         SafeOutputService(db).record(
             run_id="run-work-item-reopen-not-blocked",
             call=SafeOutputCall(

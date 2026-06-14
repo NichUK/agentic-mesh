@@ -123,6 +123,9 @@ ROLE_TOOLS: dict[str, frozenset[str]] = {
     | {
         "product.mark_sponsor_ready",
         "work_item.mark_ready",
+        "work_item.close",
+        "work_item.reopen",
+        "work_item.supersede",
     },
     "engineering": COMMON_TOOLS
     | {
@@ -507,10 +510,7 @@ class SafeOutputService:
 
     def _validate_work_item_reopen_target(self, call: SafeOutputCall) -> None:
         work_item = self.db.get_work_item(_required_text(call.payload, "work_item_id"))
-        if work_item.state != "blocked":
-            raise SafeOutputError(
-                f"`work_item.reopen` requires work item state `blocked`, found `{work_item.state}`"
-            )
+        _work_item_reopen_target_state(call, current_state=work_item.state)
 
     def _validate_work_item_supersede_target(self, call: SafeOutputCall) -> None:
         work_item = self.db.get_work_item(_required_text(call.payload, "work_item_id"))
@@ -903,43 +903,46 @@ class SafeOutputService:
             return
         work_item_id = _required_text(call.payload, "work_item_id")
         work_item = self.db.get_work_item(work_item_id)
-        if work_item.state != "blocked":
-            raise SafeOutputError(
-                f"`work_item.reopen` requires work item state `blocked`, found `{work_item.state}`"
-            )
+        target_state = _work_item_reopen_target_state(call, current_state=work_item.state)
         target_role = _required_text(call.payload, "target_role")
         reason = _required_text(call.payload, "reason")
-        self.db.reopen_work_item_with_assignment(
-            request=TransitionRequest(
-                work_item_id=work_item_id,
-                from_state="blocked",
-                to_state="active",
-                actor_role=call.role_id,
-                reason=reason,
-                owner=target_role,
-            ),
-            assignment_id=assignment_id,
-            role_id=target_role,
-            source_ref=call_id,
-            title=_optional_text(call.payload.get("title")) or f"Reopened work for {target_role}",
-            summary=_single_line_text(reason),
-            assignment_type="work_item_reopen",
-            visibility_scope=_optional_text(call.payload.get("context_visibility")) or "project",
-            payload={
-                "safe_output_ref": call_id,
-                "source_run_id": run_id,
-                "source_role": call.role_id,
-                "target_role": target_role,
-                "reason": _single_line_text(reason),
-                "route_tool": call.tool_name,
-                "work_item_id": work_item_id,
-                "previous_flow_state": "blocked",
-                "current_flow_state": "active",
-                "source_documents": _string_list(call.payload.get("source_documents")),
-                "target_outputs": _string_list(call.payload.get("target_outputs")),
-                "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
-            },
+        payload = {
+            "safe_output_ref": call_id,
+            "source_run_id": run_id,
+            "source_role": call.role_id,
+            "target_role": target_role,
+            "reason": _single_line_text(reason),
+            "route_tool": call.tool_name,
+            "work_item_id": work_item_id,
+            "previous_flow_state": work_item.state,
+            "current_flow_state": target_state,
+            "source_documents": _string_list(call.payload.get("source_documents")),
+            "target_outputs": _string_list(call.payload.get("target_outputs")),
+            "allowed_tools": sorted(self.policy.tools_for_role(target_role)),
+        }
+        request = TransitionRequest(
+            work_item_id=work_item_id,
+            from_state=work_item.state,
+            to_state=target_state,
+            actor_role=call.role_id,
+            reason=reason,
+            owner=target_role,
         )
+        common_args = {
+            "request": request,
+            "assignment_id": assignment_id,
+            "role_id": target_role,
+            "source_ref": call_id,
+            "title": _optional_text(call.payload.get("title")) or f"Reopened work for {target_role}",
+            "summary": _single_line_text(reason),
+            "assignment_type": "work_item_reopen",
+            "visibility_scope": _optional_text(call.payload.get("context_visibility")) or "project",
+            "payload": payload,
+        }
+        if work_item.state == "blocked":
+            self.db.reopen_work_item_with_assignment(**common_args)
+        else:
+            self.db.restore_terminal_work_item_with_assignment(**common_args)
 
     def _supersede_work_item(self, *, call_id: str, call: SafeOutputCall) -> None:
         if _has_work_item_evidence_ref(self.db, safe_output_ref=call_id):
@@ -1465,6 +1468,25 @@ def _work_item_supersede_summary(payload: dict[str, Any]) -> str:
     return (
         f"Superseded by {_single_line_text(_required_text(payload, 'replacement_ref'))}: "
         f"{_single_line_text(_required_text(payload, 'reason'))}"
+    )
+
+
+def _work_item_reopen_target_state(call: SafeOutputCall, *, current_state: str) -> str:
+    raw_target_state = _optional_text(call.payload.get("target_state"))
+    if current_state == "blocked":
+        target_state = raw_target_state or "active"
+        if target_state != "active":
+            raise SafeOutputError("`work_item.reopen` can only move blocked work to `active`")
+        return target_state
+    if current_state in {"superseded", "canceled", "failed_terminal"}:
+        target_state = raw_target_state or "shaping"
+        if target_state not in {"shaping", "ready", "active"}:
+            raise SafeOutputError(
+                "`work_item.reopen` terminal restore target_state must be `shaping`, `ready`, or `active`"
+            )
+        return target_state
+    raise SafeOutputError(
+        f"`work_item.reopen` requires work item state `blocked`, `superseded`, `canceled`, or `failed_terminal`, found `{current_state}`"
     )
 
 
