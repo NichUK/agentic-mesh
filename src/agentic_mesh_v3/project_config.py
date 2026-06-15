@@ -64,6 +64,12 @@ class V3TeamsConnectorConfig:
 
 
 @dataclass(frozen=True)
+class V3FlowConfig:
+    template: str | None = None
+    path: Path | None = None
+
+
+@dataclass(frozen=True)
 class V3RoleInstanceConfig:
     role_id: str
     template: str | None = None
@@ -82,6 +88,34 @@ class V3ProjectConfig:
     roles: tuple[V3RoleInstanceConfig, ...]
     release_deployment_targets: tuple[V3ReleaseDeploymentTargetConfig, ...] = ()
     teams_connector: V3TeamsConnectorConfig = V3TeamsConnectorConfig()
+    flow: V3FlowConfig = V3FlowConfig()
+
+
+def resolve_project_flow_config_path(
+    project_config_path: Path,
+    project_config: V3ProjectConfig,
+    *,
+    stock_flows_dir: Path = Path("config/flows"),
+) -> Path | None:
+    """Resolve the project's selected flow config, if one is declared.
+
+    Explicit paths are project-relative unless absolute. Stock templates are
+    resolved from the system source tree's flow catalog. The legacy `sdlc`
+    template name maps to the V3 agent-owned SDLC flow first.
+    """
+
+    if project_config.flow.path is not None:
+        path = project_config.flow.path
+        return path if path.is_absolute() else project_config_path.parent / path
+    if project_config.flow.template is None:
+        return None
+    for filename in _flow_template_candidates(project_config.flow.template):
+        candidate = stock_flows_dir / filename
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        f"flow template `{project_config.flow.template}` not found under {stock_flows_dir}"
+    )
 
 
 def load_project_config(path: Path) -> V3ProjectConfig:
@@ -92,6 +126,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
     roles_raw = _mapping(raw.get("roles"))
     release_targets_raw = _mapping(raw.get("release_deployment_targets"))
     teams_raw = _mapping(_mapping(raw.get("connectors")).get("teams"))
+    flow_raw = _mapping(raw.get("flow"))
     return V3ProjectConfig(
         project_id=project_id,
         broker=V3BrokerConfig(
@@ -113,6 +148,10 @@ def load_project_config(path: Path) -> V3ProjectConfig:
         teams_connector=V3TeamsConnectorConfig(
             adapter=_optional(teams_raw.get("adapter")),
             graph_base_url=str(teams_raw.get("graph_base_url") or "https://graph.microsoft.com/v1.0"),
+        ),
+        flow=V3FlowConfig(
+            template=_optional(flow_raw.get("template")),
+            path=Path(str(flow_raw["path"])) if flow_raw.get("path") else None,
         ),
     )
 
@@ -199,3 +238,10 @@ def _load_messaging_identity(role_id: str, project_raw: dict[str, Any]) -> V3Rol
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _flow_template_candidates(template: str) -> tuple[str, ...]:
+    normalized = template[:-5] if template.endswith(".yaml") else template
+    if normalized == "sdlc":
+        return ("sdlc-v3.yaml", "sdlc.yaml")
+    return (f"{normalized}-v3.yaml", f"{normalized}.yaml")

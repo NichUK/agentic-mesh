@@ -75,9 +75,11 @@ purpose-only roles cannot be mounted as executable agent identities. Starter
 role templates also keep local documentation obligations pointed at real
 durable documents, so agents are not instructed to write or consult missing
 library locations.
-Agent config materialization can load RACI from a flow YAML file with
-`materialize-agent-configs --flow-config ...`; when omitted, it falls back to
-the built-in starter SDLC matrix for local smoke runs. This keeps mounted
+Agent config materialization loads RACI from an explicit
+`materialize-agent-configs --flow-config ...` override when supplied. Otherwise
+it resolves the project-selected flow from `project.yaml`, with
+`flow.path` treated as project-relative and `flow.template: sdlc` resolving to
+the stock V3 SDLC flow at `config/flows/sdlc-v3.yaml`. This keeps mounted
 `raci.json` aligned with project-selected flow configuration instead of
 silently freezing the default matrix into every agent.
 The V3 project JSON schema is kept in parity with this parsed configuration
@@ -228,7 +230,7 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev lifecycle-pla
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml broker-inspect --consumer agentic-mesh-dev.product-manager.1
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-once --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-service --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state --idle-exit-seconds 300
-agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml materialize-agent-configs --image agentic-mesh-v3:local --source-repo . --organisation-config-repo ../org --project-config-repo examples/projects/agentic-mesh-dev --agent-config-root .tmp/v3-agents --runtime-state-dir .tmp/v3-state --document-library-root .tmp/v3-documents --role-templates-dir config/roles --flow-config config/flows/sdlc-v3.yaml --compose-output .tmp/v3-compose/roles.yml
+agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml materialize-agent-configs --image agentic-mesh-v3:local --source-repo . --organisation-config-repo ../org --project-config-repo examples/projects/agentic-mesh-dev --agent-config-root .tmp/v3-agents --runtime-state-dir .tmp/v3-state --document-library-root .tmp/v3-documents --role-templates-dir config/roles --compose-output .tmp/v3-compose/roles.yml
 ```
 
 ## Adapter Status

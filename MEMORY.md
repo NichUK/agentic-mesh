@@ -28,21 +28,26 @@ Important V3 decisions:
 
 ## Current State
 
-Agentic Mesh is on the v2 runtime reset branch:
+Agentic Mesh is now progressing through stacked V3 implementation branches.
+The V2 console entry point remains present for compatibility while V3 is
+proved, but new runtime-reset work should land under the V3 package:
 
 ```text
-codex/v2-runtime-reset
+src/agentic_mesh_v3
+tests/test_v3_*.py
 ```
 
-The v1 Python package and v1 tests have been removed. Active implementation
-lives under:
+The installed V3 console script is:
 
 ```text
-src/agentic_mesh_v2
-tests/test_v2_*.py
+agentic-mesh-v3 = agentic_mesh_v3.cli:main
 ```
 
-The installed console script is:
+Use feature branches stacked from the latest V3 PR branch, then promote through
+PRs with Copilot review. Do not restart broad V1/V2 dogfood work unless the
+sponsor explicitly asks for an operational fix.
+
+The legacy V2 console script still exists as:
 
 ```text
 agentic-mesh = agentic_mesh_v2.cli:main
@@ -338,11 +343,12 @@ connector adapter settings, and release deployment targets. It validates the
 current dogfood project config while staying permissive for broader
 organisation/project fields that V3 has not interpreted yet.
 
-V3 agent config materialization can now load RACI assignments from a flow YAML
-file via `materialize-agent-configs --flow-config config/flows/sdlc-v3.yaml`.
-The mounted `raci.json` therefore follows the project-selected flow instead of
-always using the in-code starter SDLC matrix; omitting `--flow-config` keeps the
-default matrix for local smoke runs.
+V3 project config now parses the `flow` block. Agent config materialization
+uses an explicit `--flow-config` when provided, otherwise it resolves the
+project-selected flow template/path from `project.yaml`; `flow.template: sdlc`
+maps to `config/flows/sdlc-v3.yaml`. The mounted `raci.json` therefore follows
+the project-selected flow instead of silently falling back to the in-code
+starter SDLC matrix.
 
 V3 role services now load database-derived governance context/checklists for
 inbox messages that carry `work_item_id`. `run-agent-once` and

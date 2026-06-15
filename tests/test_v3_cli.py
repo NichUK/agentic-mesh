@@ -764,6 +764,62 @@ raci:
     ]
 
 
+def test_cli_materialize_agent_configs_uses_project_flow_template_raci(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+flow:
+  template: sdlc
+roles:
+  release-manager:
+    template: release-manager
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    roles_dir = tmp_path / "roles"
+    roles_dir.mkdir()
+    (roles_dir / "release-manager.yaml").write_text(_role_template("release-manager"), encoding="utf-8")
+
+    result = main(
+        [
+            "--project-config",
+            str(project_config),
+            "materialize-agent-configs",
+            "--image",
+            "agentic-mesh-v3:local",
+            "--source-repo",
+            str(tmp_path / "source"),
+            "--organisation-config-repo",
+            str(tmp_path / "org"),
+            "--project-config-repo",
+            str(tmp_path / "project"),
+            "--agent-config-root",
+            str(tmp_path / "agents"),
+            "--runtime-state-dir",
+            str(tmp_path / "state"),
+            "--document-library-root",
+            str(tmp_path / "documents"),
+            "--role-templates-dir",
+            str(roles_dir),
+        ]
+    )
+
+    raci = json.loads((tmp_path / "agents" / "release-manager" / "1" / "raci.json").read_text(encoding="utf-8"))
+    deployment = next(item for item in raci if item["phase"] == "deployment")
+    assert result == 0
+    assert "agentic-mesh-dev.release-manager.1" in capsys.readouterr().out
+    assert deployment["accountable"] == "release-manager"
+    assert deployment["responsible"] == ["platform-engineer", "engineering"]
+
+
 def _role_template(role_id: str) -> str:
     return f"""
 role_id: {role_id}
