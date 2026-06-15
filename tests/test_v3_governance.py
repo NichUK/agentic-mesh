@@ -3,6 +3,7 @@ from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import GovernanceInstructionSet
 from agentic_mesh_v3.governance import RaciAssignment
 from agentic_mesh_v3.governance import RaciMatrix
+from agentic_mesh_v3.governance import evaluate_governance_checklist
 
 
 def test_default_raci_has_one_accountable_per_phase() -> None:
@@ -53,3 +54,90 @@ def test_governance_prompt_rules_are_explicit_about_consultation() -> None:
     assert "Consult every role marked C" in prompt_section
     assert "Ask the sponsor" in prompt_section
     assert "Write governance evidence" in prompt_section
+
+
+def test_governance_checklist_flags_missing_required_evidence() -> None:
+    context = GovernanceContext(
+        work_item_id="work-123",
+        phase="development",
+        accountable_role="engineering",
+        responsible_roles=("engineering",),
+        consulted_roles=("product-manager", "qa-engineer"),
+        informed_roles=("project-manager",),
+        sponsor_decision_points=("product-signoff",),
+    )
+
+    checklist = evaluate_governance_checklist(context)
+
+    assert checklist.missing_consultations == ("product-manager", "qa-engineer")
+    assert checklist.missing_informed_updates == ("project-manager",)
+    assert checklist.pending_sponsor_decisions == ("product-signoff",)
+    assert checklist.is_satisfied is False
+    assert "Missing consultation evidence for `product-manager`" in checklist.as_prompt_section()
+
+
+def test_governance_checklist_uses_recorded_tool_evidence() -> None:
+    context = GovernanceContext(
+        work_item_id="work-123",
+        phase="deployment",
+        accountable_role="release-manager",
+        responsible_roles=("platform-engineer",),
+        consulted_roles=("qa-engineer",),
+        informed_roles=("project-manager",),
+        sponsor_decision_points=("release-approval",),
+    )
+
+    checklist = evaluate_governance_checklist(
+        context,
+        governance_records=(
+            {
+                "record_type": "consult.request",
+                "target_ref": "qa-engineer",
+                "status": "requested",
+            },
+            {
+                "record_type": "informed.update",
+                "target_ref": "project-manager",
+                "status": "sent",
+            },
+        ),
+        approvals=(
+            {
+                "approval_id": "approval-1",
+                "question": "release-approval for work-123",
+                "status": "approved",
+            },
+        ),
+    )
+
+    assert checklist.is_satisfied is True
+    assert "currently satisfied" in checklist.as_prompt_section()
+
+
+def test_governance_checklist_respects_recorded_exceptions() -> None:
+    context = GovernanceContext(
+        work_item_id="work-123",
+        phase="system-design",
+        accountable_role="solution-architect",
+        responsible_roles=("solution-architect",),
+        consulted_roles=("security-architect",),
+        informed_roles=("stakeholders",),
+    )
+
+    checklist = evaluate_governance_checklist(
+        context,
+        governance_records=(
+            {
+                "record_type": "governance.record_exception",
+                "target_ref": "security-architect",
+                "summary": "Security consultation deferred because scope is documentation-only.",
+                "status": "exception_recorded",
+            },
+        ),
+    )
+
+    assert checklist.missing_consultations == ()
+    assert checklist.missing_informed_updates == ("stakeholders",)
+    assert checklist.recorded_exceptions == (
+        "Security consultation deferred because scope is documentation-only.",
+    )
