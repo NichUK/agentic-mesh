@@ -6,7 +6,9 @@ services.
 
 The current architecture direction is recorded in:
 
+- `docs/architecture/v3-agent-owned-runtime.md`
 - `docs/architecture/agentic-mesh-design.md`
+- `docs/architecture/decisions.md#adr-004---v3-agent-owned-runtime-reset`
 - `docs/architecture/decisions.md#adr-001---agentic-mesh-enterprise-runtime-direction`
 - `docs/architecture/risk-register.md`
 
@@ -14,7 +16,8 @@ The current architecture direction is recorded in:
 
 Agentic Mesh replaces the OpenAgents-centered prototype direction with an
 enterprise runtime designed around independently deployable, long-running role
-agents.
+agents. V3 sharpens this by making role agents own work progression while the
+runtime provides platform services only.
 
 Each role-agent instance runs in its own container with:
 
@@ -51,16 +54,20 @@ operational support.
 
 ## Core Boundaries
 
-- Agent runtime: claims work, loads context, enforces policy, invokes worker
-  adapters, records outcomes, and emits telemetry.
+- Role agent: owns work progression, governance consultation, documentation,
+  handoffs, stakeholder questions, implementation/review/release actions within
+  its authority, and confirmations.
+- Runtime platform: starts, stops, hibernates, hydrates, and observes role
+  agents; provides broker, connector, document-library, configuration,
+  reporting, and telemetry services.
 - Worker adapter: executes model or CLI work through Codex, OpenAI, Anthropic,
   Claude Code, MiniMax, DeepSeek, or future providers.
-- Router: routes messages, handoffs, DMs, action requests, and connector
-  events. It is not an executive controller.
+- Broker: provides durable inbox/outbox delivery behind an adapter interface,
+  initially NATS JetStream.
+- Connector bridge: maps Teams, Slack, web, CLI, or other surfaces to the
+  internal message/action model. It is transparent plumbing, not a manager.
 - Control-plane: supervises topology, role-instance lifecycle, hibernation,
   wake-up, health checks, and configuration reloads.
-- Collaboration connector: maps Teams, Slack, web, CLI, or other surfaces to
-  the internal message/action model.
 - Message store: owns durable delivery, claims, retries, and dead letters.
 - State store: owns project state, work item state, leases, cursors, and
   approvals.

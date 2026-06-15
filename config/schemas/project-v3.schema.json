@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-mesh.local/schemas/project-v3.schema.json",
+  "title": "Agentic Mesh V3 Project Config",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["project_id", "broker", "document_library", "roles"],
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "broker": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["adapter"],
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "nats-jetstream",
+            "rabbitmq",
+            "redis-streams",
+            "azure-service-bus",
+            "kafka",
+            "aws-sqs-sns",
+            "google-pubsub",
+            "filesystem"
+          ]
+        },
+        "stream": { "type": "string" },
+        "servers": { "type": "string" }
+      }
+    },
+    "document_library": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["adapter"],
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "enum": ["onedrive", "sharepoint", "filesystem", "remote-filesystem", "dropbox"]
+        },
+        "root": { "type": "string" },
+        "drive_id": { "type": "string" },
+        "root_path": { "type": "string", "default": "/documents" }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "instances": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.documents import OneDriveDocumentLibraryAdapter
 from agentic_mesh_v3.documents import WorkItemIndex
 from agentic_mesh_v3.documents import work_item_index_path
 from agentic_mesh_v3.documents import write_root_work_item_index
@@ -54,3 +55,40 @@ def test_write_root_work_item_index(tmp_path: Path) -> None:
 
     content = (tmp_path / "work-items" / "index.md").read_text(encoding="utf-8")
     assert "[Add status page](work-items/work-123/index.md)" in content
+
+
+class FakeGraphDocumentTransport:
+    def __init__(self) -> None:
+        self.puts: list[tuple[str, str]] = []
+        self.text_by_url: dict[str, str] = {}
+
+    def put_text(self, url: str, content: str) -> dict[str, object]:
+        self.puts.append((url, content))
+        self.text_by_url[url] = content
+        return {"webUrl": "https://example.test/doc"}
+
+    def get_text(self, url: str) -> str:
+        return self.text_by_url[url]
+
+    def exists(self, url: str) -> bool:
+        return url in self.text_by_url
+
+
+def test_onedrive_document_library_uses_documents_root_and_graph_paths() -> None:
+    transport = FakeGraphDocumentTransport()
+    adapter = OneDriveDocumentLibraryAdapter(
+        "drive-123",
+        root_path="/documents",
+        graph_base_url="https://graph.test/v1.0",
+        transport=transport,
+    )
+
+    ref = adapter.write_text("work-items/work-1/index.md", "# Work One")
+
+    assert ref.url == "https://example.test/doc"
+    assert transport.puts[0][0] == (
+        "https://graph.test/v1.0/drives/drive-123/root:/documents/work-items/work-1/index.md:/content"
+    )
+    content_url = "https://graph.test/v1.0/drives/drive-123/root:/documents/work-items/work-1/index.md:/content"
+    assert adapter.read_text("work-items/work-1/index.md") == "# Work One"
+    assert transport.text_by_url[content_url] == "# Work One"
