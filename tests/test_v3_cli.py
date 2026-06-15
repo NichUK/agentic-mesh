@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 from agentic_mesh_v3.cli import _teams_activity_router
+from agentic_mesh_v3.cli import _broker_inspection_payload
 from agentic_mesh_v3.cli import _ensure_agent_stream
 from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
@@ -136,6 +137,53 @@ def test_cli_tool_catalog_lists_role_allowed_tools(capsys) -> None:  # type: ign
     assert '"role_id": "release-manager"' in output
     assert '"tool_name": "release.deploy"' in output
     assert '"allowed": true' in output
+
+
+def test_cli_broker_inspection_payload_lists_pending_and_dead_letters() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager", "agent.engineering"])
+    broker.ensure_consumer("agent-inbox", "pm-1", filter_subject="agent.product-manager")
+    pending = broker.publish("agent-inbox", "agent.product-manager", {"text": "shape"})
+    dead_lettered = broker.publish("agent-inbox", "agent.product-manager", {"text": "poison"})
+    fetched = broker.fetch("agent-inbox", "pm-1", batch=1)[0]
+    assert fetched.message_id == pending.message_id
+    broker.ack("agent-inbox", "pm-1", fetched.message_id)
+    fetched = broker.fetch("agent-inbox", "pm-1", batch=1)[0]
+    assert fetched.message_id == dead_lettered.message_id
+    broker.dead_letter("agent-inbox", "pm-1", fetched.message_id, reason="invalid payload")
+    waiting = broker.publish("agent-inbox", "agent.product-manager", {"text": "next"})
+
+    payload = _broker_inspection_payload(broker, stream="agent-inbox", consumer="pm-1")
+
+    assert payload["stream"] == "agent-inbox"
+    assert payload["consumer"] == "pm-1"
+    assert payload["pending"] == [
+        {
+            "message_id": waiting.message_id,
+            "subject": "agent.product-manager",
+            "payload": {"text": "next"},
+            "created_at": waiting.created_at,
+            "delivery_count": 0,
+        }
+    ]
+    assert payload["dead_letters"] == [
+        {
+            "message_id": dead_lettered.message_id,
+            "subject": "agent.product-manager",
+            "payload": {"text": "poison", "dead_letter_reason": "invalid payload"},
+            "created_at": dead_lettered.created_at,
+            "delivery_count": 0,
+        }
+    ]
+
+
+def test_cli_broker_inspect_requires_project_config() -> None:
+    try:
+        main(["broker-inspect"])
+    except ValueError as exc:
+        assert str(exc) == "--project-config is required for broker-inspect"
+    else:
+        raise AssertionError("broker-inspect should require --project-config")
 
 
 def test_cli_teams_activity_router_is_none_without_project_config() -> None:

@@ -93,6 +93,9 @@ forever inside a role container.
 Agent status includes both inbox depth and dead-letter depth so `/agents`,
 status JSON, and operator dashboards can spot recovery work without inspecting
 broker internals.
+Operators can also inspect broker state through `broker-inspect`, which reports
+pending and dead-lettered messages for the configured project broker without
+claiming, acknowledging, or requeueing work.
 
 Project Manager sweeps are read-only health inspections over work-item state.
 They flag blocked, waiting, recovering, and stale non-terminal work so the
@@ -183,6 +186,7 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev local-e2e-dog
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev status-json
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev serve --document-library-root .tmp/v3-documents
 agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
+agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml broker-inspect --consumer agentic-mesh-dev.product-manager.1
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-once --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-service --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state --idle-exit-seconds 300
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml materialize-agent-configs --image agentic-mesh-v3:local --source-repo . --organisation-config-repo ../org --project-config-repo examples/projects/agentic-mesh-dev --agent-config-root .tmp/v3-agents --runtime-state-dir .tmp/v3-state --document-library-root .tmp/v3-documents --role-templates-dir config/roles --compose-output .tmp/v3-compose/roles.yml

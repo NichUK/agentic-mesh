@@ -244,3 +244,8 @@ instead of leaving the agent in an endless retry loop.
 Agent status now carries `dead_letter_depth` as well as `inbox_depth`, and the
 agents page renders the dead-letter count. The database migration adds the
 column for existing V3 state files.
+
+The V3 CLI now exposes read-only broker inspection through `broker-inspect`.
+It loads the configured project broker and reports pending and dead-lettered
+messages as JSON without claiming or mutating work, giving operators a standard
+way to inspect inbox/recovery state.
