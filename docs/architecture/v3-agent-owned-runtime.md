@@ -142,7 +142,9 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
   `/documents/work-items/{work_item_id}`.
 - Deployment: V3 defines command and no-deployment deployment targets so the
   Release Manager can execute a configured deployment or record a clear
-  no-deployment disposition.
+  no-deployment disposition. Release closure is a Release Manager tool action
+  and requires a recorded deployment or explicit no-deployment disposition
+  before the work item can be moved to released/closed.
 
 ## Artifact Library
 

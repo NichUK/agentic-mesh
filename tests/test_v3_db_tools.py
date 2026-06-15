@@ -176,6 +176,77 @@ def test_v3_tool_service_release_deploy_uses_configured_target(tmp_path: Path) -
     assert release_count == 1
 
 
+def test_v3_release_close_requires_release_disposition(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Release work",
+            description="Needs release.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+        tools = V3ToolService(db)
+
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                tool_name="release.close",
+                payload={"work_item_id": "work-1"},
+            )
+        except ValueError as exc:
+            assert "no deployment or no-deployment release disposition" in str(exc)
+        else:
+            raise AssertionError("release close should require release evidence")
+    finally:
+        db.close()
+
+
+def test_v3_release_close_closes_after_no_deployment_disposition(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Planning release",
+            description="Planning-only.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+        tools = V3ToolService(
+            db,
+            deployment_targets={
+                "planning-only": NoDeploymentDisposition(
+                    target_id="planning-only",
+                    reason="Planning-only slice.",
+                )
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.deploy",
+            payload={
+                "work_item_id": "work-1",
+                "target_id": "planning-only",
+                "scope": "Planning-only release",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.close",
+            payload={"work_item_id": "work-1"},
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "closed"
+    assert detail.owner_role == "project-manager"
+
+
 def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

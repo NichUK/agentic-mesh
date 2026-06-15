@@ -187,6 +187,24 @@ class V3ToolService:
                 rollback_plan=result.rollback_plan,
                 residual_risks=str(payload.get("residual_risks") or "None recorded"),
             )
+        elif tool_name == "release.close":
+            work_item_id = _required(payload, "work_item_id")
+            if not self.db.has_release_disposition(work_item_id):
+                raise ValueError(f"work item `{work_item_id}` has no deployment or no-deployment release disposition")
+            self.db.update_work_item_state(
+                work_item_id=work_item_id,
+                state="released",
+                owner_role=role_from_instance(role_instance_id),
+                current_phase="deployment",
+                next_action=str(payload.get("release_note") or "Release disposition recorded; ready for closure."),
+            )
+            self.db.update_work_item_state(
+                work_item_id=work_item_id,
+                state="closed",
+                owner_role=str(payload.get("closure_owner_role") or "project-manager"),
+                current_phase="project-closure",
+                next_action=str(payload.get("closure_note") or "Release closed with deployment disposition recorded."),
+            )
         elif tool_name == "memory.propose_update":
             self.db.record_role_memory(
                 memory_id=str(payload.get("memory_id") or f"memory-{call_id}"),

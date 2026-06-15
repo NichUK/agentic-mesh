@@ -508,6 +508,17 @@ class V3Database:
                 {"release_id": release_id, "status": status, "deployment_result": deployment_result},
             )
 
+    def has_release_disposition(self, work_item_id: str) -> bool:
+        row = self.connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM releases
+            WHERE work_item_id=? AND status IN ('deployed', 'no_deployment', 'released')
+            """,
+            (work_item_id,),
+        ).fetchone()
+        return bool(row and row["count"] > 0)
+
     def record_role_memory(
         self,
         *,

@@ -46,6 +46,7 @@ ROLE_TOOLS = {
     },
     "release-manager": {
         "approval.request",
+        "release.close",
         "release.deploy",
         "release.record",
         "work_item.update_state",
