@@ -818,12 +818,16 @@ def test_v3_db_records_approval_response(tmp_path: Path) -> None:
         )
 
         detail = db.work_item_detail("work-1")
+        approval = db.approval_detail("approval-1")
     finally:
         db.close()
 
     assert detail is not None
     assert detail.approvals[0].status == "approved"
     assert detail.approvals[0].response == "Approved by sponsor."
+    assert approval is not None
+    assert approval["requested_by_role"] == "product-manager"
+    assert approval["work_item_id"] == "work-1"
 
 
 def test_v3_tool_service_approval_request_delivers_when_target_is_present(tmp_path: Path) -> None:

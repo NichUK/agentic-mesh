@@ -236,6 +236,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   carries target metadata it sends the Markdown reply through the bridge.
   `approval.request` records the approval request and, when target metadata is
   present, sends the sponsor-facing approval request through the bridge.
+  `record-approval-response` records sponsor/operator decisions and, when
+  project broker config is available, publishes the response to the role that
+  requested the approval so the agent can continue the work.
   `stakeholder.ask_question` records governance evidence and, when target
   metadata is present, sends the question through the bridge.
   `artifact.link` lets any role register an existing document-library path as a
