@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.memory import DatabaseRoleMemory
 from agentic_mesh_v3.memory import RoleMemoryRecord
 from agentic_mesh_v3.memory import SQLiteRoleMemory
 from agentic_mesh_v3.tools import V3ToolService
@@ -68,5 +69,41 @@ def test_memory_safe_output_records_role_memory(tmp_path: Path) -> None:
                 "created_at": role_memory[0]["created_at"],
             }
         ]
+    finally:
+        db.close()
+
+
+def test_database_role_memory_reads_safe_output_memory_records(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="memory.propose_update",
+            payload={
+                "summary": "Sponsor prefers compact dashboard rows.",
+                "source_ref": "work-123/index.md",
+            },
+        )
+        memory = DatabaseRoleMemory(db)
+
+        summary = memory.load_summary("agentic-mesh-dev.product-manager.1")
+
+        assert "Sponsor prefers compact dashboard rows." in summary
+        assert "source: work-123/index.md" in summary
+    finally:
+        db.close()
+
+
+def test_database_role_memory_deduplicates_agent_observations(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        memory = DatabaseRoleMemory(db)
+
+        memory.record_observation("agentic-mesh-dev.product-manager.1", "Processed message msg-123.")
+        memory.record_observation("agentic-mesh-dev.product-manager.1", "Processed message msg-123.")
+
+        assert memory.load_summary("agentic-mesh-dev.product-manager.1").count("Processed message msg-123.") == 1
     finally:
         db.close()
