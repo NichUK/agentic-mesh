@@ -34,6 +34,37 @@ def test_in_memory_broker_nack_requeues_with_reason() -> None:
     assert retried.payload["last_nack_reason"] == "try again"
 
 
+def test_in_memory_broker_inspects_pending_without_claiming() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager", "agent.engineering"])
+    broker.ensure_consumer("agent-inbox", "pm-1", filter_subject="agent.product-manager")
+    first = broker.publish("agent-inbox", "agent.product-manager", {"text": "shape"})
+    second = broker.publish("agent-inbox", "agent.engineering", {"text": "build"})
+
+    pending_for_pm = broker.pending("agent-inbox", "pm-1")
+    pending_all = broker.pending("agent-inbox")
+
+    assert [message.message_id for message in pending_for_pm] == [first.message_id]
+    assert [message.message_id for message in pending_all] == [first.message_id, second.message_id]
+    assert broker.depth("agent-inbox").pending == 2
+
+
+def test_in_memory_broker_dead_letters_inflight_message() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_consumer("agent-inbox", "pm-1", filter_subject="agent.product-manager")
+    published = broker.publish("agent-inbox", "agent.product-manager", {"text": "hello"})
+    fetched = broker.fetch("agent-inbox", "pm-1")[0]
+
+    broker.dead_letter("agent-inbox", "pm-1", fetched.message_id, reason="poison message")
+
+    assert broker.depth("agent-inbox").pending == 0
+    assert broker.depth("agent-inbox").consumers["pm-1"] == 0
+    dead = broker.dead_letters("agent-inbox")[0]
+    assert dead.message_id == published.message_id
+    assert dead.payload["dead_letter_reason"] == "poison message"
+
+
 def test_build_broker_adapter_supports_in_memory_and_nats() -> None:
     assert isinstance(build_broker_adapter(adapter="in-memory"), InMemoryBrokerAdapter)
     assert isinstance(

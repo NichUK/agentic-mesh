@@ -230,3 +230,8 @@ The V3 CLI exposes sweep publication through `sweep-project
 --publish-to-project-manager` using the configured project broker. This gives
 operators and future schedulers a standard route to wake the Project Manager
 agent for stale/blocked work without giving the runtime lifecycle authority.
+
+The V3 broker port now includes pending message inspection and dead-letter
+operations in addition to publish/fetch/ack/nack/depth. The in-memory adapter
+implements these fully for contract tests, and product code should continue to
+target the broker interface rather than a specific backend.
