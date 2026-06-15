@@ -26,6 +26,9 @@ def test_write_work_item_index(tmp_path: Path) -> None:
         raci_summary="engineering A/R, qa-engineer C",
         governance_state="qa consulted",
         artifacts=(DocumentRef(relative_path="020-product-definition.md", title="Product definition"),),
+        consultations=("QA consulted on acceptance evidence",),
+        approvals=("Sponsor approved product sign-off",),
+        evidence=("Focused status-page tests passed",),
         decisions=("Sponsor approved scope",),
         risks=("No staging environment yet",),
         next_action="Implement",
@@ -38,6 +41,12 @@ def test_write_work_item_index(tmp_path: Path) -> None:
     assert "# Add status page" in content
     assert "qa consulted" in content
     assert "[Product definition](020-product-definition.md)" in content
+    assert "## Consultations" in content
+    assert "QA consulted on acceptance evidence" in content
+    assert "## Approvals" in content
+    assert "Sponsor approved product sign-off" in content
+    assert "## Evidence" in content
+    assert "Focused status-page tests passed" in content
 
 
 def test_write_root_work_item_index(tmp_path: Path) -> None:
@@ -100,6 +109,26 @@ def test_write_work_item_index_rejects_duplicate_evidence(tmp_path: Path) -> Non
         assert "duplicates artifact path" in str(exc)
     else:
         raise AssertionError("duplicate work-item evidence should be rejected")
+
+
+def test_write_work_item_index_rejects_duplicate_named_sections(tmp_path: Path) -> None:
+    adapter = LocalDocumentLibraryAdapter(tmp_path)
+    index = WorkItemIndex(
+        work_item_id="work-123",
+        title="Duplicate consultations",
+        status="active",
+        owner_role="engineering",
+        raci_summary="engineering A/R",
+        governance_state="ready",
+        consultations=("QA consulted", "QA consulted"),
+    )
+
+    try:
+        write_work_item_index(adapter, index)
+    except DocumentLibraryError as exc:
+        assert "duplicates consultation" in str(exc)
+    else:
+        raise AssertionError("duplicate named index sections should be rejected")
 
 
 class FakeGraphDocumentTransport:

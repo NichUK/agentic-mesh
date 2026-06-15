@@ -284,3 +284,8 @@ dependency for every development phase. V3 development RACI excludes it by
 default, while governance instructions require consultation when prompt
 components, role instructions, safe-output guidance, context loading, memory
 instructions, or prompt-driven behaviour are in scope.
+
+V3 work-item indexes now include first-class sections for consultations,
+approvals, and explicit evidence in addition to artifacts, decisions, risks,
+and next action. The document-library validation rejects duplicate entries in
+those named sections so dossiers stay factual rather than repetitive.

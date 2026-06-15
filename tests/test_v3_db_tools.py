@@ -93,6 +93,9 @@ def test_v3_tool_service_writes_work_item_index_and_refreshes_root_index(tmp_pat
                 "owner_role": "engineering",
                 "raci_summary": "engineering A/R",
                 "governance_state": "qa consulted",
+                "consultations": ["QA reviewed acceptance coverage."],
+                "approvals": ["Sponsor approved product definition."],
+                "evidence": ["Focused status page tests passed."],
                 "next_action": "Implement",
             },
         )
@@ -102,6 +105,11 @@ def test_v3_tool_service_writes_work_item_index_and_refreshes_root_index(tmp_pat
     assert (tmp_path / "documents" / "work-items" / "work-1" / "index.md").exists()
     root_index = tmp_path / "documents" / "work-items" / "index.md"
     assert root_index.exists()
+    work_index = tmp_path / "documents" / "work-items" / "work-1" / "index.md"
+    index_content = work_index.read_text(encoding="utf-8")
+    assert "QA reviewed acceptance coverage." in index_content
+    assert "Sponsor approved product definition." in index_content
+    assert "Focused status page tests passed." in index_content
     assert "[Add status page](work-items/work-1/index.md) - `active` - engineering" in root_index.read_text(
         encoding="utf-8"
     )

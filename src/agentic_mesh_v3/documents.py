@@ -27,6 +27,9 @@ class WorkItemIndex:
     raci_summary: str
     governance_state: str
     artifacts: tuple[DocumentRef, ...] = ()
+    consultations: tuple[str, ...] = ()
+    approvals: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
     decisions: tuple[str, ...] = ()
     risks: tuple[str, ...] = ()
     next_action: str = ""
@@ -46,6 +49,21 @@ class WorkItemIndex:
         ]
         if self.artifacts:
             lines.extend(f"- [{artifact.title}]({artifact.relative_path})" for artifact in self.artifacts)
+        else:
+            lines.append("- None recorded")
+        lines.extend(["", "## Consultations"])
+        if self.consultations:
+            lines.extend(f"- {consultation}" for consultation in self.consultations)
+        else:
+            lines.append("- None recorded")
+        lines.extend(["", "## Approvals"])
+        if self.approvals:
+            lines.extend(f"- {approval}" for approval in self.approvals)
+        else:
+            lines.append("- None recorded")
+        lines.extend(["", "## Evidence"])
+        if self.evidence:
+            lines.extend(f"- {evidence}" for evidence in self.evidence)
         else:
             lines.append("- None recorded")
         lines.extend(["", "## Decisions"])
@@ -269,13 +287,24 @@ def validate_work_item_index(index: WorkItemIndex) -> None:
         raise DocumentLibraryError("work item index requires raci_summary")
     if not index.governance_state.strip():
         raise DocumentLibraryError("work item index requires governance_state")
-    has_evidence = bool(index.artifacts or index.decisions or index.risks or index.next_action.strip())
+    has_evidence = bool(
+        index.artifacts
+        or index.consultations
+        or index.approvals
+        or index.evidence
+        or index.decisions
+        or index.risks
+        or index.next_action.strip()
+    )
     if not has_evidence:
         raise DocumentLibraryError("work item index cannot be status-only; record evidence, risks, decisions, or next action")
     _reject_duplicates(
         (artifact.relative_path.casefold() for artifact in index.artifacts),
         label="artifact path",
     )
+    _reject_duplicates((consultation.strip().casefold() for consultation in index.consultations), label="consultation")
+    _reject_duplicates((approval.strip().casefold() for approval in index.approvals), label="approval")
+    _reject_duplicates((evidence.strip().casefold() for evidence in index.evidence), label="evidence")
     _reject_duplicates((decision.strip().casefold() for decision in index.decisions), label="decision")
     _reject_duplicates((risk.strip().casefold() for risk in index.risks), label="risk")
 
