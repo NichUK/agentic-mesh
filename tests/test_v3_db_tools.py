@@ -100,7 +100,7 @@ def test_v3_tool_service_writes_work_item_index_and_root_index(tmp_path: Path) -
     assert (tmp_path / "documents" / "work-items" / "index.md").exists()
 
 
-def test_v3_tool_service_rejects_unknown_tool(tmp_path: Path) -> None:
+def test_v3_tool_service_rejects_disallowed_or_unknown_tool(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
         db.migrate()
@@ -111,8 +111,8 @@ def test_v3_tool_service_rejects_unknown_tool(tmp_path: Path) -> None:
                 tool_name="not.real",
                 payload={},
             )
-        except ValueError as exc:
-            assert "unknown V3 tool" in str(exc)
+        except PermissionError as exc:
+            assert "not.real" in str(exc)
         else:
             raise AssertionError("unknown tool should fail")
     finally:

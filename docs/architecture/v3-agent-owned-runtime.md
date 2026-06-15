@@ -71,6 +71,13 @@ Sponsor consultation is required for material changes to scope, priority,
 acceptance criteria, user-visible behavior, release risk, cost, compliance,
 security posture, or delivery commitment.
 
+Tool authority is role-scoped. All roles can communicate, consult, hand off,
+record governance evidence, update document indexes, and report status.
+Product Manager and Project Manager can shape backlog/work-item state. Release
+Manager owns release/deploy tools. Roles can request out-of-flow help through
+consult/handoff tools, but cannot silently execute another role's specialist
+authority.
+
 ## Reporting
 
 Initial reporting routes are:
