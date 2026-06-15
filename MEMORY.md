@@ -164,3 +164,8 @@ V3 role container specs now generate the `agentic-mesh-v3 run-agent-service`
 command, and materialized `container.json` includes that command alongside
 mounts and prompt paths. The default mounted project config path is
 `/mesh/project/agentic-mesh/project.yaml`.
+
+V3 now has a Compose renderer for role services. It turns materialized
+`RoleContainerSpec` values into one Docker Compose service per role instance,
+using the generated `run-agent-service` command, stable mounts, environment,
+and a configured network name.
