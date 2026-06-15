@@ -266,3 +266,7 @@ subjects, and source context without letting the runtime interpret the work.
 V3 status tables now link work-item IDs and queue-linked work items to the
 corresponding `/work-item/{work_item_id}` detail route, making the reporting
 plane easier for sponsors and operators to traverse.
+
+Starter role documentation obligations now have concrete durable document
+targets, and role validation can check repo-local documentation paths. This
+prevents role prompts from sending agents toward missing library files.
