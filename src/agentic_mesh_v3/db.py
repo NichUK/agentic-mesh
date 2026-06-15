@@ -10,6 +10,7 @@ from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.reporting import ApprovalStatus
 from agentic_mesh_v3.reporting import ArtifactStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
+from agentic_mesh_v3.reporting import GovernanceRecordStatus
 from agentic_mesh_v3.reporting import ReleaseStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import WorkItemDetail
@@ -148,6 +149,18 @@ class V3Database:
                   source_ref TEXT NOT NULL,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   UNIQUE(role_instance_id, summary, source_ref)
+                );
+
+                CREATE TABLE IF NOT EXISTS governance_records (
+                  record_id TEXT PRIMARY KEY,
+                  work_item_id TEXT NOT NULL,
+                  record_type TEXT NOT NULL,
+                  role_instance_id TEXT NOT NULL,
+                  target_ref TEXT,
+                  summary TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  payload_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
@@ -481,6 +494,51 @@ class V3Database:
                 {"memory_id": memory_id, "summary": summary, "source_ref": source_ref},
             )
 
+    def record_governance_record(
+        self,
+        *,
+        record_id: str,
+        work_item_id: str,
+        record_type: str,
+        role_instance_id: str,
+        summary: str,
+        status: str = "recorded",
+        target_ref: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO governance_records(
+                  record_id, work_item_id, record_type, role_instance_id, target_ref,
+                  summary, status, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record_id,
+                    work_item_id,
+                    record_type,
+                    role_instance_id,
+                    target_ref,
+                    summary,
+                    status,
+                    json.dumps(payload or {}, sort_keys=True),
+                ),
+            )
+            self.record_event(
+                "governance.recorded",
+                "work_item",
+                work_item_id,
+                {
+                    "record_id": record_id,
+                    "record_type": record_type,
+                    "role_instance_id": role_instance_id,
+                    "target_ref": target_ref,
+                    "status": status,
+                },
+            )
+
     def list_role_memory(self, role_instance_id: str | None = None) -> list[dict[str, Any]]:
         if role_instance_id is None:
             rows = self.connection.execute(
@@ -668,6 +726,25 @@ class V3Database:
                 (work_item_id,),
             )
         )
+        governance_records = tuple(
+            GovernanceRecordStatus(
+                record_id=row["record_id"],
+                record_type=row["record_type"],
+                role_instance_id=row["role_instance_id"],
+                target_ref=row["target_ref"],
+                summary=row["summary"],
+                status=row["status"],
+            )
+            for row in self.connection.execute(
+                """
+                SELECT record_id, record_type, role_instance_id, target_ref, summary, status
+                FROM governance_records
+                WHERE work_item_id=?
+                ORDER BY created_at ASC, record_id ASC
+                """,
+                (work_item_id,),
+            )
+        )
         return WorkItemDetail(
             work_item_id=work["work_item_id"],
             title=work["title"],
@@ -680,6 +757,7 @@ class V3Database:
             artifacts=artifacts,
             approvals=approvals,
             releases=releases,
+            governance_records=governance_records,
         )
 
     def list_tool_calls(self) -> list[dict[str, Any]]:

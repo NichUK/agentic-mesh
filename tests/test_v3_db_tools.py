@@ -174,3 +174,38 @@ def test_v3_tool_service_release_deploy_uses_configured_target(tmp_path: Path) -
         db.close()
 
     assert release_count == 1
+
+
+def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Governed work",
+            description="Needs consultation.",
+            state="active",
+            owner_role="engineering",
+        )
+        tools = V3ToolService(db)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="consult.request",
+            payload={
+                "work_item_id": "work-1",
+                "target_role": "qa-engineer",
+                "question": "Please review the acceptance criteria.",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert len(detail.governance_records) == 1
+    record = detail.governance_records[0]
+    assert record.record_type == "consult.request"
+    assert record.target_ref == "qa-engineer"
+    assert record.status == "requested"
+    assert record.summary == "Please review the acceptance criteria."

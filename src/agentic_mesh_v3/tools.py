@@ -194,13 +194,21 @@ class V3ToolService:
                 summary=_required(payload, "summary"),
                 source_ref=_required(payload, "source_ref"),
             )
-        elif tool_name in TERMINAL_TOOLS or tool_name in {
-            "messaging.send",
+        elif tool_name in {
             "handoff.require",
             "consult.request",
             "informed.update",
             "governance.record_exception",
             "stakeholder.ask_question",
+        }:
+            self._record_governance_tool(
+                call_id=call_id,
+                role_instance_id=role_instance_id,
+                tool_name=tool_name,
+                payload=payload,
+            )
+        elif tool_name in TERMINAL_TOOLS or tool_name in {
+            "messaging.send",
             "status.update",
         }:
             return
@@ -260,6 +268,25 @@ class V3ToolService:
         ]
         write_root_work_item_index(self.document_library, indexes)
 
+    def _record_governance_tool(
+        self,
+        *,
+        call_id: str,
+        role_instance_id: str,
+        tool_name: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self.db.record_governance_record(
+            record_id=str(payload.get("record_id") or f"governance-{call_id}"),
+            work_item_id=_required(payload, "work_item_id"),
+            record_type=tool_name,
+            role_instance_id=role_instance_id,
+            target_ref=_target_ref(payload),
+            summary=_summary(payload),
+            status=str(payload.get("status") or _default_governance_status(tool_name)),
+            payload=payload,
+        )
+
 
 def _required(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
@@ -277,3 +304,25 @@ def _optional(value: Any) -> str | None:
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _target_ref(payload: dict[str, Any]) -> str | None:
+    return _optional(payload.get("target_ref") or payload.get("target_role") or payload.get("stakeholder_ref"))
+
+
+def _summary(payload: dict[str, Any]) -> str:
+    for key in ("summary", "question", "reason", "required_next_action", "message"):
+        value = payload.get(key)
+        if value is not None and str(value):
+            return str(value)
+    raise ValueError("summary, question, reason, required_next_action, or message is required")
+
+
+def _default_governance_status(tool_name: str) -> str:
+    return {
+        "consult.request": "requested",
+        "handoff.require": "required",
+        "informed.update": "sent",
+        "stakeholder.ask_question": "requested",
+        "governance.record_exception": "exception_recorded",
+    }.get(tool_name, "recorded")
