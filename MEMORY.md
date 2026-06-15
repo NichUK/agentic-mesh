@@ -270,3 +270,7 @@ plane easier for sponsors and operators to traverse.
 Starter role documentation obligations now have concrete durable document
 targets, and role validation can check repo-local documentation paths. This
 prevents role prompts from sending agents toward missing library files.
+
+The V3 CLI now exposes `lifecycle-plan`, a read-only operator command that
+uses the DB agent status projection and role-grouped lifecycle planner to show
+start, wake, hibernate, and no-op decisions without mutating container state.
