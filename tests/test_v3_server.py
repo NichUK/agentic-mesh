@@ -100,8 +100,11 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
                 "current_phase": "deployment",
                 "next_action": "Awaiting release approval.",
                 "governance": {
+                    "phase": "deployment",
                     "accountable_role": "release-manager",
                     "consulted_roles": ["qa-engineer"],
+                    "informed_roles": ["project-manager"],
+                    "sponsor_decision_points": ["release-approval"],
                 },
             },
         )
@@ -168,6 +171,10 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "/artifact-viewer/work-1/index.md" in html
     assert "consult.request" in html
     assert "Confirm smoke evidence remains valid." in html
+    assert "Governance Checklist" in html
+    assert "Informed updates" in html
+    assert "project-manager" in html
+    assert "release-approval" in html
     assert "approval-1" in html
     assert "Approve release?" in html
     assert "release-1" in html
