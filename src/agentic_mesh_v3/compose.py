@@ -5,6 +5,7 @@ from typing import Iterable
 import yaml
 
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
+from agentic_mesh_v3.lifecycle import service_name_for_role
 
 
 def render_role_services_compose(
@@ -34,13 +35,6 @@ def render_role_services_compose(
         },
     }
     return yaml.safe_dump(compose, sort_keys=True)
-
-
-def service_name_for_role(role_instance_id: str) -> str:
-    if not role_instance_id.strip():
-        raise ValueError("role_instance_id is required")
-    return role_instance_id.replace(".", "-")
-
 
 def _volume_list(spec: RoleContainerSpec) -> list[str]:
     return [f"{host}:{container}" for host, container in sorted(spec.volume_mounts().items())]

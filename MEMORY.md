@@ -369,3 +369,9 @@ override it; otherwise the default comes from
 `config/prompts/worker/safe-outputs.xml` before the role-scoped tool catalog is
 appended. This keeps shared agent behavior in prompt config rather than hidden
 inside the runtime image or code path.
+
+V3 lifecycle now has an explicit Compose actuator path. `lifecycle-plan` remains
+read-only; `lifecycle-apply` converts actionable start/wake/hibernate decisions
+into Docker Compose commands, dry-runs by default, and only executes container
+starts/stops when `--execute` is supplied. Compose rendering and lifecycle
+execution share the same role-instance-to-service-name mapping.
