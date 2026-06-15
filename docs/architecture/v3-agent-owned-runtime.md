@@ -63,6 +63,12 @@ runtime state, and document-library roots at stable paths. Hibernation planning
 uses heartbeat, active work, inbox depth, and minimum warm-pool policy; it does
 not make work decisions.
 
+Project Manager sweeps are read-only health inspections over work-item state.
+They flag blocked, waiting, recovering, and stale non-terminal work so the
+Project Manager agent can chase blockers or coordinate handoffs through normal
+tools. The sweep service does not auto-close, auto-reopen, or silently advance
+work.
+
 ## Governance
 
 Every work item carries a governance context: accountable role, responsible
