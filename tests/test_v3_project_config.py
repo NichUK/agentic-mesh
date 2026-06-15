@@ -18,9 +18,28 @@ document_library:
   root_path: /documents
 roles:
   project-manager:
+    template: project-manager
     instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+      - Keep work moving.
+    write_paths:
+      - docs/project/**
   engineering:
     instances: 2
+connectors:
+  teams:
+    role_bots:
+      project-manager:
+        display_name: AM-Project Manager
+        bot_id_ref: teams-bot-project-manager-app-id
+        secret_ref: teams-bot-project-manager-secret
 """,
         encoding="utf-8",
     )
@@ -36,3 +55,13 @@ roles:
         "engineering": 2,
         "project-manager": 1,
     }
+    project_manager = next(role for role in config.roles if role.role_id == "project-manager")
+    assert project_manager.template == "project-manager"
+    assert project_manager.worker.adapter == "codex-cli"
+    assert project_manager.worker.reasoning_effort == "high"
+    assert project_manager.worker.auth.credential == "codex-agentic-mesh-dev-team-q"
+    assert project_manager.instructions == ("Keep work moving.",)
+    assert project_manager.write_paths == ("docs/project/**",)
+    assert project_manager.messaging_identity.display_name == "AM-Project Manager"
+    assert project_manager.messaging_identity.mention_handle == "@AM-Project Manager"
+    assert project_manager.messaging_identity.bot_id_ref == "teams-bot-project-manager-app-id"
