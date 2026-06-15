@@ -258,3 +258,7 @@ V3 lifecycle planning now supports role-grouped batch decisions. Wake/start
 actions are planned before idle hibernation, and warm-pool counts are updated
 as decisions are made so the runtime does not hibernate every idle instance of
 the same role in one pass.
+
+Role-agent prompts now include explicit broker message metadata and render the
+assignment payload as deterministic JSON. This gives agents stable message ids,
+subjects, and source context without letting the runtime interpret the work.
