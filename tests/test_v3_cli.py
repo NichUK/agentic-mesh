@@ -9,6 +9,7 @@ from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.worker_adapters import CodexCliWorker
 from agentic_mesh_v3.worker_adapters import SafeOutputSubprocessWorker
 
 
@@ -222,12 +223,35 @@ def test_cli_worker_from_args_builds_subprocess_worker() -> None:
             worker="safe-output-subprocess",
             worker_command_json='["python","-c","print({})"]',
             worker_timeout_seconds=7,
+            worker_model=None,
+            worker_reasoning_effort=None,
+            worker_sandbox_mode=None,
         )
     )
 
     assert isinstance(worker, SafeOutputSubprocessWorker)
     assert worker.command == ("python", "-c", "print({})")
     assert worker.timeout_seconds == 7
+
+
+def test_cli_worker_from_args_builds_codex_cli_worker() -> None:
+    worker = _worker_from_args(
+        argparse.Namespace(
+            worker="codex-cli",
+            worker_command_json='["codex","exec"]',
+            worker_timeout_seconds=600,
+            worker_model="gpt-5.5",
+            worker_reasoning_effort="high",
+            worker_sandbox_mode="workspace-write",
+        )
+    )
+
+    assert isinstance(worker, CodexCliWorker)
+    assert worker.command == ("codex", "exec")
+    assert worker.timeout_seconds == 600
+    assert worker.model == "gpt-5.5"
+    assert worker.reasoning_effort == "high"
+    assert worker.sandbox_mode == "workspace-write"
 
 
 def test_cli_record_approval_response_updates_approval(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]

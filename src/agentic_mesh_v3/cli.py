@@ -65,9 +65,12 @@ def main(argv: list[str] | None = None) -> int:
     run_agent_parser.add_argument("--agent-config-dir", type=Path, required=True)
     run_agent_parser.add_argument("--runtime-state-dir", type=Path, required=True)
     run_agent_parser.add_argument("--max-messages", type=int, default=1)
-    run_agent_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess"], default="echo")
+    run_agent_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess", "codex-cli"], default="echo")
     run_agent_parser.add_argument("--worker-command-json")
     run_agent_parser.add_argument("--worker-timeout-seconds", type=int)
+    run_agent_parser.add_argument("--worker-model")
+    run_agent_parser.add_argument("--worker-reasoning-effort")
+    run_agent_parser.add_argument("--worker-sandbox-mode")
 
     tool_parser = subparsers.add_parser("tool-call")
     tool_parser.add_argument("--role-instance-id", required=True)
@@ -304,6 +307,9 @@ def _worker_from_args(args: argparse.Namespace):
         adapter=args.worker,
         command=command,
         timeout_seconds=args.worker_timeout_seconds,
+        model=args.worker_model,
+        reasoning_effort=args.worker_reasoning_effort,
+        sandbox_mode=args.worker_sandbox_mode,
     )
 
 

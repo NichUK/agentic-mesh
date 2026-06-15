@@ -5,6 +5,8 @@ import sys
 
 from agentic_mesh_v3.agent import AgentMessage
 from agentic_mesh_v3.worker_adapters import build_worker_adapter
+from agentic_mesh_v3.worker_adapters import CodexCliWorker
+from agentic_mesh_v3.worker_adapters import _codex_command_with_options
 from agentic_mesh_v3.worker_adapters import SafeOutputSubprocessWorker
 
 
@@ -64,3 +66,63 @@ def test_build_worker_adapter_creates_subprocess_worker() -> None:
     assert isinstance(worker, SafeOutputSubprocessWorker)
     assert worker.command == ("python", "-c", "print('{}')")
     assert worker.timeout_seconds == 9
+
+
+def test_codex_cli_worker_wraps_prompt_with_safe_output_contract(tmp_path: Path) -> None:
+    worker_script = tmp_path / "codex_worker.py"
+    worker_script.write_text(
+        "import json, sys\n"
+        "prompt=sys.stdin.read()\n"
+        "assert '<agentic-mesh-v3-agent>' in prompt\n"
+        "assert 'SAFE-OUTPUT TOOL CONTRACT' in prompt\n"
+        "assert 'status.reply' in prompt\n"
+        "assert 'msg-1' in prompt\n"
+        "print(json.dumps({'tool_calls':['status.reply']}))\n",
+        encoding="utf-8",
+    )
+    worker = CodexCliWorker(command=(sys.executable, str(worker_script)), timeout_seconds=5)
+
+    calls = worker.run(
+        "<agentic-mesh-v3-agent>prompt</agentic-mesh-v3-agent>",
+        AgentMessage(message_id="msg-1", subject="agent.product-manager", payload={"text": "Hello"}),
+    )
+
+    assert calls == ["status.reply"]
+
+
+def test_codex_cli_command_builder_adds_exec_options() -> None:
+    command = _codex_command_with_options(
+        ("codex", "exec"),
+        model="gpt-5.5",
+        reasoning_effort="high",
+        sandbox_mode="workspace-write",
+    )
+
+    assert command == [
+        "codex",
+        "exec",
+        "--model",
+        "gpt-5.5",
+        "--sandbox",
+        "workspace-write",
+        "--config",
+        'model_reasoning_effort="high"',
+    ]
+
+
+def test_build_worker_adapter_creates_codex_cli_worker() -> None:
+    worker = build_worker_adapter(
+        adapter="codex-cli",
+        command=("codex", "exec"),
+        timeout_seconds=30,
+        model="gpt-5.5",
+        reasoning_effort="medium",
+        sandbox_mode="danger-full-access",
+    )
+
+    assert isinstance(worker, CodexCliWorker)
+    assert worker.command == ("codex", "exec")
+    assert worker.timeout_seconds == 30
+    assert worker.model == "gpt-5.5"
+    assert worker.reasoning_effort == "medium"
+    assert worker.sandbox_mode == "danger-full-access"
