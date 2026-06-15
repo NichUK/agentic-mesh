@@ -1,9 +1,14 @@
 from pathlib import Path
 
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.broker import InMemoryBrokerAdapter
+from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
+from agentic_mesh_v3.teams_ingress import TeamsRoleIdentity
 from agentic_mesh_v3.server import V3StatusHandler
 from agentic_mesh_v3.server import _artifact_page
+from agentic_mesh_v3.server import _teams_activity_response
 from agentic_mesh_v3.tools import V3ToolService
 
 
@@ -44,6 +49,30 @@ def test_status_handler_snapshot_uses_v3_db(tmp_path: Path) -> None:
     snapshot = handler._snapshot()
 
     assert snapshot.work_items[0].work_item_id == "work-1"
+
+
+def test_teams_activity_response_routes_to_agent_inbox() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    router = TeamsActivityRouter(
+        LocalTeamsBridge(broker),
+        role_identities=(TeamsRoleIdentity("product-manager", "AM-Product Manager", bot_id="bot-product"),),
+    )
+
+    response = _teams_activity_response(
+        {
+            "id": "msg-1",
+            "text": "Please respond.",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        },
+        router,
+    )
+
+    assert response == {"status": "routed", "subjects": ["agent.product-manager"]}
+    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
+    assert broker.fetch("agent-inbox", "pm")[0].payload["text"] == "Please respond."
 
 
 def test_artifact_viewer_reads_local_document_library(tmp_path: Path) -> None:
