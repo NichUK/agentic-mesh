@@ -315,3 +315,8 @@ V3 Teams ingress now records inbound connector-neutral messages into the
 runtime conversation read model, and role-agent prompts load recent messages
 for the current `conversation_ref`. This keeps DMs and project-channel
 conversation context available across stateless worker executions.
+
+V3 work-item terminal states now sync linked queue/backlog item status in the
+runtime read model. When linked work reaches `closed`, `canceled`,
+`superseded`, or `failed_terminal`, the queue item leaves current backlog views
+without requiring a second explicit backlog update.
