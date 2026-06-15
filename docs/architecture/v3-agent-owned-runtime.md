@@ -82,7 +82,9 @@ run-agent-service` against mounted `/mesh/agent`, `/mesh/state`, and
 Role containers mount source, organisation config, project config, agent config,
 runtime state, and document-library roots at stable paths. Hibernation planning
 uses heartbeat, active work, inbox depth, and minimum warm-pool policy; it does
-not make work decisions.
+not make work decisions. Lifecycle planning is evaluated across each role group
+so waking, starting, and hibernating instances preserves the configured warm
+pool instead of letting every idle instance decide independently.
 The V3 Compose renderer converts materialized role container specs into one
 Compose service per role instance, using the generated `run-agent-service`
 command and the same mounted path contract.

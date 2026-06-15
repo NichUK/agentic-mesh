@@ -253,3 +253,8 @@ way to inspect inbox/recovery state.
 Work-item document index writes now refresh `/documents/work-items/index.md`
 automatically. Agents still own the content of each work-item dossier, but the
 root browse index no longer depends on a second manual tool call.
+
+V3 lifecycle planning now supports role-grouped batch decisions. Wake/start
+actions are planned before idle hibernation, and warm-pool counts are updated
+as decisions are made so the runtime does not hibernate every idle instance of
+the same role in one pass.
