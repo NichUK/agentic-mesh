@@ -112,6 +112,9 @@ consultation, informed-update, exception, and approval evidence. They are
 agent-facing guidance: they tell the accountable role what must still be
 resolved before handoff or phase closure, but they do not advance state or let
 the runtime make the decision.
+When a role service receives a governance context, prompt assembly includes the
+matching checklist so the agent sees concrete missing consults, informed
+updates, and sponsor decisions alongside the raw RACI context.
 
 Tool authority is role-scoped. All roles can communicate, consult, hand off,
 record governance evidence, update document indexes, and report status.
