@@ -294,11 +294,13 @@ def test_role_agent_dead_letters_after_delivery_limit(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
     broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    reporter = FakeStatusReporter()
     service = RoleAgentService(
         config=_config(tmp_path),
         broker=broker,
         worker=NoToolWorker(),
         memory=InMemoryRoleMemory(),
+        status_reporter=reporter,
         max_delivery_attempts=2,
     )
 
@@ -312,6 +314,7 @@ def test_role_agent_dead_letters_after_delivery_limit(tmp_path: Path) -> None:
     assert broker.depth("agent-inbox").pending == 0
     dead = broker.dead_letters("agent-inbox")[0]
     assert dead.payload["dead_letter_reason"] == "agent did not call any tool"
+    assert reporter.statuses[-1].dead_letter_depth == 1
 
 
 def test_role_agent_rejects_invalid_delivery_limit(tmp_path: Path) -> None:

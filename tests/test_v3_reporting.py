@@ -13,7 +13,7 @@ def test_reporting_pages_include_required_status_data() -> None:
         project_id="agentic-mesh-dev",
         backlog=(BacklogItemStatus("queue-1", "Add status page", "queued", "project-manager"),),
         work_items=(WorkItemStatus("work-1", "Add status page", "active", "engineering", "Implement", 2),),
-        agents=(AgentStatus("agentic-mesh-dev.engineering.1", "running", "2026-06-15T10:00:00Z", "work-1", 3),),
+        agents=(AgentStatus("agentic-mesh-dev.engineering.1", "running", "2026-06-15T10:00:00Z", "work-1", 3, 1),),
     )
 
     status_html = render_status_page(snapshot)
@@ -23,6 +23,8 @@ def test_reporting_pages_include_required_status_data() -> None:
     assert "Backlog / Queue" in status_html
     assert "Active Work" in status_html
     assert "agentic-mesh-dev.engineering.1" in agents_html
+    assert "Dead Letters" in agents_html
+    assert "<td>1</td>" in agents_html
     assert "<strong>Work item:</strong> work-1" in work_html
 
 

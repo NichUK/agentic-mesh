@@ -39,7 +39,12 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
         tools.call(
             role_instance_id="agentic-mesh-dev.engineering.1",
             tool_name="agent.heartbeat",
-            payload={"heartbeat_at": "2026-06-15T12:00:00Z", "current_work": "work-1", "inbox_depth": 2},
+            payload={
+                "heartbeat_at": "2026-06-15T12:00:00Z",
+                "current_work": "work-1",
+                "inbox_depth": 2,
+                "dead_letter_depth": 1,
+            },
         )
         tools.call(
             role_instance_id="agentic-mesh-dev.release-manager.1",
@@ -58,6 +63,7 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
     assert snapshot.backlog[0].queue_item_id == "queue-1"
     assert snapshot.work_items[0].work_item_id == "work-1"
     assert snapshot.agents[0].role_instance_id == "agentic-mesh-dev.engineering.1"
+    assert snapshot.agents[0].dead_letter_depth == 1
 
 
 def test_v3_tool_service_writes_work_item_index_and_root_index(tmp_path: Path) -> None:

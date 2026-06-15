@@ -90,6 +90,9 @@ Role services retry failed broker messages up to a configured delivery limit
 and then dead-letter the message with the failure reason. This keeps poison
 messages visible for recovery without letting one broken assignment loop
 forever inside a role container.
+Agent status includes both inbox depth and dead-letter depth so `/agents`,
+status JSON, and operator dashboards can spot recovery work without inspecting
+broker internals.
 
 Project Manager sweeps are read-only health inspections over work-item state.
 They flag blocked, waiting, recovering, and stale non-terminal work so the
