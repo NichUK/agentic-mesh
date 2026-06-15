@@ -9,6 +9,7 @@ from agentic_mesh_v3.demo import run_demo_slice
 from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.server import serve
+from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
 from agentic_mesh_v3.tools import V3ToolService
 from agentic_mesh_v3.topology import V3Topology
 from agentic_mesh_v3.topology import validate_topology
@@ -39,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     tool_parser.add_argument("--payload-json", required=True)
     tool_parser.add_argument("--document-library-root", type=Path)
     tool_parser.add_argument("--terminal", action="store_true")
+
+    subparsers.add_parser("run-tool-mcp-stdio")
 
     topology_parser = subparsers.add_parser("validate-topology")
     topology_parser.add_argument("--source-repo", type=Path, required=True)
@@ -103,6 +106,14 @@ def main(argv: list[str] | None = None) -> int:
                 terminal=args.terminal,
             )
             print(json.dumps(result.__dict__, indent=2))
+        finally:
+            db.close()
+        return 0
+    if args.command == "run-tool-mcp-stdio":
+        db = V3Database(args.db)
+        try:
+            db.migrate()
+            run_v3_mcp_stdio(db)
         finally:
             db.close()
         return 0

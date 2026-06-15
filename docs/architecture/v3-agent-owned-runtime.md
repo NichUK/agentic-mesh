@@ -91,12 +91,16 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev demo-slice --
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev local-e2e-dogfood --document-library-root .tmp/v3-documents
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev status-json
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev serve --document-library-root .tmp/v3-documents
+agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
 ```
 
 ## Adapter Status
 
-- Broker: V3 defines the broker port and local contract adapter; NATS JetStream
-  is the first target adapter.
+- Broker: V3 defines the broker port, local contract adapter, and NATS
+  JetStream adapter/factory.
+- Agent tools: V3 exposes tool calls through CLI and MCP-compatible JSON-RPC
+  stdio so Codex, other workers, and external automation can use the same
+  approved pathway.
 - Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
   routing, and Graph-backed outbound message delivery with injectable transport.
 - OneDrive: V3 defines the document-library port and Graph-backed OneDrive

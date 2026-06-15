@@ -511,3 +511,19 @@ class V3Database:
             (work_item_id, filename),
         ).fetchone()
         return dict(row) if row is not None else None
+
+    def list_tool_calls(self) -> list[dict[str, Any]]:
+        return [
+            {
+                **dict(row),
+                "payload": json.loads(row["payload_json"]),
+                "terminal": bool(row["terminal"]),
+            }
+            for row in self.connection.execute(
+                """
+                SELECT call_id, role_instance_id, tool_name, payload_json, terminal, created_at
+                FROM tool_calls
+                ORDER BY created_at ASC, call_id ASC
+                """
+            )
+        ]
