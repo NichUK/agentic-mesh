@@ -168,6 +168,8 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   present, sends the sponsor-facing approval request through the bridge.
   `stakeholder.ask_question` records governance evidence and, when target
   metadata is present, sends the question through the bridge.
+  Materialized agent `tools.md` files include the same role-scoped catalog so
+  each worker sees allowed and blocked tool authority in its prompt context.
 - Worker adapters: V3 provides an echo worker for local smoke tests, a
   safe-output subprocess adapter for external agents, and a Codex CLI adapter.
   The Codex adapter wraps the generated role prompt with the V3 safe-output

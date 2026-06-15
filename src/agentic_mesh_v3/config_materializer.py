@@ -10,6 +10,7 @@ from agentic_mesh_v3.governance import RaciMatrix
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
 from agentic_mesh_v3.project_config import V3ProjectConfig
 from agentic_mesh_v3.project_config import V3RoleInstanceConfig
+from agentic_mesh_v3.tool_catalog import tool_catalog_for_role
 
 
 @dataclass(frozen=True)
@@ -141,7 +142,7 @@ def materialize_project_agent_configs(
                 role_prompt=_read_role_template(role_templates_dir, role),
                 organisation_instructions=organisation_instructions,
                 project_instructions=_role_project_instructions(role),
-                tool_instructions=tool_instructions,
+                tool_instructions=_role_tool_instructions(role.role_id, tool_instructions),
                 raci=raci,
             )
             materialized.append(
@@ -175,3 +176,18 @@ def _role_project_instructions(role: V3RoleInstanceConfig) -> str:
     if not role.instructions:
         return "No project-specific role instructions."
     return "\n".join(f"- {instruction}" for instruction in role.instructions)
+
+
+def _role_tool_instructions(role_id: str, base_instructions: str) -> str:
+    lines = [
+        base_instructions.rstrip(),
+        "",
+        "## Role-Scoped Safe-Output Tool Catalog",
+        "",
+        "Allowed tools for this role are marked `allowed`; blocked tools are shown so agents do not guess authority.",
+    ]
+    for entry in tool_catalog_for_role(role_id):
+        status = "allowed" if entry.allowed else "blocked"
+        terminal = " terminal" if entry.terminal else ""
+        lines.append(f"- `{entry.tool_name}`: {status}{terminal}. {entry.description}")
+    return "\n".join(lines).rstrip()

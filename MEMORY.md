@@ -179,3 +179,8 @@ V3 safe-output tools are now discoverable through a shared role-scoped tool
 catalog. Operators can run `agentic-mesh-v3 tool-catalog --role-id <role>`,
 and MCP-native agents can call the read-only `agentic_mesh_v3.tool_catalog`
 tool before emitting durable safe-output calls.
+
+Materialized V3 agent `tools.md` files now append the role-scoped safe-output
+tool catalog, marking each tool allowed or blocked for that role and noting
+terminal tools. This gives Codex and other workers prompt-visible authority
+guidance before they call CLI/MCP tools.
