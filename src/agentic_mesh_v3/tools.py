@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -13,6 +14,8 @@ from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import WorkItemIndex
 from agentic_mesh_v3.documents import write_root_work_item_index
 from agentic_mesh_v3.documents import write_work_item_index
+from agentic_mesh_v3.observability import V3Telemetry
+from agentic_mesh_v3.observability import get_telemetry
 from agentic_mesh_v3.reporting import AgentStatus
 
 
@@ -39,11 +42,13 @@ class V3ToolService:
         document_library: DocumentLibraryAdapter | None = None,
         deployment_targets: dict[str, DeploymentTarget] | None = None,
         authority_policy: ToolAuthorityPolicy | None = None,
+        telemetry: V3Telemetry | None = None,
     ) -> None:
         self.db = db
         self.document_library = document_library
         self.deployment_targets = deployment_targets or {}
         self.authority_policy = authority_policy or ToolAuthorityPolicy.default()
+        self.telemetry = telemetry or get_telemetry()
 
     def call(
         self,
@@ -53,18 +58,54 @@ class V3ToolService:
         payload: dict[str, Any],
         terminal: bool | None = None,
     ) -> ToolResult:
-        self.authority_policy.assert_allowed(role_instance_id=role_instance_id, tool_name=tool_name)
-        call_id = f"call-{uuid4().hex}"
-        is_terminal = bool(terminal) or tool_name in TERMINAL_TOOLS
-        self.db.record_tool_call(
-            call_id=call_id,
+        with self.telemetry.span(
+            "v3.tool_call",
             role_instance_id=role_instance_id,
             tool_name=tool_name,
-            payload=payload,
-            terminal=is_terminal,
-        )
-        self._apply_effect(call_id=call_id, role_instance_id=role_instance_id, tool_name=tool_name, payload=payload)
-        return ToolResult(call_id=call_id, tool_name=tool_name, terminal=is_terminal)
+            terminal=bool(terminal),
+        ):
+            try:
+                self.authority_policy.assert_allowed(role_instance_id=role_instance_id, tool_name=tool_name)
+                call_id = f"call-{uuid4().hex}"
+                is_terminal = bool(terminal) or tool_name in TERMINAL_TOOLS
+                self.db.record_tool_call(
+                    call_id=call_id,
+                    role_instance_id=role_instance_id,
+                    tool_name=tool_name,
+                    payload=payload,
+                    terminal=is_terminal,
+                )
+                self._apply_effect(
+                    call_id=call_id,
+                    role_instance_id=role_instance_id,
+                    tool_name=tool_name,
+                    payload=payload,
+                )
+            except Exception as exc:
+                self.telemetry.increment(
+                    "agentic_mesh_v3_tool_calls",
+                    attributes={"tool.name": tool_name, "role.instance": role_instance_id, "status": "error"},
+                )
+                self.telemetry.log_event(
+                    "v3.tool_call.failed",
+                    level=logging.ERROR,
+                    role_instance_id=role_instance_id,
+                    tool_name=tool_name,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                raise
+            self.telemetry.increment(
+                "agentic_mesh_v3_tool_calls",
+                attributes={"tool.name": tool_name, "role.instance": role_instance_id, "status": "ok"},
+            )
+            self.telemetry.log_event(
+                "v3.tool_call.recorded",
+                role_instance_id=role_instance_id,
+                tool_name=tool_name,
+                terminal=is_terminal,
+            )
+            return ToolResult(call_id=call_id, tool_name=tool_name, terminal=is_terminal)
 
     def _apply_effect(
         self, *, call_id: str, role_instance_id: str, tool_name: str, payload: dict[str, Any]

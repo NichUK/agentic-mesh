@@ -95,6 +95,12 @@ Initial reporting routes are:
 The report plane reads projections and document-library metadata. It does not
 own lifecycle decisions.
 
+V3 observability starts with a shared telemetry facade configured from
+environment variables. Safe-output tool calls emit OpenTelemetry spans,
+structured log events, and counters tagged by role instance, tool name, and
+success/failure status. Runtime services should use this facade rather than
+calling OpenTelemetry SDK objects directly.
+
 Local command smoke:
 
 ```powershell
