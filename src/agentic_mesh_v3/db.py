@@ -445,6 +445,43 @@ class V3Database:
                 {"approval_id": approval_id, "requested_by_role": requested_by_role, "question": question},
             )
 
+    def record_approval_response(
+        self,
+        *,
+        approval_id: str,
+        response: str,
+        status: str,
+        responder_ref: str,
+    ) -> None:
+        existing = self.connection.execute(
+            "SELECT work_item_id FROM approvals WHERE approval_id=?",
+            (approval_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(f"approval `{approval_id}` was not found")
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE approvals SET
+                  status=?,
+                  response=?,
+                  updated_at=CURRENT_TIMESTAMP
+                WHERE approval_id=?
+                """,
+                (status, response, approval_id),
+            )
+            self.record_event(
+                "approval.response_recorded",
+                "work_item",
+                existing["work_item_id"],
+                {
+                    "approval_id": approval_id,
+                    "status": status,
+                    "response": response,
+                    "responder_ref": responder_ref,
+                },
+            )
+
     def record_release(
         self,
         *,

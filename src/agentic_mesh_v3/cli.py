@@ -33,6 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("status-json")
     sweep_parser = subparsers.add_parser("sweep-project")
     sweep_parser.add_argument("--stale-after-seconds", type=int, default=3600)
+    approval_parser = subparsers.add_parser("record-approval-response")
+    approval_parser.add_argument("--approval-id", required=True)
+    approval_parser.add_argument("--status", required=True, choices=["approved", "rejected", "changes_requested"])
+    approval_parser.add_argument("--response", required=True)
+    approval_parser.add_argument("--responder-ref", default="sponsor")
     demo_parser = subparsers.add_parser("demo-slice")
     demo_parser.add_argument("--document-library-root", type=Path)
 
@@ -98,6 +103,29 @@ def main(argv: list[str] | None = None) -> int:
             db.migrate()
             findings = ProjectSweepService(db).sweep(stale_after_seconds=args.stale_after_seconds)
             print(json.dumps({"findings": [finding.to_dict() for finding in findings]}, indent=2))
+        finally:
+            db.close()
+        return 0
+    if args.command == "record-approval-response":
+        db = V3Database(args.db)
+        try:
+            db.migrate()
+            db.record_approval_response(
+                approval_id=args.approval_id,
+                status=args.status,
+                response=args.response,
+                responder_ref=args.responder_ref,
+            )
+            print(
+                json.dumps(
+                    {
+                        "approval_id": args.approval_id,
+                        "status": args.status,
+                        "responder_ref": args.responder_ref,
+                    },
+                    indent=2,
+                )
+            )
         finally:
             db.close()
         return 0
