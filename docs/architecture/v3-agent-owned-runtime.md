@@ -152,6 +152,8 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
   successful tool results for messages that were not handed to a connector.
   `status.reply` remains valid as an audit-only terminal record, but when it
   carries target metadata it sends the Markdown reply through the bridge.
+  `approval.request` records the approval request and, when target metadata is
+  present, sends the sponsor-facing approval request through the bridge.
 - Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
   routing, and Graph-backed outbound message delivery with injectable transport.
   Project-channel messages are retained as shared `project.context`.

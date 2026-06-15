@@ -425,3 +425,75 @@ def test_v3_db_records_approval_response(tmp_path: Path) -> None:
     assert detail is not None
     assert detail.approvals[0].status == "approved"
     assert detail.approvals[0].response == "Approved by sponsor."
+
+
+def test_v3_tool_service_approval_request_delivers_when_target_is_present(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Approval work",
+            description="Needs approval.",
+            state="waiting_human",
+            owner_role="product-manager",
+        )
+        V3ToolService(db, stakeholder_bridge=bridge).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="approval.request",
+            payload={
+                "approval_id": "approval-1",
+                "work_item_id": "work-1",
+                "question": "Approve product definition?",
+                "connector": "teams",
+                "target_ref": "dm:sponsor",
+                "thread_ref": "thread-1",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.approvals[0].approval_id == "approval-1"
+    assert bridge.deliveries[0].target_ref == "dm:sponsor"
+    assert "Approve product definition?" in bridge.deliveries[0].text_markdown
+    assert "approval-1" in bridge.deliveries[0].text_markdown
+    assert bridge.deliveries[0].importance == "high"
+
+
+def test_v3_tool_service_approval_request_with_target_requires_bridge(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Approval work",
+            description="Needs approval.",
+            state="waiting_human",
+            owner_role="product-manager",
+        )
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="approval.request",
+                payload={
+                    "approval_id": "approval-1",
+                    "work_item_id": "work-1",
+                    "question": "Approve product definition?",
+                    "connector": "teams",
+                    "target_ref": "dm:sponsor",
+                },
+            )
+        except ValueError as exc:
+            assert "stakeholder bridge is not configured" in str(exc)
+        else:
+            raise AssertionError("approval.request with target should require a stakeholder bridge")
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.approvals == ()
