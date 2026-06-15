@@ -332,6 +332,67 @@ def test_v3_tool_service_messaging_send_requires_bridge(tmp_path: Path) -> None:
         db.close()
 
 
+def test_v3_tool_service_status_reply_delivers_when_target_is_present(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        result = V3ToolService(db, stakeholder_bridge=bridge).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="status.reply",
+            payload={
+                "connector": "teams",
+                "target_ref": "dm:sponsor",
+                "message": "Product Manager reply.",
+                "thread_ref": "thread-1",
+            },
+        )
+    finally:
+        db.close()
+
+    assert result.terminal is True
+    assert bridge.deliveries[0].target_ref == "dm:sponsor"
+    assert bridge.deliveries[0].text_markdown == "Product Manager reply."
+    assert bridge.deliveries[0].thread_ref == "thread-1"
+
+
+def test_v3_tool_service_status_reply_without_target_remains_audit_only(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        result = V3ToolService(db, stakeholder_bridge=bridge).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="status.reply",
+            payload={"message": "MCP-local reply."},
+        )
+    finally:
+        db.close()
+
+    assert result.terminal is True
+    assert bridge.deliveries == []
+
+
+def test_v3_tool_service_status_reply_with_target_requires_bridge(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="status.reply",
+                payload={"connector": "teams", "target_ref": "dm:sponsor", "message": "Reply."},
+            )
+        except ValueError as exc:
+            assert "stakeholder bridge is not configured" in str(exc)
+        else:
+            raise AssertionError("status.reply with target should require a stakeholder bridge")
+    finally:
+        db.close()
+
+
 def test_v3_db_records_approval_response(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

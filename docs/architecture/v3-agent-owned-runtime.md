@@ -150,6 +150,8 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
   approved pathway. Stakeholder-facing delivery tools call the configured
   bridge and fail when no bridge is configured; agents must not receive
   successful tool results for messages that were not handed to a connector.
+  `status.reply` remains valid as an audit-only terminal record, but when it
+  carries target metadata it sends the Markdown reply through the bridge.
 - Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
   routing, and Graph-backed outbound message delivery with injectable transport.
   Project-channel messages are retained as shared `project.context`.
