@@ -288,3 +288,44 @@ def test_role_agent_requeues_if_worker_calls_no_tools(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert "did not call any tool" in (result.error or "")
     assert broker.depth("agent-inbox").pending == 1
+
+
+def test_role_agent_dead_letters_after_delivery_limit(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=NoToolWorker(),
+        memory=InMemoryRoleMemory(),
+        max_delivery_attempts=2,
+    )
+
+    first = service.run_once()
+    second = service.run_once()
+
+    assert first is not None
+    assert first.status == "failed"
+    assert second is not None
+    assert second.status == "dead_lettered"
+    assert broker.depth("agent-inbox").pending == 0
+    dead = broker.dead_letters("agent-inbox")[0]
+    assert dead.payload["dead_letter_reason"] == "agent did not call any tool"
+
+
+def test_role_agent_rejects_invalid_delivery_limit(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+
+    try:
+        RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=EchoWorker(),
+            memory=InMemoryRoleMemory(),
+            max_delivery_attempts=0,
+        )
+    except ValueError as exc:
+        assert "max_delivery_attempts must be positive" in str(exc)
+    else:
+        raise AssertionError("invalid delivery limit should fail validation")
