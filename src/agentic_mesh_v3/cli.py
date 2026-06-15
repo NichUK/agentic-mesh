@@ -319,7 +319,14 @@ def main(argv: list[str] | None = None) -> int:
         try:
             db.migrate()
             adapter = _document_library_adapter(args)
-            result = V3ToolService(db, adapter, deployment_targets=_deployment_targets(args)).call(
+            broker, broker_stream = _tool_broker(args)
+            result = V3ToolService(
+                db,
+                adapter,
+                deployment_targets=_deployment_targets(args),
+                broker=broker,
+                broker_stream=broker_stream,
+            ).call(
                 role_instance_id=args.role_instance_id,
                 tool_name=args.tool_name,
                 payload=json.loads(args.payload_json),
@@ -345,10 +352,13 @@ def main(argv: list[str] | None = None) -> int:
         db = V3Database(args.db)
         try:
             db.migrate()
+            broker, broker_stream = _tool_broker(args)
             service = V3ToolService(
                 db,
                 _document_library_adapter(args),
                 deployment_targets=_deployment_targets(args),
+                broker=broker,
+                broker_stream=broker_stream,
             )
             run_v3_mcp_stdio(db, service=service)
         finally:
@@ -447,6 +457,16 @@ def _deployment_targets(args: argparse.Namespace) -> dict[str, DeploymentTarget]
     if project_config is None:
         return {}
     return deployment_targets_from_project_config(load_project_config(project_config))
+
+
+def _tool_broker(args: argparse.Namespace) -> tuple[BrokerAdapter | None, str | None]:
+    project_config = getattr(args, "project_config", None)
+    if project_config is None:
+        return None, None
+    config = load_project_config(project_config)
+    broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
+    _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=tuple(role.role_id for role in config.roles))
+    return broker, config.broker.stream
 
 
 def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | None:
