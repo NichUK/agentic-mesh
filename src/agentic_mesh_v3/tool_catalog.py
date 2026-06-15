@@ -25,6 +25,7 @@ class ToolCatalogEntry:
 TOOL_DESCRIPTIONS = {
     "agent.heartbeat": "Report role-instance heartbeat, inbox depth, and current work.",
     "approval.request": "Ask a sponsor or stakeholder for approval and optionally deliver the request.",
+    "artifact.link": "Link an existing work-item artifact or document-library path into the work-item evidence list.",
     "backlog.upsert": "Create or update a backlog or queue item.",
     "consult.request": "Request input from a consulted role or stakeholder.",
     "document.write_root_work_item_index": "Regenerate the root work-item index in the document library.",

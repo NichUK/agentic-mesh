@@ -6,6 +6,8 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
 
     assert product_tools["status.reply"].allowed is True
     assert product_tools["status.reply"].terminal is True
+    assert product_tools["artifact.link"].allowed is True
+    assert product_tools["artifact.link"].description
     assert product_tools["backlog.upsert"].allowed is True
     assert product_tools["release.deploy"].allowed is False
     assert product_tools["release.deploy"].description

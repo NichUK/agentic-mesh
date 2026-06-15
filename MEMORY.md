@@ -274,3 +274,7 @@ prevents role prompts from sending agents toward missing library files.
 The V3 CLI now exposes `lifecycle-plan`, a read-only operator command that
 uses the DB agent status projection and role-grouped lifecycle planner to show
 start, wake, hibernate, and no-op decisions without mutating container state.
+
+V3 safe-output tools now include `artifact.link` for role-owned evidence
+linking. Any role can register an existing document-library path as a work-item
+artifact, and the tool rejects paths that escape the document library.
