@@ -40,6 +40,23 @@ Agents must use tools for durable effects and must confirm meaningful action
 after doing the work. If no action is appropriate, they must explicitly call a
 no-op/status tool and explain why.
 
+## Agent Configuration And Lifecycle
+
+The runtime image must not contain mutable organisation, project, or role
+configuration. Before starting or waking a role instance, the runtime
+materialises an external agent config folder containing:
+
+- `role.md`
+- `organisation.md`
+- `project.md`
+- `raci.json`
+- `container.json`
+
+Role containers mount source, organisation config, project config, agent config,
+runtime state, and document-library roots at stable paths. Hibernation planning
+uses heartbeat, active work, inbox depth, and minimum warm-pool policy; it does
+not make work decisions.
+
 ## Governance
 
 Every work item carries a governance context: accountable role, responsible
