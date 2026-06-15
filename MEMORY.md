@@ -343,3 +343,9 @@ file via `materialize-agent-configs --flow-config config/flows/sdlc-v3.yaml`.
 The mounted `raci.json` therefore follows the project-selected flow instead of
 always using the in-code starter SDLC matrix; omitting `--flow-config` keeps the
 default matrix for local smoke runs.
+
+V3 role services now load database-derived governance context/checklists for
+inbox messages that carry `work_item_id`. `run-agent-once` and
+`run-agent-service` pass this provider automatically, so agent prompts include
+current missing consultations, informed updates, and sponsor decisions without
+manual caller injection.

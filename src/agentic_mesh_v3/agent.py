@@ -69,6 +69,11 @@ class ConversationContext(Protocol):
         """Load recent conversation context for a connector conversation."""
 
 
+class WorkItemGovernanceContextProvider(Protocol):
+    def load_for_work_item(self, work_item_id: str) -> tuple[GovernanceContext | None, GovernanceChecklist | None]:
+        """Load governance context/checklist for a work item."""
+
+
 class AgentStatusReporter(Protocol):
     def report(self, status: AgentStatus) -> None:
         """Publish current agent status to the runtime read model."""
@@ -117,6 +122,22 @@ class DatabaseConversationContext:
         return "\n".join(_conversation_row_summary(row) for row in rows)
 
 
+class NullWorkItemGovernanceContextProvider:
+    def load_for_work_item(self, work_item_id: str) -> tuple[GovernanceContext | None, GovernanceChecklist | None]:
+        del work_item_id
+        return None, None
+
+
+class DatabaseWorkItemGovernanceContextProvider:
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+    def load_for_work_item(self, work_item_id: str) -> tuple[GovernanceContext | None, GovernanceChecklist | None]:
+        context = self.db.work_item_governance_context(work_item_id)  # type: ignore[attr-defined]
+        checklist = self.db.work_item_governance_checklist(work_item_id)  # type: ignore[attr-defined]
+        return context, checklist
+
+
 class EchoWorker:
     """Tiny worker for contract tests; production uses Codex or other adapters."""
 
@@ -133,6 +154,9 @@ class RoleAgentService:
     worker: AgentWorker
     memory: AgentMemory
     conversation_context: ConversationContext = field(default_factory=NullConversationContext)
+    work_item_governance_context: WorkItemGovernanceContextProvider = field(
+        default_factory=NullWorkItemGovernanceContextProvider
+    )
     governance_instructions: GovernanceInstructionSet = field(default_factory=GovernanceInstructionSet)
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
     max_delivery_attempts: int = 3
@@ -184,10 +208,15 @@ class RoleAgentService:
             subject=message.subject,
             payload=message.payload,
         )
-        prompt = self._build_prompt(
+        prompt_governance_context, prompt_governance_checklist = self._governance_for_message(
             agent_message,
             governance_context=governance_context,
             governance_checklist=governance_checklist,
+        )
+        prompt = self._build_prompt(
+            agent_message,
+            governance_context=prompt_governance_context,
+            governance_checklist=prompt_governance_checklist,
         )
         try:
             tool_calls = self.worker.run(prompt, agent_message)
@@ -294,6 +323,20 @@ class RoleAgentService:
             ]
         )
         return "\n".join(lines)
+
+    def _governance_for_message(
+        self,
+        message: AgentMessage,
+        *,
+        governance_context: GovernanceContext | None,
+        governance_checklist: GovernanceChecklist | None,
+    ) -> tuple[GovernanceContext | None, GovernanceChecklist | None]:
+        if governance_context is not None:
+            return governance_context, governance_checklist
+        work_item_id = message.payload.get("work_item_id")
+        if work_item_id is None or str(work_item_id) == "":
+            return None, None
+        return self.work_item_governance_context.load_for_work_item(str(work_item_id))
 
     def _conversation_summary(self, message: AgentMessage) -> str:
         conversation_ref = message.payload.get("conversation_ref")
