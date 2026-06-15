@@ -23,6 +23,7 @@ def test_materialize_agent_config_writes_mounted_files(tmp_path: Path) -> None:
         role_prompt="You are Project Manager.",
         organisation_instructions="Org rules.",
         project_instructions="Project rules.",
+        tool_instructions="Use MCP or CLI safe-output tools for durable effects.",
         raci=DEFAULT_SDLC_RACI,
     )
 
@@ -30,8 +31,11 @@ def test_materialize_agent_config_writes_mounted_files(tmp_path: Path) -> None:
         "role.md",
         "organisation.md",
         "project.md",
+        "tools.md",
         "raci.json",
         "container.json",
     }
     assert "Project Manager" in (tmp_path / "agent" / "role.md").read_text(encoding="utf-8")
+    assert "safe-output tools" in (tmp_path / "agent" / "tools.md").read_text(encoding="utf-8")
     assert "requirements" in (tmp_path / "agent" / "raci.json").read_text(encoding="utf-8")
+    assert "tools.md" in (tmp_path / "agent" / "container.json").read_text(encoding="utf-8")

@@ -60,6 +60,7 @@ materialises an external agent config folder containing:
 - `role.md`
 - `organisation.md`
 - `project.md`
+- `tools.md`
 - `raci.json`
 - `container.json`
 

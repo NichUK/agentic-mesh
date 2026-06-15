@@ -14,6 +14,7 @@ def materialize_agent_config(
     role_prompt: str,
     organisation_instructions: str,
     project_instructions: str,
+    tool_instructions: str,
     raci: RaciMatrix,
 ) -> list[Path]:
     """Write the mounted per-agent configuration folder.
@@ -29,6 +30,7 @@ def materialize_agent_config(
         "role.md": role_prompt.rstrip() + "\n",
         "organisation.md": organisation_instructions.rstrip() + "\n",
         "project.md": project_instructions.rstrip() + "\n",
+        "tools.md": tool_instructions.rstrip() + "\n",
         "raci.json": json.dumps([asdict(item) for item in raci.assignments], indent=2),
         "container.json": json.dumps(
             {
@@ -36,6 +38,13 @@ def materialize_agent_config(
                 "image": spec.image,
                 "mounts": spec.volume_mounts(),
                 "environment": spec.environment,
+                "prompt_paths": {
+                    "role": "/mesh/agent/role.md",
+                    "organisation": "/mesh/agent/organisation.md",
+                    "project": "/mesh/agent/project.md",
+                    "raci": "/mesh/agent/raci.json",
+                    "tools": "/mesh/agent/tools.md",
+                },
             },
             indent=2,
             sort_keys=True,
