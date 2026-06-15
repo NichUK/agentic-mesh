@@ -58,6 +58,12 @@ class V3RoleMessagingIdentity:
 
 
 @dataclass(frozen=True)
+class V3TeamsConnectorConfig:
+    adapter: str | None = None
+    graph_base_url: str = "https://graph.microsoft.com/v1.0"
+
+
+@dataclass(frozen=True)
 class V3RoleInstanceConfig:
     role_id: str
     template: str | None = None
@@ -75,6 +81,7 @@ class V3ProjectConfig:
     document_library: V3DocumentLibraryConfig
     roles: tuple[V3RoleInstanceConfig, ...]
     release_deployment_targets: tuple[V3ReleaseDeploymentTargetConfig, ...] = ()
+    teams_connector: V3TeamsConnectorConfig = V3TeamsConnectorConfig()
 
 
 def load_project_config(path: Path) -> V3ProjectConfig:
@@ -84,6 +91,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
     docs_raw = _mapping(raw.get("document_library"))
     roles_raw = _mapping(raw.get("roles"))
     release_targets_raw = _mapping(raw.get("release_deployment_targets"))
+    teams_raw = _mapping(_mapping(raw.get("connectors")).get("teams"))
     return V3ProjectConfig(
         project_id=project_id,
         broker=V3BrokerConfig(
@@ -101,6 +109,10 @@ def load_project_config(path: Path) -> V3ProjectConfig:
         release_deployment_targets=tuple(
             _load_release_deployment_target(target_id, _mapping(target_raw))
             for target_id, target_raw in sorted(release_targets_raw.items())
+        ),
+        teams_connector=V3TeamsConnectorConfig(
+            adapter=_optional(teams_raw.get("adapter")),
+            graph_base_url=str(teams_raw.get("graph_base_url") or "https://graph.microsoft.com/v1.0"),
         ),
     )
 

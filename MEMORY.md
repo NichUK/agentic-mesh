@@ -325,3 +325,9 @@ V3 approval responses recorded through the CLI now wake the requesting role
 when project broker config is supplied. The runtime records the approval
 decision, then publishes an `approval.response_recorded` message to
 `agent.{requested_by_role}` so the role agent can continue the slice.
+
+V3 CLI and MCP safe-output tool services now build stakeholder outbound
+bridges from `project.yaml` Teams connector settings. Local/test projects can
+use `connectors.teams.adapter: local`; Graph/Teams bot connector adapters
+require `AGENTIC_MESH_TEAMS_TOKEN` so targeted sponsor or stakeholder messages
+cannot be reported as delivered without a configured connector credential.

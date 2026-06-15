@@ -52,6 +52,8 @@ release_deployment_targets:
     reason: Planning-only slice.
 connectors:
   teams:
+    adapter: teams-bot-connector
+    graph_base_url: https://graph.test/v1.0
     role_bots:
       project-manager:
         display_name: AM-Project Manager
@@ -84,6 +86,8 @@ connectors:
     assert project_manager.messaging_identity.display_name == "AM-Project Manager"
     assert project_manager.messaging_identity.mention_handle == "@AM-Project Manager"
     assert project_manager.messaging_identity.bot_id_ref == "teams-bot-project-manager-app-id"
+    assert config.teams_connector.adapter == "teams-bot-connector"
+    assert config.teams_connector.graph_base_url == "https://graph.test/v1.0"
     targets = {target.target_id: target for target in config.release_deployment_targets}
     assert targets["local-smoke"].target_type == "command"
     assert targets["local-smoke"].command == ("python", "-c", "print('deployed')")

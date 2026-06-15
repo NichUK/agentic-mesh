@@ -195,6 +195,28 @@ class GraphTeamsTransport(Protocol):
         """POST a JSON payload and return parsed response data."""
 
 
+class UrlLibGraphTeamsTransport:
+    def __init__(self, *, access_token: str) -> None:
+        self.access_token = access_token
+
+    def post_json(self, url: str, payload: dict[str, object]) -> dict[str, object]:
+        import json
+        import urllib.request
+
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+
 def _markdown_to_teams_html(markdown: str) -> str:
     import markdown as markdown_lib
 
