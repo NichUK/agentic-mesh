@@ -5,7 +5,12 @@ import json
 import os
 from pathlib import Path
 
+from agentic_mesh_v3.agent import build_role_memory
+from agentic_mesh_v3.agent import EchoWorker
+from agentic_mesh_v3.agent import RoleAgentService
 from agentic_mesh_v3.broker import build_broker_adapter
+from agentic_mesh_v3.broker import BrokerAdapter
+from agentic_mesh_v3.config_materializer import build_role_instance_config
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
@@ -52,6 +57,14 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8080)
     serve_parser.add_argument("--document-library-root", type=Path)
+
+    run_agent_parser = subparsers.add_parser("run-agent-once")
+    run_agent_parser.add_argument("--role-id", required=True)
+    run_agent_parser.add_argument("--instance-id", default="1")
+    run_agent_parser.add_argument("--agent-config-dir", type=Path, required=True)
+    run_agent_parser.add_argument("--runtime-state-dir", type=Path, required=True)
+    run_agent_parser.add_argument("--max-messages", type=int, default=1)
+    run_agent_parser.add_argument("--worker", choices=["echo"], default="echo")
 
     tool_parser = subparsers.add_parser("tool-call")
     tool_parser.add_argument("--role-instance-id", required=True)
@@ -142,6 +155,10 @@ def main(argv: list[str] | None = None) -> int:
             document_library=_document_library_adapter(args),
             teams_activity_router=_teams_activity_router(args),
         )
+        return 0
+    if args.command == "run-agent-once":
+        results = _run_agent_once(args)
+        print(json.dumps({"results": [result.__dict__ for result in results]}, indent=2))
         return 0
     if args.command == "tool-call":
         db = V3Database(args.db)
@@ -235,16 +252,44 @@ def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | No
         return None
     config = load_project_config(project_config_path)
     broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
-    subjects = ["project.context"]
     role_ids = tuple(role.role_id for role in config.roles)
-    for role_id in role_ids:
-        subjects.append(f"agent.{role_id}")
-        subjects.append(f"agent.{role_id}.relevance")
-    broker.ensure_stream(config.broker.stream, subjects)
+    _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=role_ids)
     return TeamsActivityRouter(
         LocalTeamsBridge(broker, stream=config.broker.stream, role_ids=role_ids),
         role_identities=teams_role_identities_from_project_config(config),
     )
+
+
+def _run_agent_once(args: argparse.Namespace):
+    project_config_path = getattr(args, "project_config", None)
+    if project_config_path is None:
+        raise ValueError("--project-config is required for run-agent-once")
+    config = load_project_config(project_config_path)
+    broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
+    _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=tuple(role.role_id for role in config.roles))
+    service_config = build_role_instance_config(
+        project_id=config.project_id,
+        role_id=args.role_id,
+        instance_id=str(args.instance_id),
+        agent_config_dir=args.agent_config_dir,
+        runtime_state_dir=args.runtime_state_dir,
+        inbox_stream=config.broker.stream,
+    )
+    service = RoleAgentService(
+        config=service_config,
+        broker=broker,
+        worker=EchoWorker(),
+        memory=build_role_memory(service_config),
+    )
+    return service.run_until_idle(max_messages=args.max_messages)
+
+
+def _ensure_agent_stream(broker: BrokerAdapter, *, stream: str, role_ids: tuple[str, ...]) -> None:
+    subjects = ["project.context"]
+    for role_id in role_ids:
+        subjects.append(f"agent.{role_id}")
+        subjects.append(f"agent.{role_id}.relevance")
+    broker.ensure_stream(stream, subjects)
 
 
 if __name__ == "__main__":

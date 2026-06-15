@@ -4,7 +4,9 @@ import subprocess
 import sys
 
 from agentic_mesh_v3.cli import _teams_activity_router
+from agentic_mesh_v3.cli import _ensure_agent_stream
 from agentic_mesh_v3.cli import main
+from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.db import V3Database
 
 
@@ -162,6 +164,54 @@ connectors:
         }
     )
     assert subjects == ["agent.product-manager"]
+
+
+def test_cli_run_agent_once_uses_project_config_and_mounted_paths(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    agent_config_dir = tmp_path / "agent"
+    agent_config_dir.mkdir()
+
+    result = main(
+        [
+            "--project-config",
+            str(project_config),
+            "run-agent-once",
+            "--role-id",
+            "product-manager",
+            "--agent-config-dir",
+            str(agent_config_dir),
+            "--runtime-state-dir",
+            str(tmp_path / "state"),
+        ]
+    )
+
+    assert result == 0
+    assert '"results": []' in capsys.readouterr().out
+
+
+def test_cli_ensure_agent_stream_sets_direct_and_relevance_subjects() -> None:
+    broker = InMemoryBrokerAdapter()
+
+    _ensure_agent_stream(broker, stream="agent-inbox", role_ids=("product-manager",))
+
+    broker.publish("agent-inbox", "agent.product-manager", {"text": "direct"})
+    broker.publish("agent-inbox", "agent.product-manager.relevance", {"text": "relevance"})
+    assert broker.depth("agent-inbox").pending == 2
 
 
 def test_cli_record_approval_response_updates_approval(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
