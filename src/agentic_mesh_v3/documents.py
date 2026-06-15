@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 from typing import Protocol
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -53,6 +54,10 @@ class WorkItemIndex:
         lines.extend(f"- {risk}" for risk in self.risks) if self.risks else lines.append("- None recorded")
         lines.append("")
         return "\n".join(lines)
+
+
+class DocumentLibraryError(ValueError):
+    """Raised when a document-library artifact violates V3 evidence rules."""
 
 
 class DocumentLibraryAdapter(Protocol):
@@ -237,6 +242,7 @@ def work_item_index_path(work_item_id: str) -> str:
 
 
 def write_work_item_index(adapter: DocumentLibraryAdapter, index: WorkItemIndex) -> DocumentRef:
+    validate_work_item_index(index)
     return adapter.write_text(work_item_index_path(index.work_item_id), index.render_markdown())
 
 
@@ -248,3 +254,38 @@ def write_root_work_item_index(adapter: DocumentLibraryAdapter, work_items: list
         lines.append(f"- [{item.title}](work-items/{item.work_item_id}/index.md) - `{item.status}` - {item.owner_role}")
     lines.append("")
     return adapter.write_text("work-items/index.md", "\n".join(lines))
+
+
+def validate_work_item_index(index: WorkItemIndex) -> None:
+    if not index.work_item_id.strip():
+        raise DocumentLibraryError("work item index requires work_item_id")
+    if not index.title.strip():
+        raise DocumentLibraryError("work item index requires title")
+    if not index.status.strip():
+        raise DocumentLibraryError("work item index requires status")
+    if not index.owner_role.strip():
+        raise DocumentLibraryError("work item index requires owner_role")
+    if not index.raci_summary.strip():
+        raise DocumentLibraryError("work item index requires raci_summary")
+    if not index.governance_state.strip():
+        raise DocumentLibraryError("work item index requires governance_state")
+    has_evidence = bool(index.artifacts or index.decisions or index.risks or index.next_action.strip())
+    if not has_evidence:
+        raise DocumentLibraryError("work item index cannot be status-only; record evidence, risks, decisions, or next action")
+    _reject_duplicates(
+        (artifact.relative_path.casefold() for artifact in index.artifacts),
+        label="artifact path",
+    )
+    _reject_duplicates((decision.strip().casefold() for decision in index.decisions), label="decision")
+    _reject_duplicates((risk.strip().casefold() for risk in index.risks), label="risk")
+
+
+def _reject_duplicates(values: Iterable[str], *, label: str) -> None:
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if not text:
+            continue
+        if text in seen:
+            raise DocumentLibraryError(f"work item index duplicates {label}: {text}")
+        seen.add(text)
