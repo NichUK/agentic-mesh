@@ -45,6 +45,59 @@ def test_local_teams_bridge_routes_unmentioned_channel_to_project_context() -> N
     assert subjects == ["project.context"]
 
 
+def test_local_teams_bridge_routes_unmentioned_channel_to_relevance_checks() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream(
+        "agent-inbox",
+        ["project.context", "agent.product-manager.relevance", "agent.qa-engineer.relevance"],
+    )
+    bridge = LocalTeamsBridge(broker, role_ids=("product-manager", "qa-engineer"))
+
+    subjects = bridge.route_inbound(
+        StakeholderMessage(
+            connector="teams",
+            message_id="msg-1",
+            source_type="channel",
+            sender_ref="sponsor",
+            conversation_ref="team:project/channel:project",
+            text="@all-agents this may affect the dashboard.",
+            thread_ref="thread-1",
+        )
+    )
+
+    assert subjects == ["project.context", "agent.product-manager.relevance", "agent.qa-engineer.relevance"]
+    broker.ensure_consumer("agent-inbox", "context", filter_subject="project.context")
+    broker.ensure_consumer("agent-inbox", "pm-relevance", filter_subject="agent.product-manager.relevance")
+    context_payload = broker.fetch("agent-inbox", "context")[0].payload
+    relevance_payload = broker.fetch("agent-inbox", "pm-relevance")[0].payload
+    assert context_payload["route_type"] == "project_channel_context"
+    assert relevance_payload["route_type"] == "team_wide_relevance_check"
+    assert relevance_payload["thread_ref"] == "thread-1"
+
+
+def test_local_teams_bridge_routes_mentioned_channel_to_role_and_shared_context() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["project.context", "agent.product-manager"])
+    bridge = LocalTeamsBridge(broker, role_ids=("product-manager", "qa-engineer"))
+
+    subjects = bridge.route_inbound(
+        StakeholderMessage(
+            connector="teams",
+            message_id="msg-1",
+            source_type="channel",
+            sender_ref="sponsor",
+            conversation_ref="team:project/channel:project",
+            text="Can Product Manager look at this?",
+            mentioned_roles=("product-manager",),
+        )
+    )
+
+    assert subjects == ["project.context", "agent.product-manager"]
+    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
+    payload = broker.fetch("agent-inbox", "pm")[0].payload
+    assert payload["route_type"] == "mentioned_role_message"
+
+
 def test_local_teams_bridge_records_outbound_delivery() -> None:
     broker = InMemoryBrokerAdapter()
     bridge = LocalTeamsBridge(broker)

@@ -127,6 +127,10 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
   approved pathway.
 - Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
   routing, and Graph-backed outbound message delivery with injectable transport.
+  Project-channel messages are retained as shared `project.context`.
+  Mentioned-role channel messages also route to the mentioned role. Unmentioned
+  project-channel messages can fan out to role relevance-check inbox subjects
+  so agents decide whether they have something material to add.
 - OneDrive: V3 defines the document-library port and Graph-backed OneDrive
   adapter with injectable transport. Work-item files live under
   `/documents/work-items/{work_item_id}`.
