@@ -157,7 +157,9 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
   activity ingress is normalised by the Teams activity router and then handed
   to the bridge, so live Teams DMs, channel posts, real mentions, and thread
   references enter the same connector-neutral broker path. The local status
-  server exposes `/teams/activity` as the first HTTP ingress hook for this path.
+  server exposes `/teams/activity` as the first HTTP ingress hook for this path;
+  `serve --project-config ...` wires it to the configured broker and role
+  identities.
 - OneDrive: V3 defines the document-library port and Graph-backed OneDrive
   adapter with injectable transport. Work-item files live under
   `/documents/work-items/{work_item_id}`.

@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 
+from agentic_mesh_v3.broker import build_broker_adapter
+from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
 from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
@@ -16,6 +18,8 @@ from agentic_mesh_v3.observability import configure_observability
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.server import serve
 from agentic_mesh_v3.sweeps import ProjectSweepService
+from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
+from agentic_mesh_v3.teams_ingress import teams_role_identities_from_project_config
 from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
 from agentic_mesh_v3.tools import V3ToolService
 from agentic_mesh_v3.topology import V3Topology
@@ -136,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
             host=args.host,
             port=args.port,
             document_library=_document_library_adapter(args),
+            teams_activity_router=_teams_activity_router(args),
         )
         return 0
     if args.command == "tool-call":
@@ -222,6 +227,24 @@ def _document_library_adapter(args: argparse.Namespace, *, required: bool = Fals
     if required:
         raise ValueError("--document-library-root or --project-config is required")
     return None
+
+
+def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | None:
+    project_config_path = getattr(args, "project_config", None)
+    if project_config_path is None:
+        return None
+    config = load_project_config(project_config_path)
+    broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
+    subjects = ["project.context"]
+    role_ids = tuple(role.role_id for role in config.roles)
+    for role_id in role_ids:
+        subjects.append(f"agent.{role_id}")
+        subjects.append(f"agent.{role_id}.relevance")
+    broker.ensure_stream(config.broker.stream, subjects)
+    return TeamsActivityRouter(
+        LocalTeamsBridge(broker, stream=config.broker.stream, role_ids=role_ids),
+        role_identities=teams_role_identities_from_project_config(config),
+    )
 
 
 if __name__ == "__main__":
