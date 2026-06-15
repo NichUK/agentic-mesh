@@ -262,6 +262,85 @@ roles:
     assert snapshot.agents[0].inbox_depth == 0
 
 
+def test_cli_materialize_agent_configs_writes_configs_and_compose(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    instructions:
+      - Shape the product.
+  engineering:
+    template: engineering
+    instances: 1
+    instructions:
+      - Build the product.
+""",
+        encoding="utf-8",
+    )
+    roles_dir = tmp_path / "roles"
+    roles_dir.mkdir()
+    (roles_dir / "product-manager.yaml").write_text("role_id: product-manager\npurpose: Product\n", encoding="utf-8")
+    (roles_dir / "engineering.yaml").write_text("role_id: engineering\npurpose: Engineering\n", encoding="utf-8")
+    org_file = tmp_path / "org.md"
+    org_file.write_text("Organisation rule.", encoding="utf-8")
+    tools_file = tmp_path / "tools.md"
+    tools_file.write_text("Use safe-output tools.", encoding="utf-8")
+    compose_output = tmp_path / "deploy" / "compose.yaml"
+
+    result = main(
+        [
+            "--project-config",
+            str(project_config),
+            "materialize-agent-configs",
+            "--image",
+            "agentic-mesh-v3:local",
+            "--source-repo",
+            str(tmp_path / "source"),
+            "--organisation-config-repo",
+            str(tmp_path / "org"),
+            "--project-config-repo",
+            str(tmp_path / "project"),
+            "--agent-config-root",
+            str(tmp_path / "agents"),
+            "--runtime-state-dir",
+            str(tmp_path / "state"),
+            "--document-library-root",
+            str(tmp_path / "documents"),
+            "--role-templates-dir",
+            str(roles_dir),
+            "--organisation-instructions-file",
+            str(org_file),
+            "--tool-instructions-file",
+            str(tools_file),
+            "--compose-output",
+            str(compose_output),
+            "--compose-network",
+            "mesh-test",
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "agentic-mesh-dev.product-manager.1" in output
+    assert (tmp_path / "agents" / "product-manager" / "1" / "container.json").exists()
+    assert "Organisation rule." in (tmp_path / "agents" / "engineering" / "1" / "organisation.md").read_text(
+        encoding="utf-8"
+    )
+    assert "run-agent-service" in compose_output.read_text(encoding="utf-8")
+    assert "mesh-test" in compose_output.read_text(encoding="utf-8")
+
+
 def test_cli_ensure_agent_stream_sets_direct_and_relevance_subjects() -> None:
     broker = InMemoryBrokerAdapter()
 
