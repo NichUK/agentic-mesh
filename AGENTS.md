@@ -28,12 +28,20 @@ Committed architecture decisions:
 - `ADR-001`: Agentic Mesh enterprise runtime direction.
 - `ADR-002`: Queue-aware agent hibernation and open-core direction.
 - `ADR-003`: Project-scoped build and deployment outputs.
+- `ADR-004`: V3 agent-owned runtime reset.
 
 Core principles:
 
-- The active implementation is v2. Do not add new code under
-  `src/agentic_mesh`; the v1 package has been removed. Active runtime code
-  lives under `src/agentic_mesh_v2`.
+- The active implementation direction is v3. New runtime reset work lives under
+  `src/agentic_mesh_v3`. V2 remains present but is frozen except for emergency
+  operational fixes while V3 proves the first end-to-end slice.
+- Do not add new code under `src/agentic_mesh`; the v1 package has been removed.
+- V3 agents own work progression. The runtime provides platform services such
+  as startup, hibernation, broker access, connector bridges, document-library
+  access, reporting, config materialisation, and telemetry.
+- Governance is explicit. Agents must consult required RACI roles and
+  stakeholders before completing phases, inform roles that must be informed,
+  and record governance exceptions when consultation is intentionally skipped.
 - Runtime state is canonical in the v2 SQLite database first, with repository
   interfaces kept suitable for Postgres later.
 - Role-agent work is recorded through safe-output calls and terminal run
