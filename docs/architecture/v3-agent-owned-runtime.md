@@ -69,6 +69,10 @@ settings, role instructions, write paths, and connector identities. The runtime
 uses those values to prepare role containers; it must not bake them into the
 image.
 
+The same mounted folder is used to build the role-service configuration:
+prompt component paths, memory database path, broker stream, and durable
+consumer name are derived from project id, role id, and instance id.
+
 Role containers mount source, organisation config, project config, agent config,
 runtime state, and document-library roots at stable paths. Hibernation planning
 uses heartbeat, active work, inbox depth, and minimum warm-pool policy; it does
