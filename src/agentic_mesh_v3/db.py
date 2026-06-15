@@ -137,6 +137,15 @@ class V3Database:
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS role_memory (
+                  memory_id TEXT PRIMARY KEY,
+                  role_instance_id TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  source_ref TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(role_instance_id, summary, source_ref)
+                );
+
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
                 """
             )
@@ -444,6 +453,50 @@ class V3Database:
                 work_item_id,
                 {"release_id": release_id, "status": status, "deployment_result": deployment_result},
             )
+
+    def record_role_memory(
+        self,
+        *,
+        memory_id: str,
+        role_instance_id: str,
+        summary: str,
+        source_ref: str,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT OR IGNORE INTO role_memory(memory_id, role_instance_id, summary, source_ref)
+                VALUES (?, ?, ?, ?)
+                """,
+                (memory_id, role_instance_id, summary, source_ref),
+            )
+            self.record_event(
+                "role_memory.recorded",
+                "role_memory",
+                role_instance_id,
+                {"memory_id": memory_id, "summary": summary, "source_ref": source_ref},
+            )
+
+    def list_role_memory(self, role_instance_id: str | None = None) -> list[dict[str, Any]]:
+        if role_instance_id is None:
+            rows = self.connection.execute(
+                """
+                SELECT memory_id, role_instance_id, summary, source_ref, created_at
+                FROM role_memory
+                ORDER BY created_at ASC, memory_id ASC
+                """
+            )
+        else:
+            rows = self.connection.execute(
+                """
+                SELECT memory_id, role_instance_id, summary, source_ref, created_at
+                FROM role_memory
+                WHERE role_instance_id=?
+                ORDER BY created_at ASC, memory_id ASC
+                """,
+                (role_instance_id,),
+            )
+        return [dict(row) for row in rows]
 
     def status_snapshot(self, *, project_id: str) -> ReportingSnapshot:
         backlog = tuple(

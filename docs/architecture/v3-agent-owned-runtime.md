@@ -40,6 +40,12 @@ Agents must use tools for durable effects and must confirm meaningful action
 after doing the work. If no action is appropriate, they must explicitly call a
 no-op/status tool and explain why.
 
+Role memory is DB-backed and source-linked. The document library remains the
+canonical project memory, while each role instance can keep a concise cache of
+facts, preferences, prior handoffs, and recurring risks. Agents update memory
+through `memory.propose_update`, and every memory entry must cite a work item,
+document, event, or conversation source.
+
 ## Agent Configuration And Lifecycle
 
 The runtime image must not contain mutable organisation, project, or role

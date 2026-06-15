@@ -11,6 +11,7 @@ BASE_TOOLS = {
     "governance.record_exception",
     "handoff.require",
     "informed.update",
+    "memory.propose_update",
     "messaging.send",
     "noop",
     "report.incomplete",
