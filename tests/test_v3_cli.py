@@ -9,6 +9,7 @@ from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.worker_adapters import CodexCliWorker
 from agentic_mesh_v3.worker_adapters import SafeOutputSubprocessWorker
 
@@ -249,6 +250,53 @@ def test_cli_worker_from_args_builds_codex_cli_worker() -> None:
     assert isinstance(worker, CodexCliWorker)
     assert worker.command == ("codex", "exec")
     assert worker.timeout_seconds == 600
+    assert worker.model == "gpt-5.5"
+    assert worker.reasoning_effort == "high"
+    assert worker.sandbox_mode == "workspace-write"
+
+
+def test_cli_worker_from_args_uses_project_configured_worker(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  product-manager:
+    instances: 1
+    worker:
+      adapter: codex-cli
+      command:
+        - codex
+        - exec
+      timeout_seconds: 1200
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+""",
+        encoding="utf-8",
+    )
+
+    worker = _worker_from_args(
+        argparse.Namespace(
+            role_id="product-manager",
+            worker=None,
+            worker_command_json=None,
+            worker_timeout_seconds=None,
+            worker_model=None,
+            worker_reasoning_effort=None,
+            worker_sandbox_mode=None,
+        ),
+        project_config=load_project_config(project_file),
+    )
+
+    assert isinstance(worker, CodexCliWorker)
+    assert worker.command == ("codex", "exec")
+    assert worker.timeout_seconds == 1200
     assert worker.model == "gpt-5.5"
     assert worker.reasoning_effort == "high"
     assert worker.sandbox_mode == "workspace-write"

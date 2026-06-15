@@ -162,7 +162,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   The Codex adapter wraps the generated role prompt with the V3 safe-output
   contract before running `codex exec`, then expects only a small operational
   JSON envelope listing tool calls already made through CLI/MCP. Durable state
-  still comes from safe-output tools.
+  still comes from safe-output tools. `run-agent-once` uses the role worker
+  configured in `project.yaml` when no worker override is supplied, falling
+  back to the echo worker only for unconfigured local smoke runs.
 - Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
   routing, and Graph-backed outbound message delivery with injectable transport.
   Project-channel messages are retained as shared `project.context`.
