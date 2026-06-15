@@ -215,12 +215,18 @@ class V3ToolService:
             self._send_message(payload)
         elif tool_name == "status.reply":
             self._send_optional_reply(payload)
+        elif tool_name == "stakeholder.ask_question":
+            self._ask_stakeholder(
+                call_id=call_id,
+                role_instance_id=role_instance_id,
+                tool_name=tool_name,
+                payload=payload,
+            )
         elif tool_name in {
             "handoff.require",
             "consult.request",
             "informed.update",
             "governance.record_exception",
-            "stakeholder.ask_question",
         }:
             self._record_governance_tool(
                 call_id=call_id,
@@ -262,6 +268,38 @@ class V3ToolService:
                 text_markdown=text_markdown,
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "normal"),
+            )
+        )
+
+    def _ask_stakeholder(
+        self,
+        *,
+        call_id: str,
+        role_instance_id: str,
+        tool_name: str,
+        payload: dict[str, Any],
+    ) -> None:
+        target_ref = _target_ref(payload)
+        should_deliver = _optional(payload.get("target_ref") or payload.get("stakeholder_ref")) is not None
+        if should_deliver and self.stakeholder_bridge is None:
+            raise ValueError("stakeholder bridge is not configured")
+        self._record_governance_tool(
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            tool_name=tool_name,
+            payload=payload,
+        )
+        if not should_deliver:
+            return
+        question = _required(payload, "question")
+        text_markdown = _optional(payload.get("text_markdown")) or f"**Question**\n\n{question}"
+        self.stakeholder_bridge.send(
+            OutboundMessage(
+                connector=_required(payload, "connector"),
+                target_ref=str(target_ref),
+                text_markdown=text_markdown,
+                thread_ref=_optional(payload.get("thread_ref")),
+                importance=str(payload.get("importance") or "high"),
             )
         )
 
