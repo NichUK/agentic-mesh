@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
 from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
+from agentic_mesh_v3.documents import DocumentLibraryAdapter
+from agentic_mesh_v3.documents import build_document_library_adapter
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.observability import TelemetrySettings
 from agentic_mesh_v3.observability import configure_observability
+from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.server import serve
 from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
 from agentic_mesh_v3.tools import V3ToolService
@@ -21,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agentic-mesh-v3")
     parser.add_argument("--db", type=Path, default=Path(".tmp/v3/agentic-mesh-v3.sqlite3"))
     parser.add_argument("--project-id", default="agentic-mesh-dev")
+    parser.add_argument("--project-config", type=Path)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init-db")
@@ -90,18 +95,14 @@ def main(argv: list[str] | None = None) -> int:
             project_id=args.project_id,
             host=args.host,
             port=args.port,
-            document_library_root=args.document_library_root,
+            document_library=_document_library_adapter(args),
         )
         return 0
     if args.command == "tool-call":
         db = V3Database(args.db)
         try:
             db.migrate()
-            adapter = (
-                LocalDocumentLibraryAdapter(args.document_library_root)
-                if args.document_library_root is not None
-                else None
-            )
+            adapter = _document_library_adapter(args)
             result = V3ToolService(db, adapter).call(
                 role_instance_id=args.role_instance_id,
                 tool_name=args.tool_name,
@@ -124,11 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         db = V3Database(args.db)
         try:
             db.migrate()
-            adapter = (
-                LocalDocumentLibraryAdapter(args.document_library_root)
-                if args.document_library_root is not None
-                else None
-            )
+            adapter = _document_library_adapter(args)
             run_demo_slice(db, project_id=args.project_id, document_library=adapter)
         finally:
             db.close()
@@ -141,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
             work_item_id = run_local_e2e_dogfood_slice(
                 db=db,
                 project_id=args.project_id,
-                document_library=LocalDocumentLibraryAdapter(args.document_library_root),
+                document_library=_document_library_adapter(args, required=True),
             )
         finally:
             db.close()
@@ -169,6 +166,22 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"valid": not errors, "errors": errors}, indent=2))
         return 1 if errors else 0
     raise AssertionError(f"unhandled command: {args.command}")
+
+
+def _document_library_adapter(args: argparse.Namespace, *, required: bool = False) -> DocumentLibraryAdapter | None:
+    explicit_root = getattr(args, "document_library_root", None)
+    if explicit_root is not None:
+        return LocalDocumentLibraryAdapter(explicit_root)
+    project_config = getattr(args, "project_config", None)
+    if project_config is not None:
+        config = load_project_config(project_config).document_library
+        return build_document_library_adapter(
+            config,
+            access_token=os.environ.get("AGENTIC_MESH_ONEDRIVE_TOKEN"),
+        )
+    if required:
+        raise ValueError("--document-library-root or --project-config is required")
+    return None
 
 
 if __name__ == "__main__":
