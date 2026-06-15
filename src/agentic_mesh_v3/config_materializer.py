@@ -10,6 +10,7 @@ from agentic_mesh_v3.governance import RaciMatrix
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
 from agentic_mesh_v3.project_config import V3ProjectConfig
 from agentic_mesh_v3.project_config import V3RoleInstanceConfig
+from agentic_mesh_v3.roles import load_role_template
 from agentic_mesh_v3.tool_catalog import tool_catalog_for_role
 
 
@@ -169,7 +170,7 @@ def _read_role_template(role_templates_dir: Path, role: V3RoleInstanceConfig) ->
     path = role_templates_dir / f"{template_id}.yaml"
     if not path.exists():
         raise FileNotFoundError(f"role template `{template_id}` not found at {path}")
-    return path.read_text(encoding="utf-8")
+    return load_role_template(path, expected_role_id=template_id).as_prompt_text()
 
 
 def _role_project_instructions(role: V3RoleInstanceConfig) -> str:

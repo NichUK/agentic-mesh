@@ -95,8 +95,8 @@ roles:
     )
     role_templates = tmp_path / "roles"
     role_templates.mkdir()
-    (role_templates / "product-manager.yaml").write_text("role_id: product-manager\npurpose: Product\n", encoding="utf-8")
-    (role_templates / "engineering.yaml").write_text("role_id: engineering\npurpose: Build\n", encoding="utf-8")
+    (role_templates / "product-manager.yaml").write_text(_role_template("product-manager"), encoding="utf-8")
+    (role_templates / "engineering.yaml").write_text(_role_template("engineering"), encoding="utf-8")
 
     materialized = materialize_project_agent_configs(
         project_config=load_project_config(project_file),
@@ -128,3 +128,45 @@ roles:
     assert "Role-Scoped Safe-Output Tool Catalog" in product_tools
     assert "`backlog.upsert`: allowed" in product_tools
     assert "`release.deploy`: blocked" in product_tools
+
+
+def _role_template(role_id: str) -> str:
+    return f"""
+role_id: {role_id}
+purpose: Test role.
+role_profile: Act as a specialist role for tests.
+accountabilities:
+  - Do the role work.
+decision_rights:
+  owns:
+    - Own role decisions.
+  advises:
+    - Advise related roles.
+  escalates:
+    - Escalate blockers.
+boundaries:
+  - Stay inside role authority.
+collaboration_style:
+  - Be concise.
+quality_bar:
+  - Evidence is recorded.
+memory_focus:
+  - Useful recurring context.
+core_workflows:
+  - workflow_id: test-workflow
+    trigger: Test trigger.
+    inputs:
+      - Input
+    outputs:
+      - Output
+    artifacts:
+      - documents/work-items/{{work_item_id}}/index.md
+standards_references:
+  - name: Test Standard
+    url: docs/test.md
+    applies_to: Tests
+anti_patterns:
+  - Pretending work happened.
+standing_instructions:
+  - Use tools honestly.
+"""
