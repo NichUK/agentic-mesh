@@ -355,6 +355,73 @@ def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> No
     assert checklist.is_satisfied is True
 
 
+def test_v3_tool_service_records_handoff_requirements_payload(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Governed handoff",
+            description="Needs engineering implementation.",
+            state="ready",
+            owner_role="product-manager",
+        )
+        V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="handoff.require",
+            payload={
+                "work_item_id": "work-1",
+                "target_role": "engineering",
+                "phase": "development",
+                "accountable_role": "engineering",
+                "required_next_action": "Implement the signed-off product slice.",
+                "acceptance_criteria": ["Feature behavior matches the signed-off product definition."],
+                "evidence_requirements": ["Implementation log and focused tests are linked."],
+                "artifact_links": ["work-items/work-1/020-product-definition.md"],
+                "open_decisions": [],
+                "open_risks": ["No staging environment is configured."],
+                "consulted_roles": ["qa-engineer", "solution-architect"],
+                "informed_roles": ["project-manager", "delivery-manager"],
+                "stakeholder_follow_up": ["Ask sponsor if acceptance criteria change."],
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert len(detail.governance_records) == 1
+    record = detail.governance_records[0]
+    assert record.record_type == "handoff.require"
+    assert record.target_ref == "engineering"
+    assert record.status == "required"
+    assert record.summary == "Implement the signed-off product slice."
+
+
+def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="handoff.require",
+                payload={
+                    "work_item_id": "work-1",
+                    "target_role": "engineering",
+                    "required_next_action": "Implement this.",
+                },
+            )
+        except ValueError as exc:
+            assert "handoff.require requires phase" in str(exc)
+        else:
+            raise AssertionError("incomplete handoff requirements should fail validation")
+    finally:
+        db.close()
+
+
 def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     broker = InMemoryBrokerAdapter()

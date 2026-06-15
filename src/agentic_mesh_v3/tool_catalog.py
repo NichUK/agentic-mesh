@@ -30,7 +30,11 @@ TOOL_DESCRIPTIONS = {
     "document.write_root_work_item_index": "Regenerate the root work-item index in the document library.",
     "document.write_work_item_index": "Write or update a work-item index document.",
     "governance.record_exception": "Record a justified governance/RACI exception.",
-    "handoff.require": "Require another role to take the next accountable/responsible action.",
+    "handoff.require": (
+        "Require another role to take the next accountable/responsible action with work id, phase, "
+        "accountable role, next action, acceptance/evidence requirements, artifact links, open decisions/risks, "
+        "consulted/informed roles, and stakeholder follow-up."
+    ),
     "informed.update": "Notify an informed role about a relevant change or decision.",
     "memory.propose_update": "Record a source-linked role-memory update.",
     "messaging.send": "Send a stakeholder-facing message through a configured connector.",

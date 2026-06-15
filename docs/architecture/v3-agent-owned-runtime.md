@@ -127,6 +127,14 @@ Manager owns release/deploy tools. Roles can request out-of-flow help through
 consult/handoff tools, but cannot silently execute another role's specialist
 authority.
 
+Handoffs are requirements packets, not informal expectations. A
+`handoff.require` call must include the work item, target role, phase,
+accountable role, required next action, acceptance criteria, evidence
+requirements, artifact links, open decisions, open risks, consulted roles,
+informed roles, and required stakeholder follow-up. Empty lists are valid when
+there is genuinely nothing open, but the fields must be present so the
+receiving agent can continue without guessing.
+
 Work-item state is explicit and validated. V3 states are `queued`, `shaping`,
 `ready`, `active`, `waiting_human`, `waiting_agent`, `waiting_external`,
 `blocked`, `recovering`, `release_review`, `deploying`, `released`, `closed`,
