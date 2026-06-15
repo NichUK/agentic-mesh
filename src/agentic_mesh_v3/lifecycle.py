@@ -31,6 +31,38 @@ class RoleContainerSpec:
             str(self.document_library_root): "/documents",
         }
 
+    def service_command(
+        self,
+        *,
+        db_path: str = "/mesh/state/agentic-mesh-v3.sqlite3",
+        project_config_path: str = "/mesh/project/agentic-mesh/project.yaml",
+        poll_interval_seconds: float = 5.0,
+        idle_exit_seconds: int = 1800,
+    ) -> list[str]:
+        """Return the command a role container should run for its service loop."""
+
+        role_id, instance_id = _role_and_instance(self.role_instance_id)
+        return [
+            "agentic-mesh-v3",
+            "--db",
+            db_path,
+            "--project-config",
+            project_config_path,
+            "run-agent-service",
+            "--role-id",
+            role_id,
+            "--instance-id",
+            instance_id,
+            "--agent-config-dir",
+            "/mesh/agent",
+            "--runtime-state-dir",
+            "/mesh/state",
+            "--poll-interval-seconds",
+            _format_seconds(poll_interval_seconds),
+            "--idle-exit-seconds",
+            str(idle_exit_seconds),
+        ]
+
 
 @dataclass(frozen=True)
 class HibernationPolicy:
@@ -84,3 +116,15 @@ def _parse_datetime(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _role_and_instance(role_instance_id: str) -> tuple[str, str]:
+    parts = role_instance_id.split(".")
+    if len(parts) < 3 or not parts[-2] or not parts[-1]:
+        raise ValueError("role_instance_id must use {project_id}.{role_id}.{instance_id}")
+    return parts[-2], parts[-1]
+
+
+def _format_seconds(value: float) -> str:
+    numeric = float(value)
+    return str(int(numeric)) if numeric.is_integer() else str(numeric)

@@ -159,3 +159,8 @@ containerised role agents. It polls the configured broker inbox, records
 agent heartbeat/status into the runtime DB for `/agents`, uses the same
 project-config worker selection as `run-agent-once`, and can idle-exit for
 hibernation-oriented supervision.
+
+V3 role container specs now generate the `agentic-mesh-v3 run-agent-service`
+command, and materialized `container.json` includes that command alongside
+mounts and prompt paths. The default mounted project config path is
+`/mesh/project/agentic-mesh/project.yaml`.

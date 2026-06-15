@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from agentic_mesh_v3.config_materializer import build_role_instance_config
 from agentic_mesh_v3.config_materializer import materialize_agent_config
@@ -41,7 +42,10 @@ def test_materialize_agent_config_writes_mounted_files(tmp_path: Path) -> None:
     assert "Project Manager" in (tmp_path / "agent" / "role.md").read_text(encoding="utf-8")
     assert "safe-output tools" in (tmp_path / "agent" / "tools.md").read_text(encoding="utf-8")
     assert "requirements" in (tmp_path / "agent" / "raci.json").read_text(encoding="utf-8")
-    assert "tools.md" in (tmp_path / "agent" / "container.json").read_text(encoding="utf-8")
+    container = json.loads((tmp_path / "agent" / "container.json").read_text(encoding="utf-8"))
+    assert "tools.md" in json.dumps(container)
+    assert container["command"][0] == "agentic-mesh-v3"
+    assert "run-agent-service" in container["command"]
 
 
 def test_build_role_instance_config_uses_materialized_prompt_paths(tmp_path: Path) -> None:
