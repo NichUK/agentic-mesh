@@ -29,6 +29,7 @@ from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
 from agentic_mesh_v3.tools import V3ToolService
 from agentic_mesh_v3.topology import V3Topology
 from agentic_mesh_v3.topology import validate_topology
+from agentic_mesh_v3.worker_adapters import build_worker_adapter
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,7 +65,9 @@ def main(argv: list[str] | None = None) -> int:
     run_agent_parser.add_argument("--agent-config-dir", type=Path, required=True)
     run_agent_parser.add_argument("--runtime-state-dir", type=Path, required=True)
     run_agent_parser.add_argument("--max-messages", type=int, default=1)
-    run_agent_parser.add_argument("--worker", choices=["echo"], default="echo")
+    run_agent_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess"], default="echo")
+    run_agent_parser.add_argument("--worker-command-json")
+    run_agent_parser.add_argument("--worker-timeout-seconds", type=int)
 
     tool_parser = subparsers.add_parser("tool-call")
     tool_parser.add_argument("--role-instance-id", required=True)
@@ -278,7 +281,7 @@ def _run_agent_once(args: argparse.Namespace):
     service = RoleAgentService(
         config=service_config,
         broker=broker,
-        worker=EchoWorker(),
+        worker=_worker_from_args(args),
         memory=build_role_memory(service_config),
     )
     return service.run_until_idle(max_messages=args.max_messages)
@@ -290,6 +293,18 @@ def _ensure_agent_stream(broker: BrokerAdapter, *, stream: str, role_ids: tuple[
         subjects.append(f"agent.{role_id}")
         subjects.append(f"agent.{role_id}.relevance")
     broker.ensure_stream(stream, subjects)
+
+
+def _worker_from_args(args: argparse.Namespace):
+    if args.worker == "echo":
+        return EchoWorker()
+    command_raw = args.worker_command_json
+    command = tuple(json.loads(command_raw)) if command_raw else None
+    return build_worker_adapter(
+        adapter=args.worker,
+        command=command,
+        timeout_seconds=args.worker_timeout_seconds,
+    )
 
 
 if __name__ == "__main__":

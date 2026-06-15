@@ -5,9 +5,11 @@ import sys
 
 from agentic_mesh_v3.cli import _teams_activity_router
 from agentic_mesh_v3.cli import _ensure_agent_stream
+from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.worker_adapters import SafeOutputSubprocessWorker
 
 
 def test_cli_validate_topology_reports_valid_paths(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -212,6 +214,20 @@ def test_cli_ensure_agent_stream_sets_direct_and_relevance_subjects() -> None:
     broker.publish("agent-inbox", "agent.product-manager", {"text": "direct"})
     broker.publish("agent-inbox", "agent.product-manager.relevance", {"text": "relevance"})
     assert broker.depth("agent-inbox").pending == 2
+
+
+def test_cli_worker_from_args_builds_subprocess_worker() -> None:
+    worker = _worker_from_args(
+        argparse.Namespace(
+            worker="safe-output-subprocess",
+            worker_command_json='["python","-c","print({})"]',
+            worker_timeout_seconds=7,
+        )
+    )
+
+    assert isinstance(worker, SafeOutputSubprocessWorker)
+    assert worker.command == ("python", "-c", "print({})")
+    assert worker.timeout_seconds == 7
 
 
 def test_cli_record_approval_response_updates_approval(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
