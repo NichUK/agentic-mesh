@@ -66,6 +66,28 @@ Initial reporting routes are:
 The report plane reads projections and document-library metadata. It does not
 own lifecycle decisions.
 
+Local command smoke:
+
+```powershell
+agentic-mesh-v3 --db .tmp/v3.sqlite3 init-db
+agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev demo-slice --document-library-root .tmp/v3-documents
+agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev status-json
+agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev serve --document-library-root .tmp/v3-documents
+```
+
+## Adapter Status
+
+- Broker: V3 defines the broker port and local contract adapter; NATS JetStream
+  is the first target adapter.
+- Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
+  routing, and Graph-backed outbound message delivery with injectable transport.
+- OneDrive: V3 defines the document-library port and Graph-backed OneDrive
+  adapter with injectable transport. Work-item files live under
+  `/documents/work-items/{work_item_id}`.
+- Deployment: V3 defines command and no-deployment deployment targets so the
+  Release Manager can execute a configured deployment or record a clear
+  no-deployment disposition.
+
 ## Artifact Library
 
 Work-item evidence lives under:

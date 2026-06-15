@@ -1,0 +1,53 @@
+from pathlib import Path
+
+from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.server import V3StatusHandler
+from agentic_mesh_v3.server import _artifact_page
+from agentic_mesh_v3.tools import V3ToolService
+
+
+def test_artifact_page_renders_markdown_safely() -> None:
+    html = _artifact_page("work-items/work-1/index.md", "# Hello\n\n<script>alert(1)</script>")
+
+    assert "<h1>Hello</h1>" in html
+    assert "<script>" not in html
+
+
+def test_status_handler_snapshot_uses_v3_db(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="work_item.upsert",
+            payload={
+                "work_item_id": "work-1",
+                "title": "Add status page",
+                "description": "Build status page",
+                "state": "active",
+                "owner_role": "engineering",
+            },
+        )
+    finally:
+        db.close()
+
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.db_path = tmp_path / "v3.sqlite3"
+    Handler.project_id = "agentic-mesh-dev"
+    Handler.document_library_root = tmp_path / "documents"
+
+    # Bypass BaseHTTPRequestHandler construction; _snapshot only uses class attrs.
+    handler = object.__new__(Handler)
+    snapshot = handler._snapshot()
+
+    assert snapshot.work_items[0].work_item_id == "work-1"
+
+
+def test_artifact_viewer_reads_local_document_library(tmp_path: Path) -> None:
+    docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    docs.write_text("work-items/work-1/index.md", "# Work One")
+
+    assert docs.read_text("work-items/work-1/index.md") == "# Work One"
