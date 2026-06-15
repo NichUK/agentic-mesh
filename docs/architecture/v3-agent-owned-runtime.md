@@ -115,6 +115,10 @@ the runtime make the decision.
 When a role service receives a governance context, prompt assembly includes the
 matching checklist so the agent sees concrete missing consults, informed
 updates, and sponsor decisions alongside the raw RACI context.
+The runtime database can derive the same checklist from the work-item read
+model, recorded governance safe-output calls, and approval records. This keeps
+dashboards and prompt builders aligned without giving the database authority to
+close or advance work.
 
 Tool authority is role-scoped. All roles can communicate, consult, hand off,
 record governance evidence, update document indexes, and report status.
