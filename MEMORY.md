@@ -289,3 +289,8 @@ V3 work-item indexes now include first-class sections for consultations,
 approvals, and explicit evidence in addition to artifacts, decisions, risks,
 and next action. The document-library validation rejects duplicate entries in
 those named sections so dossiers stay factual rather than repetitive.
+
+V3 project config now loads `release_deployment_targets` and the CLI safe-output
+tool path passes them into `V3ToolService`. Release Manager `release.deploy`
+can therefore execute configured command targets or explicit no-deployment
+targets from `project.yaml`.

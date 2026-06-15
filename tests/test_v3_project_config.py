@@ -37,6 +37,19 @@ roles:
       - docs/project/**
   engineering:
     instances: 2
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - python
+      - -c
+      - print('deployed')
+    working_directory: /tmp
+    timeout_seconds: 30
+    rollback_summary: Re-run the previous image.
+  planning-only:
+    type: no_deployment
+    reason: Planning-only slice.
 connectors:
   teams:
     role_bots:
@@ -71,3 +84,11 @@ connectors:
     assert project_manager.messaging_identity.display_name == "AM-Project Manager"
     assert project_manager.messaging_identity.mention_handle == "@AM-Project Manager"
     assert project_manager.messaging_identity.bot_id_ref == "teams-bot-project-manager-app-id"
+    targets = {target.target_id: target for target in config.release_deployment_targets}
+    assert targets["local-smoke"].target_type == "command"
+    assert targets["local-smoke"].command == ("python", "-c", "print('deployed')")
+    assert targets["local-smoke"].working_directory == Path("/tmp")
+    assert targets["local-smoke"].timeout_seconds == 30
+    assert targets["local-smoke"].rollback_plan == "Re-run the previous image."
+    assert targets["planning-only"].target_type == "no_deployment"
+    assert targets["planning-only"].reason == "Planning-only slice."

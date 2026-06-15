@@ -20,6 +20,8 @@ from agentic_mesh_v3.compose import render_role_services_compose
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
+from agentic_mesh_v3.deployment import DeploymentTarget
+from agentic_mesh_v3.deployment import deployment_targets_from_project_config
 from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import build_document_library_adapter
@@ -316,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             db.migrate()
             adapter = _document_library_adapter(args)
-            result = V3ToolService(db, adapter).call(
+            result = V3ToolService(db, adapter, deployment_targets=_deployment_targets(args)).call(
                 role_instance_id=args.role_instance_id,
                 tool_name=args.tool_name,
                 payload=json.loads(args.payload_json),
@@ -432,6 +434,13 @@ def _document_library_adapter(args: argparse.Namespace, *, required: bool = Fals
     if required:
         raise ValueError("--document-library-root or --project-config is required")
     return None
+
+
+def _deployment_targets(args: argparse.Namespace) -> dict[str, DeploymentTarget]:
+    project_config = getattr(args, "project_config", None)
+    if project_config is None:
+        return {}
+    return deployment_targets_from_project_config(load_project_config(project_config))
 
 
 def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | None:

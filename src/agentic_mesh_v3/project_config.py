@@ -28,6 +28,17 @@ class V3WorkerAuthConfig:
 
 
 @dataclass(frozen=True)
+class V3ReleaseDeploymentTargetConfig:
+    target_id: str
+    target_type: str
+    command: tuple[str, ...] = ()
+    working_directory: Path | None = None
+    timeout_seconds: int = 300
+    rollback_plan: str = "Re-run the previous known-good deployment target."
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class V3WorkerConfig:
     adapter: str | None = None
     command: tuple[str, ...] = ()
@@ -63,6 +74,7 @@ class V3ProjectConfig:
     broker: V3BrokerConfig
     document_library: V3DocumentLibraryConfig
     roles: tuple[V3RoleInstanceConfig, ...]
+    release_deployment_targets: tuple[V3ReleaseDeploymentTargetConfig, ...] = ()
 
 
 def load_project_config(path: Path) -> V3ProjectConfig:
@@ -71,6 +83,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
     broker_raw = _mapping(raw.get("broker"))
     docs_raw = _mapping(raw.get("document_library"))
     roles_raw = _mapping(raw.get("roles"))
+    release_targets_raw = _mapping(raw.get("release_deployment_targets"))
     return V3ProjectConfig(
         project_id=project_id,
         broker=V3BrokerConfig(
@@ -85,6 +98,10 @@ def load_project_config(path: Path) -> V3ProjectConfig:
             root_path=str(docs_raw.get("root_path") or "/documents"),
         ),
         roles=tuple(_load_role(role_id, _mapping(role_raw), raw) for role_id, role_raw in sorted(roles_raw.items())),
+        release_deployment_targets=tuple(
+            _load_release_deployment_target(target_id, _mapping(target_raw))
+            for target_id, target_raw in sorted(release_targets_raw.items())
+        ),
     )
 
 
@@ -131,6 +148,25 @@ def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, An
         instructions=tuple(str(value) for value in _list(role_raw.get("instructions"))),
         write_paths=tuple(str(value) for value in _list(role_raw.get("write_paths"))),
         messaging_identity=_load_messaging_identity(role_id, project_raw),
+    )
+
+
+def _load_release_deployment_target(
+    target_id: str,
+    target_raw: dict[str, Any],
+) -> V3ReleaseDeploymentTargetConfig:
+    return V3ReleaseDeploymentTargetConfig(
+        target_id=target_id,
+        target_type=str(target_raw.get("type") or "command"),
+        command=tuple(str(value) for value in _list(target_raw.get("command"))),
+        working_directory=Path(str(target_raw["working_directory"])) if target_raw.get("working_directory") else None,
+        timeout_seconds=int(target_raw.get("timeout_seconds") or 300),
+        rollback_plan=str(
+            target_raw.get("rollback_plan")
+            or target_raw.get("rollback_summary")
+            or "Re-run the previous known-good deployment target."
+        ),
+        reason=_optional(target_raw.get("reason") or target_raw.get("description")),
     )
 
 

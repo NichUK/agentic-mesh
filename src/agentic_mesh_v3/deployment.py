@@ -4,6 +4,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agentic_mesh_v3.project_config import V3ProjectConfig
 
 
 @dataclass(frozen=True)
@@ -60,3 +64,27 @@ class NoDeploymentDisposition:
             output=self.reason,
             rollback_plan=self.rollback_plan,
         )
+
+
+def deployment_targets_from_project_config(config: "V3ProjectConfig") -> dict[str, DeploymentTarget]:
+    targets: dict[str, DeploymentTarget] = {}
+    for target in config.release_deployment_targets:
+        target_type = target.target_type.casefold().replace("_", "-")
+        if target_type == "command":
+            targets[target.target_id] = CommandDeploymentTarget(
+                target_id=target.target_id,
+                command=target.command,
+                cwd=target.working_directory,
+                rollback_plan=target.rollback_plan,
+                timeout_seconds=target.timeout_seconds,
+            )
+            continue
+        if target_type in {"no-deployment", "no-deployment-disposition"}:
+            targets[target.target_id] = NoDeploymentDisposition(
+                target_id=target.target_id,
+                reason=target.reason or "No deployment is required for this target.",
+                rollback_plan=target.rollback_plan,
+            )
+            continue
+        raise ValueError(f"unsupported deployment target type: {target.target_type}")
+    return targets
