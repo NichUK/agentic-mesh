@@ -133,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     materialize_parser.add_argument("--runtime-state-dir", type=Path, required=True)
     materialize_parser.add_argument("--document-library-root", type=Path, required=True)
     materialize_parser.add_argument("--role-templates-dir", type=Path, required=True)
+    materialize_parser.add_argument("--system-instructions-file", type=Path)
     materialize_parser.add_argument("--organisation-instructions-file", type=Path)
     materialize_parser.add_argument("--tool-instructions-file", type=Path)
     materialize_parser.add_argument("--flow-config", type=Path)
@@ -578,15 +579,13 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
         runtime_state_dir=args.runtime_state_dir,
         document_library_root=args.document_library_root,
         role_templates_dir=args.role_templates_dir,
+        system_instructions=_read_system_instructions(args.system_instructions_file),
         organisation_instructions=_read_text_or_default(
             args.organisation_instructions_file,
             "No organisation-specific instructions configured.",
         ),
         raci=_raci_matrix(args, project_config=config),
-        tool_instructions=_read_text_or_default(
-            args.tool_instructions_file,
-            "Use approved Agentic Mesh safe-output tools for durable effects.",
-        ),
+        tool_instructions=_read_tool_instructions(args.tool_instructions_file),
     )
     compose_output = None
     if args.compose_output is not None:
@@ -611,6 +610,30 @@ def _read_text_or_default(path: Path | None, default: str) -> str:
     if path is None:
         return default
     return path.read_text(encoding="utf-8")
+
+
+def _read_system_instructions(path: Path | None) -> str:
+    if path is not None:
+        return path.read_text(encoding="utf-8")
+    return "\n\n".join(
+        _read_existing_prompt(path)
+        for path in (
+            Path("config/prompts/worker/system-security.xml"),
+            Path("config/prompts/worker/instructions.xml"),
+        )
+    ).strip()
+
+
+def _read_tool_instructions(path: Path | None) -> str:
+    if path is not None:
+        return path.read_text(encoding="utf-8")
+    return _read_existing_prompt(Path("config/prompts/worker/safe-outputs.xml"))
+
+
+def _read_existing_prompt(path: Path) -> str:
+    if not path.exists():
+        raise FileNotFoundError(f"prompt component not found: {path}")
+    return path.read_text(encoding="utf-8").strip()
 
 
 def _raci_matrix(args: argparse.Namespace, *, project_config: V3ProjectConfig | None = None) -> RaciMatrix:

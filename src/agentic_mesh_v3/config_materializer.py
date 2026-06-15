@@ -26,6 +26,7 @@ class MaterializedRoleInstance:
 def materialize_agent_config(
     *,
     spec: RoleContainerSpec,
+    system_instructions: str,
     role_prompt: str,
     organisation_instructions: str,
     project_instructions: str,
@@ -42,6 +43,7 @@ def materialize_agent_config(
     spec.agent_config_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     files = {
+        "system.md": system_instructions.rstrip() + "\n",
         "role.md": role_prompt.rstrip() + "\n",
         "organisation.md": organisation_instructions.rstrip() + "\n",
         "project.md": project_instructions.rstrip() + "\n",
@@ -55,6 +57,7 @@ def materialize_agent_config(
                 "mounts": spec.volume_mounts(),
                 "environment": spec.environment,
                 "prompt_paths": {
+                    "system": "/mesh/agent/system.md",
                     "role": "/mesh/agent/role.md",
                     "organisation": "/mesh/agent/organisation.md",
                     "project": "/mesh/agent/project.md",
@@ -92,6 +95,7 @@ def build_role_instance_config(
         role_prompt_path=agent_config_dir / "role.md",
         organisation_prompt_path=agent_config_dir / "organisation.md",
         project_prompt_path=agent_config_dir / "project.md",
+        system_prompt_path=agent_config_dir / "system.md",
         raci_path=agent_config_dir / "raci.json",
         tools_prompt_path=agent_config_dir / "tools.md",
         memory_db_path=runtime_state_dir / "memory" / f"{role_instance_id}.sqlite3",
@@ -111,6 +115,7 @@ def materialize_project_agent_configs(
     runtime_state_dir: Path,
     document_library_root: Path,
     role_templates_dir: Path,
+    system_instructions: str,
     organisation_instructions: str,
     raci: RaciMatrix,
     tool_instructions: str,
@@ -140,6 +145,7 @@ def materialize_project_agent_configs(
             )
             written_files = materialize_agent_config(
                 spec=container_spec,
+                system_instructions=system_instructions,
                 role_prompt=_read_role_template(role_templates_dir, role),
                 organisation_instructions=organisation_instructions,
                 project_instructions=_role_project_instructions(role),

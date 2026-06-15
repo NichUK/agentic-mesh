@@ -60,6 +60,7 @@ The runtime image must not contain mutable organisation, project, or role
 configuration. Before starting or waking a role instance, the runtime
 materialises an external agent config folder containing:
 
+- `system.md`
 - `role.md`
 - `organisation.md`
 - `project.md`
@@ -75,6 +76,14 @@ purpose-only roles cannot be mounted as executable agent identities. Starter
 role templates also keep local documentation obligations pointed at real
 durable documents, so agents are not instructed to write or consult missing
 library locations.
+The mounted `system.md` prompt component is materialized from
+`--system-instructions-file` when supplied, otherwise from
+`config/prompts/worker/system-security.xml` plus
+`config/prompts/worker/instructions.xml`. The mounted `tools.md` prompt uses
+`--tool-instructions-file` when supplied, otherwise
+`config/prompts/worker/safe-outputs.xml`, followed by the role-scoped tool
+catalog. Shared agent behavior therefore remains editable configuration rather
+than image-baked prompt text.
 Agent config materialization loads RACI from an explicit
 `materialize-agent-configs --flow-config ...` override when supplied. Otherwise
 it resolves the project-selected flow from `project.yaml`, with

@@ -214,8 +214,10 @@ def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -
     config = _config(tmp_path)
     organisation = tmp_path / "organisation.md"
     project = tmp_path / "project.md"
+    system = tmp_path / "system.md"
     raci = tmp_path / "raci.json"
     tools = tmp_path / "tools.md"
+    system.write_text("System instruction.", encoding="utf-8")
     organisation.write_text("Organisation instruction.", encoding="utf-8")
     project.write_text("Project instruction.", encoding="utf-8")
     raci.write_text('[{"phase":"requirements"}]', encoding="utf-8")
@@ -228,6 +230,7 @@ def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -
         memory_db_path=config.memory_db_path,
         inbox_stream=config.inbox_stream,
         inbox_consumer=config.inbox_consumer,
+        system_prompt_path=system,
         organisation_prompt_path=organisation,
         project_prompt_path=project,
         raci_path=raci,
@@ -245,6 +248,8 @@ def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -
 
     assert result is not None
     assert result.status == "completed"
+    assert "<system>" in worker.prompt
+    assert "System instruction." in worker.prompt
     assert "<organisation>" in worker.prompt
     assert "Organisation instruction." in worker.prompt
     assert "<project>" in worker.prompt

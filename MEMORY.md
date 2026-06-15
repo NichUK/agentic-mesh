@@ -360,3 +360,12 @@ V3 role services now consume both direct `agent.{role}` and role relevance
 `agent.{role}.relevance` inbox messages. Direct work is processed first, then
 project-channel relevance checks, so unmentioned project-channel posts can be
 reviewed by roles without broadening consumers to every stream subject.
+
+V3 agent config materialization now writes a mounted `system.md` prompt
+component. `materialize-agent-configs --system-instructions-file ...` can
+override it; otherwise the default comes from
+`config/prompts/worker/system-security.xml` plus
+`config/prompts/worker/instructions.xml`. Default tool guidance now comes from
+`config/prompts/worker/safe-outputs.xml` before the role-scoped tool catalog is
+appended. This keeps shared agent behavior in prompt config rather than hidden
+inside the runtime image or code path.

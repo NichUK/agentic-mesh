@@ -24,6 +24,7 @@ def test_materialize_agent_config_writes_mounted_files(tmp_path: Path) -> None:
 
     written = materialize_agent_config(
         spec=spec,
+        system_instructions="System rules.",
         role_prompt="You are Project Manager.",
         organisation_instructions="Org rules.",
         project_instructions="Project rules.",
@@ -33,6 +34,7 @@ def test_materialize_agent_config_writes_mounted_files(tmp_path: Path) -> None:
 
     assert {path.name for path in written} == {
         "role.md",
+        "system.md",
         "organisation.md",
         "project.md",
         "tools.md",
@@ -40,6 +42,7 @@ def test_materialize_agent_config_writes_mounted_files(tmp_path: Path) -> None:
         "container.json",
     }
     assert "Project Manager" in (tmp_path / "agent" / "role.md").read_text(encoding="utf-8")
+    assert "System rules." in (tmp_path / "agent" / "system.md").read_text(encoding="utf-8")
     assert "safe-output tools" in (tmp_path / "agent" / "tools.md").read_text(encoding="utf-8")
     assert "requirements" in (tmp_path / "agent" / "raci.json").read_text(encoding="utf-8")
     container = json.loads((tmp_path / "agent" / "container.json").read_text(encoding="utf-8"))
@@ -60,6 +63,7 @@ def test_build_role_instance_config_uses_materialized_prompt_paths(tmp_path: Pat
 
     assert config.role_instance_id == "agentic-mesh-dev.product-manager.1"
     assert config.role_prompt_path == tmp_path / "agent" / "role.md"
+    assert config.system_prompt_path == tmp_path / "agent" / "system.md"
     assert config.organisation_prompt_path == tmp_path / "agent" / "organisation.md"
     assert config.project_prompt_path == tmp_path / "agent" / "project.md"
     assert config.raci_path == tmp_path / "agent" / "raci.json"
@@ -108,6 +112,7 @@ roles:
         runtime_state_dir=tmp_path / "state",
         document_library_root=tmp_path / "documents",
         role_templates_dir=role_templates,
+        system_instructions="System rules.",
         organisation_instructions="Org rules.",
         raci=DEFAULT_SDLC_RACI,
         tool_instructions="Use approved tools.",
@@ -123,6 +128,7 @@ roles:
     assert engineering_2.role_service_config.inbox_consumer == "agentic-mesh-dev.engineering.2"
     assert engineering_2.role_service_config.memory_db_path == tmp_path / "state" / "memory" / "agentic-mesh-dev.engineering.2.sqlite3"
     assert "Build safely." in (tmp_path / "agents" / "engineering" / "2" / "project.md").read_text(encoding="utf-8")
+    assert "System rules." in (tmp_path / "agents" / "engineering" / "2" / "system.md").read_text(encoding="utf-8")
     product_tools = (tmp_path / "agents" / "product-manager" / "1" / "tools.md").read_text(encoding="utf-8")
     assert "Use approved tools." in product_tools
     assert "Role-Scoped Safe-Output Tool Catalog" in product_tools
