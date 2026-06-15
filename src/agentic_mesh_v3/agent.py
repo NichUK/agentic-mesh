@@ -64,6 +64,11 @@ class AgentMemory(Protocol):
         """Record a source-linked memory observation."""
 
 
+class ConversationContext(Protocol):
+    def load_recent(self, conversation_ref: str) -> str:
+        """Load recent conversation context for a connector conversation."""
+
+
 class AgentStatusReporter(Protocol):
     def report(self, status: AgentStatus) -> None:
         """Publish current agent status to the runtime read model."""
@@ -97,6 +102,21 @@ def build_role_memory(config: RoleInstanceConfig) -> AgentMemory:
     return SQLiteRoleMemory(config.memory_db_path)
 
 
+class NullConversationContext:
+    def load_recent(self, conversation_ref: str) -> str:
+        return ""
+
+
+class DatabaseConversationContext:
+    def __init__(self, db: object, *, limit: int = 10) -> None:
+        self.db = db
+        self.limit = limit
+
+    def load_recent(self, conversation_ref: str) -> str:
+        rows = self.db.list_conversation_messages(conversation_ref, limit=self.limit)  # type: ignore[attr-defined]
+        return "\n".join(_conversation_row_summary(row) for row in rows)
+
+
 class EchoWorker:
     """Tiny worker for contract tests; production uses Codex or other adapters."""
 
@@ -112,6 +132,7 @@ class RoleAgentService:
     broker: BrokerAdapter
     worker: AgentWorker
     memory: AgentMemory
+    conversation_context: ConversationContext = field(default_factory=NullConversationContext)
     governance_instructions: GovernanceInstructionSet = field(default_factory=GovernanceInstructionSet)
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
     max_delivery_attempts: int = 3
@@ -231,6 +252,7 @@ class RoleAgentService:
         raci_prompt = _read_optional(self.config.raci_path)
         tools_prompt = _read_optional(self.config.tools_prompt_path)
         memory_summary = self.memory.load_summary(self.config.role_instance_id)
+        conversation_summary = self._conversation_summary(message)
         lines = [
             "<agentic-mesh-v3-agent>",
             f"<role-instance>{self.config.role_instance_id}</role-instance>",
@@ -258,6 +280,9 @@ class RoleAgentService:
                 "<memory>",
                 memory_summary or "No prior role memory recorded.",
                 "</memory>",
+                "<conversation-context>",
+                conversation_summary or "No recent conversation context recorded.",
+                "</conversation-context>",
                 "<message-metadata>",
                 f"<message-id>{message.message_id}</message-id>",
                 f"<subject>{message.subject}</subject>",
@@ -269,6 +294,12 @@ class RoleAgentService:
             ]
         )
         return "\n".join(lines)
+
+    def _conversation_summary(self, message: AgentMessage) -> str:
+        conversation_ref = message.payload.get("conversation_ref")
+        if conversation_ref is None or str(conversation_ref) == "":
+            return ""
+        return self.conversation_context.load_recent(str(conversation_ref))
 
 
 def _message_work_ref(payload: dict[str, object]) -> str | None:
@@ -286,3 +317,12 @@ def _append_optional_section(lines: list[str], name: str, content: str | None) -
     if not content:
         return
     lines.extend([f"<{name}>", content, f"</{name}>"])
+
+
+def _conversation_row_summary(row: dict[str, object]) -> str:
+    thread = row.get("thread_ref")
+    thread_text = f", thread: {thread}" if thread else ""
+    return (
+        f"- [{row.get('connector')}/{row.get('source_type')}] {row.get('sender_ref')}: "
+        f"{row.get('text')} (message: {row.get('message_id')}{thread_text})"
+    )

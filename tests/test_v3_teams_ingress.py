@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
+from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.project_config import load_project_config
+from agentic_mesh_v3.teams_ingress import DatabaseConversationRecorder
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 from agentic_mesh_v3.teams_ingress import TeamsRoleIdentity
 from agentic_mesh_v3.teams_ingress import normalize_teams_activity
@@ -119,6 +121,41 @@ def test_teams_activity_router_normalizes_and_routes_to_agent_inbox() -> None:
     payload = broker.fetch("agent-inbox", "pm")[0].payload
     assert payload["route_type"] == "role_dm"
     assert payload["conversation_ref"] == "dm:product-manager"
+
+
+def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    db_path = tmp_path / "v3.sqlite3"
+    router = TeamsActivityRouter(
+        LocalTeamsBridge(broker),
+        role_identities=(
+            TeamsRoleIdentity("product-manager", "AM-Product Manager", bot_id="bot-product"),
+        ),
+        conversation_recorder=DatabaseConversationRecorder(db_path),
+    )
+
+    subjects = router.route_activity(
+        {
+            "id": "msg-3",
+            "text": "Give me a status update.",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        }
+    )
+
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        messages = db.list_conversation_messages("dm:product-manager")
+    finally:
+        db.close()
+
+    assert subjects == ["agent.product-manager"]
+    assert messages[0]["message_id"] == "msg-3"
+    assert messages[0]["text"] == "Give me a status update."
+    assert messages[0]["sender_ref"] == "user-1"
 
 
 def test_teams_role_identities_load_from_project_config(tmp_path) -> None:

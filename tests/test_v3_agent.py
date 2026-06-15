@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
+from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import InMemoryRoleMemory
 from agentic_mesh_v3.agent import RoleAgentService
@@ -236,6 +237,45 @@ def test_role_agent_prompt_loads_runtime_database_role_memory(tmp_path: Path) ->
         assert result.status == "completed"
         assert "Sponsor prefers compact dashboard rows." in worker.prompt
         assert "source: work-123/index.md" in worker.prompt
+    finally:
+        db.close()
+
+
+def test_role_agent_prompt_loads_recent_conversation_context(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {"request": "status", "conversation_ref": "dm:product-manager"},
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.record_conversation_message(
+            message_id="msg-1",
+            connector="teams",
+            conversation_ref="dm:product-manager",
+            source_type="dm",
+            sender_ref="sponsor",
+            text="Give me a status update.",
+        )
+        worker = CapturingWorker()
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=worker,
+            memory=InMemoryRoleMemory(),
+            conversation_context=DatabaseConversationContext(db),
+        )
+
+        result = service.run_once()
+
+        assert result is not None
+        assert result.status == "completed"
+        assert "<conversation-context>" in worker.prompt
+        assert "Give me a status update." in worker.prompt
+        assert "message: msg-1" in worker.prompt
     finally:
         db.close()
 

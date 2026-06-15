@@ -155,6 +155,17 @@ class V3Database:
                   UNIQUE(role_instance_id, summary, source_ref)
                 );
 
+                CREATE TABLE IF NOT EXISTS conversations (
+                  message_id TEXT PRIMARY KEY,
+                  connector TEXT NOT NULL,
+                  conversation_ref TEXT NOT NULL,
+                  thread_ref TEXT,
+                  source_type TEXT NOT NULL,
+                  sender_ref TEXT NOT NULL,
+                  text TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS governance_records (
                   record_id TEXT PRIMARY KEY,
                   work_item_id TEXT NOT NULL,
@@ -614,6 +625,55 @@ class V3Database:
                 (role_instance_id,),
             )
         return [dict(row) for row in rows]
+
+    def record_conversation_message(
+        self,
+        *,
+        message_id: str,
+        connector: str,
+        conversation_ref: str,
+        source_type: str,
+        sender_ref: str,
+        text: str,
+        thread_ref: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT OR IGNORE INTO conversations(
+                  message_id, connector, conversation_ref, thread_ref, source_type, sender_ref, text
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (message_id, connector, conversation_ref, thread_ref, source_type, sender_ref, text),
+            )
+            self.record_event(
+                "conversation.message_recorded",
+                "conversation",
+                conversation_ref,
+                {
+                    "message_id": message_id,
+                    "connector": connector,
+                    "source_type": source_type,
+                    "sender_ref": sender_ref,
+                    "thread_ref": thread_ref,
+                },
+            )
+
+    def list_conversation_messages(self, conversation_ref: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        rows = self.connection.execute(
+            """
+            SELECT message_id, connector, conversation_ref, thread_ref, source_type, sender_ref, text, created_at
+            FROM conversations
+            WHERE conversation_ref=?
+            ORDER BY created_at DESC, message_id DESC
+            LIMIT ?
+            """,
+            (conversation_ref, limit),
+        )
+        return list(reversed([dict(row) for row in rows]))
 
     def status_snapshot(self, *, project_id: str) -> ReportingSnapshot:
         backlog = tuple(

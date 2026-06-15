@@ -310,3 +310,8 @@ broker is configured. `handoff.require`, `consult.request`, and
 `informed.update` still record governance evidence, but they can also enqueue a
 connector-neutral message on `agent.{target_role}` so agents, not the runtime,
 drive follow-on work.
+
+V3 Teams ingress now records inbound connector-neutral messages into the
+runtime conversation read model, and role-agent prompts load recent messages
+for the current `conversation_ref`. This keeps DMs and project-channel
+conversation context available across stateless worker executions.

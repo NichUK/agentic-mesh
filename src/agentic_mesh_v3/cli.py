@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from agentic_mesh_v3.agent import AgentMemory
+from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import RoleAgentService
@@ -38,6 +39,7 @@ from agentic_mesh_v3.project_config import V3WorkerConfig
 from agentic_mesh_v3.server import serve
 from agentic_mesh_v3.sweeps import ProjectSweepService
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
+from agentic_mesh_v3.teams_ingress import DatabaseConversationRecorder
 from agentic_mesh_v3.teams_ingress import teams_role_identities_from_project_config
 from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
 from agentic_mesh_v3.tool_catalog import tool_catalog_for_role
@@ -477,9 +479,11 @@ def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | No
     broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
     role_ids = tuple(role.role_id for role in config.roles)
     _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=role_ids)
+    db_path = getattr(args, "db", None)
     return TeamsActivityRouter(
         LocalTeamsBridge(broker, stream=config.broker.stream, role_ids=role_ids),
         role_identities=teams_role_identities_from_project_config(config),
+        conversation_recorder=DatabaseConversationRecorder(db_path) if db_path is not None else None,
     )
 
 
@@ -550,6 +554,7 @@ def _run_agent_once(args: argparse.Namespace):
             project_config=config,
             broker=broker,
             memory=DatabaseRoleMemory(db),
+            conversation_context=DatabaseConversationContext(db),
             status_reporter=DatabaseAgentStatusReporter(db),
         )
         return service.run_until_idle(max_messages=args.max_messages)
@@ -581,6 +586,7 @@ def _run_agent_service(args: argparse.Namespace):
             project_config=config,
             broker=broker,
             memory=DatabaseRoleMemory(db),
+            conversation_context=DatabaseConversationContext(db),
             status_reporter=DatabaseAgentStatusReporter(db),
         )
         idle_since: float | None = None
@@ -610,6 +616,7 @@ def _build_role_agent_service(
     project_config: V3ProjectConfig,
     broker: BrokerAdapter,
     memory: AgentMemory,
+    conversation_context: DatabaseConversationContext,
     status_reporter: AgentStatusReporter | None = None,
 ) -> RoleAgentService:
     service_config = build_role_instance_config(
@@ -628,6 +635,7 @@ def _build_role_agent_service(
         broker=broker,
         worker=_worker_from_args(args, project_config=project_config),
         memory=memory,
+        conversation_context=conversation_context,
         max_delivery_attempts=args.max_delivery_attempts,
         **kwargs,
     )
