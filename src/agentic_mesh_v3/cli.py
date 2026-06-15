@@ -6,6 +6,7 @@ from pathlib import Path
 
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
+from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.server import serve
 from agentic_mesh_v3.tools import V3ToolService
@@ -23,6 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("status-json")
     demo_parser = subparsers.add_parser("demo-slice")
     demo_parser.add_argument("--document-library-root", type=Path)
+
+    dogfood_parser = subparsers.add_parser("local-e2e-dogfood")
+    dogfood_parser.add_argument("--document-library-root", type=Path, required=True)
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
@@ -115,6 +119,27 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             db.close()
         print(json.dumps({"database": str(args.db), "status": "demo_slice_complete"}))
+        return 0
+    if args.command == "local-e2e-dogfood":
+        db = V3Database(args.db)
+        try:
+            db.migrate()
+            work_item_id = run_local_e2e_dogfood_slice(
+                db=db,
+                project_id=args.project_id,
+                document_library=LocalDocumentLibraryAdapter(args.document_library_root),
+            )
+        finally:
+            db.close()
+        print(
+            json.dumps(
+                {
+                    "database": str(args.db),
+                    "status": "local_e2e_dogfood_complete",
+                    "work_item_id": work_item_id,
+                }
+            )
+        )
         return 0
     if args.command == "validate-topology":
         topology = V3Topology(
