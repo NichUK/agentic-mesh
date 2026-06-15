@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 from dataclasses import dataclass
 
 
@@ -22,6 +23,50 @@ class WorkItemStatus:
     owner_role: str
     next_action: str
     artifact_count: int = 0
+
+
+@dataclass(frozen=True)
+class ArtifactStatus:
+    filename: str
+    title: str
+    relative_path: str
+    document_type: str
+    status: str
+    created_by_role: str
+
+
+@dataclass(frozen=True)
+class ApprovalStatus:
+    approval_id: str
+    requested_by_role: str
+    question: str
+    status: str
+    response: str | None = None
+
+
+@dataclass(frozen=True)
+class ReleaseStatus:
+    release_id: str
+    status: str
+    scope: str
+    deployment_result: str
+    rollback_plan: str
+    residual_risks: str
+
+
+@dataclass(frozen=True)
+class WorkItemDetail:
+    work_item_id: str
+    title: str
+    description: str
+    state: str
+    owner_role: str
+    current_phase: str | None
+    next_action: str
+    governance: dict[str, object]
+    artifacts: tuple[ArtifactStatus, ...] = ()
+    approvals: tuple[ApprovalStatus, ...] = ()
+    releases: tuple[ReleaseStatus, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -94,11 +139,44 @@ def render_work_item_page(snapshot: ReportingSnapshot, work_item_id: str) -> str
     )
 
 
+def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: str) -> str:
+    if detail is None:
+        return _page("Work Item Not Found", [f"<h1>Work item not found</h1><p>{html.escape(work_item_id)}</p>"])
+    return _page(
+        detail.title,
+        [
+            f"<h1>{html.escape(detail.title)}</h1>",
+            "<section>",
+            f"<p><strong>Work item:</strong> {html.escape(detail.work_item_id)}</p>",
+            f"<p><strong>Description:</strong> {html.escape(detail.description)}</p>",
+            f"<p><strong>State:</strong> {html.escape(detail.state)}</p>",
+            f"<p><strong>Owner:</strong> {html.escape(detail.owner_role)}</p>",
+            f"<p><strong>Phase:</strong> {html.escape(detail.current_phase or '')}</p>",
+            f"<p><strong>Next action:</strong> {html.escape(detail.next_action)}</p>",
+            "</section>",
+            "<h2>Governance</h2>",
+            f"<pre>{html.escape(json.dumps(detail.governance, indent=2, sort_keys=True))}</pre>",
+            "<h2>Artifacts</h2>",
+            _artifact_table(detail.work_item_id, detail.artifacts),
+            "<h2>Approvals</h2>",
+            _approval_table(detail.approvals),
+            "<h2>Releases</h2>",
+            _release_table(detail.releases),
+        ],
+    )
+
+
 def artifact_viewer_path(work_item_id: str, artifact_filename: str) -> str:
     clean_name = artifact_filename.replace("\\", "/").lstrip("/")
     if "\x00" in clean_name or clean_name.startswith("../") or "/../" in clean_name:
         raise ValueError("invalid artifact filename")
     return f"work-items/{work_item_id}/{clean_name}"
+
+
+def artifact_viewer_url(work_item_id: str, artifact_filename: str) -> str:
+    from urllib.parse import quote
+
+    return f"/artifact-viewer/{quote(work_item_id)}/{quote(artifact_filename)}"
 
 
 def _backlog_table(items: tuple[BacklogItemStatus, ...]) -> str:
@@ -128,6 +206,63 @@ def _work_table(items: tuple[WorkItemStatus, ...]) -> str:
             f"<td>{html.escape(item.next_action)}</td>"
             "</tr>"
         )
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _artifact_table(work_item_id: str, items: tuple[ArtifactStatus, ...]) -> str:
+    rows = [
+        "<tr><th>Artifact</th><th>Type</th><th>Status</th><th>Created By</th><th>Path</th></tr>"
+    ]
+    for item in items:
+        url = artifact_viewer_url(work_item_id, item.filename)
+        rows.append(
+            "<tr>"
+            f"<td><a href=\"{html.escape(url)}\">{html.escape(item.title)}</a></td>"
+            f"<td>{html.escape(item.document_type)}</td>"
+            f"<td>{html.escape(item.status)}</td>"
+            f"<td>{html.escape(item.created_by_role)}</td>"
+            f"<td>{html.escape(item.relative_path)}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"5\">No artifacts recorded.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _approval_table(items: tuple[ApprovalStatus, ...]) -> str:
+    rows = ["<tr><th>Approval</th><th>Requested By</th><th>Status</th><th>Question</th><th>Response</th></tr>"]
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.approval_id)}</td>"
+            f"<td>{html.escape(item.requested_by_role)}</td>"
+            f"<td>{html.escape(item.status)}</td>"
+            f"<td>{html.escape(item.question)}</td>"
+            f"<td>{html.escape(item.response or '')}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"5\">No approvals recorded.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _release_table(items: tuple[ReleaseStatus, ...]) -> str:
+    rows = [
+        "<tr><th>Release</th><th>Status</th><th>Scope</th><th>Deployment</th><th>Rollback</th><th>Risks</th></tr>"
+    ]
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.release_id)}</td>"
+            f"<td>{html.escape(item.status)}</td>"
+            f"<td>{html.escape(item.scope)}</td>"
+            f"<td>{html.escape(item.deployment_result)}</td>"
+            f"<td>{html.escape(item.rollback_plan)}</td>"
+            f"<td>{html.escape(item.residual_risks)}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"6\">No releases recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 

@@ -7,8 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from agentic_mesh_v3.reporting import AgentStatus
+from agentic_mesh_v3.reporting import ApprovalStatus
+from agentic_mesh_v3.reporting import ArtifactStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
+from agentic_mesh_v3.reporting import ReleaseStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
+from agentic_mesh_v3.reporting import WorkItemDetail
 from agentic_mesh_v3.reporting import WorkItemStatus
 from agentic_mesh_v3.state_machine import StateTransition
 from agentic_mesh_v3.state_machine import validate_state
@@ -596,6 +600,87 @@ class V3Database:
             (work_item_id, filename),
         ).fetchone()
         return dict(row) if row is not None else None
+
+    def work_item_detail(self, work_item_id: str) -> WorkItemDetail | None:
+        work = self.connection.execute(
+            """
+            SELECT work_item_id, title, description, state, owner_role, current_phase, next_action, governance_json
+            FROM work_items
+            WHERE work_item_id=?
+            """,
+            (work_item_id,),
+        ).fetchone()
+        if work is None:
+            return None
+        artifacts = tuple(
+            ArtifactStatus(
+                filename=row["filename"],
+                title=row["title"],
+                relative_path=row["relative_path"],
+                document_type=row["document_type"],
+                status=row["status"],
+                created_by_role=row["created_by_role"],
+            )
+            for row in self.connection.execute(
+                """
+                SELECT filename, title, relative_path, document_type, status, created_by_role
+                FROM artifacts
+                WHERE work_item_id=?
+                ORDER BY created_at ASC, filename ASC
+                """,
+                (work_item_id,),
+            )
+        )
+        approvals = tuple(
+            ApprovalStatus(
+                approval_id=row["approval_id"],
+                requested_by_role=row["requested_by_role"],
+                question=row["question"],
+                status=row["status"],
+                response=row["response"],
+            )
+            for row in self.connection.execute(
+                """
+                SELECT approval_id, requested_by_role, question, status, response
+                FROM approvals
+                WHERE work_item_id=?
+                ORDER BY created_at ASC, approval_id ASC
+                """,
+                (work_item_id,),
+            )
+        )
+        releases = tuple(
+            ReleaseStatus(
+                release_id=row["release_id"],
+                status=row["status"],
+                scope=row["scope"],
+                deployment_result=row["deployment_result"],
+                rollback_plan=row["rollback_plan"],
+                residual_risks=row["residual_risks"],
+            )
+            for row in self.connection.execute(
+                """
+                SELECT release_id, status, scope, deployment_result, rollback_plan, residual_risks
+                FROM releases
+                WHERE work_item_id=?
+                ORDER BY created_at ASC, release_id ASC
+                """,
+                (work_item_id,),
+            )
+        )
+        return WorkItemDetail(
+            work_item_id=work["work_item_id"],
+            title=work["title"],
+            description=work["description"],
+            state=work["state"],
+            owner_role=work["owner_role"],
+            current_phase=work["current_phase"],
+            next_action=work["next_action"],
+            governance=json.loads(work["governance_json"] or "{}"),
+            artifacts=artifacts,
+            approvals=approvals,
+            releases=releases,
+        )
 
     def list_tool_calls(self) -> list[dict[str, Any]]:
         return [
