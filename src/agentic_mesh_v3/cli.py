@@ -34,6 +34,7 @@ from agentic_mesh_v3.sweeps import ProjectSweepService
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 from agentic_mesh_v3.teams_ingress import teams_role_identities_from_project_config
 from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
+from agentic_mesh_v3.tool_catalog import tool_catalog_for_role
 from agentic_mesh_v3.tools import V3ToolService
 from agentic_mesh_v3.topology import V3Topology
 from agentic_mesh_v3.topology import validate_topology
@@ -116,6 +117,9 @@ def main(argv: list[str] | None = None) -> int:
     tool_parser.add_argument("--payload-json", required=True)
     tool_parser.add_argument("--document-library-root", type=Path)
     tool_parser.add_argument("--terminal", action="store_true")
+
+    catalog_parser = subparsers.add_parser("tool-catalog")
+    catalog_parser.add_argument("--role-id", required=True)
 
     subparsers.add_parser("run-tool-mcp-stdio")
 
@@ -226,6 +230,18 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result.__dict__, indent=2))
         finally:
             db.close()
+        return 0
+    if args.command == "tool-catalog":
+        print(
+            json.dumps(
+                {
+                    "role_id": args.role_id,
+                    "tools": [entry.to_dict() for entry in tool_catalog_for_role(args.role_id)],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     if args.command == "run-tool-mcp-stdio":
         db = V3Database(args.db)

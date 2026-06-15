@@ -156,9 +156,12 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   JetStream adapter/factory.
 - Agent tools: V3 exposes tool calls through CLI and MCP-compatible JSON-RPC
   stdio so Codex, other workers, and external automation can use the same
-  approved pathway. Stakeholder-facing delivery tools call the configured
-  bridge and fail when no bridge is configured; agents must not receive
-  successful tool results for messages that were not handed to a connector.
+  approved pathway. Tool discovery is available through `tool-catalog
+  --role-id ...` and the read-only `agentic_mesh_v3.tool_catalog` MCP tool, so
+  agents can inspect their role-scoped permissions instead of guessing tool
+  names. Stakeholder-facing delivery tools call the configured bridge and fail
+  when no bridge is configured; agents must not receive successful tool results
+  for messages that were not handed to a connector.
   `status.reply` remains valid as an audit-only terminal record, but when it
   carries target metadata it sends the Markdown reply through the bridge.
   `approval.request` records the approval request and, when target metadata is

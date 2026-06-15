@@ -174,3 +174,8 @@ The `materialize-agent-configs` CLI command now materializes per-role agent
 config folders from `project.yaml`, role templates, organisation/tool
 instruction files, and explicit external path mounts. It can also write the
 Compose role-services YAML in the same run via `--compose-output`.
+
+V3 safe-output tools are now discoverable through a shared role-scoped tool
+catalog. Operators can run `agentic-mesh-v3 tool-catalog --role-id <role>`,
+and MCP-native agents can call the read-only `agentic_mesh_v3.tool_catalog`
+tool before emitting durable safe-output calls.

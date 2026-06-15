@@ -127,6 +127,17 @@ roles:
     assert (docs_root / "work-items" / "work-1" / "index.md").exists()
 
 
+def test_cli_tool_catalog_lists_role_allowed_tools(capsys) -> None:  # type: ignore[no-untyped-def]
+    result = main(["tool-catalog", "--role-id", "release-manager"])
+
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert '"role_id": "release-manager"' in output
+    assert '"tool_name": "release.deploy"' in output
+    assert '"allowed": true' in output
+
+
 def test_cli_teams_activity_router_is_none_without_project_config() -> None:
     assert _teams_activity_router(argparse.Namespace(project_config=None)) is None
 
