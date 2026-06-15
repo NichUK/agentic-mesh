@@ -1,9 +1,12 @@
+from pathlib import Path
+
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import GovernanceInstructionSet
 from agentic_mesh_v3.governance import RaciAssignment
 from agentic_mesh_v3.governance import RaciMatrix
 from agentic_mesh_v3.governance import evaluate_governance_checklist
+from agentic_mesh_v3.governance import load_raci_matrix_from_flow
 
 
 def test_default_raci_has_one_accountable_per_phase() -> None:
@@ -30,6 +33,17 @@ def test_raci_rejects_duplicate_phase() -> None:
         assert "duplicate RACI phase" in str(exc)
     else:
         raise AssertionError("duplicate phase should fail validation")
+
+
+def test_load_raci_matrix_from_flow_reads_configured_flow() -> None:
+    matrix = load_raci_matrix_from_flow(Path("config/flows/sdlc-v3.yaml"))
+
+    matrix.validate()
+    deployment = matrix.for_phase("deployment")
+    assert deployment.accountable == "release-manager"
+    assert deployment.responsible == ("platform-engineer", "engineering")
+    assert "qa-engineer" in deployment.consulted
+    assert "project-manager" in deployment.informed
 
 
 def test_governance_context_exports_handoff_requirements() -> None:
