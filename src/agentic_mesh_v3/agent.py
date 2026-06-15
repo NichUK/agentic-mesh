@@ -11,6 +11,7 @@ from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import GovernanceInstructionSet
 from agentic_mesh_v3.memory import SQLiteRoleMemory
+from agentic_mesh_v3.reporting import AgentStatus
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,24 @@ class AgentMemory(Protocol):
         """Record a source-linked memory observation."""
 
 
+class AgentStatusReporter(Protocol):
+    def report(self, status: AgentStatus) -> None:
+        """Publish current agent status to the runtime read model."""
+
+
+class NullAgentStatusReporter:
+    def report(self, status: AgentStatus) -> None:
+        return
+
+
+class DatabaseAgentStatusReporter:
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+    def report(self, status: AgentStatus) -> None:
+        self.db.upsert_agent_status(status)  # type: ignore[attr-defined]
+
+
 class InMemoryRoleMemory:
     def __init__(self) -> None:
         self._memory: dict[str, list[str]] = {}
@@ -87,6 +106,23 @@ class RoleAgentService:
     worker: AgentWorker
     memory: AgentMemory
     governance_instructions: GovernanceInstructionSet = field(default_factory=GovernanceInstructionSet)
+    status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
+
+    def run_until_idle(
+        self,
+        *,
+        max_messages: int = 10,
+        governance_context: GovernanceContext | None = None,
+    ) -> tuple[AgentRunResult, ...]:
+        if max_messages < 1:
+            raise ValueError("max_messages must be positive")
+        results: list[AgentRunResult] = []
+        for _ in range(max_messages):
+            result = self.run_once(governance_context=governance_context)
+            if result is None:
+                break
+            results.append(result)
+        return tuple(results)
 
     def run_once(self, *, governance_context: GovernanceContext | None = None) -> AgentRunResult | None:
         self.broker.ensure_consumer(
@@ -94,10 +130,13 @@ class RoleAgentService:
             self.config.inbox_consumer,
             filter_subject=f"agent.{self.config.role_id}",
         )
+        self._report_status(container_state="running", current_work=None)
         messages = self.broker.fetch(self.config.inbox_stream, self.config.inbox_consumer, batch=1)
         if not messages:
+            self._report_status(container_state="running", current_work=None)
             return None
         message = messages[0]
+        self._report_status(container_state="running", current_work=_message_work_ref(message.payload))
         agent_message = AgentMessage(
             message_id=message.message_id,
             subject=message.subject,
@@ -113,6 +152,7 @@ class RoleAgentService:
                 f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(tool_calls)} tool calls",
             )
             self.broker.ack(self.config.inbox_stream, self.config.inbox_consumer, message.message_id)
+            self._report_status(container_state="running", current_work=None)
             return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=tuple(tool_calls))
         except Exception as exc:
             self.broker.nack(
@@ -121,7 +161,26 @@ class RoleAgentService:
                 message.message_id,
                 reason=str(exc),
             )
+            self._report_status(container_state="running", current_work=None, governance_waits=(str(exc),))
             return AgentRunResult(message_id=message.message_id, status="failed", error=str(exc))
+
+    def _report_status(
+        self,
+        *,
+        container_state: str,
+        current_work: str | None,
+        governance_waits: tuple[str, ...] = (),
+    ) -> None:
+        self.status_reporter.report(
+            AgentStatus(
+                role_instance_id=self.config.role_instance_id,
+                container_state=container_state,
+                heartbeat_at=datetime.now(timezone.utc).isoformat(),
+                current_work=current_work,
+                inbox_depth=self.broker.depth(self.config.inbox_stream).pending,
+                governance_waits=governance_waits,
+            )
+        )
 
     def _build_prompt(
         self, message: AgentMessage, *, governance_context: GovernanceContext | None = None
@@ -156,3 +215,8 @@ class RoleAgentService:
             ]
         )
         return "\n".join(lines)
+
+
+def _message_work_ref(payload: dict[str, object]) -> str | None:
+    value = payload.get("work_item_id") or payload.get("source_message_id")
+    return None if value is None else str(value)
