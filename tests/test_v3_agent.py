@@ -115,6 +115,54 @@ def test_role_agent_run_until_idle_processes_available_messages(tmp_path: Path) 
     assert broker.depth("agent-inbox").pending == 0
 
 
+def test_role_agent_processes_relevance_inbox_messages(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager", "agent.product-manager.relevance"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.product-manager.relevance",
+        {"source_message_id": "msg-1", "route_type": "project_channel_relevance_check"},
+    )
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert result.message_id == published.message_id
+    assert "<subject>agent.product-manager.relevance</subject>" in worker.prompt
+    assert "project_channel_relevance_check" in worker.prompt
+    assert broker.depth("agent-inbox").pending == 0
+
+
+def test_role_agent_prioritizes_direct_messages_over_relevance_checks(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager", "agent.product-manager.relevance"])
+    relevance = broker.publish("agent-inbox", "agent.product-manager.relevance", {"source_message_id": "msg-1"})
+    direct = broker.publish("agent-inbox", "agent.product-manager", {"work_item_id": "work-1"})
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=EchoWorker(),
+        memory=InMemoryRoleMemory(),
+    )
+
+    first = service.run_once()
+    second = service.run_once()
+
+    assert first is not None
+    assert first.message_id == direct.message_id
+    assert second is not None
+    assert second.message_id == relevance.message_id
+    assert broker.depth("agent-inbox").pending == 0
+
+
 def test_database_status_reporter_updates_agent_read_model(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])

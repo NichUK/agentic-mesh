@@ -285,7 +285,10 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
 - Role service loop: `run-agent-service` keeps a configured role instance
   alive, polls its broker inbox, records heartbeat/status into the reporting
   database, and can exit after an idle window so the runtime can hibernate the
-  container without losing role identity or memory.
+  container without losing role identity or memory. Each role service consumes
+  direct `agent.{role}` messages first and then `agent.{role}.relevance`
+  messages, so unmentioned project-channel posts can be relevance-checked by
+  agents without letting a role consume another role's inbox.
 - Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
   routing, and Graph-backed outbound message delivery with injectable transport.
   Project-channel messages are retained as shared `project.context`.
