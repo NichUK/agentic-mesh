@@ -344,7 +344,12 @@ def main(argv: list[str] | None = None) -> int:
         db = V3Database(args.db)
         try:
             db.migrate()
-            run_v3_mcp_stdio(db)
+            service = V3ToolService(
+                db,
+                _document_library_adapter(args),
+                deployment_targets=_deployment_targets(args),
+            )
+            run_v3_mcp_stdio(db, service=service)
         finally:
             db.close()
         return 0

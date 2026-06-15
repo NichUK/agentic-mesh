@@ -1,7 +1,9 @@
 from pathlib import Path
 import argparse
+import json
 import subprocess
 import sys
+from io import StringIO
 
 from agentic_mesh_v3.cli import _teams_activity_router
 from agentic_mesh_v3.cli import _broker_inspection_payload
@@ -198,6 +200,64 @@ roles:
     assert detail is not None
     assert detail.releases[0].status == "deployed"
     assert "configured deploy" in detail.releases[0].deployment_result
+
+
+def test_cli_mcp_stdio_uses_project_config_document_library(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    docs_root = tmp_path / "documents"
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+roles:
+  project-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    request = {
+        "jsonrpc": "2.0",
+        "id": "mcp-docs",
+        "method": "tools/call",
+        "params": {
+            "name": "agentic_mesh_v3.tool_call",
+            "arguments": {
+                "role_instance_id": "agentic-mesh-dev.project-manager.1",
+                "tool_name": "document.write_work_item_index",
+                "payload": {
+                    "work_item_id": "work-1",
+                    "title": "Work One",
+                    "status": "active",
+                    "owner_role": "project-manager",
+                    "raci_summary": "PM A/R",
+                    "governance_state": "ready",
+                    "next_action": "Continue project control.",
+                },
+            },
+        },
+    }
+    output = StringIO()
+    monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(request) + "\n"))
+    monkeypatch.setattr(sys, "stdout", output)
+
+    result = main(
+        [
+            "--db",
+            str(tmp_path / "v3.sqlite3"),
+            "--project-config",
+            str(project_config),
+            "run-tool-mcp-stdio",
+        ]
+    )
+
+    response = json.loads(output.getvalue())
+    assert result == 0
+    assert response["result"]["structuredContent"]["tool_name"] == "document.write_work_item_index"
+    assert (docs_root / "work-items" / "work-1" / "index.md").exists()
 
 
 def test_cli_tool_catalog_lists_role_allowed_tools(capsys) -> None:  # type: ignore[no-untyped-def]
