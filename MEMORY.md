@@ -249,3 +249,7 @@ The V3 CLI now exposes read-only broker inspection through `broker-inspect`.
 It loads the configured project broker and reports pending and dead-lettered
 messages as JSON without claiming or mutating work, giving operators a standard
 way to inspect inbox/recovery state.
+
+Work-item document index writes now refresh `/documents/work-items/index.md`
+automatically. Agents still own the content of each work-item dossier, but the
+root browse index no longer depends on a second manual tool call.

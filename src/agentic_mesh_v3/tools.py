@@ -359,6 +359,7 @@ class V3ToolService:
             next_action=str(payload.get("next_action") or ""),
         )
         ref = write_work_item_index(self.document_library, index)
+        self._write_root_work_item_index()
         self.db.add_artifact(
             artifact_id=f"artifact-{call_id}",
             work_item_id=work_item_id,
