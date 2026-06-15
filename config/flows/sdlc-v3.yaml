@@ -15,6 +15,14 @@ governance:
     - security_posture_change
     - delivery_commitment_change
   disagreement_policy: written_review_loops_then_project_manager_or_sponsor_mediation
+  specialist_consultation_triggers:
+    prompt-engineer:
+      - prompt_components_changed
+      - role_instructions_changed
+      - safe_output_tool_guidance_changed
+      - context_loading_changed
+      - memory_instructions_changed
+      - prompt_driven_behaviour_changed
 backlog_ownership:
   product_priority_owner: product-manager
   queue_health_owner: project-manager
@@ -42,7 +50,7 @@ raci:
   - phase: development
     accountable: engineering
     responsible: [engineering]
-    consulted: [product-manager, solution-architect, security-architect, qa-engineer, platform-engineer, prompt-engineer]
+    consulted: [product-manager, solution-architect, security-architect, qa-engineer, platform-engineer]
     informed: [project-manager, delivery-manager, stakeholders]
   - phase: testing-and-qa
     accountable: qa-engineer
