@@ -91,7 +91,10 @@ Project Manager sweeps are read-only health inspections over work-item state.
 They flag blocked, waiting, recovering, and stale non-terminal work so the
 Project Manager agent can chase blockers or coordinate handoffs through normal
 tools. The sweep service does not auto-close, auto-reopen, or silently advance
-work.
+work. Sweep findings can be published to the Project Manager inbox as
+`project_sweep.finding` messages, giving the agent the work item, owner,
+reason, next action, and required follow-up while preserving agent ownership of
+the response.
 
 ## Governance
 
