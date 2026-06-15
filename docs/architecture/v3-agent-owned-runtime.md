@@ -78,6 +78,11 @@ Manager owns release/deploy tools. Roles can request out-of-flow help through
 consult/handoff tools, but cannot silently execute another role's specialist
 authority.
 
+Work-item state is explicit and validated. V3 states are `queued`, `shaping`,
+`ready`, `active`, `waiting_human`, `waiting_agent`, `waiting_external`,
+`blocked`, `recovering`, `release_review`, `deploying`, `released`, `closed`,
+`canceled`, `superseded`, and `failed_terminal`.
+
 ## Reporting
 
 Initial reporting routes are:

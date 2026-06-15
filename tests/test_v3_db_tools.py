@@ -119,6 +119,27 @@ def test_v3_tool_service_rejects_disallowed_or_unknown_tool(tmp_path: Path) -> N
         db.close()
 
 
+def test_v3_db_rejects_invalid_work_item_transition(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Closed work",
+            description="Already closed.",
+            state="closed",
+            owner_role="project-manager",
+        )
+        try:
+            db.update_work_item_state(work_item_id="work-1", state="active")
+        except ValueError as exc:
+            assert "closed -> active" in str(exc)
+        else:
+            raise AssertionError("closed work should not reopen through normal transition")
+    finally:
+        db.close()
+
+
 def test_v3_tool_service_release_deploy_uses_configured_target(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
