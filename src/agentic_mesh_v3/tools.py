@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from agentic_mesh_v3.authority import ToolAuthorityPolicy
 from agentic_mesh_v3.authority import role_from_instance
+from agentic_mesh_v3.connectors import OutboundMessage
+from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
@@ -41,12 +43,14 @@ class V3ToolService:
         db: V3Database,
         document_library: DocumentLibraryAdapter | None = None,
         deployment_targets: dict[str, DeploymentTarget] | None = None,
+        stakeholder_bridge: StakeholderBridge | None = None,
         authority_policy: ToolAuthorityPolicy | None = None,
         telemetry: V3Telemetry | None = None,
     ) -> None:
         self.db = db
         self.document_library = document_library
         self.deployment_targets = deployment_targets or {}
+        self.stakeholder_bridge = stakeholder_bridge
         self.authority_policy = authority_policy or ToolAuthorityPolicy.default()
         self.telemetry = telemetry or get_telemetry()
 
@@ -212,6 +216,8 @@ class V3ToolService:
                 summary=_required(payload, "summary"),
                 source_ref=_required(payload, "source_ref"),
             )
+        elif tool_name == "messaging.send":
+            self._send_message(payload)
         elif tool_name in {
             "handoff.require",
             "consult.request",
@@ -225,13 +231,23 @@ class V3ToolService:
                 tool_name=tool_name,
                 payload=payload,
             )
-        elif tool_name in TERMINAL_TOOLS or tool_name in {
-            "messaging.send",
-            "status.update",
-        }:
+        elif tool_name in TERMINAL_TOOLS or tool_name == "status.update":
             return
         else:
             raise ValueError(f"unknown V3 tool: {tool_name}")
+
+    def _send_message(self, payload: dict[str, Any]) -> None:
+        if self.stakeholder_bridge is None:
+            raise ValueError("stakeholder bridge is not configured")
+        self.stakeholder_bridge.send(
+            OutboundMessage(
+                connector=_required(payload, "connector"),
+                target_ref=_required(payload, "target_ref"),
+                text_markdown=_required(payload, "text_markdown"),
+                thread_ref=_optional(payload.get("thread_ref")),
+                importance=str(payload.get("importance") or "normal"),
+            )
+        )
 
     def _write_work_item_index(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         if self.document_library is None:

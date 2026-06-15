@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from agentic_mesh_v3.broker import InMemoryBrokerAdapter
+from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import NoDeploymentDisposition
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
@@ -280,6 +282,54 @@ def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None
     assert record.target_ref == "qa-engineer"
     assert record.status == "requested"
     assert record.summary == "Please review the acceptance criteria."
+
+
+def test_v3_tool_service_messaging_send_uses_stakeholder_bridge(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        result = V3ToolService(db, stakeholder_bridge=bridge).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="messaging.send",
+            payload={
+                "connector": "teams",
+                "target_ref": "dm:sponsor",
+                "text_markdown": "**Please review**",
+                "thread_ref": "thread-1",
+                "importance": "high",
+            },
+        )
+    finally:
+        db.close()
+
+    assert result.tool_name == "messaging.send"
+    assert bridge.deliveries[0].target_ref == "dm:sponsor"
+    assert bridge.deliveries[0].text_markdown == "**Please review**"
+    assert bridge.deliveries[0].importance == "high"
+
+
+def test_v3_tool_service_messaging_send_requires_bridge(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="messaging.send",
+                payload={
+                    "connector": "teams",
+                    "target_ref": "dm:sponsor",
+                    "text_markdown": "This should not pretend to send.",
+                },
+            )
+        except ValueError as exc:
+            assert "stakeholder bridge is not configured" in str(exc)
+        else:
+            raise AssertionError("messaging.send should require a stakeholder bridge")
+    finally:
+        db.close()
 
 
 def test_v3_db_records_approval_response(tmp_path: Path) -> None:
