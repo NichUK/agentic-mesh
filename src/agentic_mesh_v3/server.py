@@ -38,6 +38,12 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         if path == "/agents":
             self._send_html(self._render_agents())
             return
+        if path == "/agents.json":
+            self._send_json_agents()
+            return
+        if path == "/work-items.json":
+            self._send_json_work_items()
+            return
         if path == "/status.json":
             self._send_json_snapshot()
             return
@@ -80,6 +86,28 @@ class V3StatusHandler(BaseHTTPRequestHandler):
 
     def _render_agents(self) -> str:
         return render_agents_page(self._snapshot())
+
+    def _send_json_agents(self) -> None:
+        snapshot = self._snapshot()
+        self._send_json(
+            {
+                "status": "ok",
+                "project_id": snapshot.project_id,
+                "agents": _jsonable(snapshot.agents),
+            }
+        )
+
+    def _send_json_work_items(self) -> None:
+        snapshot = self._snapshot()
+        self._send_json(
+            {
+                "status": "ok",
+                "project_id": snapshot.project_id,
+                "backlog": _jsonable(snapshot.backlog),
+                "work_items": _jsonable(snapshot.work_items),
+                "recent_completions": _jsonable(snapshot.recent_completions),
+            }
+        )
 
     def _render_work_item(self, work_item_id: str) -> str:
         db = V3Database(self.db_path)
@@ -147,10 +175,10 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         self._send_json(
             {
                 "project_id": snapshot.project_id,
-                "backlog": [item.__dict__ for item in snapshot.backlog],
-                "work_items": [item.__dict__ for item in snapshot.work_items],
-                "agents": [item.__dict__ for item in snapshot.agents],
-                "recent_completions": [item.__dict__ for item in snapshot.recent_completions],
+                "backlog": _jsonable(snapshot.backlog),
+                "work_items": _jsonable(snapshot.work_items),
+                "agents": _jsonable(snapshot.agents),
+                "recent_completions": _jsonable(snapshot.recent_completions),
             }
         )
 
