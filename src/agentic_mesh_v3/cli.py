@@ -9,10 +9,12 @@ from pathlib import Path
 from agentic_mesh_v3.agent import AgentMemory
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
+from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import RoleAgentService
 from agentic_mesh_v3.agent import AgentStatusReporter
+from agentic_mesh_v3.agent import TerminalToolCallAudit
 from agentic_mesh_v3.agent import WorkItemGovernanceContextProvider
 from agentic_mesh_v3.broker import build_broker_adapter
 from agentic_mesh_v3.broker import BrokerAdapter
@@ -757,6 +759,7 @@ def _run_agent_once(args: argparse.Namespace):
             conversation_context=DatabaseConversationContext(db),
             work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
             status_reporter=DatabaseAgentStatusReporter(db),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
         )
         return service.run_until_idle(max_messages=args.max_messages)
     finally:
@@ -790,6 +793,7 @@ def _run_agent_service(args: argparse.Namespace):
             conversation_context=DatabaseConversationContext(db),
             work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
             status_reporter=DatabaseAgentStatusReporter(db),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
         )
         idle_since: float | None = None
         ticks = 0
@@ -821,6 +825,7 @@ def _build_role_agent_service(
     conversation_context: DatabaseConversationContext,
     work_item_governance_context: WorkItemGovernanceContextProvider,
     status_reporter: AgentStatusReporter | None = None,
+    terminal_tool_call_audit: TerminalToolCallAudit | None = None,
 ) -> RoleAgentService:
     service_config = build_role_instance_config(
         project_id=project_config.project_id,
@@ -833,6 +838,8 @@ def _build_role_agent_service(
     kwargs = {}
     if status_reporter is not None:
         kwargs["status_reporter"] = status_reporter
+    if terminal_tool_call_audit is not None:
+        kwargs["terminal_tool_call_audit"] = terminal_tool_call_audit
     return RoleAgentService(
         config=service_config,
         broker=broker,

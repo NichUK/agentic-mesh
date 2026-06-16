@@ -89,9 +89,49 @@ class AgentStatusReporter(Protocol):
         """Publish current agent status to the runtime read model."""
 
 
+class TerminalToolCallAudit(Protocol):
+    def snapshot(self, role_instance_id: str) -> object:
+        """Capture terminal tool-call state before a worker run."""
+
+    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> None:
+        """Verify the run recorded a terminal tool call through approved tools."""
+
+
 class NullAgentStatusReporter:
     def report(self, status: AgentStatus) -> None:
         return
+
+
+class NullTerminalToolCallAudit:
+    def snapshot(self, role_instance_id: str) -> object:
+        del role_instance_id
+        return None
+
+    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> None:
+        del role_instance_id, before, tool_calls
+        return
+
+
+class DatabaseTerminalToolCallAudit:
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+    def snapshot(self, role_instance_id: str) -> frozenset[str]:
+        return frozenset(self._terminal_call_ids(role_instance_id))
+
+    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> None:
+        del tool_calls
+        before_ids = set(before) if isinstance(before, (frozenset, set)) else set()
+        new_terminal_ids = set(self._terminal_call_ids(role_instance_id)) - before_ids
+        if not new_terminal_ids:
+            raise ValueError("agent did not record a terminal safe-output tool call")
+
+    def _terminal_call_ids(self, role_instance_id: str) -> tuple[str, ...]:
+        return tuple(
+            str(row["call_id"])
+            for row in self.db.list_tool_calls()  # type: ignore[attr-defined]
+            if row.get("role_instance_id") == role_instance_id and bool(row.get("terminal"))
+        )
 
 
 class DatabaseAgentStatusReporter:
@@ -170,6 +210,7 @@ class RoleAgentService:
     )
     governance_instructions: GovernanceInstructionSet = field(default_factory=GovernanceInstructionSet)
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
+    terminal_tool_call_audit: TerminalToolCallAudit = field(default_factory=NullTerminalToolCallAudit)
     max_delivery_attempts: int = 3
 
     def __post_init__(self) -> None:
@@ -225,11 +266,19 @@ class RoleAgentService:
             governance_checklist=prompt_governance_checklist,
         )
         try:
+            terminal_audit_snapshot = self.terminal_tool_call_audit.snapshot(self.config.role_instance_id)
             tool_calls = self.worker.run(prompt, agent_message)
             if not tool_calls:
                 raise ValueError("agent did not call any tool")
-            if not _has_terminal_tool_call(tool_calls):
+            if isinstance(self.terminal_tool_call_audit, NullTerminalToolCallAudit) and not _has_terminal_tool_call(
+                tool_calls
+            ):
                 raise ValueError("agent did not call a terminal safe-output tool")
+            self.terminal_tool_call_audit.verify_terminal_call(
+                self.config.role_instance_id,
+                terminal_audit_snapshot,
+                tool_calls,
+            )
             self.memory.record_observation(
                 self.config.role_instance_id,
                 f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(tool_calls)} tool calls",
