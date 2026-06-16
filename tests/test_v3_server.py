@@ -122,10 +122,12 @@ def test_artifact_viewer_route_renders_work_item_scoped_artifact(tmp_path: Path)
 
 def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
         db.migrate()
-        tools = V3ToolService(db, docs)
+        tools = V3ToolService(db, docs, stakeholder_bridge=bridge)
         tools.call(
             role_instance_id="agentic-mesh-dev.project-manager.1",
             tool_name="work_item.upsert",
@@ -169,6 +171,9 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
                 "approval_id": "approval-1",
                 "work_item_id": "work-1",
                 "question": "Approve release?",
+                "connector": "teams",
+                "target_ref": "dm:sponsor",
+                "thread_ref": "thread-1",
             },
         )
         tools.call(
@@ -266,3 +271,7 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "Deployment credentials may delay release validation." in html
     assert "release-1" in html
     assert "staging smoke passed" in html
+    assert "Outbound Deliveries" in html
+    assert "approval.request" in html
+    assert "dm:sponsor" in html
+    assert "Thread: thread-1" in html

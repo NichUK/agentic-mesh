@@ -89,6 +89,19 @@ class AgentRunStatus:
 
 
 @dataclass(frozen=True)
+class DeliveryStatus:
+    delivery_id: str
+    call_id: str
+    role_instance_id: str
+    purpose: str
+    connector: str
+    target_ref: str
+    thread_ref: str | None
+    status: str
+    created_at: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkItemDetail:
     work_item_id: str
     title: str
@@ -103,6 +116,7 @@ class WorkItemDetail:
     releases: tuple[ReleaseStatus, ...] = ()
     governance_records: tuple[GovernanceRecordStatus, ...] = ()
     agent_runs: tuple[AgentRunStatus, ...] = ()
+    deliveries: tuple[DeliveryStatus, ...] = ()
     governance_checklist: GovernanceChecklist | None = None
 
 
@@ -224,6 +238,8 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             _release_table(detail.releases),
             "<h2>Agent Runs</h2>",
             _agent_run_table(detail.agent_runs),
+            "<h2>Outbound Deliveries</h2>",
+            _delivery_table(detail.deliveries),
         ],
     )
 
@@ -429,6 +445,29 @@ def _agent_run_table(items: tuple[AgentRunStatus, ...]) -> str:
         )
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"6\">No agent runs recorded for this work item.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _delivery_table(items: tuple[DeliveryStatus, ...]) -> str:
+    rows = [
+        "<tr><th>Purpose</th><th>Role Instance</th><th>Target</th><th>Status</th><th>Delivery</th><th>Created</th></tr>"
+    ]
+    for item in items:
+        target = html.escape(item.target_ref)
+        if item.thread_ref:
+            target = f"{target}<br><small>Thread: {html.escape(item.thread_ref)}</small>"
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.purpose)}</td>"
+            f"<td>{html.escape(item.role_instance_id)}</td>"
+            f"<td>{target}</td>"
+            f"<td>{html.escape(item.status)}</td>"
+            f"<td>{html.escape(item.delivery_id)}<br><small>{html.escape(item.connector)}</small></td>"
+            f"<td>{html.escape(item.created_at or '')}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"6\">No outbound deliveries recorded for this work item.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 

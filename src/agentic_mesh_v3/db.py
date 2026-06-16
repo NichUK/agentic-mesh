@@ -18,6 +18,7 @@ from agentic_mesh_v3.reporting import AgentRunStatus
 from agentic_mesh_v3.reporting import ApprovalStatus
 from agentic_mesh_v3.reporting import ArtifactStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
+from agentic_mesh_v3.reporting import DeliveryStatus
 from agentic_mesh_v3.reporting import GovernanceRecordStatus
 from agentic_mesh_v3.reporting import ReleaseStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
@@ -131,6 +132,19 @@ class V3Database:
                   tool_name TEXT NOT NULL,
                   payload_json TEXT NOT NULL,
                   terminal INTEGER NOT NULL DEFAULT 0,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS outbound_deliveries (
+                  delivery_id TEXT PRIMARY KEY,
+                  call_id TEXT NOT NULL,
+                  role_instance_id TEXT NOT NULL,
+                  work_item_id TEXT,
+                  purpose TEXT NOT NULL,
+                  connector TEXT NOT NULL,
+                  target_ref TEXT NOT NULL,
+                  thread_ref TEXT,
+                  status TEXT NOT NULL,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -714,6 +728,65 @@ class V3Database:
                 "tool_call",
                 call_id,
                 {"role_instance_id": role_instance_id, "tool_name": tool_name, "terminal": terminal},
+            )
+
+    def record_outbound_delivery(
+        self,
+        *,
+        delivery_id: str,
+        call_id: str,
+        role_instance_id: str,
+        purpose: str,
+        connector: str,
+        target_ref: str,
+        status: str = "sent",
+        work_item_id: str | None = None,
+        thread_ref: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO outbound_deliveries(
+                  delivery_id, call_id, role_instance_id, work_item_id, purpose,
+                  connector, target_ref, thread_ref, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(delivery_id) DO UPDATE SET
+                  call_id=excluded.call_id,
+                  role_instance_id=excluded.role_instance_id,
+                  work_item_id=excluded.work_item_id,
+                  purpose=excluded.purpose,
+                  connector=excluded.connector,
+                  target_ref=excluded.target_ref,
+                  thread_ref=excluded.thread_ref,
+                  status=excluded.status
+                """,
+                (
+                    delivery_id,
+                    call_id,
+                    role_instance_id,
+                    work_item_id,
+                    purpose,
+                    connector,
+                    target_ref,
+                    thread_ref,
+                    status,
+                ),
+            )
+            self.record_event(
+                "outbound_delivery.recorded",
+                "delivery",
+                delivery_id,
+                {
+                    "call_id": call_id,
+                    "role_instance_id": role_instance_id,
+                    "work_item_id": work_item_id,
+                    "purpose": purpose,
+                    "connector": connector,
+                    "target_ref": target_ref,
+                    "thread_ref": thread_ref,
+                    "status": status,
+                },
             )
 
     def add_artifact(
@@ -1396,6 +1469,19 @@ class V3Database:
                 (work_item_id,),
             )
         )
+        deliveries = tuple(
+            _delivery_status(row)
+            for row in self.connection.execute(
+                """
+                SELECT delivery_id, call_id, role_instance_id, purpose, connector,
+                       target_ref, thread_ref, status, created_at
+                FROM outbound_deliveries
+                WHERE work_item_id=?
+                ORDER BY created_at ASC, delivery_id ASC
+                """,
+                (work_item_id,),
+            )
+        )
         governance = json.loads(work["governance_json"] or "{}")
         context = _governance_context_from_values(
             work_item_id=work["work_item_id"],
@@ -1423,6 +1509,7 @@ class V3Database:
             releases=releases,
             governance_records=governance_records,
             agent_runs=agent_runs,
+            deliveries=deliveries,
             governance_checklist=governance_checklist,
         )
 
@@ -1481,6 +1568,29 @@ class V3Database:
                 (role_instance_id,),
             )
         return [_agent_run_row(row) for row in rows]
+
+    def list_outbound_deliveries(self, work_item_id: str | None = None) -> list[dict[str, Any]]:
+        if work_item_id is None:
+            rows = self.connection.execute(
+                """
+                SELECT delivery_id, call_id, role_instance_id, work_item_id, purpose,
+                       connector, target_ref, thread_ref, status, created_at
+                FROM outbound_deliveries
+                ORDER BY created_at ASC, delivery_id ASC
+                """
+            )
+        else:
+            rows = self.connection.execute(
+                """
+                SELECT delivery_id, call_id, role_instance_id, work_item_id, purpose,
+                       connector, target_ref, thread_ref, status, created_at
+                FROM outbound_deliveries
+                WHERE work_item_id=?
+                ORDER BY created_at ASC, delivery_id ASC
+                """,
+                (work_item_id,),
+            )
+        return [dict(row) for row in rows]
 
     def _latest_agent_runs(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
@@ -1541,6 +1651,20 @@ def _agent_run_status(row: sqlite3.Row) -> AgentRunStatus:
         error=data["error"],
         started_at=data["started_at"],
         completed_at=data["completed_at"],
+    )
+
+
+def _delivery_status(row: sqlite3.Row) -> DeliveryStatus:
+    return DeliveryStatus(
+        delivery_id=row["delivery_id"],
+        call_id=row["call_id"],
+        role_instance_id=row["role_instance_id"],
+        purpose=row["purpose"],
+        connector=row["connector"],
+        target_ref=row["target_ref"],
+        thread_ref=row["thread_ref"],
+        status=row["status"],
+        created_at=row["created_at"],
     )
 
 
