@@ -346,6 +346,9 @@ Every work item has an `index.md`. The root work-item index is:
 Writing a work-item `index.md` through the approved document tool refreshes
 the root work-item index immediately, so sponsors can browse current and
 recent work without relying on agents to remember a second indexing step.
+Links from the root work-item index are relative to `/documents/work-items/`
+itself, for example `work-123/index.md`, so they work when opened directly in
+OneDrive/Teams Shared Files as well as through the runtime artifact viewer.
 
 Work-item indexes are evidence records, not status placeholders. The document
 library writer rejects status-only `index.md` records and duplicate evidence
