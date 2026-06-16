@@ -406,6 +406,8 @@ class V3ToolService:
     ) -> None:
         _validate_stakeholder_question(payload)
         target_ref = _target_ref(payload)
+        work_item_id = _required(payload, "work_item_id")
+        question = _required(payload, "question")
         should_deliver = _optional(payload.get("target_ref") or payload.get("stakeholder_ref")) is not None
         if should_deliver and self.stakeholder_bridge is None:
             raise ValueError("stakeholder bridge is not configured")
@@ -415,9 +417,18 @@ class V3ToolService:
             tool_name=tool_name,
             payload=payload,
         )
+        waiting_owner = str(payload.get("waiting_owner_role") or payload.get("owner_role") or "sponsor")
+        current_phase = _optional(payload.get("current_phase"))
+        next_action = str(payload.get("next_action") or f"Awaiting stakeholder answer: {question}")
+        self.db.update_work_item_state(
+            work_item_id=work_item_id,
+            state="waiting_human",
+            owner_role=waiting_owner,
+            current_phase=current_phase,
+            next_action=next_action,
+        )
         if not should_deliver:
             return
-        question = _required(payload, "question")
         text_markdown = _optional(payload.get("text_markdown")) or f"**Question**\n\n{question}"
         receipt = self.stakeholder_bridge.send(
             OutboundMessage(
