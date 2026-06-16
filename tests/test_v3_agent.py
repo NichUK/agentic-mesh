@@ -28,13 +28,23 @@ class NonTerminalWorker:
         return ["status.update"]
 
 
+class ReplyOnlySymbolicWorker:
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        return [f"status.reply:{message.message_id}"]
+
+
+class DoOnlySymbolicWorker:
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        return [f"noop:{message.message_id}"]
+
+
 class CapturingWorker:
     def __init__(self) -> None:
         self.prompt = ""
 
     def run(self, prompt, message):  # type: ignore[no-untyped-def]
         self.prompt = prompt
-        return [f"status.reply:{message.message_id}"]
+        return [f"noop:{message.message_id}", f"status.reply:{message.message_id}"]
 
 
 class RecordingTerminalWorker:
@@ -635,6 +645,44 @@ def test_role_agent_requeues_if_worker_calls_no_terminal_tool(tmp_path: Path) ->
     assert result is not None
     assert result.status == "failed"
     assert "terminal safe-output tool" in (result.error or "")
+    assert broker.depth("agent-inbox").pending == 1
+
+
+def test_role_agent_requeues_if_symbolic_worker_calls_reply_without_do_tool(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=ReplyOnlySymbolicWorker(),
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert "DO safe-output tool" in (result.error or "")
+    assert broker.depth("agent-inbox").pending == 1
+
+
+def test_role_agent_requeues_if_symbolic_worker_calls_do_without_reply_tool(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=DoOnlySymbolicWorker(),
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert "REPLY safe-output tool" in (result.error or "")
     assert broker.depth("agent-inbox").pending == 1
 
 

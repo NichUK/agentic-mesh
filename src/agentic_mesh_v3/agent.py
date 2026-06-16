@@ -110,8 +110,13 @@ class NullTerminalToolCallAudit:
         return None
 
     def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> None:
-        del role_instance_id, before, tool_calls
-        return
+        del role_instance_id, before
+        if not _has_terminal_tool_call(tool_calls):
+            raise ValueError("agent did not call a terminal safe-output tool")
+        if not any(_tool_call_name(call) in DO_TOOLS for call in tool_calls):
+            raise ValueError("agent did not call a DO safe-output tool")
+        if not any(_tool_call_name(call) in REPLY_TOOLS for call in tool_calls):
+            raise ValueError("agent did not call a REPLY safe-output tool")
 
 
 class DatabaseTerminalToolCallAudit:
@@ -208,7 +213,7 @@ class EchoWorker:
     def run(self, prompt: str, message: AgentMessage) -> list[str]:
         if not prompt:
             raise ValueError("prompt is required")
-        return [f"status.complete:{message.message_id}"]
+        return [f"noop:{message.message_id}", f"status.complete:{message.message_id}"]
 
 
 @dataclass
@@ -283,10 +288,6 @@ class RoleAgentService:
             tool_calls = self.worker.run(prompt, agent_message)
             if not tool_calls:
                 raise ValueError("agent did not call any tool")
-            if isinstance(self.terminal_tool_call_audit, NullTerminalToolCallAudit) and not _has_terminal_tool_call(
-                tool_calls
-            ):
-                raise ValueError("agent did not call a terminal safe-output tool")
             self.terminal_tool_call_audit.verify_terminal_call(
                 self.config.role_instance_id,
                 terminal_audit_snapshot,
@@ -469,9 +470,16 @@ def _has_terminal_tool_call(tool_calls: list[str]) -> bool:
         text = str(call)
         if text.startswith("terminal:"):
             return True
-        if any(text == tool or text.startswith(f"{tool}:") for tool in TERMINAL_TOOL_NAMES):
+        if _tool_call_name(text) in TERMINAL_TOOL_NAMES:
             return True
     return False
+
+
+def _tool_call_name(call: object) -> str:
+    text = str(call)
+    if text.startswith("terminal:"):
+        text = text[len("terminal:") :]
+    return text.split(":", 1)[0]
 
 
 def _read_optional(path: Path | None) -> str | None:
