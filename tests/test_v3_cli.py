@@ -129,6 +129,77 @@ roles:
     assert (docs_root / "work-items" / "work-1" / "index.md").exists()
 
 
+def test_cli_tool_call_uses_project_config_deployment_targets(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    docs_root = tmp_path / "documents"
+    python_exe = Path(sys.executable).as_posix()
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('configured deploy')"
+    rollback_summary: Re-run previous target.
+roles:
+  release-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "v3.sqlite3"
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Release work",
+            description="Needs deployment.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+    finally:
+        db.close()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "tool-call",
+            "--role-instance-id",
+            "agentic-mesh-dev.release-manager.1",
+            "--tool-name",
+            "release.deploy",
+            "--payload-json",
+            '{"work_item_id":"work-1","target_id":"local-smoke","scope":"CLI configured deployment"}',
+        ]
+    )
+
+    output = capsys.readouterr().out
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert result == 0
+    assert '"tool_name": "release.deploy"' in output
+    assert detail is not None
+    assert detail.releases[0].status == "deployed"
+    assert "configured deploy" in detail.releases[0].deployment_result
+
+
 def test_cli_tool_catalog_lists_role_allowed_tools(capsys) -> None:  # type: ignore[no-untyped-def]
     result = main(["tool-catalog", "--role-id", "release-manager"])
 
