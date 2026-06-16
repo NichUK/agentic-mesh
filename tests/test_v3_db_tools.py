@@ -923,6 +923,10 @@ def test_v3_tool_service_records_handoff_requirements_payload(tmp_path: Path) ->
         db.close()
 
     assert detail is not None
+    assert detail.state == "waiting_agent"
+    assert detail.owner_role == "engineering"
+    assert detail.current_phase == "development"
+    assert detail.next_action == "Implement the signed-off product slice."
     assert len(detail.governance_records) == 1
     record = detail.governance_records[0]
     assert record.record_type == "handoff.require"
@@ -965,9 +969,13 @@ def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) 
         )
 
         pending = broker.pending("agent-inbox")
+        detail = db.work_item_detail("work-1")
     finally:
         db.close()
 
+    assert detail is not None
+    assert detail.state == "waiting_agent"
+    assert detail.owner_role == "engineering"
     assert len(pending) == 1
     assert pending[0].subject == "agent.engineering"
     assert pending[0].payload["message_type"] == "handoff.require"

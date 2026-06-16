@@ -332,7 +332,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   `handoff.require`, `consult.request`, and `informed.update` record governance
   evidence and, when the tool service has a broker, publish a connector-neutral
   message to the target role inbox so agents can coordinate without runtime
-  lifecycle choreography.
+  lifecycle choreography. `handoff.require` also projects visible ownership to
+  the target role as `waiting_agent`, using the required next action as the
+  work item's next action.
   Materialized agent `tools.md` files include the same role-scoped catalog so
   each worker sees allowed and blocked tool authority in its prompt context.
 - Worker adapters: V3 provides an echo worker for local smoke tests, a
