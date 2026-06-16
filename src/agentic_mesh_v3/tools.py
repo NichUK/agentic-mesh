@@ -21,6 +21,8 @@ from agentic_mesh_v3.documents import write_work_item_index
 from agentic_mesh_v3.observability import V3Telemetry
 from agentic_mesh_v3.observability import get_telemetry
 from agentic_mesh_v3.reporting import AgentStatus
+from agentic_mesh_v3.tool_contracts import TERMINAL_TOOLS
+from agentic_mesh_v3.tool_contracts import validate_tool_required_fields
 
 
 @dataclass(frozen=True)
@@ -28,9 +30,6 @@ class ToolResult:
     call_id: str
     tool_name: str
     terminal: bool = False
-
-
-TERMINAL_TOOLS = {"status.reply", "status.complete", "noop", "report.incomplete"}
 
 
 class V3ToolService:
@@ -76,6 +75,7 @@ class V3ToolService:
         ):
             try:
                 self.authority_policy.assert_allowed(role_instance_id=role_instance_id, tool_name=tool_name)
+                validate_tool_required_fields(tool_name, payload)
                 call_id = f"call-{uuid4().hex}"
                 is_terminal = bool(terminal) or tool_name in TERMINAL_TOOLS
                 self.db.record_tool_call(

@@ -291,9 +291,11 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   agents can inspect their role-scoped permissions instead of guessing tool
   names. The catalog also exposes required payload fields, and materialized
   `tools.md` prompt context renders those fields next to each role-scoped
-  tool. Stakeholder-facing delivery tools call the configured bridge and fail
-  when no bridge is configured; agents must not receive successful tool results
-  for messages that were not handed to a connector.
+  tool. The same required-field contract is enforced by the tool service before
+  durable tool calls are recorded. Stakeholder-facing delivery tools call the
+  configured bridge and fail when no bridge is configured; agents must not
+  receive successful tool results for messages that were not handed to a
+  connector.
   CLI `tool-call` and MCP stdio now build that stakeholder bridge from
   `project.yaml` connector settings. `connectors.teams.adapter: local` uses
   the local Teams-shaped bridge for tests and local development, while
