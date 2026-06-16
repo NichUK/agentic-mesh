@@ -323,7 +323,10 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   or project-channel conversation.
 - OneDrive: V3 defines the document-library port and Graph-backed OneDrive
   adapter with injectable transport. Work-item files live under
-  `/documents/work-items/{work_item_id}`.
+  `/documents/work-items/{work_item_id}`. Live OneDrive/SharePoint adapters
+  require `AGENTIC_MESH_ONEDRIVE_TOKEN` unless the host injects its own Graph
+  transport, so unauthenticated document-library wiring fails before agents
+  claim that artifacts were published.
 - Deployment: V3 defines command and no-deployment deployment targets so the
   Release Manager can execute a configured deployment or record a clear
   no-deployment disposition. Release closure is a Release Manager tool action

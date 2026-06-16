@@ -191,3 +191,23 @@ def test_document_library_factory_builds_onedrive_adapter() -> None:
     assert transport.puts[0][0] == (
         "https://graph.microsoft.com/v1.0/drives/drive-123/root:/documents/work-items/work-1/index.md:/content"
     )
+
+
+def test_document_library_factory_requires_onedrive_token_without_custom_transport() -> None:
+    try:
+        build_document_library_adapter(
+            V3DocumentLibraryConfig(adapter="onedrive", drive_id="drive-123", root_path="/documents")
+        )
+    except ValueError as exc:
+        assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in str(exc)
+    else:
+        raise AssertionError("Graph-backed OneDrive libraries should require an access token")
+
+
+def test_document_library_factory_accepts_onedrive_token_without_custom_transport() -> None:
+    adapter = build_document_library_adapter(
+        V3DocumentLibraryConfig(adapter="onedrive", drive_id="drive-123", root_path="/documents"),
+        access_token="token-123",
+    )
+
+    assert isinstance(adapter, OneDriveDocumentLibraryAdapter)

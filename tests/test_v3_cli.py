@@ -133,6 +133,51 @@ roles:
     assert (docs_root / "work-items" / "work-1" / "index.md").exists()
 
 
+def test_cli_tool_call_requires_onedrive_token_for_project_config(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_TOKEN", raising=False)
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: drive-123
+  root_path: /documents
+roles:
+  product-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        main(
+            [
+                "--db",
+                str(tmp_path / "v3.sqlite3"),
+                "--project-config",
+                str(project_config),
+                "tool-call",
+                "--role-instance-id",
+                "agentic-mesh-dev.product-manager.1",
+                "--tool-name",
+                "document.write_work_item_index",
+                "--payload-json",
+                (
+                    '{"work_item_id":"work-1","title":"Work One","status":"active",'
+                    '"owner_role":"product-manager","raci_summary":"PM A/R",'
+                    '"governance_state":"ready","next_action":"Continue product shaping."}'
+                ),
+            ]
+        )
+    except ValueError as exc:
+        assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in str(exc)
+    else:
+        raise AssertionError("OneDrive project document libraries should require an access token")
+
+
 def test_cli_tool_call_uses_project_config_deployment_targets(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     docs_root = tmp_path / "documents"

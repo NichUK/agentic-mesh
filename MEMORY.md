@@ -22,6 +22,9 @@ Important V3 decisions:
   local adapters kept behind the same port.
 - OneDrive is the first document-library target so Teams can show Shared Files
   under `/documents`; work items live under `/documents/work-items/{id}`.
+  Live OneDrive/SharePoint adapters require `AGENTIC_MESH_ONEDRIVE_TOKEN`
+  unless a host injects a custom Graph transport, so the CLI fails early
+  instead of letting agents believe unauthenticated document writes succeeded.
 - Governance instructions must be explicit in prompts: consult RACI `C` roles,
   inform `I` roles, ask stakeholders for material decisions, and record
   exceptions/evidence.
