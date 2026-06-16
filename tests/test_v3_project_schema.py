@@ -19,6 +19,7 @@ def test_project_v3_schema_allows_local_agent_runtime_config() -> None:
         "document_library": {
             "adapter": "filesystem",
             "root": "documents",
+            "structure_policy": "togaf-sdlc-v1",
         },
         "flow": {
             "template": "sdlc",
@@ -126,6 +127,20 @@ def test_project_v3_schema_rejects_unsafe_flow_template_refs() -> None:
     project = {
         "project_id": "agentic-mesh-dev",
         "flow": {"template": "../sdlc"},
+        "roles": {"product-manager": {"instances": 1}},
+    }
+
+    validator = jsonschema.Draft202012Validator(_schema())
+    errors = sorted(validator.iter_errors(project), key=lambda item: item.json_path)
+
+    assert errors
+    assert "does not match" in errors[0].message
+
+
+def test_project_v3_schema_rejects_unsafe_document_library_structure_policy() -> None:
+    project = {
+        "project_id": "agentic-mesh-dev",
+        "document_library": {"structure_policy": "../togaf"},
         "roles": {"product-manager": {"instances": 1}},
     }
 

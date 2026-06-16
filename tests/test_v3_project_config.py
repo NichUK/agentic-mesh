@@ -19,6 +19,7 @@ document_library:
   adapter: onedrive
   drive_id: drive-123
   root_path: /documents
+  structure_policy: togaf-sdlc-v1
 flow:
   template: sdlc
 target_repositories:
@@ -80,6 +81,7 @@ connectors:
     assert config.broker.servers == "nats://localhost:4222"
     assert config.document_library.adapter == "onedrive"
     assert config.document_library.root_path == "/documents"
+    assert config.document_library.structure_policy == "togaf-sdlc-v1"
     assert config.flow.template == "sdlc"
     assert config.flow.path is None
     assert len(config.target_repositories) == 1
@@ -132,6 +134,41 @@ roles:
     resolved = resolve_project_flow_config_path(project_file, load_project_config(project_file))
 
     assert resolved == Path("config/flows/sdlc-v3.yaml")
+
+
+def test_load_project_config_defaults_document_library_structure_policy(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    config = load_project_config(project_file)
+
+    assert config.document_library.structure_policy == "togaf-sdlc-v1"
+
+
+def test_load_project_config_rejects_unsafe_document_library_structure_policy(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+document_library:
+  structure_policy: ../togaf
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"document_library.structure_policy must match"):
+        load_project_config(project_file)
 
 
 def test_load_project_config_reads_workspace_repositories_as_target_repositories(tmp_path: Path) -> None:

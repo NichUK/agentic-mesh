@@ -111,6 +111,11 @@ surface, including broker defaults, document-library defaults, role workers,
 Teams connector adapter settings, and release deployment targets. It remains
 extension-friendly for organisation and project-specific fields that are not
 yet interpreted by the V3 runtime.
+Project document-library config also carries a validated `structure_policy`
+field, defaulting to `togaf-sdlc-v1`. The selected policy is materialized into
+each role's mounted `project.md` instructions so agents know which
+documentation framework governs work-item dossiers, root work-item indexes,
+and durable system documentation before they start writing artifacts.
 
 The same mounted folder is used to build the role-service configuration:
 prompt component paths, memory database path, broker stream, and durable
@@ -458,6 +463,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   require `AGENTIC_MESH_ONEDRIVE_TOKEN` unless the host injects its own Graph
   transport, so unauthenticated document-library wiring fails before agents
   claim that artifacts were published.
+  Project config selects a document structure policy through
+  `document_library.structure_policy`; V3 defaults this to `togaf-sdlc-v1`
+  and passes it into agent-facing project instructions.
 - Deployment: V3 defines command and no-deployment deployment targets so the
   Release Manager can execute a configured deployment or record a clear
   no-deployment disposition. Release closure is a Release Manager tool action

@@ -83,6 +83,8 @@ broker:
 document_library:
   adapter: filesystem
   root: documents
+  root_path: /documents
+  structure_policy: togaf-sdlc-v1
 target_repositories:
   app:
     type: git
@@ -135,7 +137,12 @@ roles:
     }
     assert engineering_2.role_service_config.inbox_consumer == "agentic-mesh-dev.engineering.2"
     assert engineering_2.role_service_config.memory_db_path == tmp_path / "state" / "memory" / "agentic-mesh-dev.engineering.2.sqlite3"
-    assert "Build safely." in (tmp_path / "agents" / "engineering" / "2" / "project.md").read_text(encoding="utf-8")
+    engineering_project = (tmp_path / "agents" / "engineering" / "2" / "project.md").read_text(encoding="utf-8")
+    assert "Build safely." in engineering_project
+    assert "Documentation framework: `togaf-sdlc-v1`" in engineering_project
+    assert "Document library root path: `/documents`" in engineering_project
+    assert "/documents/work-items/{work_item_id}" in engineering_project
+    assert "/documents/work-items/index.md" in engineering_project
     assert "System rules." in (tmp_path / "agents" / "engineering" / "2" / "system.md").read_text(encoding="utf-8")
     container = json.loads((tmp_path / "agents" / "engineering" / "2" / "container.json").read_text(encoding="utf-8"))
     assert container["mounts"][str((project_file.parent / "../app").resolve(strict=False))] == "/mesh/workspaces/app"
