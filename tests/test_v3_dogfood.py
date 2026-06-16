@@ -66,11 +66,11 @@ def test_local_e2e_dogfood_slice_can_use_onedrive_document_library_urls(tmp_path
     assert detail is not None
     assert detail.state == "closed"
     assert any(
-        url == "https://graph.test/documents/work-items/work-v3-local-e2e/index.md"
+        url == f"https://graph.test/documents/work-items/{work_item_id}/index.md"
         for url in (artifact.url for artifact in detail.artifacts)
     )
     assert (
-        "https://graph.test/v1.0/drives/drive-123/root:/documents/work-items/work-v3-local-e2e/index.md:/content"
+        f"https://graph.test/v1.0/drives/drive-123/root:/documents/work-items/{work_item_id}/index.md:/content"
         in transport.text_by_url
     )
     assert (
