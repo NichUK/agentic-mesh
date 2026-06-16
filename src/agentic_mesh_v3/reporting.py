@@ -143,8 +143,8 @@ def render_agents_page(snapshot: ReportingSnapshot) -> str:
             f"<td>{agent.inbox_depth}</td>"
             f"<td>{agent.dead_letter_depth}</td>"
             f"<td>{memory}</td>"
-            f"<td>{html.escape(agent.current_work or '')}</td>"
-            f"<td>{html.escape(', '.join(agent.governance_waits))}</td>"
+            f"<td>{_agent_current_work_cell(agent.current_work)}</td>"
+            f"<td>{_list_cell(agent.governance_waits)}</td>"
             "</tr>"
         )
     return _page("Agents", ["<h1>Agents</h1>", f"<table>{''.join(rows)}</table>"])
@@ -233,6 +233,18 @@ def _backlog_table(items: tuple[BacklogItemStatus, ...]) -> str:
             "</tr>"
         )
     return f"<table>{''.join(rows)}</table>"
+
+
+def _agent_current_work_cell(current_work: str | None) -> str:
+    if not current_work:
+        return ""
+    return f"<a href=\"{html.escape(work_item_url(current_work))}\">{html.escape(current_work)}</a>"
+
+
+def _list_cell(items: tuple[str, ...]) -> str:
+    if not items:
+        return ""
+    return "<ul>" + "".join(f"<li>{html.escape(item)}</li>" for item in items) + "</ul>"
 
 
 def _work_table(items: tuple[WorkItemStatus, ...]) -> str:

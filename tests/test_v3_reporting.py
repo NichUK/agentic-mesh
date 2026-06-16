@@ -71,6 +71,8 @@ def test_reporting_pages_include_required_status_data() -> None:
     assert "Memory" in agents_html
     assert "2 entries" in agents_html
     assert "2026-06-15 10:01:00" in agents_html
+    assert '<a href="/work-item/work-1">work-1</a>' in agents_html
+    assert "<li>Missing consultation evidence for `qa-engineer`.</li>" in agents_html
     assert "<td>1</td>" in agents_html
     assert "<strong>Work item:</strong> work-1" in work_html
 
