@@ -1,0 +1,294 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import os
+from pathlib import Path
+import shutil
+from typing import Callable
+
+from agentic_mesh_v3.broker import build_broker_adapter
+from agentic_mesh_v3.project_config import V3ProjectConfig
+
+
+@dataclass(frozen=True)
+class PreflightCheck:
+    check_id: str
+    passed: bool
+    summary: str
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "check_id": self.check_id,
+            "passed": self.passed,
+            "summary": self.summary,
+            "detail": self.detail,
+        }
+
+
+@dataclass(frozen=True)
+class LivePreflightResult:
+    passed: bool
+    checks: tuple[PreflightCheck, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "passed": self.passed,
+            "checks": [check.to_dict() for check in self.checks],
+        }
+
+
+def run_live_preflight(
+    *,
+    project_config: V3ProjectConfig,
+    env: dict[str, str] | None = None,
+    check_broker: bool = False,
+    check_document_library: bool = False,
+    document_exists: Callable[[str], bool] | None = None,
+) -> LivePreflightResult:
+    env = env if env is not None else dict(os.environ)
+    checks: list[PreflightCheck] = []
+    checks.append(_roles_check(project_config))
+    checks.append(_document_config_check(project_config))
+    checks.extend(_document_env_checks(project_config, env))
+    checks.append(_teams_config_check(project_config))
+    checks.extend(_teams_env_checks(project_config, env))
+    checks.append(_broker_config_check(project_config, check_live=check_broker))
+    if check_broker:
+        checks.append(_broker_live_check(project_config))
+    checks.extend(_deployment_target_checks(project_config))
+    checks.extend(_stakeholder_contact_checks(project_config))
+    if check_document_library:
+        checks.append(_document_library_live_check(document_exists))
+    return LivePreflightResult(
+        passed=all(check.passed for check in checks),
+        checks=tuple(checks),
+    )
+
+
+def _roles_check(project_config: V3ProjectConfig) -> PreflightCheck:
+    required_roles = {"product-manager", "engineering", "qa-engineer", "release-manager", "project-manager"}
+    configured = {role.role_id for role in project_config.roles}
+    missing = sorted(required_roles - configured)
+    if missing:
+        return PreflightCheck(
+            "roles.required",
+            False,
+            "Missing required V3 dogfood roles.",
+            ", ".join(missing),
+        )
+    return PreflightCheck("roles.required", True, "Required V3 dogfood roles are configured.")
+
+
+def _document_config_check(project_config: V3ProjectConfig) -> PreflightCheck:
+    docs = project_config.document_library
+    adapter = docs.adapter.casefold().replace("_", "-")
+    if adapter in {"onedrive", "sharepoint"}:
+        if not docs.drive_id:
+            return PreflightCheck(
+                "documents.config",
+                False,
+                "OneDrive/SharePoint document library needs a drive_id.",
+            )
+        if docs.root_path.rstrip("/") != "/documents":
+            return PreflightCheck(
+                "documents.config",
+                False,
+                "V3 dogfood documents should be mounted in Teams Shared Files under /documents.",
+                f"Configured root_path: {docs.root_path}",
+            )
+        return PreflightCheck(
+            "documents.config",
+            True,
+            "OneDrive/SharePoint document library is configured for /documents.",
+            f"drive_id={_redact(docs.drive_id)}",
+        )
+    if adapter in {"local", "filesystem", "file", "git"}:
+        if docs.root is None:
+            return PreflightCheck("documents.config", False, "Filesystem document library needs a root.")
+        return PreflightCheck("documents.config", True, "Filesystem document library is configured.", str(docs.root))
+    return PreflightCheck("documents.config", False, "Unsupported document library adapter.", docs.adapter)
+
+
+def _document_env_checks(project_config: V3ProjectConfig, env: dict[str, str]) -> list[PreflightCheck]:
+    adapter = project_config.document_library.adapter.casefold().replace("_", "-")
+    if adapter not in {"onedrive", "sharepoint"}:
+        return []
+    return [_required_env_check(env, "AGENTIC_MESH_ONEDRIVE_TOKEN", "documents.env")]
+
+
+def _teams_config_check(project_config: V3ProjectConfig) -> PreflightCheck:
+    adapter = (project_config.teams_connector.adapter or "").casefold().replace("_", "-")
+    if adapter in {"", "none"}:
+        return PreflightCheck("teams.config", False, "Teams connector is not configured.")
+    if adapter in {"local", "local-teams", "in-memory"}:
+        return PreflightCheck("teams.config", True, "Local Teams-shaped connector is configured.")
+    if adapter in {"graph", "microsoft-graph", "teams-graph", "teams-bot-connector"}:
+        role_bots = [role for role in project_config.roles if role.messaging_identity.display_name]
+        if not role_bots:
+            return PreflightCheck("teams.config", False, "Graph Teams connector has no role bot identities.")
+        return PreflightCheck(
+            "teams.config",
+            True,
+            "Graph Teams connector and role bot identities are configured.",
+            ", ".join(role.role_id for role in role_bots),
+        )
+    return PreflightCheck("teams.config", False, "Unsupported Teams connector adapter.", adapter)
+
+
+def _teams_env_checks(project_config: V3ProjectConfig, env: dict[str, str]) -> list[PreflightCheck]:
+    adapter = (project_config.teams_connector.adapter or "").casefold().replace("_", "-")
+    if adapter not in {"graph", "microsoft-graph", "teams-graph", "teams-bot-connector"}:
+        return []
+    return [
+        _required_env_check(env, "AGENTIC_MESH_TEAMS_TOKEN", "teams.env.token"),
+        _required_env_check(env, "AGENTIC_MESH_TEAMS_SENDER_USER_ID", "teams.env.sender"),
+    ]
+
+
+def _broker_config_check(project_config: V3ProjectConfig, *, check_live: bool) -> PreflightCheck:
+    broker = project_config.broker
+    adapter = broker.adapter.casefold().replace("_", "-")
+    if adapter == "nats-jetstream" and not broker.servers:
+        return PreflightCheck("broker.config", False, "NATS JetStream broker needs servers.")
+    detail = f"adapter={broker.adapter}, stream={broker.stream}"
+    if broker.servers:
+        detail = f"{detail}, servers={broker.servers}"
+    if check_live:
+        detail = f"{detail}, live check requested"
+    return PreflightCheck("broker.config", True, "Broker configuration is present.", detail)
+
+
+def _broker_live_check(project_config: V3ProjectConfig) -> PreflightCheck:
+    try:
+        broker = build_broker_adapter(adapter=project_config.broker.adapter, servers=project_config.broker.servers)
+        subjects = ["project.context"]
+        for role in project_config.roles:
+            subjects.append(f"agent.{role.role_id}")
+            subjects.append(f"agent.{role.role_id}.relevance")
+        broker.ensure_stream(project_config.broker.stream, subjects)
+        depth = broker.depth(project_config.broker.stream)
+    except Exception as exc:  # pragma: no cover - exercised with real broker failures
+        return PreflightCheck("broker.live", False, "Broker live check failed.", str(exc))
+    return PreflightCheck("broker.live", True, "Broker stream is reachable.", f"pending={depth.pending}")
+
+
+def _deployment_target_checks(project_config: V3ProjectConfig) -> list[PreflightCheck]:
+    if not project_config.release_deployment_targets:
+        return [PreflightCheck("deployment.targets", False, "No release deployment targets are configured.")]
+    checks: list[PreflightCheck] = []
+    for target in project_config.release_deployment_targets:
+        if target.target_type.casefold().replace("_", "-") != "command":
+            checks.append(
+                PreflightCheck(
+                    f"deployment.target.{target.target_id}",
+                    True,
+                    "Non-command deployment target is configured.",
+                    target.target_type,
+                )
+            )
+            continue
+        if not target.command:
+            checks.append(
+                PreflightCheck(
+                    f"deployment.target.{target.target_id}",
+                    False,
+                    "Command deployment target has no command.",
+                )
+            )
+            continue
+        cwd_detail = ""
+        if target.working_directory is not None:
+            cwd_detail = f" cwd={target.working_directory}"
+            if not target.working_directory.exists():
+                checks.append(
+                    PreflightCheck(
+                        f"deployment.target.{target.target_id}",
+                        False,
+                        "Command deployment target working directory does not exist.",
+                        str(target.working_directory),
+                    )
+                )
+                continue
+        executable = target.command[0]
+        if Path(executable).is_absolute():
+            executable_ok = Path(executable).exists()
+        else:
+            executable_ok = shutil.which(executable) is not None
+        if not executable_ok:
+            checks.append(
+                PreflightCheck(
+                    f"deployment.target.{target.target_id}",
+                    False,
+                    "Command deployment executable is not available.",
+                    executable,
+                )
+            )
+            continue
+        checks.append(
+            PreflightCheck(
+                f"deployment.target.{target.target_id}",
+                True,
+                "Command deployment target is runnable by this host.",
+                f"command={' '.join(target.command)}{cwd_detail}",
+            )
+        )
+    return checks
+
+
+def _stakeholder_contact_checks(project_config: V3ProjectConfig) -> list[PreflightCheck]:
+    if not project_config.stakeholder_contacts:
+        return [PreflightCheck("stakeholders.sponsor", False, "No stakeholder contacts are configured.")]
+    checks = []
+    sponsor = next(
+        (contact for contact in project_config.stakeholder_contacts if contact.contact_id == "sponsor"),
+        project_config.stakeholder_contacts[0],
+    )
+    if sponsor.connector != "teams":
+        checks.append(
+            PreflightCheck(
+                "stakeholders.sponsor",
+                False,
+                "Sponsor contact must use Teams for this live dogfood proof.",
+                sponsor.connector,
+            )
+        )
+    elif not sponsor.target_ref:
+        checks.append(PreflightCheck("stakeholders.sponsor", False, "Sponsor contact target_ref is empty."))
+    else:
+        checks.append(
+            PreflightCheck(
+                "stakeholders.sponsor",
+                True,
+                "Sponsor Teams contact is configured.",
+                f"{sponsor.display_name} -> {sponsor.target_ref}",
+            )
+        )
+    return checks
+
+
+def _document_library_live_check(document_exists: Callable[[str], bool] | None) -> PreflightCheck:
+    if document_exists is None:
+        return PreflightCheck(
+            "documents.live",
+            False,
+            "Document library live check requested but no adapter check was supplied.",
+        )
+    try:
+        document_exists("work-items/index.md")
+    except Exception as exc:  # pragma: no cover - exercised with real Graph failures
+        return PreflightCheck("documents.live", False, "Document library live check failed.", str(exc))
+    return PreflightCheck("documents.live", True, "Document library accepted a live existence probe.")
+
+
+def _required_env_check(env: dict[str, str], name: str, check_id: str) -> PreflightCheck:
+    value = env.get(name)
+    if not value:
+        return PreflightCheck(check_id, False, f"{name} is required.")
+    return PreflightCheck(check_id, True, f"{name} is present.", _redact(value))
+
+
+def _redact(value: str) -> str:
+    if len(value) <= 8:
+        return "***"
+    return f"{value[:4]}...{value[-4:]}"

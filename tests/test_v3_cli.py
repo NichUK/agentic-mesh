@@ -491,6 +491,164 @@ roles:
         raise AssertionError("OneDrive-backed dogfood runs should require an access token")
 
 
+def test_cli_preflight_live_reports_missing_graph_env(tmp_path: Path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_TOKEN", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_TEAMS_TOKEN", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_TEAMS_SENDER_USER_ID", raising=False)
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    role_bots = "\n".join(
+        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: drive-123
+  root_path: /documents
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    role_bots:
+{role_bots}
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: user:sponsor-user
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    failed = {check["check_id"] for check in output["checks"] if not check["passed"]}
+    assert "documents.env" in failed
+    assert "teams.env.token" in failed
+    assert "teams.env.sender" in failed
+
+
+def test_cli_preflight_live_reports_missing_config_env_reference(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_DRIVE_ID", raising=False)
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}
+roles:
+  product-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    assert output["passed"] is False
+    assert output["checks"][0]["check_id"] == "project_config.load"
+    assert "AGENTIC_MESH_ONEDRIVE_DRIVE_ID" in output["checks"][0]["detail"]
+
+
+def test_cli_preflight_live_passes_local_project_config(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    docs_root = tmp_path / "documents"
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+connectors:
+  teams:
+    adapter: local
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: dm:sponsor
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert output["passed"] is True
+    assert {check["check_id"] for check in output["checks"]} >= {
+        "roles.required",
+        "documents.config",
+        "teams.config",
+        "broker.config",
+        "deployment.target.local-smoke",
+        "stakeholders.sponsor",
+    }
+
+
 def test_cli_tool_call_uses_project_config_document_library(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     docs_root = tmp_path / "documents"

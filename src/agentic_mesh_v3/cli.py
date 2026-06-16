@@ -44,6 +44,9 @@ from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
 from agentic_mesh_v3.lifecycle import ComposeLifecycleExecutor
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
+from agentic_mesh_v3.live_preflight import LivePreflightResult
+from agentic_mesh_v3.live_preflight import PreflightCheck
+from agentic_mesh_v3.live_preflight import run_live_preflight
 from agentic_mesh_v3.memory import DatabaseRoleMemory
 from agentic_mesh_v3.observability import TelemetrySettings
 from agentic_mesh_v3.observability import configure_observability
@@ -148,6 +151,9 @@ def main(argv: list[str] | None = None) -> int:
     dogfood_audit_parser.add_argument("--document-library-root", type=Path)
     dogfood_audit_parser.add_argument("--work-item-id", default="work-v3-local-e2e")
     dogfood_audit_parser.add_argument("--require-onedrive-artifacts", action="store_true")
+    live_preflight_parser = subparsers.add_parser("preflight-live")
+    live_preflight_parser.add_argument("--check-broker", action="store_true")
+    live_preflight_parser.add_argument("--check-document-library", action="store_true")
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
@@ -604,6 +610,38 @@ def main(argv: list[str] | None = None) -> int:
             )
         finally:
             db.close()
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0 if result.passed else 1
+    if args.command == "preflight-live":
+        if args.project_config is None:
+            raise ValueError("--project-config is required for preflight-live")
+        try:
+            project_config = load_project_config(args.project_config)
+        except ValueError as exc:
+            result = LivePreflightResult(
+                passed=False,
+                checks=(
+                    PreflightCheck(
+                        "project_config.load",
+                        False,
+                        "Project config could not be loaded.",
+                        str(exc),
+                    ),
+                ),
+            )
+            print(json.dumps(result.to_dict(), indent=2))
+            return 1
+        document_library = (
+            _document_library_adapter(args, required=True)
+            if args.check_document_library
+            else None
+        )
+        result = run_live_preflight(
+            project_config=project_config,
+            check_broker=args.check_broker,
+            check_document_library=args.check_document_library,
+            document_exists=(document_library.exists if document_library is not None else None),
+        )
         print(json.dumps(result.to_dict(), indent=2))
         return 0 if result.passed else 1
     if args.command == "validate-topology":
