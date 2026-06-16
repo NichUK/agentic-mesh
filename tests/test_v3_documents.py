@@ -66,7 +66,7 @@ def test_write_root_work_item_index(tmp_path: Path) -> None:
     )
 
     content = (tmp_path / "work-items" / "index.md").read_text(encoding="utf-8")
-    assert "[Add status page](work-items/work-123/index.md)" in content
+    assert "[Add status page](work-123/index.md)" in content
 
 
 def test_write_work_item_index_rejects_status_only_document(tmp_path: Path) -> None:

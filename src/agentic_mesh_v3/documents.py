@@ -269,7 +269,7 @@ def write_root_work_item_index(adapter: DocumentLibraryAdapter, work_items: list
     if not work_items:
         lines.append("No work items recorded.")
     for item in sorted(work_items, key=lambda candidate: candidate.work_item_id):
-        lines.append(f"- [{item.title}](work-items/{item.work_item_id}/index.md) - `{item.status}` - {item.owner_role}")
+        lines.append(f"- [{item.title}]({item.work_item_id}/index.md) - `{item.status}` - {item.owner_role}")
     lines.append("")
     return adapter.write_text("work-items/index.md", "\n".join(lines))
 

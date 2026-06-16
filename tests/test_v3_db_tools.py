@@ -110,7 +110,7 @@ def test_v3_tool_service_writes_work_item_index_and_refreshes_root_index(tmp_pat
     assert "QA reviewed acceptance coverage." in index_content
     assert "Sponsor approved product definition." in index_content
     assert "Focused status page tests passed." in index_content
-    assert "[Add status page](work-items/work-1/index.md) - `active` - engineering" in root_index.read_text(
+    assert "[Add status page](work-1/index.md) - `active` - engineering" in root_index.read_text(
         encoding="utf-8"
     )
 

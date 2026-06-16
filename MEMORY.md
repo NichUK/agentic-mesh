@@ -257,7 +257,10 @@ way to inspect inbox/recovery state.
 
 Work-item document index writes now refresh `/documents/work-items/index.md`
 automatically. Agents still own the content of each work-item dossier, but the
-root browse index no longer depends on a second manual tool call.
+root browse index no longer depends on a second manual tool call. Root index
+links are relative to `/documents/work-items/`, for example
+`work-123/index.md`, so the index renders correctly from OneDrive/Teams Shared
+Files and the runtime artifact viewer.
 
 V3 lifecycle planning now supports role-grouped batch decisions. Wake/start
 actions are planned before idle hibernation, and warm-pool counts are updated
