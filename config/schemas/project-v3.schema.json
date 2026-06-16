@@ -105,7 +105,10 @@
         "type": "object",
         "additionalProperties": true,
         "properties": {
-          "template": { "type": "string" },
+          "template": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
           "instances": { "type": "integer", "minimum": 1 },
           "worker": { "$ref": "#/$defs/worker" },
           "instructions": {

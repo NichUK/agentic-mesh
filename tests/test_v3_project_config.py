@@ -244,6 +244,23 @@ roles:
         load_project_config(project_file)
 
 
+def test_load_project_config_rejects_unsafe_role_template(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+roles:
+  product-manager:
+    template: ../product-manager
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"roles.product-manager.template must match"):
+        load_project_config(project_file)
+
+
 def test_load_project_config_rejects_unsafe_target_repository_id(tmp_path: Path) -> None:
     project_file = tmp_path / "project.yaml"
     project_file.write_text(

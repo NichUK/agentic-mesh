@@ -137,6 +137,21 @@ def test_project_v3_schema_rejects_unsafe_role_ids() -> None:
     assert "does not match" in errors[0].message
 
 
+def test_project_v3_schema_rejects_unsafe_role_template_refs() -> None:
+    project = {
+        "project_id": "agentic-mesh-dev",
+        "roles": {
+            "product-manager": {"template": "../product-manager", "instances": 1},
+        },
+    }
+
+    validator = jsonschema.Draft202012Validator(_schema())
+    errors = sorted(validator.iter_errors(project), key=lambda item: item.json_path)
+
+    assert errors
+    assert "does not match" in errors[0].message
+
+
 def test_project_v3_schema_rejects_unsafe_target_repository_ids() -> None:
     project = {
         "project_id": "agentic-mesh-dev",
