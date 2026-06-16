@@ -136,7 +136,10 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
   Project-channel messages are retained as shared `project.context`.
   Mentioned-role channel messages also route to the mentioned role. Unmentioned
   project-channel messages can fan out to role relevance-check inbox subjects
-  so agents decide whether they have something material to add.
+  so agents decide whether they have something material to add. Bot Framework
+  activity ingress is normalised before routing so live Teams DMs, channel
+  posts, real mentions, and thread references enter the same connector-neutral
+  path.
 - OneDrive: V3 defines the document-library port and Graph-backed OneDrive
   adapter with injectable transport. Work-item files live under
   `/documents/work-items/{work_item_id}`.
