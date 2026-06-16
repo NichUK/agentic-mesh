@@ -5,6 +5,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote
 from urllib.parse import urlparse
 
@@ -17,12 +18,14 @@ from agentic_mesh_v3.reporting import artifact_viewer_path
 from agentic_mesh_v3.reporting import render_agents_page
 from agentic_mesh_v3.reporting import render_status_page
 from agentic_mesh_v3.reporting import render_work_item_detail_page
+from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 
 
 class V3StatusHandler(BaseHTTPRequestHandler):
     db_path: Path
     project_id: str
     document_library: DocumentLibraryAdapter | None = None
+    teams_activity_router: TeamsActivityRouter | None = None
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -44,6 +47,13 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/artifact-viewer/"):
             self._render_artifact_route(path.removeprefix("/artifact-viewer/"))
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "not found")
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/teams/activity":
+            self._handle_teams_activity()
             return
         self.send_error(HTTPStatus.NOT_FOUND, "not found")
 
@@ -109,6 +119,28 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             }
         )
 
+    def _handle_teams_activity(self) -> None:
+        router = self.teams_activity_router
+        if router is None:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Teams activity router is not configured")
+            return
+        try:
+            payload = self._read_json_body()
+            self._send_json(_teams_activity_response(payload, router))
+        except ValueError as exc:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
+
+    def _read_json_body(self) -> dict[str, Any]:
+        import json
+
+        length = int(self.headers.get("Content-Length") or 0)
+        if length < 1:
+            raise ValueError("JSON body is required")
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+        return payload
+
     def _send_json(self, payload: dict[str, object]) -> None:
         import json
 
@@ -135,6 +167,7 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8080,
     document_library: DocumentLibraryAdapter | None = None,
+    teams_activity_router: TeamsActivityRouter | None = None,
 ) -> None:
     class Handler(V3StatusHandler):
         pass
@@ -142,8 +175,14 @@ def serve(
     Handler.db_path = db_path
     Handler.project_id = project_id
     Handler.document_library = document_library
+    Handler.teams_activity_router = teams_activity_router
     server = ThreadingHTTPServer((host, port), Handler)
     server.serve_forever()
+
+
+def _teams_activity_response(activity: dict[str, Any], router: TeamsActivityRouter) -> dict[str, object]:
+    subjects = router.route_activity(activity)
+    return {"status": "routed", "subjects": subjects}
 
 
 def _artifact_page(relative_path: str, content: str) -> str:
