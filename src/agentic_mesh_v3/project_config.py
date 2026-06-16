@@ -291,10 +291,10 @@ def _load_stakeholder_contact(
 ) -> V3StakeholderContactConfig:
     _validate_config_key(f"stakeholder_contacts.{contact_id}", contact_id)
     connector = contact_raw.get("connector")
-    if not connector or str(connector) == "":
+    if not connector:
         raise ValueError(f"stakeholder_contacts.{contact_id}.connector is required")
     target_ref = contact_raw.get("target_ref")
-    if not target_ref or str(target_ref) == "":
+    if not target_ref:
         raise ValueError(f"stakeholder_contacts.{contact_id}.target_ref is required")
     return V3StakeholderContactConfig(
         contact_id=contact_id,
