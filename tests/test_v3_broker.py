@@ -139,6 +139,18 @@ def test_nats_broker_dead_letters_are_inspectable_without_claiming_more_work() -
     assert dead[0].payload == {"text": "hello", "dead_letter_reason": "poison message"}
 
 
+def test_nats_broker_pending_decodes_inflight_payload() -> None:
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    adapter._acked_messages[("agent-inbox", "pm-1", "agent.product-manager:1")] = FakeNatsMessage()
+
+    pending = adapter.pending("agent-inbox", "pm-1")
+
+    assert len(pending) == 1
+    assert pending[0].message_id == "agent.product-manager:1"
+    assert pending[0].subject == "agent.product-manager"
+    assert pending[0].payload == {"text": "hello"}
+
+
 def test_build_broker_adapter_requires_nats_servers() -> None:
     try:
         build_broker_adapter(adapter="nats-jetstream")
