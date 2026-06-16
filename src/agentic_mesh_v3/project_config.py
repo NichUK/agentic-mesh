@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -10,6 +11,7 @@ import yaml
 
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _CONFIG_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+_ENV_REF_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
 
 @dataclass(frozen=True)
@@ -206,7 +208,7 @@ def _required(raw: dict[str, Any], key: str) -> str:
     value = raw.get(key)
     if value is None or str(value) == "":
         raise ValueError(f"{key} is required")
-    return str(value)
+    return _expand_env_refs(str(value))
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -216,7 +218,7 @@ def _mapping(value: Any) -> dict[str, Any]:
 def _optional(value: Any) -> str | None:
     if value is None:
         return None
-    text = str(value)
+    text = _expand_env_refs(str(value))
     return text if text else None
 
 
@@ -300,7 +302,7 @@ def _load_stakeholder_contact(
         contact_id=contact_id,
         display_name=str(contact_raw.get("display_name") or contact_id),
         connector=str(connector),
-        target_ref=str(target_ref),
+        target_ref=_expand_env_refs(str(target_ref)),
         thread_ref=_optional(contact_raw.get("thread_ref")),
         importance=str(contact_raw.get("importance") or "high"),
     )
@@ -360,6 +362,19 @@ def _load_target_repository(
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _expand_env_refs(value: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        env_value = os.environ.get(name)
+        if env_value is None:
+            raise ValueError(
+                f"Config references environment variable ${{{name}}} which is not set"
+            )
+        return env_value
+
+    return _ENV_REF_RE.sub(replace, value)
 
 
 def _flow_template_candidates(template: str) -> tuple[str, ...]:

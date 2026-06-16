@@ -40,11 +40,19 @@ pip install -e .[dev]
 pytest -q
 agentic-mesh-v3 --db .tmp/v3.sqlite3 init-db
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev demo-slice --document-library-root .tmp/v3-documents
+agentic-mesh-v3 --db .tmp/v3-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml local-e2e-dogfood --deployment-target-id dogfood-compose
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev status-json
 agentic-mesh --db .tmp/v2.sqlite3 init-db
 agentic-mesh --db .tmp/v2.sqlite3 demo-slice
 agentic-mesh --db .tmp/v2.sqlite3 status-json
 ```
+
+The `project-v3.yaml` dogfood command expects the V3 environment to provide
+NATS, Graph/Teams credentials, `AGENTIC_MESH_ONEDRIVE_TOKEN`,
+`AGENTIC_MESH_ONEDRIVE_DRIVE_ID`, `AGENTIC_MESH_SPONSOR_TEAMS_USER_ID`, and the
+configured `dogfood-compose` deployment target. Use `--document-library-root`
+only for local filesystem smoke tests; the V3 dogfood project configuration
+itself is OneDrive-backed.
 
 Validate source/runtime/project boundaries:
 

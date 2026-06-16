@@ -14,6 +14,7 @@ outputs, runtime state location, and future generated infrastructure artifacts.
 examples/projects/agentic-mesh-dev/
   agentic-mesh/
     project.yaml              # project overlay and role network
+    project-v3.yaml           # V3 dogfood overlay with OneDrive documents
   documents/
     requirements/             # generated role adoption and analysis outputs
   deploy/
@@ -62,6 +63,21 @@ The project file is:
 ```text
 /mesh/project/agentic-mesh/project.yaml
 ```
+
+The V3 dogfood proof uses:
+
+```text
+/mesh/project/agentic-mesh/project-v3.yaml
+```
+
+That file is the V3-oriented project overlay. It uses OneDrive/Teams Shared
+Files under `/documents` as the document-library source, records work-item
+dossiers under `/documents/work-items/{work_item_id}`, routes sponsor approval
+and closure notifications through configured stakeholder contacts, and uses a
+configured release deployment target for the dogfood Compose activation.
+Runtime tokens such as `AGENTIC_MESH_ONEDRIVE_TOKEN` and Graph/Teams
+credentials are supplied by the deployment environment, not committed to the
+project file.
 
 Runtime state is:
 
