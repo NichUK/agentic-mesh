@@ -16,6 +16,8 @@ def test_local_e2e_dogfood_slice_records_release_and_closure(tmp_path: Path) -> 
             "SELECT status, deployment_result FROM releases WHERE work_item_id=?",
             (work_item_id,),
         ).fetchone()
+        approval = db.approval_detail("approval-v3-local-product")
+        detail = db.work_item_detail(work_item_id)
     finally:
         db.close()
 
@@ -25,5 +27,15 @@ def test_local_e2e_dogfood_slice_records_release_and_closure(tmp_path: Path) -> 
     assert snapshot.recent_completions[0].work_item_id == work_item_id
     assert release["status"] == "deployed"
     assert "v3 local smoke deployed" in release["deployment_result"]
+    assert approval is not None
+    assert approval["status"] == "approved"
+    assert detail is not None
+    record_types = [record.record_type for record in detail.governance_records]
+    assert "handoff.require" in record_types
+    assert "consult.request" in record_types
+    assert "informed.update" in record_types
+    assert "decision.record" in record_types
+    assert detail.governance_checklist is not None
+    assert detail.governance_checklist.is_satisfied is True
     assert (tmp_path / "documents" / "work-items" / work_item_id / "index.md").exists()
     assert (tmp_path / "documents" / "work-items" / "index.md").exists()

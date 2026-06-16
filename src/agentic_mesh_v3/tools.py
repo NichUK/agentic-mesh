@@ -528,6 +528,7 @@ class V3ToolService:
                 owner_role=_required(payload, "target_role"),
                 current_phase=_required(payload, "phase"),
                 next_action=_required(payload, "required_next_action"),
+                governance=_handoff_governance(payload),
             )
         elif tool_name == "consult.request":
             _validate_consult_request(payload)
@@ -621,6 +622,18 @@ def _work_item_governance(
     governance.setdefault("accountable_role", owner_role)
     governance.setdefault("responsible_roles", [owner_role])
     return governance
+
+
+def _handoff_governance(payload: dict[str, Any]) -> dict[str, Any]:
+    target_role = _required(payload, "target_role")
+    return {
+        "phase": _required(payload, "phase"),
+        "accountable_role": _required(payload, "accountable_role"),
+        "responsible_roles": [target_role],
+        "consulted_roles": [str(role) for role in payload.get("consulted_roles") or ()],
+        "informed_roles": [str(role) for role in payload.get("informed_roles") or ()],
+        "required_evidence": [str(item) for item in payload.get("evidence_requirements") or ()],
+    }
 
 
 def _target_ref(payload: dict[str, Any]) -> str | None:
