@@ -133,6 +133,8 @@ def load_project_config(path: Path) -> V3ProjectConfig:
     broker_raw = _mapping(raw.get("broker"))
     docs_raw = _mapping(raw.get("document_library"))
     roles_raw = _mapping(raw.get("roles"))
+    if not roles_raw:
+        raise ValueError("roles must define at least one role")
     release_targets_raw = _mapping(raw.get("release_deployment_targets"))
     teams_raw = _mapping(_mapping(raw.get("connectors")).get("teams"))
     flow_raw = _mapping(raw.get("flow"))
@@ -197,10 +199,13 @@ def _optional_int(value: Any) -> int | None:
 def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, Any]) -> V3RoleInstanceConfig:
     worker_raw = _mapping(role_raw.get("worker"))
     auth_raw = _mapping(worker_raw.get("auth"))
+    instances = int(role_raw["instances"]) if "instances" in role_raw else 1
+    if instances < 1:
+        raise ValueError(f"roles.{role_id}.instances must be at least 1")
     return V3RoleInstanceConfig(
         role_id=role_id,
         template=_optional(role_raw.get("template")),
-        instances=int(role_raw.get("instances") or 1),
+        instances=instances,
         worker=V3WorkerConfig(
             adapter=_optional(worker_raw.get("adapter")),
             command=tuple(str(value) for value in _list(worker_raw.get("command"))),

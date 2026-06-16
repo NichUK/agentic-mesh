@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.project_config import resolve_project_flow_config_path
 
@@ -178,3 +180,33 @@ roles:
     resolved = resolve_project_flow_config_path(project_file, load_project_config(project_file))
 
     assert resolved == project_file.parent / "flows" / "custom.yaml"
+
+
+def test_load_project_config_rejects_empty_roles(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+roles: {}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="roles must define at least one role"):
+        load_project_config(project_file)
+
+
+def test_load_project_config_rejects_non_positive_role_instances(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+roles:
+  product-manager:
+    instances: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"roles.product-manager.instances must be at least 1"):
+        load_project_config(project_file)
