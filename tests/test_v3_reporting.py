@@ -50,6 +50,15 @@ def test_reporting_pages_include_required_status_data() -> None:
                 ("Missing consultation evidence for `qa-engineer`.",),
                 2,
                 "2026-06-15 10:01:00",
+                None,
+                None,
+                None,
+                "wake",
+                "pending inbox messages",
+                "agentic-mesh-dev-engineering-1",
+                0,
+                True,
+                "2026-06-15 10:02:00",
             ),
         ),
     )
@@ -71,6 +80,9 @@ def test_reporting_pages_include_required_status_data() -> None:
     assert "Missing consultation evidence for `qa-engineer`." in status_html
     assert "agentic-mesh-dev.engineering.1" in agents_html
     assert "Dead Letters" in agents_html
+    assert "Lifecycle" in agents_html
+    assert "<strong>wake</strong>" in agents_html
+    assert "pending inbox messages" in agents_html
     assert "Memory" in agents_html
     assert "2 entries" in agents_html
     assert "2026-06-15 10:01:00" in agents_html

@@ -352,6 +352,12 @@ def test_lifecycle_results_update_agent_status_projection(tmp_path: Path) -> Non
         db.close()
 
     assert snapshot.agents[0].container_state == "lifecycle_failed"
+    assert snapshot.agents[0].last_lifecycle_action == "wake"
+    assert snapshot.agents[0].last_lifecycle_reason == "pending inbox messages"
+    assert snapshot.agents[0].last_lifecycle_service == "agentic-mesh-dev-engineering-1"
+    assert snapshot.agents[0].last_lifecycle_exit_code == 1
+    assert snapshot.agents[0].last_lifecycle_executed is True
+    assert snapshot.agents[0].last_lifecycle_at is not None
     assert snapshot.agents[0].governance_waits == (
         "Lifecycle wake failed for agentic-mesh-dev-engineering-1: compose failed",
     )
