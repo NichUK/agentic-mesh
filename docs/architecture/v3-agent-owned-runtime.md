@@ -82,6 +82,9 @@ Role containers mount source, organisation config, project config, agent config,
 runtime state, and document-library roots at stable paths. Hibernation planning
 uses heartbeat, active work, inbox depth, and minimum warm-pool policy; it does
 not make work decisions.
+The V3 Compose renderer converts materialized role container specs into one
+Compose service per role instance, using the generated `run-agent-service`
+command and the same mounted path contract.
 
 Project Manager sweeps are read-only health inspections over work-item state.
 They flag blocked, waiting, recovering, and stale non-terminal work so the
