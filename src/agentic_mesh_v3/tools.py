@@ -15,8 +15,10 @@ from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import DocumentRef
+from agentic_mesh_v3.documents import GovernanceRegisterItem
 from agentic_mesh_v3.documents import WorkItemIndex
 from agentic_mesh_v3.documents import write_root_work_item_index
+from agentic_mesh_v3.documents import write_governance_register
 from agentic_mesh_v3.documents import write_work_item_index
 from agentic_mesh_v3.observability import V3Telemetry
 from agentic_mesh_v3.observability import get_telemetry
@@ -603,6 +605,7 @@ class V3ToolService:
             status=str(payload.get("status") or _default_governance_status(tool_name)),
             payload=payload,
         )
+        self._refresh_governance_register(tool_name)
         self._publish_role_governance_message(
             call_id=call_id,
             role_instance_id=role_instance_id,
@@ -634,6 +637,35 @@ class V3ToolService:
                 "summary": _summary(payload),
                 "payload": payload,
             },
+        )
+
+    def _refresh_governance_register(self, tool_name: str) -> None:
+        if self.document_library is None:
+            return
+        if tool_name == "decision.record":
+            relative_path = "decisions/index.md"
+            title = "Decision Register"
+        elif tool_name == "risk.register":
+            relative_path = "risks/index.md"
+            title = "Risk Register"
+        else:
+            return
+        records = self.db.list_governance_records(record_type=tool_name)
+        write_governance_register(
+            self.document_library,
+            relative_path=relative_path,
+            title=title,
+            items=(
+                GovernanceRegisterItem(
+                    record_id=str(record["record_id"]),
+                    work_item_id=str(record["work_item_id"]),
+                    summary=str(record["summary"]),
+                    status=str(record["status"]),
+                    role_instance_id=str(record["role_instance_id"]),
+                    target_ref=_optional(record.get("target_ref")),
+                )
+                for record in records
+            ),
         )
 
 

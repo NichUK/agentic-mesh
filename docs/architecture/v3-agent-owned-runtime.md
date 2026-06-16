@@ -199,10 +199,13 @@ for these duties: `consult.request`, `informed.update`,
 `document.write_work_item_index`. Agents also have first-class
 `decision.record` and `risk.register` tools so durable decisions and risks can
 be recorded as work-item governance evidence before they are summarized into
-document-library indexes or longer-lived registers. `blocker.raise` is the
-first-class path for marking work blocked: it records blocker evidence, moves
-the work item to `blocked`, and surfaces the required next action for the
-Project Manager, sponsor, or owning role to chase.
+document-library indexes or longer-lived registers. When a document library is
+configured, those tools refresh `/documents/decisions/index.md` and
+`/documents/risks/index.md` so durable governance evidence is visible outside
+the runtime database. `blocker.raise` is the first-class path for marking work
+blocked: it records blocker evidence, moves the work item to `blocked`, and
+surfaces the required next action for the Project Manager, sponsor, or owning
+role to chase.
 
 Governance checklists compare a work item's RACI context with recorded
 consultation, informed-update, exception, and approval evidence. They are

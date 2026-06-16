@@ -1028,6 +1028,7 @@ def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None
 
 def test_v3_tool_service_records_decisions_and_risks_as_governance_evidence(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
+    docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
     try:
         db.migrate()
         db.upsert_work_item(
@@ -1037,7 +1038,7 @@ def test_v3_tool_service_records_decisions_and_risks_as_governance_evidence(tmp_
             state="active",
             owner_role="project-manager",
         )
-        tools = V3ToolService(db)
+        tools = V3ToolService(db, docs)
         tools.call(
             role_instance_id="agentic-mesh-dev.solution-architect.1",
             tool_name="decision.record",
@@ -1071,6 +1072,14 @@ def test_v3_tool_service_records_decisions_and_risks_as_governance_evidence(tmp_
     assert records["risk.register"].summary == "Graph token scopes may block Teams installation automation."
     assert records["risk.register"].status == "risk_open"
     assert records["risk.register"].target_ref == "risk-identity-consent"
+    decision_register = (tmp_path / "documents" / "decisions" / "index.md").read_text(encoding="utf-8")
+    risk_register = (tmp_path / "documents" / "risks" / "index.md").read_text(encoding="utf-8")
+    assert "# Decision Register" in decision_register
+    assert "[work-1](../work-items/work-1/index.md)" in decision_register
+    assert "Use NATS JetStream as the first V3 broker adapter." in decision_register
+    assert "# Risk Register" in risk_register
+    assert "[work-1](../work-items/work-1/index.md)" in risk_register
+    assert "Graph token scopes may block Teams installation automation." in risk_register
 
 
 def test_v3_tool_service_records_project_channel_relevance_without_work_item(tmp_path: Path) -> None:
