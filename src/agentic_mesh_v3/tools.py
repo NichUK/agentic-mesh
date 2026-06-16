@@ -17,6 +17,7 @@ from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import GovernanceRegisterItem
 from agentic_mesh_v3.documents import WorkItemIndex
+from agentic_mesh_v3.documents import validate_framework_artifact_path
 from agentic_mesh_v3.documents import write_root_work_item_index
 from agentic_mesh_v3.documents import write_governance_register
 from agentic_mesh_v3.documents import write_work_item_index
@@ -521,13 +522,21 @@ class V3ToolService:
         filename = str(payload.get("filename") or PurePosixPath(relative_path).name)
         if not filename:
             raise ValueError("filename is required")
+        document_type = str(payload.get("document_type") or "artifact")
+        if self.document_library is not None:
+            validate_framework_artifact_path(
+                framework_id=getattr(self.document_library, "framework_id", "togaf-sdlc-v1"),
+                document_type=document_type,
+                work_item_id=_required(payload, "work_item_id"),
+                relative_path=relative_path,
+            )
         self.db.add_artifact(
             artifact_id=str(payload.get("artifact_id") or f"artifact-{call_id}"),
             work_item_id=_required(payload, "work_item_id"),
             filename=filename,
             title=str(payload.get("title") or filename),
             relative_path=relative_path,
-            document_type=str(payload.get("document_type") or "artifact"),
+            document_type=document_type,
             status=str(payload.get("status") or "linked"),
             created_by_role=role_from_instance(role_instance_id),
         )

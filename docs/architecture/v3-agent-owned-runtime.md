@@ -116,6 +116,12 @@ field, defaulting to `togaf-sdlc-v1`. The selected policy is materialized into
 each role's mounted `project.md` instructions so agents know which
 documentation framework governs work-item dossiers, root work-item indexes,
 and durable system documentation before they start writing artifacts.
+The runtime also keeps a framework catalog for known document types. In the
+initial `togaf-sdlc-v1` policy, typed work-item evidence such as product
+definitions, solution designs, implementation logs, QA evidence, and release
+records must use the configured work-item dossier paths. Generic artifacts are
+still allowed for screenshots, exports, or supporting evidence that has no
+standard document slot yet.
 
 The same mounted folder is used to build the role-service configuration:
 prompt component paths, memory database path, broker stream, and durable
@@ -465,7 +471,10 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   claim that artifacts were published.
   Project config selects a document structure policy through
   `document_library.structure_policy`; V3 defaults this to `togaf-sdlc-v1`
-  and passes it into agent-facing project instructions.
+  and passes it into agent-facing project instructions. The selected policy
+  also validates typed document-library artifact links, so agents cannot claim a
+  product definition or release record exists at a non-standard path when a
+  framework path is defined.
 - Deployment: V3 defines command and no-deployment deployment targets so the
   Release Manager can execute a configured deployment or record a clear
   no-deployment disposition. Release closure is a Release Manager tool action

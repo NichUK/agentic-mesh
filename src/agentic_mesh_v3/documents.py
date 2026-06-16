@@ -20,6 +20,83 @@ class DocumentRef:
 
 
 @dataclass(frozen=True)
+class DocumentTypeRule:
+    document_type: str
+    title: str
+    path_template: str | None = None
+
+    def path_for(self, *, work_item_id: str) -> str:
+        if self.path_template is None:
+            raise DocumentLibraryError(f"document type `{self.document_type}` does not define a fixed path")
+        return self.path_template.format(work_item_id=work_item_id)
+
+
+@dataclass(frozen=True)
+class DocumentFramework:
+    framework_id: str
+    document_types: tuple[DocumentTypeRule, ...]
+
+    def rule_for(self, document_type: str) -> DocumentTypeRule | None:
+        normalized = document_type.strip().casefold().replace("-", "_")
+        for rule in self.document_types:
+            if rule.document_type == normalized:
+                return rule
+        return None
+
+
+TOGAF_SDLC_V1 = DocumentFramework(
+    framework_id="togaf-sdlc-v1",
+    document_types=(
+        DocumentTypeRule(
+            document_type="work_item_index",
+            title="Work item index",
+            path_template="work-items/{work_item_id}/index.md",
+        ),
+        DocumentTypeRule(
+            document_type="product_definition",
+            title="Product definition",
+            path_template="work-items/{work_item_id}/020-product-definition.md",
+        ),
+        DocumentTypeRule(
+            document_type="solution_design",
+            title="Solution design",
+            path_template="work-items/{work_item_id}/030-solution-design.md",
+        ),
+        DocumentTypeRule(
+            document_type="security_review",
+            title="Security review",
+            path_template="work-items/{work_item_id}/050-security-review.md",
+        ),
+        DocumentTypeRule(
+            document_type="prompt_contract",
+            title="Prompt contract",
+            path_template="work-items/{work_item_id}/060-prompt-contract.md",
+        ),
+        DocumentTypeRule(
+            document_type="implementation_log",
+            title="Implementation log",
+            path_template="work-items/{work_item_id}/100-implementation-log.md",
+        ),
+        DocumentTypeRule(
+            document_type="qa_evidence",
+            title="QA evidence",
+            path_template="work-items/{work_item_id}/110-quality-evidence.md",
+        ),
+        DocumentTypeRule(
+            document_type="release_record",
+            title="Release record",
+            path_template="work-items/{work_item_id}/140-release-record.md",
+        ),
+        DocumentTypeRule(document_type="decision_register", title="Decision register", path_template="decisions/index.md"),
+        DocumentTypeRule(document_type="risk_register", title="Risk register", path_template="risks/index.md"),
+        DocumentTypeRule(document_type="artifact", title="Generic artifact"),
+    ),
+)
+
+DOCUMENT_FRAMEWORKS = {TOGAF_SDLC_V1.framework_id: TOGAF_SDLC_V1}
+
+
+@dataclass(frozen=True)
 class WorkItemIndex:
     work_item_id: str
     title: str
@@ -106,8 +183,9 @@ class DocumentLibraryAdapter(Protocol):
 
 
 class LocalDocumentLibraryAdapter:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, framework_id: str = "togaf-sdlc-v1") -> None:
         self.root = root
+        self.framework_id = framework_for(framework_id).framework_id
 
     def write_text(self, relative_path: str, content: str) -> DocumentRef:
         target = self._target(relative_path)
@@ -148,12 +226,14 @@ class OneDriveDocumentLibraryAdapter:
         *,
         access_token: str | None = None,
         root_path: str = "/documents",
+        framework_id: str = "togaf-sdlc-v1",
         graph_base_url: str = "https://graph.microsoft.com/v1.0",
         transport: "GraphDocumentTransport | None" = None,
     ) -> None:
         self.drive_id = drive_id
         self.access_token = access_token
         self.root_path = root_path
+        self.framework_id = framework_for(framework_id).framework_id
         self.graph_base_url = graph_base_url.rstrip("/")
         self.transport = transport or UrlLibGraphDocumentTransport(access_token=access_token)
 
@@ -255,7 +335,7 @@ def build_document_library_adapter(
     if adapter in {"local", "filesystem", "file", "git"}:
         if config.root is None:
             raise ValueError("document_library.root is required for local/filesystem/git document libraries")
-        return LocalDocumentLibraryAdapter(config.root)
+        return LocalDocumentLibraryAdapter(config.root, framework_id=config.structure_policy)
     if adapter in {"onedrive", "sharepoint"}:
         if not config.drive_id:
             raise ValueError("document_library.drive_id is required for OneDrive/SharePoint document libraries")
@@ -265,6 +345,7 @@ def build_document_library_adapter(
             config.drive_id,
             access_token=access_token,
             root_path=config.root_path,
+            framework_id=config.structure_policy,
             graph_base_url=graph_base_url,
             transport=transport,
         )
@@ -273,6 +354,34 @@ def build_document_library_adapter(
 
 def work_item_index_path(work_item_id: str) -> str:
     return f"work-items/{work_item_id}/index.md"
+
+
+def framework_for(framework_id: str) -> DocumentFramework:
+    normalized = framework_id.strip().casefold()
+    try:
+        return DOCUMENT_FRAMEWORKS[normalized]
+    except KeyError as exc:
+        raise DocumentLibraryError(f"unsupported document framework: {framework_id}") from exc
+
+
+def validate_framework_artifact_path(
+    *,
+    framework_id: str,
+    document_type: str,
+    work_item_id: str,
+    relative_path: str,
+) -> None:
+    rule = framework_for(framework_id).rule_for(document_type)
+    if rule is None:
+        raise DocumentLibraryError(f"unknown document type `{document_type}` for framework `{framework_id}`")
+    if rule.path_template is None:
+        return
+    expected = rule.path_for(work_item_id=work_item_id)
+    actual = relative_path.replace("\\", "/").lstrip("/")
+    if actual != expected:
+        raise DocumentLibraryError(
+            f"document type `{document_type}` must use framework path `{expected}`, got `{actual}`"
+        )
 
 
 def _work_item_artifact_link(work_item_id: str, artifact: DocumentRef) -> str:
