@@ -231,6 +231,10 @@ Work-item detail pages include the governance checklist derived from the
 runtime read model so sponsors and agents can see unresolved consultations,
 informed updates, sponsor decisions, and recorded exceptions without reading
 raw JSON.
+The artifact viewer renders Markdown through the existing Python-Markdown
+library, sanitizes artifact content with `bleach`, and preserves Mermaid code
+fences as controlled Mermaid render blocks so lifecycle and architecture
+diagrams can be read directly from work-item evidence.
 The `/agents` page includes each role instance's inbox/dead-letter depths,
 current work, governance waits, and database-derived memory status. Memory
 counts and last-memory timestamps come from the `role_memory` table rather

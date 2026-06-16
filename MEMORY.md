@@ -397,3 +397,8 @@ V3 agent reporting now surfaces database-derived role-memory health. The
 `/agents` page and `status-json` projection include memory entry count and the
 last memory timestamp for each role instance, derived from `role_memory` rather
 than heartbeat payloads.
+
+V3 artifact rendering now preserves Mermaid fenced code blocks as controlled
+Mermaid render blocks while continuing to sanitize artifact content with
+`bleach`. The viewer only loads Mermaid when an artifact contains a Mermaid
+fence.
