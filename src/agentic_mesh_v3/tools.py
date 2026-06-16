@@ -78,6 +78,7 @@ class V3ToolService:
             try:
                 self.authority_policy.assert_allowed(role_instance_id=role_instance_id, tool_name=tool_name)
                 validate_tool_required_fields(tool_name, payload)
+                self._validate_runtime_dependencies(tool_name=tool_name, payload=payload)
                 call_id = f"call-{uuid4().hex}"
                 is_terminal = bool(terminal) or tool_name in TERMINAL_TOOLS
                 self.db.record_tool_call(
@@ -118,6 +119,29 @@ class V3ToolService:
                 terminal=is_terminal,
             )
             return ToolResult(call_id=call_id, tool_name=tool_name, terminal=is_terminal)
+
+    def _validate_runtime_dependencies(self, *, tool_name: str, payload: dict[str, Any]) -> None:
+        if tool_name == "messaging.send" and self.stakeholder_bridge is None:
+            raise ValueError("stakeholder bridge is not configured")
+        if tool_name == "status.reply":
+            target_ref = _optional(payload.get("target_ref")) or _optional(payload.get("reply_target_ref"))
+            if target_ref is not None and self.stakeholder_bridge is None:
+                raise ValueError("stakeholder bridge is not configured")
+        if tool_name == "stakeholder.ask_question":
+            should_deliver = _optional(payload.get("target_ref") or payload.get("stakeholder_ref")) is not None
+            if should_deliver and self.stakeholder_bridge is None:
+                raise ValueError("stakeholder bridge is not configured")
+        if tool_name == "approval.request":
+            target_ref = _optional(payload.get("target_ref"))
+            if target_ref is not None and self.stakeholder_bridge is None:
+                raise ValueError("stakeholder bridge is not configured")
+        if tool_name == "release.deploy":
+            target_id = _required(payload, "target_id")
+            if target_id not in self.deployment_targets:
+                raise ValueError(f"deployment target is not configured: {target_id}")
+        if tool_name in {"document.write_work_item_index", "document.write_root_work_item_index"}:
+            if self.document_library is None:
+                raise ValueError("document library is not configured")
 
     def _apply_effect(
         self, *, call_id: str, role_instance_id: str, tool_name: str, payload: dict[str, Any]

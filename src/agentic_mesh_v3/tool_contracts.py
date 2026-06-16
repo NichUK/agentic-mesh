@@ -144,3 +144,19 @@ def validate_tool_required_fields(tool_name: str, payload: dict[str, Any]) -> No
         value = payload.get(field_name)
         if value is None or str(value) == "":
             raise ValueError(f"{field_name} is required for {tool_name}")
+    if tool_name == "status.reply" and _has_any(payload, "target_ref", "reply_target_ref"):
+        _require(payload, "connector", tool_name)
+    elif tool_name == "stakeholder.ask_question" and _has_any(payload, "target_ref", "stakeholder_ref"):
+        _require(payload, "connector", tool_name)
+    elif tool_name == "approval.request" and _has_any(payload, "target_ref"):
+        _require(payload, "connector", tool_name)
+
+
+def _has_any(payload: dict[str, Any], *field_names: str) -> bool:
+    return any(payload.get(field_name) is not None and str(payload.get(field_name)) != "" for field_name in field_names)
+
+
+def _require(payload: dict[str, Any], field_name: str, tool_name: str) -> None:
+    value = payload.get(field_name)
+    if value is None or str(value) == "":
+        raise ValueError(f"{field_name} is required for targeted {tool_name}")

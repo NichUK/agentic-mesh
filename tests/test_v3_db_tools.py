@@ -694,6 +694,45 @@ def test_v3_release_deploy_success_moves_work_to_released(tmp_path: Path) -> Non
     assert state_events == ["deploying", "released"]
 
 
+def test_v3_release_deploy_unknown_target_fails_before_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Deploy runtime",
+            description="Needs runtime deployment.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                tool_name="release.deploy",
+                payload={
+                    "work_item_id": "work-1",
+                    "target_id": "missing-target",
+                    "scope": "Runtime release",
+                    "version_ref": "commit:abc123",
+                    "approval_ref": "approval-release-1",
+                },
+            )
+        except ValueError as exc:
+            assert "deployment target is not configured: missing-target" in str(exc)
+        else:
+            raise AssertionError("release.deploy should require a configured deployment target")
+
+        detail = db.work_item_detail("work-1")
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "release_review"
+    assert detail.releases == ()
+    assert calls == []
+
+
 def test_v3_release_deploy_failure_moves_work_to_recovering(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
@@ -1604,11 +1643,51 @@ def test_v3_tool_service_stakeholder_question_with_target_requires_bridge(tmp_pa
         else:
             raise AssertionError("targeted stakeholder question should require a bridge")
         detail = db.work_item_detail("work-1")
+        calls = db.list_tool_calls()
     finally:
         db.close()
 
     assert detail is not None
     assert detail.governance_records == ()
+    assert calls == []
+
+
+def test_v3_tool_service_stakeholder_question_target_requires_connector_before_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Question work",
+            description="Needs sponsor input.",
+            state="waiting_human",
+            owner_role="product-manager",
+        )
+        try:
+            V3ToolService(db, stakeholder_bridge=bridge).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="stakeholder.ask_question",
+                payload={
+                    "work_item_id": "work-1",
+                    "question": "Which sponsor-visible channel should be used?",
+                    "stakeholder_ref": "dm:sponsor",
+                },
+            )
+        except ValueError as exc:
+            assert "connector is required for targeted stakeholder.ask_question" in str(exc)
+        else:
+            raise AssertionError("targeted stakeholder.ask_question should require connector")
+
+        detail = db.work_item_detail("work-1")
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.governance_records == ()
+    assert calls == []
 
 
 def test_v3_tool_service_messaging_send_uses_stakeholder_bridge(tmp_path: Path) -> None:
@@ -1756,8 +1835,35 @@ def test_v3_tool_service_status_reply_with_target_requires_bridge(tmp_path: Path
             assert "stakeholder bridge is not configured" in str(exc)
         else:
             raise AssertionError("status.reply with target should require a stakeholder bridge")
+        calls = db.list_tool_calls()
     finally:
         db.close()
+
+    assert calls == []
+
+
+def test_v3_tool_service_status_reply_target_requires_connector_before_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        try:
+            V3ToolService(db, stakeholder_bridge=bridge).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="status.reply",
+                payload={"target_ref": "dm:sponsor", "text_markdown": "Reply."},
+            )
+        except ValueError as exc:
+            assert "connector is required for targeted status.reply" in str(exc)
+        else:
+            raise AssertionError("targeted status.reply should require connector")
+
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert calls == []
 
 
 def test_v3_tool_service_status_reply_requires_markdown_before_recording(tmp_path: Path) -> None:
@@ -1960,11 +2066,52 @@ def test_v3_tool_service_approval_request_with_target_requires_bridge(tmp_path: 
         else:
             raise AssertionError("approval.request with target should require a stakeholder bridge")
         detail = db.work_item_detail("work-1")
+        calls = db.list_tool_calls()
     finally:
         db.close()
 
     assert detail is not None
     assert detail.approvals == ()
+    assert calls == []
+
+
+def test_v3_tool_service_approval_request_target_requires_connector_before_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Approval work",
+            description="Needs approval.",
+            state="waiting_human",
+            owner_role="product-manager",
+        )
+        try:
+            V3ToolService(db, stakeholder_bridge=bridge).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="approval.request",
+                payload={
+                    "approval_id": "approval-1",
+                    "work_item_id": "work-1",
+                    "question": "Approve product definition?",
+                    "target_ref": "dm:sponsor",
+                },
+            )
+        except ValueError as exc:
+            assert "connector is required for targeted approval.request" in str(exc)
+        else:
+            raise AssertionError("targeted approval.request should require connector")
+
+        detail = db.work_item_detail("work-1")
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.approvals == ()
+    assert calls == []
 
 
 def test_v3_tool_service_approval_request_rejects_missing_work_item_without_recording(tmp_path: Path) -> None:
