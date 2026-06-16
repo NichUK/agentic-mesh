@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections import deque
+import asyncio
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -156,32 +157,154 @@ class InMemoryBrokerAdapter:
 
 
 class NatsJetStreamAdapter:
-    """NATS JetStream adapter placeholder behind the v3 broker port."""
+    """NATS JetStream adapter behind the v3 broker port.
+
+    The adapter keeps product code behind the synchronous `BrokerAdapter`
+    boundary while using `nats-py` internally. It connects per operation for a
+    simple local-first implementation; a later enterprise tuning slice can add
+    connection pooling without changing the port.
+    """
 
     def __init__(self, servers: str) -> None:
         self.servers = servers
+        self._acked_messages: dict[tuple[str, str, str], object] = {}
 
     def ensure_stream(self, stream: str, subjects: list[str]) -> None:
-        raise NotImplementedError("NATS JetStream client wiring belongs in the adapter slice")
+        asyncio.run(self._ensure_stream(stream, subjects))
 
     def ensure_consumer(
         self, stream: str, consumer: str, *, filter_subject: str | None = None
     ) -> BrokerConsumer:
-        raise NotImplementedError("NATS JetStream client wiring belongs in the adapter slice")
+        asyncio.run(self._ensure_consumer(stream, consumer, filter_subject=filter_subject))
+        return BrokerConsumer(stream=stream, consumer=consumer, filter_subject=filter_subject)
 
     def publish(
         self, stream: str, subject: str, payload: dict[str, object], *, message_id: str | None = None
     ) -> BrokerMessage:
-        raise NotImplementedError("NATS JetStream client wiring belongs in the adapter slice")
+        return asyncio.run(self._publish(stream, subject, payload, message_id=message_id))
 
     def fetch(self, stream: str, consumer: str, *, batch: int = 1) -> list[BrokerMessage]:
-        raise NotImplementedError("NATS JetStream client wiring belongs in the adapter slice")
+        return asyncio.run(self._fetch(stream, consumer, batch=batch))
 
     def ack(self, stream: str, consumer: str, message_id: str) -> None:
-        raise NotImplementedError("NATS JetStream client wiring belongs in the adapter slice")
+        message = self._acked_messages.pop((stream, consumer, message_id), None)
+        if message is not None:
+            asyncio.run(_ack_nats_message(message))
 
     def nack(self, stream: str, consumer: str, message_id: str, *, reason: str) -> None:
-        raise NotImplementedError("NATS JetStream client wiring belongs in the adapter slice")
+        message = self._acked_messages.pop((stream, consumer, message_id), None)
+        if message is not None:
+            asyncio.run(_nak_nats_message(message, reason=reason))
 
     def depth(self, stream: str) -> BrokerDepth:
-        raise NotImplementedError("NATS JetStream client wiring belongs in the adapter slice")
+        return asyncio.run(self._depth(stream))
+
+    async def _connect(self):
+        nats = _import_nats()
+        return await nats.connect(servers=[self.servers])
+
+    async def _ensure_stream(self, stream: str, subjects: list[str]) -> None:
+        nc = await self._connect()
+        try:
+            js = nc.jetstream()
+            try:
+                await js.stream_info(stream)
+                await js.update_stream(name=stream, subjects=subjects)
+            except Exception:
+                await js.add_stream(name=stream, subjects=subjects)
+        finally:
+            await nc.close()
+
+    async def _ensure_consumer(self, stream: str, consumer: str, *, filter_subject: str | None) -> None:
+        nc = await self._connect()
+        try:
+            js = nc.jetstream()
+            config = {"durable_name": consumer, "ack_policy": "explicit"}
+            if filter_subject:
+                config["filter_subject"] = filter_subject
+            await js.add_consumer(stream, config=config)
+        finally:
+            await nc.close()
+
+    async def _publish(
+        self, stream: str, subject: str, payload: dict[str, object], *, message_id: str | None
+    ) -> BrokerMessage:
+        del stream
+        import json
+
+        nc = await self._connect()
+        try:
+            js = nc.jetstream()
+            headers = {"Nats-Msg-Id": message_id} if message_id else None
+            ack = await js.publish(subject, json.dumps(payload).encode("utf-8"), headers=headers)
+            return BrokerMessage(
+                message_id=message_id or f"{subject}:{ack.seq}",
+                subject=subject,
+                payload=dict(payload),
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        finally:
+            await nc.close()
+
+    async def _fetch(self, stream: str, consumer: str, *, batch: int) -> list[BrokerMessage]:
+        import json
+
+        nc = await self._connect()
+        try:
+            js = nc.jetstream()
+            subscription = await js.pull_subscribe("", durable=consumer, stream=stream)
+            raw_messages = await subscription.fetch(batch=batch, timeout=1)
+            messages: list[BrokerMessage] = []
+            for raw in raw_messages:
+                payload = json.loads(raw.data.decode("utf-8")) if raw.data else {}
+                metadata = await raw.metadata
+                message_id = f"{raw.subject}:{metadata.sequence.stream}"
+                self._acked_messages[(stream, consumer, message_id)] = raw
+                messages.append(
+                    BrokerMessage(
+                        message_id=message_id,
+                        subject=raw.subject,
+                        payload=payload if isinstance(payload, dict) else {"value": payload},
+                        created_at=datetime.now(timezone.utc).isoformat(),
+                        delivery_count=max(metadata.num_delivered - 1, 0),
+                    )
+                )
+            return messages
+        finally:
+            await nc.close()
+
+    async def _depth(self, stream: str) -> BrokerDepth:
+        nc = await self._connect()
+        try:
+            js = nc.jetstream()
+            info = await js.stream_info(stream)
+            return BrokerDepth(stream=stream, pending=int(info.state.messages), consumers={})
+        finally:
+            await nc.close()
+
+
+def build_broker_adapter(*, adapter: str, servers: str | None = None) -> BrokerAdapter:
+    if adapter == "in-memory":
+        return InMemoryBrokerAdapter()
+    if adapter == "nats-jetstream":
+        if not servers:
+            raise ValueError("NATS JetStream broker requires servers")
+        return NatsJetStreamAdapter(servers)
+    raise ValueError(f"unsupported broker adapter: {adapter}")
+
+
+def _import_nats():
+    try:
+        import nats
+    except ImportError as exc:
+        raise RuntimeError("NATS JetStream adapter requires the optional `nats-py` package") from exc
+    return nats
+
+
+async def _ack_nats_message(message: object) -> None:
+    await message.ack()  # type: ignore[attr-defined]
+
+
+async def _nak_nats_message(message: object, *, reason: str) -> None:
+    del reason
+    await message.nak()  # type: ignore[attr-defined]

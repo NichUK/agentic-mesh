@@ -1,4 +1,6 @@
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
+from agentic_mesh_v3.broker import NatsJetStreamAdapter
+from agentic_mesh_v3.broker import build_broker_adapter
 
 
 def test_in_memory_broker_publish_fetch_ack() -> None:
@@ -30,3 +32,20 @@ def test_in_memory_broker_nack_requeues_with_reason() -> None:
     assert retried.message_id == published.message_id
     assert retried.delivery_count == 1
     assert retried.payload["last_nack_reason"] == "try again"
+
+
+def test_build_broker_adapter_supports_in_memory_and_nats() -> None:
+    assert isinstance(build_broker_adapter(adapter="in-memory"), InMemoryBrokerAdapter)
+    assert isinstance(
+        build_broker_adapter(adapter="nats-jetstream", servers="nats://localhost:4222"),
+        NatsJetStreamAdapter,
+    )
+
+
+def test_build_broker_adapter_requires_nats_servers() -> None:
+    try:
+        build_broker_adapter(adapter="nats-jetstream")
+    except ValueError as exc:
+        assert "requires servers" in str(exc)
+    else:
+        raise AssertionError("NATS adapter should require servers")
