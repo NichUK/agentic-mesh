@@ -17,6 +17,15 @@ class NoToolWorker:
         return []
 
 
+class CapturingWorker:
+    def __init__(self) -> None:
+        self.prompt = ""
+
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        self.prompt = prompt
+        return [f"status.reply:{message.message_id}"]
+
+
 class FakeStatusReporter:
     def __init__(self) -> None:
         self.statuses = []
@@ -144,6 +153,54 @@ def test_role_agent_can_use_configured_sqlite_memory(tmp_path: Path) -> None:
     assert result is not None
     assert result.status == "completed"
     assert "processed" in memory.load_summary("agentic-mesh-dev.product-manager.1")
+
+
+def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "shape this"})
+    config = _config(tmp_path)
+    organisation = tmp_path / "organisation.md"
+    project = tmp_path / "project.md"
+    raci = tmp_path / "raci.json"
+    tools = tmp_path / "tools.md"
+    organisation.write_text("Organisation instruction.", encoding="utf-8")
+    project.write_text("Project instruction.", encoding="utf-8")
+    raci.write_text('[{"phase":"requirements"}]', encoding="utf-8")
+    tools.write_text("Use safe-output tools.", encoding="utf-8")
+    config = RoleInstanceConfig(
+        project_id=config.project_id,
+        role_id=config.role_id,
+        instance_id=config.instance_id,
+        role_prompt_path=config.role_prompt_path,
+        memory_db_path=config.memory_db_path,
+        inbox_stream=config.inbox_stream,
+        inbox_consumer=config.inbox_consumer,
+        organisation_prompt_path=organisation,
+        project_prompt_path=project,
+        raci_path=raci,
+        tools_prompt_path=tools,
+    )
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=config,
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "<organisation>" in worker.prompt
+    assert "Organisation instruction." in worker.prompt
+    assert "<project>" in worker.prompt
+    assert "Project instruction." in worker.prompt
+    assert "<raci>" in worker.prompt
+    assert '"phase":"requirements"' in worker.prompt
+    assert "<available-tools>" in worker.prompt
+    assert "Use safe-output tools." in worker.prompt
 
 
 def test_role_agent_requeues_if_worker_calls_no_tools(tmp_path: Path) -> None:

@@ -23,6 +23,10 @@ class RoleInstanceConfig:
     memory_db_path: Path
     inbox_stream: str
     inbox_consumer: str
+    organisation_prompt_path: Path | None = None
+    project_prompt_path: Path | None = None
+    raci_path: Path | None = None
+    tools_prompt_path: Path | None = None
 
     @property
     def role_instance_id(self) -> str:
@@ -186,6 +190,10 @@ class RoleAgentService:
         self, message: AgentMessage, *, governance_context: GovernanceContext | None = None
     ) -> str:
         role_prompt = self.config.role_prompt_path.read_text(encoding="utf-8")
+        organisation_prompt = _read_optional(self.config.organisation_prompt_path)
+        project_prompt = _read_optional(self.config.project_prompt_path)
+        raci_prompt = _read_optional(self.config.raci_path)
+        tools_prompt = _read_optional(self.config.tools_prompt_path)
         memory_summary = self.memory.load_summary(self.config.role_instance_id)
         lines = [
             "<agentic-mesh-v3-agent>",
@@ -193,8 +201,12 @@ class RoleAgentService:
             "<role>",
             role_prompt,
             "</role>",
-            self.governance_instructions.as_prompt_section(),
         ]
+        _append_optional_section(lines, "organisation", organisation_prompt)
+        _append_optional_section(lines, "project", project_prompt)
+        _append_optional_section(lines, "raci", raci_prompt)
+        _append_optional_section(lines, "available-tools", tools_prompt)
+        lines.append(self.governance_instructions.as_prompt_section())
         if governance_context is not None:
             lines.extend(
                 [
@@ -220,3 +232,15 @@ class RoleAgentService:
 def _message_work_ref(payload: dict[str, object]) -> str | None:
     value = payload.get("work_item_id") or payload.get("source_message_id")
     return None if value is None else str(value)
+
+
+def _read_optional(path: Path | None) -> str | None:
+    if path is None or not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _append_optional_section(lines: list[str], name: str, content: str | None) -> None:
+    if not content:
+        return
+    lines.extend([f"<{name}>", content, f"</{name}>"])
