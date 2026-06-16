@@ -202,6 +202,10 @@ def _role_project_instructions(role: V3RoleInstanceConfig, project_config: V3Pro
         "- Each work-item dossier must maintain `index.md`; the root work-item index is `/documents/work-items/index.md`.",
         "- Durable system, architecture, product, engineering, QA, operations, release, risk, decision, and programming documentation also belongs in the document library.",
         "",
+        "## Release Deployment Targets",
+        "",
+        *_release_deployment_target_lines(project_config),
+        "",
         "## Role Instructions",
         "",
     ]
@@ -210,6 +214,29 @@ def _role_project_instructions(role: V3RoleInstanceConfig, project_config: V3Pro
     else:
         lines.extend(f"- {instruction}" for instruction in role.instructions)
     return "\n".join(lines)
+
+
+def _release_deployment_target_lines(project_config: V3ProjectConfig) -> list[str]:
+    if not project_config.release_deployment_targets:
+        return [
+            "- No release deployment targets are configured.",
+            "- Development work that needs activation must be blocked with the exact missing deployment target/config instead of closed as released.",
+        ]
+    lines = [
+        "- Release Manager must choose an appropriate configured target when deployment is required.",
+        "- Development slices require a deployment target unless explicitly classified as spike, planning-only, design-only, documentation-only, analysis-only, research-only, or no-runtime-change.",
+    ]
+    for target in project_config.release_deployment_targets:
+        lines.append(f"- `{target.target_id}`: type `{target.target_type}`.")
+        if target.command:
+            lines.append(f"  - Command: `{' '.join(target.command)}`")
+        if target.working_directory is not None:
+            lines.append(f"  - Working directory: `{target.working_directory}`")
+        lines.append(f"  - Timeout seconds: `{target.timeout_seconds}`")
+        lines.append(f"  - Rollback plan: {target.rollback_plan}")
+        if target.reason:
+            lines.append(f"  - No-deployment reason/description: {target.reason}")
+    return lines
 
 
 def _role_tool_instructions(role_id: str, base_instructions: str, *, document_framework_id: str) -> str:
