@@ -215,6 +215,9 @@ def _validate_config_key(field_name: str, value: str) -> None:
 
 def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, Any]) -> V3RoleInstanceConfig:
     _validate_identifier(f"roles.{role_id}", role_id)
+    template = _optional(role_raw.get("template"))
+    if template is not None:
+        _validate_identifier(f"roles.{role_id}.template", template)
     worker_raw = _mapping(role_raw.get("worker"))
     auth_raw = _mapping(worker_raw.get("auth"))
     instances = int(role_raw["instances"]) if "instances" in role_raw else 1
@@ -222,7 +225,7 @@ def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, An
         raise ValueError(f"roles.{role_id}.instances must be at least 1")
     return V3RoleInstanceConfig(
         role_id=role_id,
-        template=_optional(role_raw.get("template")),
+        template=template,
         instances=instances,
         worker=V3WorkerConfig(
             adapter=_optional(worker_raw.get("adapter")),
