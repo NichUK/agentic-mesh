@@ -20,6 +20,9 @@ def test_project_v3_schema_allows_local_agent_runtime_config() -> None:
             "adapter": "filesystem",
             "root": "documents",
         },
+        "flow": {
+            "template": "sdlc",
+        },
         "connectors": {
             "teams": {
                 "adapter": "local",

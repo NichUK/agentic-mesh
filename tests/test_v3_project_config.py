@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agentic_mesh_v3.project_config import load_project_config
+from agentic_mesh_v3.project_config import resolve_project_flow_config_path
 
 
 def test_load_project_config_reads_v3_broker_docs_and_roles(tmp_path: Path) -> None:
@@ -16,6 +17,8 @@ document_library:
   adapter: onedrive
   drive_id: drive-123
   root_path: /documents
+flow:
+  template: sdlc
 roles:
   project-manager:
     template: project-manager
@@ -70,6 +73,8 @@ connectors:
     assert config.broker.servers == "nats://localhost:4222"
     assert config.document_library.adapter == "onedrive"
     assert config.document_library.root_path == "/documents"
+    assert config.flow.template == "sdlc"
+    assert config.flow.path is None
     assert {role.role_id: role.instances for role in config.roles} == {
         "engineering": 2,
         "project-manager": 1,
@@ -96,3 +101,42 @@ connectors:
     assert targets["local-smoke"].rollback_plan == "Re-run the previous image."
     assert targets["planning-only"].target_type == "no_deployment"
     assert targets["planning-only"].reason == "Planning-only slice."
+
+
+def test_resolve_project_flow_config_path_prefers_v3_sdlc_template(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+flow:
+  template: sdlc
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    resolved = resolve_project_flow_config_path(project_file, load_project_config(project_file))
+
+    assert resolved == Path("config/flows/sdlc-v3.yaml")
+
+
+def test_resolve_project_flow_config_path_allows_project_relative_path(tmp_path: Path) -> None:
+    project_file = tmp_path / "agentic-mesh" / "project.yaml"
+    project_file.parent.mkdir()
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+flow:
+  path: flows/custom.yaml
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    resolved = resolve_project_flow_config_path(project_file, load_project_config(project_file))
+
+    assert resolved == project_file.parent / "flows" / "custom.yaml"

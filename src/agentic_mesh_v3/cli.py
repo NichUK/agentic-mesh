@@ -41,6 +41,7 @@ from agentic_mesh_v3.memory import DatabaseRoleMemory
 from agentic_mesh_v3.observability import TelemetrySettings
 from agentic_mesh_v3.observability import configure_observability
 from agentic_mesh_v3.project_config import load_project_config
+from agentic_mesh_v3.project_config import resolve_project_flow_config_path
 from agentic_mesh_v3.project_config import V3ProjectConfig
 from agentic_mesh_v3.project_config import V3WorkerConfig
 from agentic_mesh_v3.server import serve
@@ -581,7 +582,7 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
             args.organisation_instructions_file,
             "No organisation-specific instructions configured.",
         ),
-        raci=_raci_matrix(args),
+        raci=_raci_matrix(args, project_config=config),
         tool_instructions=_read_text_or_default(
             args.tool_instructions_file,
             "Use approved Agentic Mesh safe-output tools for durable effects.",
@@ -612,11 +613,16 @@ def _read_text_or_default(path: Path | None, default: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _raci_matrix(args: argparse.Namespace) -> RaciMatrix:
+def _raci_matrix(args: argparse.Namespace, *, project_config: V3ProjectConfig | None = None) -> RaciMatrix:
     flow_config = getattr(args, "flow_config", None)
-    if flow_config is None:
-        return DEFAULT_SDLC_RACI
-    return load_raci_matrix_from_flow(flow_config)
+    if flow_config is not None:
+        return load_raci_matrix_from_flow(flow_config)
+    project_config_path = getattr(args, "project_config", None)
+    if project_config_path is not None and project_config is not None:
+        resolved = resolve_project_flow_config_path(project_config_path, project_config)
+        if resolved is not None:
+            return load_raci_matrix_from_flow(resolved)
+    return DEFAULT_SDLC_RACI
 
 
 def _run_agent_once(args: argparse.Namespace):
