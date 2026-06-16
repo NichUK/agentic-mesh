@@ -275,6 +275,8 @@ class V3ToolService:
             "consult.request",
             "informed.update",
             "governance.record_exception",
+            "decision.record",
+            "risk.register",
         }:
             self._record_governance_tool(
                 call_id=call_id,
@@ -497,6 +499,10 @@ class V3ToolService:
             _validate_informed_update(payload)
         elif tool_name == "governance.record_exception":
             _validate_governance_exception(payload)
+        elif tool_name == "decision.record":
+            _validate_decision_record(payload)
+        elif tool_name == "risk.register":
+            _validate_risk_register(payload)
         self.db.record_governance_record(
             record_id=str(payload.get("record_id") or f"governance-{call_id}"),
             work_item_id=_required(payload, "work_item_id"),
@@ -651,11 +657,23 @@ def _validate_governance_exception(payload: dict[str, Any]) -> None:
     _required(payload, "reason")
 
 
+def _validate_decision_record(payload: dict[str, Any]) -> None:
+    _required(payload, "work_item_id")
+    _required(payload, "summary")
+
+
+def _validate_risk_register(payload: dict[str, Any]) -> None:
+    _required(payload, "work_item_id")
+    _required(payload, "summary")
+
+
 def _default_governance_status(tool_name: str) -> str:
     return {
         "consult.request": "requested",
+        "decision.record": "decision_recorded",
         "handoff.require": "required",
         "informed.update": "sent",
+        "risk.register": "risk_open",
         "stakeholder.ask_question": "requested",
         "governance.record_exception": "exception_recorded",
     }.get(tool_name, "recorded")

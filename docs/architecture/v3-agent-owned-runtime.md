@@ -183,7 +183,10 @@ security posture, or delivery commitment.
 The reusable governance prompt instructions name the exact safe-output tools
 for these duties: `consult.request`, `informed.update`,
 `stakeholder.ask_question`, `governance.record_exception`, and
-`document.write_work_item_index`.
+`document.write_work_item_index`. Agents also have first-class
+`decision.record` and `risk.register` tools so durable decisions and risks can
+be recorded as work-item governance evidence before they are summarized into
+document-library indexes or longer-lived registers.
 
 Governance checklists compare a work item's RACI context with recorded
 consultation, informed-update, exception, and approval evidence. They are
@@ -336,7 +339,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   communication tools validate their minimum routable payloads:
   `consult.request` needs a target role and question, `informed.update` needs
   a target role and message, stakeholder questions need a question, and
-  governance exceptions need a reason.
+  governance exceptions need a reason. `decision.record` and `risk.register`
+  provide direct safe-output paths for agents to record source-linked work-item
+  decisions and risks without burying them in prose-only artifacts.
   `artifact.link` lets any role register an existing document-library path as a
   work-item artifact/evidence record without requiring the runtime to infer
   which files matter.

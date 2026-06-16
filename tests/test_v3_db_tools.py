@@ -875,6 +875,53 @@ def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None
     assert record.summary == "Please review the acceptance criteria."
 
 
+def test_v3_tool_service_records_decisions_and_risks_as_governance_evidence(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Governed delivery",
+            description="Needs durable decision and risk evidence.",
+            state="active",
+            owner_role="project-manager",
+        )
+        tools = V3ToolService(db)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.solution-architect.1",
+            tool_name="decision.record",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Use NATS JetStream as the first V3 broker adapter.",
+                "target_ref": "ADR-v3-broker",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.security-architect.1",
+            tool_name="risk.register",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Graph token scopes may block Teams installation automation.",
+                "target_ref": "risk-identity-consent",
+                "impact": "Project onboarding may require manual tenant admin consent.",
+                "mitigation": "Document required scopes and preflight tenant permissions.",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    records = {record.record_type: record for record in detail.governance_records}
+    assert records["decision.record"].summary == "Use NATS JetStream as the first V3 broker adapter."
+    assert records["decision.record"].status == "decision_recorded"
+    assert records["decision.record"].target_ref == "ADR-v3-broker"
+    assert records["risk.register"].summary == "Graph token scopes may block Teams installation automation."
+    assert records["risk.register"].status == "risk_open"
+    assert records["risk.register"].target_ref == "risk-identity-consent"
+
+
 def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
