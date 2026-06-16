@@ -359,7 +359,10 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   Release Manager can execute a configured deployment or record a clear
   no-deployment disposition. Release closure is a Release Manager tool action
   and requires a recorded deployment or explicit no-deployment disposition
-  before the work item can be moved to released/closed. Project
+  before the work item can be moved to released/closed. `release.deploy` moves
+  work visibly into `deploying` while the target runs and then to `released`
+  when deployment or a no-deployment disposition is recorded; `release.close`
+  performs the separate final closure. Project
   `release_deployment_targets` are loaded from `project.yaml` and passed into
   the safe-output tool service, so `release.deploy` uses configured project
   targets rather than ad hoc runtime commands. If a deployment target fails,
