@@ -35,6 +35,56 @@ def test_raci_rejects_duplicate_phase() -> None:
         raise AssertionError("duplicate phase should fail validation")
 
 
+def test_raci_rejects_unsafe_phase_identifier() -> None:
+    matrix = RaciMatrix(
+        assignments=(
+            RaciAssignment(phase="System Design", accountable="solution-architect", responsible=("solution-architect",)),
+        )
+    )
+
+    try:
+        matrix.validate()
+    except ValueError as exc:
+        assert "phase must match" in str(exc)
+    else:
+        raise AssertionError("unsafe RACI phase identifiers should fail validation")
+
+
+def test_raci_rejects_blank_role_entries() -> None:
+    matrix = RaciMatrix(
+        assignments=(
+            RaciAssignment(phase="development", accountable="engineering", responsible=("engineering", "")),
+        )
+    )
+
+    try:
+        matrix.validate()
+    except ValueError as exc:
+        assert "development.responsible is required" in str(exc)
+    else:
+        raise AssertionError("blank RACI role entries should fail validation")
+
+
+def test_raci_rejects_duplicate_consulted_roles() -> None:
+    matrix = RaciMatrix(
+        assignments=(
+            RaciAssignment(
+                phase="development",
+                accountable="engineering",
+                responsible=("engineering",),
+                consulted=("qa-engineer", "qa-engineer"),
+            ),
+        )
+    )
+
+    try:
+        matrix.validate()
+    except ValueError as exc:
+        assert "duplicate consulted role `qa-engineer`" in str(exc)
+    else:
+        raise AssertionError("duplicate RACI consulted roles should fail validation")
+
+
 def test_load_raci_matrix_from_flow_reads_configured_flow() -> None:
     matrix = load_raci_matrix_from_flow(Path("config/flows/sdlc-v3.yaml"))
 
@@ -44,6 +94,26 @@ def test_load_raci_matrix_from_flow_reads_configured_flow() -> None:
     assert deployment.responsible == ("platform-engineer", "engineering")
     assert "qa-engineer" in deployment.consulted
     assert "project-manager" in deployment.informed
+
+
+def test_load_raci_matrix_from_flow_rejects_unsafe_role_ids(tmp_path: Path) -> None:
+    flow = tmp_path / "flow.yaml"
+    flow.write_text(
+        """
+raci:
+  - phase: requirements
+    accountable: Project Manager
+    responsible: [business-analyst]
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        load_raci_matrix_from_flow(flow)
+    except ValueError as exc:
+        assert "requirements.accountable must match" in str(exc)
+    else:
+        raise AssertionError("unsafe RACI role ids in flow config should fail validation")
 
 
 def test_governance_context_exports_handoff_requirements() -> None:

@@ -3,10 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
+import re
 from typing import Iterable
 from typing import Mapping
 
 import yaml
+
+
+_IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 @dataclass(frozen=True)
@@ -18,12 +22,13 @@ class RaciAssignment:
     informed: tuple[str, ...] = ()
 
     def validate(self) -> None:
-        if not self.phase:
-            raise ValueError("phase is required")
-        if not self.accountable:
-            raise ValueError(f"{self.phase}: one accountable role is required")
+        _validate_identifier("phase", self.phase)
+        _validate_identifier(f"{self.phase}.accountable", self.accountable)
         if not self.responsible:
             raise ValueError(f"{self.phase}: at least one responsible role is required")
+        _validate_role_list(self.phase, "responsible", self.responsible)
+        _validate_role_list(self.phase, "consulted", self.consulted)
+        _validate_role_list(self.phase, "informed", self.informed)
         if self.accountable in self.informed:
             raise ValueError(f"{self.phase}: accountable role cannot be only informed")
 
@@ -273,6 +278,22 @@ def _string_tuple(value: object, *, key: str, index: int) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise ValueError(f"raci item {index} {key} must be a list")
     return tuple(str(item) for item in value)
+
+
+def _validate_identifier(field_name: str, value: str) -> None:
+    if not value:
+        raise ValueError(f"{field_name} is required")
+    if not _IDENTIFIER_RE.match(value):
+        raise ValueError(f"{field_name} must match ^[a-z0-9][a-z0-9-]*$")
+
+
+def _validate_role_list(phase: str, key: str, roles: tuple[str, ...]) -> None:
+    seen: set[str] = set()
+    for role in roles:
+        _validate_identifier(f"{phase}.{key}", role)
+        if role in seen:
+            raise ValueError(f"{phase}: duplicate {key} role `{role}`")
+        seen.add(role)
 
 
 DEFAULT_SDLC_RACI = RaciMatrix(
