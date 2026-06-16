@@ -104,6 +104,14 @@ def test_project_v3_schema_allows_current_dogfood_project_config() -> None:
     jsonschema.Draft202012Validator(_schema()).validate(project)
 
 
+def test_project_v3_schema_allows_v3_dogfood_project_config() -> None:
+    project = yaml.safe_load(
+        Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml").read_text(encoding="utf-8")
+    )
+
+    jsonschema.Draft202012Validator(_schema()).validate(project)
+
+
 def test_project_v3_schema_rejects_unknown_teams_adapter() -> None:
     project = {
         "project_id": "agentic-mesh-dev",

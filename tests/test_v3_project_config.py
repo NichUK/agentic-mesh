@@ -5,6 +5,8 @@ import pytest
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.project_config import resolve_project_flow_config_path
 
+DOGFOOD_V3_PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml")
+
 
 def test_load_project_config_reads_v3_broker_docs_and_roles(tmp_path: Path) -> None:
     project_file = tmp_path / "project.yaml"
@@ -130,6 +132,27 @@ connectors:
     assert sponsor.target_ref == "chat:sponsor-chat"
     assert sponsor.thread_ref == "sponsor-thread"
     assert sponsor.importance == "high"
+
+
+def test_load_v3_dogfood_project_config_uses_onedrive_and_deployment_target(monkeypatch) -> None:
+    monkeypatch.setenv("AGENTIC_MESH_ONEDRIVE_DRIVE_ID", "drive-dogfood")
+    monkeypatch.setenv("AGENTIC_MESH_SPONSOR_TEAMS_USER_ID", "sponsor-user")
+
+    config = load_project_config(DOGFOOD_V3_PROJECT_FILE)
+
+    assert config.project_id == "agentic-mesh-dev"
+    assert config.broker.adapter == "nats-jetstream"
+    assert config.document_library.adapter == "onedrive"
+    assert config.document_library.drive_id == "drive-dogfood"
+    assert config.document_library.root_path == "/documents"
+    assert config.document_library.structure_policy == "togaf-sdlc-v1"
+    assert config.stakeholder_contacts[0].contact_id == "sponsor"
+    assert config.stakeholder_contacts[0].target_ref == "user:sponsor-user"
+    targets = {target.target_id: target for target in config.release_deployment_targets}
+    assert targets["dogfood-compose"].command == ("sh", "scripts/release-linuxch-compose.sh")
+    assert targets["dogfood-compose"].working_directory == Path("/mesh/system")
+    role_ids = {role.role_id for role in config.roles}
+    assert {"product-manager", "project-manager", "engineering", "qa-engineer", "release-manager"} <= role_ids
 
 
 def test_resolve_project_flow_config_path_prefers_v3_sdlc_template(tmp_path: Path) -> None:

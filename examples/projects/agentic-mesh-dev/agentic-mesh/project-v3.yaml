@@ -1,0 +1,143 @@
+project_id: agentic-mesh-dev
+name: Agentic Mesh Development V3
+goal:
+  description: Prove the V3 agent-owned runtime with OneDrive-backed work-item dossiers, Teams stakeholder routing, configured deployment targets, and agent-owned lifecycle progression.
+  success_measures:
+  - One dogfood slice reaches release and closure through V3 tools and evidence.
+  - Work-item dossiers are written under the project document library `/documents/work-items`.
+  - Sponsor approval and closure notifications use configured stakeholder contacts.
+  - Release Manager deployment uses a configured deployment target.
+  constraints:
+  - Runtime state, project configuration, source repository, and document library remain separate.
+  - Secrets and access tokens are supplied by runtime environment, not this file.
+flow:
+  template: sdlc
+broker:
+  adapter: nats-jetstream
+  stream: agent-inbox
+  servers: nats://nats:4222
+document_library:
+  adapter: onedrive
+  drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}
+  root_path: /documents
+  structure_policy: togaf-sdlc-v1
+target_repositories:
+  agentic-mesh:
+    type: git
+    path: ../../..
+    default_branch: develop
+release_deployment_targets:
+  dogfood-compose:
+    type: command
+    description: Build and activate the linuxch dogfood Docker Compose runtime from the checked-out system repository.
+    command:
+    - sh
+    - scripts/release-linuxch-compose.sh
+    working_directory: /mesh/system
+    timeout_seconds: 900
+    rollback_summary: Rebuild and activate the previous reviewed image or revert the scoped commit and rerun the dogfood Compose activation target.
+stakeholder_contacts:
+  sponsor:
+    display_name: Nicholas Overend
+    connector: teams
+    target_ref: user:${AGENTIC_MESH_SPONSOR_TEAMS_USER_ID}
+    importance: high
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    graph_base_url: https://graph.microsoft.com/v1.0
+    role_bots:
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: teams-bot-product-manager-app-id
+        secret_ref: teams-bot-product-manager-secret
+      project-manager:
+        display_name: AM-Project Manager
+        bot_id_ref: teams-bot-project-manager-app-id
+        secret_ref: teams-bot-project-manager-secret
+      engineering:
+        display_name: AM-Engineering
+        bot_id_ref: teams-bot-engineering-app-id
+        secret_ref: teams-bot-engineering-secret
+      qa-engineer:
+        display_name: AM-QA Engineer
+        bot_id_ref: teams-bot-qa-engineer-app-id
+        secret_ref: teams-bot-qa-engineer-secret
+      release-manager:
+        display_name: AM-Release Manager
+        bot_id_ref: teams-bot-release-manager-app-id
+        secret_ref: teams-bot-release-manager-secret
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Shape product scope, acceptance criteria, and sponsor sign-off before downstream work.
+    write_paths:
+    - documents/work-items/**
+  project-manager:
+    template: project-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Keep work progressing and close only after required evidence is recorded.
+    write_paths:
+    - documents/work-items/**
+  engineering:
+    template: engineering
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Implement signed-off development slices and record source-linked evidence.
+    write_paths:
+    - src/**
+    - tests/**
+    - documents/work-items/**
+  qa-engineer:
+    template: qa-engineer
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Verify acceptance criteria and deployment evidence before release.
+    write_paths:
+    - tests/**
+    - documents/work-items/**
+  release-manager:
+    template: release-manager
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: codex
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Execute configured deployment targets and record rollback, smoke evidence, residual risk, and closure.
+    write_paths:
+    - documents/work-items/**
