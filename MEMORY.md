@@ -3,6 +3,29 @@
 This file records the context needed to resume Agentic Mesh in a fresh chat
 after opening `C:\Dev\agentic-mesh` as the workspace.
 
+## 2026-06-15 - V3 Agent-Owned Runtime Reset
+
+The project started V3 on branch `codex/v3-agent-owned-runtime`. V3 changes the
+direction from runtime-owned lifecycle orchestration to self-contained role
+agents. The runtime should provide startup, hibernation, broker, connector,
+document-library, reporting, config, and telemetry services; agents should own
+work progression, governance, consultation, documentation, handoffs, and
+confirmations.
+
+Important V3 decisions:
+
+- Project Manager and Delivery Manager are separate active roles.
+- Product Manager owns product priority/scope; Project Manager owns queue
+  health, sequencing, regular sweeps, governance hygiene, and closure.
+- Broker abstraction comes first, with NATS JetStream as the first target and
+  RabbitMQ, Redis Streams, Azure Service Bus, Kafka, SQS/SNS, Pub/Sub, and
+  local adapters kept behind the same port.
+- OneDrive is the first document-library target so Teams can show Shared Files
+  under `/documents`; work items live under `/documents/work-items/{id}`.
+- Governance instructions must be explicit in prompts: consult RACI `C` roles,
+  inform `I` roles, ask stakeholders for material decisions, and record
+  exceptions/evidence.
+
 ## Current State
 
 Agentic Mesh is on the v2 runtime reset branch:

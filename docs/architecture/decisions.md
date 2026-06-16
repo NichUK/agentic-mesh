@@ -288,3 +288,57 @@ Rollback would move the dogfood Compose files back to the system root and use
 the old loose project YAML. Avoid this unless project-scoped build tooling
 proves unusable, because root deployment files obscure which project network is
 being run.
+
+## ADR-004 - V3 Agent-Owned Runtime Reset
+
+Date: 2026-06-15
+
+Status: draft direction
+
+Design document: `docs/architecture/v3-agent-owned-runtime.md`
+
+### Context
+
+The V2 runtime proved useful slices around safe-output tools, Teams ingress,
+status pages, document artifacts, and release gates, but it kept too much
+lifecycle judgment inside the runtime. This made role agents dependent on
+central state transitions and sometimes prevented them from acting like capable
+human specialists.
+
+The next architecture must make agents self-contained, governance-aware, and
+responsible for work progression. The runtime should provide platform services
+without owning project decisions.
+
+### Decision
+
+Create V3 as an agent-owned runtime. Each role instance runs as a long-lived
+container with mounted configuration, role identity, prompt material, RACI,
+governance rules, inbox/outbox tools, memory, source access, and document
+library access.
+
+The runtime owns startup, hibernation, hydration, broker services, connector
+services, document-library adapter services, reporting, configuration
+materialisation, and OpenTelemetry. It does not own product, architecture,
+implementation, QA, release, or governance decisions.
+
+Governance is explicit. Every work item carries accountable, responsible,
+consulted, and informed roles, sponsor decision points, and required evidence.
+Agents must consult required roles and stakeholders before completing phases
+unless an accountable role records a justified governance exception.
+
+### Consequences
+
+- V3 code lives under `src/agentic_mesh_v3`.
+- V2 is frozen except for emergency operational fixes while V3 is proved.
+- Broker, document library, connector, and worker providers are ports first.
+- Project Manager and Delivery Manager remain separate active roles.
+- Project Manager owns project sweeps, governance hygiene, and queue health.
+- Product Manager owns product priority and scope.
+- Work-item evidence belongs in the document library, not hidden runtime state.
+
+### Rollback
+
+If V3 cannot prove one real end-to-end dogfood slice, keep V2 available as the
+running local runtime while retaining V3 design and code as an experimental
+branch. Do not migrate production use to V3 until the dogfood slice reaches
+release and closure with complete evidence.
