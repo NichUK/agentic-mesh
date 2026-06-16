@@ -1672,7 +1672,7 @@ def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tm
             work_item_id="work-1",
             title="Question work",
             description="Needs sponsor input.",
-            state="waiting_human",
+            state="active",
             owner_role="product-manager",
         )
         V3ToolService(db, stakeholder_bridge=bridge).call(
@@ -1684,6 +1684,8 @@ def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tm
                 "connector": "teams",
                 "stakeholder_ref": "dm:sponsor",
                 "thread_ref": "thread-1",
+                "waiting_owner_role": "sponsor",
+                "current_phase": "product-shaping",
             },
         )
         detail = db.work_item_detail("work-1")
@@ -1692,6 +1694,10 @@ def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tm
         db.close()
 
     assert detail is not None
+    assert detail.state == "waiting_human"
+    assert detail.owner_role == "sponsor"
+    assert detail.current_phase == "product-shaping"
+    assert detail.next_action == "Awaiting stakeholder answer: Which sponsor-visible channel should be used?"
     assert detail.governance_records[0].record_type == "stakeholder.ask_question"
     assert detail.governance_records[0].target_ref == "dm:sponsor"
     assert bridge.deliveries[0].target_ref == "dm:sponsor"
@@ -1712,7 +1718,7 @@ def test_v3_tool_service_stakeholder_question_with_target_requires_bridge(tmp_pa
             work_item_id="work-1",
             title="Question work",
             description="Needs sponsor input.",
-            state="waiting_human",
+            state="active",
             owner_role="product-manager",
         )
         try:
@@ -1736,6 +1742,7 @@ def test_v3_tool_service_stakeholder_question_with_target_requires_bridge(tmp_pa
         db.close()
 
     assert detail is not None
+    assert detail.state == "active"
     assert detail.governance_records == ()
     assert calls == []
 
@@ -1750,7 +1757,7 @@ def test_v3_tool_service_stakeholder_question_target_requires_connector_before_r
             work_item_id="work-1",
             title="Question work",
             description="Needs sponsor input.",
-            state="waiting_human",
+            state="active",
             owner_role="product-manager",
         )
         try:
@@ -1774,6 +1781,7 @@ def test_v3_tool_service_stakeholder_question_target_requires_connector_before_r
         db.close()
 
     assert detail is not None
+    assert detail.state == "active"
     assert detail.governance_records == ()
     assert calls == []
 
