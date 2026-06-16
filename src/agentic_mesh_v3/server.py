@@ -16,7 +16,7 @@ from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.reporting import artifact_viewer_path
 from agentic_mesh_v3.reporting import render_agents_page
 from agentic_mesh_v3.reporting import render_status_page
-from agentic_mesh_v3.reporting import render_work_item_page
+from agentic_mesh_v3.reporting import render_work_item_detail_page
 
 
 class V3StatusHandler(BaseHTTPRequestHandler):
@@ -65,7 +65,13 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         return render_agents_page(self._snapshot())
 
     def _render_work_item(self, work_item_id: str) -> str:
-        return render_work_item_page(self._snapshot(), work_item_id)
+        db = V3Database(self.db_path)
+        try:
+            db.migrate()
+            detail = db.work_item_detail(work_item_id)
+        finally:
+            db.close()
+        return render_work_item_detail_page(detail, work_item_id)
 
     def _render_artifact_route(self, route_path: str) -> None:
         parts = [part for part in unquote(route_path).split("/") if part]

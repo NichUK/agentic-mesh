@@ -51,3 +51,83 @@ def test_artifact_viewer_reads_local_document_library(tmp_path: Path) -> None:
     docs.write_text("work-items/work-1/index.md", "# Work One")
 
     assert docs.read_text("work-items/work-1/index.md") == "# Work One"
+
+
+def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
+    docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db, docs)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="work_item.upsert",
+            payload={
+                "work_item_id": "work-1",
+                "title": "Add status page",
+                "description": "Build the V3 status page.",
+                "state": "release_review",
+                "owner_role": "release-manager",
+                "current_phase": "deployment",
+                "next_action": "Awaiting release approval.",
+                "governance": {
+                    "accountable_role": "release-manager",
+                    "consulted_roles": ["qa-engineer"],
+                },
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="document.write_work_item_index",
+            payload={
+                "work_item_id": "work-1",
+                "title": "Add status page",
+                "status": "release_review",
+                "owner_role": "release-manager",
+                "raci_summary": "release-manager A, qa-engineer C",
+                "governance_state": "QA consulted",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="approval.request",
+            payload={
+                "approval_id": "approval-1",
+                "work_item_id": "work-1",
+                "question": "Approve release?",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.record",
+            payload={
+                "release_id": "release-1",
+                "work_item_id": "work-1",
+                "status": "ready",
+                "scope": "Status page",
+                "deployment_result": "staging smoke passed",
+                "rollback_plan": "restart previous image",
+            },
+        )
+    finally:
+        db.close()
+
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.db_path = tmp_path / "v3.sqlite3"
+    Handler.project_id = "agentic-mesh-dev"
+    Handler.document_library = docs
+    handler = object.__new__(Handler)
+
+    html = handler._render_work_item("work-1")
+
+    assert "Build the V3 status page." in html
+    assert "release-manager" in html
+    assert "qa-engineer" in html
+    assert "Work item index" in html
+    assert "/artifact-viewer/work-1/index.md" in html
+    assert "approval-1" in html
+    assert "Approve release?" in html
+    assert "release-1" in html
+    assert "staging smoke passed" in html
