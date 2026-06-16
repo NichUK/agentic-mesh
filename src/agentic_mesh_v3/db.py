@@ -6,6 +6,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from agentic_mesh_v3.governance import GovernanceChecklist
+from agentic_mesh_v3.governance import GovernanceContext
+from agentic_mesh_v3.governance import evaluate_governance_checklist
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.reporting import ApprovalStatus
 from agentic_mesh_v3.reporting import ArtifactStatus
@@ -808,6 +811,39 @@ class V3Database:
             governance_records=governance_records,
         )
 
+    def work_item_governance_context(self, work_item_id: str) -> GovernanceContext | None:
+        detail = self.work_item_detail(work_item_id)
+        if detail is None:
+            return None
+        governance = detail.governance
+        phase = str(governance.get("phase") or detail.current_phase or "")
+        accountable_role = str(governance.get("accountable_role") or detail.owner_role)
+        responsible_roles = _tuple_strings(governance.get("responsible_roles")) or (detail.owner_role,)
+        return GovernanceContext(
+            work_item_id=detail.work_item_id,
+            phase=phase,
+            accountable_role=accountable_role,
+            responsible_roles=responsible_roles,
+            consulted_roles=_tuple_strings(governance.get("consulted_roles")),
+            informed_roles=_tuple_strings(governance.get("informed_roles")),
+            sponsor_decision_points=_tuple_strings(governance.get("sponsor_decision_points")),
+            required_evidence=_tuple_strings(governance.get("required_evidence")),
+            consultation_exceptions=_tuple_strings(governance.get("consultation_exceptions")),
+        )
+
+    def work_item_governance_checklist(self, work_item_id: str) -> GovernanceChecklist | None:
+        detail = self.work_item_detail(work_item_id)
+        if detail is None:
+            return None
+        context = self.work_item_governance_context(work_item_id)
+        if context is None:
+            return None
+        return evaluate_governance_checklist(
+            context,
+            governance_records=detail.governance_records,
+            approvals=detail.approvals,
+        )
+
     def list_tool_calls(self) -> list[dict[str, Any]]:
         return [
             {
@@ -823,3 +859,13 @@ class V3Database:
                 """
             )
         ]
+
+
+def _tuple_strings(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item) for item in value if str(item))
+    return (str(value),)

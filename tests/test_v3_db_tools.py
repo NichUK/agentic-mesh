@@ -284,6 +284,77 @@ def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None
     assert record.summary == "Please review the acceptance criteria."
 
 
+def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Governed work",
+            description="Needs consultation and approval.",
+            state="active",
+            owner_role="engineering",
+            current_phase="development",
+            governance={
+                "phase": "development",
+                "accountable_role": "engineering",
+                "responsible_roles": ["engineering"],
+                "consulted_roles": ["qa-engineer"],
+                "informed_roles": ["project-manager"],
+                "sponsor_decision_points": ["product-signoff"],
+            },
+        )
+
+        checklist = db.work_item_governance_checklist("work-1")
+
+        assert checklist is not None
+        assert checklist.missing_consultations == ("qa-engineer",)
+        assert checklist.missing_informed_updates == ("project-manager",)
+        assert checklist.pending_sponsor_decisions == ("product-signoff",)
+
+        tools = V3ToolService(db)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="consult.request",
+            payload={
+                "work_item_id": "work-1",
+                "target_role": "qa-engineer",
+                "question": "Please review the acceptance criteria.",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="informed.update",
+            payload={
+                "work_item_id": "work-1",
+                "target_role": "project-manager",
+                "summary": "Development governance evidence is ready.",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="approval.request",
+            payload={
+                "approval_id": "product-signoff",
+                "work_item_id": "work-1",
+                "question": "Approve product-signoff?",
+            },
+        )
+        db.record_approval_response(
+            approval_id="product-signoff",
+            status="approved",
+            response="Approved",
+            responder_ref="sponsor",
+        )
+
+        checklist = db.work_item_governance_checklist("work-1")
+    finally:
+        db.close()
+
+    assert checklist is not None
+    assert checklist.is_satisfied is True
+
+
 def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     broker = InMemoryBrokerAdapter()
