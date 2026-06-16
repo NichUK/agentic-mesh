@@ -372,6 +372,11 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   `artifact.link` lets any role register an existing document-library path as a
   work-item artifact/evidence record without requiring the runtime to infer
   which files matter.
+  `conversation.compact_context` lets any role compact important conversation
+  context into a source-linked summary that future prompts can load before raw
+  recent messages. It requires source message ids, a visibility
+  classification, and, for promoted/shared DM context, a durable reference
+  proving the private conversation was intentionally made project evidence.
   `blocker.raise` lets any role stop unsafe or impossible progress with a
   visible blocker and next action instead of burying the issue inside a final
   status reply.
@@ -426,7 +431,16 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   read model so future role prompts can include recent context for the same DM
   or project-channel conversation. Recorded context preserves mentioned-role
   metadata, so agents can distinguish general project context from messages
-  explicitly aimed at one or more roles. Graph-backed Teams deployments use the
+  explicitly aimed at one or more roles. Agents can also call
+  `conversation.compact_context` to preserve important conversation context as
+  a concise, source-linked summary. Prompt assembly loads compacted summaries
+  before recent raw messages, giving agents continuity without making long raw
+  threads the durable memory mechanism. Direct-message summaries remain private
+  unless the agent explicitly promotes them with a durable reference such as a
+  work item or document path; this keeps private stakeholder chats out of
+  shared project context until they have been intentionally turned into project
+  evidence. Raw message text can be expired while retaining a hash and
+  compacted summary trail for audit and debugging. Graph-backed Teams deployments use the
   same inbound bridge contract as local Teams routing; live inbound events must
   provide either an explicit inbound bridge or a broker-backed bridge so
   normalized messages are delivered to agent inboxes instead of stopping at the
