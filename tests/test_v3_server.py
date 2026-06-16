@@ -115,6 +115,7 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
                 "owner_role": "release-manager",
                 "raci_summary": "release-manager A, qa-engineer C",
                 "governance_state": "QA consulted",
+                "next_action": "Await release approval.",
             },
         )
         tools.call(

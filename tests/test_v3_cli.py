@@ -117,7 +117,7 @@ roles:
             (
                 '{"work_item_id":"work-1","title":"Work One","status":"active",'
                 '"owner_role":"product-manager","raci_summary":"PM A/R",'
-                '"governance_state":"ready"}'
+                '"governance_state":"ready","next_action":"Continue product shaping."}'
             ),
         ]
     )

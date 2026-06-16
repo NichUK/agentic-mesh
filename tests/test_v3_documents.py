@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agentic_mesh_v3.documents import DocumentRef
+from agentic_mesh_v3.documents import DocumentLibraryError
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.documents import OneDriveDocumentLibraryAdapter
 from agentic_mesh_v3.documents import WorkItemIndex
@@ -57,6 +58,48 @@ def test_write_root_work_item_index(tmp_path: Path) -> None:
 
     content = (tmp_path / "work-items" / "index.md").read_text(encoding="utf-8")
     assert "[Add status page](work-items/work-123/index.md)" in content
+
+
+def test_write_work_item_index_rejects_status_only_document(tmp_path: Path) -> None:
+    adapter = LocalDocumentLibraryAdapter(tmp_path)
+    index = WorkItemIndex(
+        work_item_id="work-123",
+        title="Blocked work",
+        status="blocked",
+        owner_role="delivery-manager",
+        raci_summary="delivery-manager A/R",
+        governance_state="blocked",
+    )
+
+    try:
+        write_work_item_index(adapter, index)
+    except DocumentLibraryError as exc:
+        assert "status-only" in str(exc)
+    else:
+        raise AssertionError("status-only work-item indexes should be rejected")
+
+
+def test_write_work_item_index_rejects_duplicate_evidence(tmp_path: Path) -> None:
+    adapter = LocalDocumentLibraryAdapter(tmp_path)
+    index = WorkItemIndex(
+        work_item_id="work-123",
+        title="Duplicate work",
+        status="active",
+        owner_role="engineering",
+        raci_summary="engineering A/R",
+        governance_state="ready",
+        artifacts=(
+            DocumentRef(relative_path="100-implementation.md", title="Implementation"),
+            DocumentRef(relative_path="100-implementation.md", title="Implementation duplicate"),
+        ),
+    )
+
+    try:
+        write_work_item_index(adapter, index)
+    except DocumentLibraryError as exc:
+        assert "duplicates artifact path" in str(exc)
+    else:
+        raise AssertionError("duplicate work-item evidence should be rejected")
 
 
 class FakeGraphDocumentTransport:

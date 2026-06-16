@@ -191,3 +191,8 @@ accountabilities, decision rights, boundaries, collaboration style, quality
 bar, memory focus, workflows, standards references, anti-patterns, and
 standing instructions; all starter templates under `config/roles` are covered
 by tests.
+
+V3 work-item document indexes now validate evidence quality before writing.
+`index.md` records must include more than status metadata, and duplicate
+artifact paths, decisions, or risks are rejected so agents cannot publish
+repeated prose dumps or status-only placeholders as enterprise evidence.
