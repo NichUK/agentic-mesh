@@ -281,3 +281,26 @@ roles:
 
     with pytest.raises(ValueError, match=r"target_repositories.App Source must match"):
         load_project_config(project_file)
+
+
+def test_load_project_config_rejects_unsafe_release_deployment_target_id(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+release_deployment_targets:
+  Runtime Deploy:
+    type: command
+    command:
+      - python
+      - -c
+      - print('deployed')
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"release_deployment_targets.Runtime Deploy must match"):
+        load_project_config(project_file)
