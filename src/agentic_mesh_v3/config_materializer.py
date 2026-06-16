@@ -49,6 +49,7 @@ def materialize_agent_config(
             {
                 "role_instance_id": spec.role_instance_id,
                 "image": spec.image,
+                "command": spec.service_command(),
                 "mounts": spec.volume_mounts(),
                 "environment": spec.environment,
                 "prompt_paths": {
