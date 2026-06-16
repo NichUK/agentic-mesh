@@ -182,13 +182,27 @@ class NullConversationContext:
 
 
 class DatabaseConversationContext:
-    def __init__(self, db: object, *, limit: int = 10) -> None:
+    def __init__(self, db: object, *, limit: int = 10, summary_limit: int = 5) -> None:
         self.db = db
         self.limit = limit
+        self.summary_limit = summary_limit
 
     def load_recent(self, conversation_ref: str) -> str:
+        summaries = self.db.list_conversation_summaries(  # type: ignore[attr-defined]
+            conversation_ref,
+            limit=self.summary_limit,
+        )
         rows = self.db.list_conversation_messages(conversation_ref, limit=self.limit)  # type: ignore[attr-defined]
-        return "\n".join(_conversation_row_summary(row) for row in rows)
+        parts: list[str] = []
+        if summaries:
+            parts.append("<conversation-summaries>")
+            parts.extend(_conversation_summary_row(summary) for summary in summaries)
+            parts.append("</conversation-summaries>")
+        if rows:
+            parts.append("<recent-messages>")
+            parts.extend(_conversation_row_summary(row) for row in rows)
+            parts.append("</recent-messages>")
+        return "\n".join(parts)
 
 
 class NullWorkItemGovernanceContextProvider:
@@ -493,7 +507,18 @@ def _conversation_row_summary(row: dict[str, object]) -> str:
     thread_text = f", thread: {thread}" if thread else ""
     mentioned_roles = row.get("mentioned_roles") or ()
     mentions_text = f", mentions: {', '.join(str(role) for role in mentioned_roles)}" if mentioned_roles else ""
+    expired_text = ", expired=true" if row.get("raw_expired_at") else ""
     return (
         f"- [{row.get('connector')}/{row.get('source_type')}] {row.get('sender_ref')}: "
-        f"{row.get('text')} (message: {row.get('message_id')}{thread_text}{mentions_text})"
+        f"{row.get('text')} (message: {row.get('message_id')}{thread_text}{mentions_text}{expired_text})"
+    )
+
+
+def _conversation_summary_row(row: dict[str, object]) -> str:
+    source_ids = ", ".join(str(item) for item in row.get("source_message_ids") or ()) or "none"
+    durable_refs = ", ".join(str(item) for item in row.get("durable_refs") or ()) or "none"
+    return (
+        f"- [{row.get('visibility')}] {row.get('summary')} "
+        f"(summary: {row.get('summary_id')}, sources: {source_ids}, durable_refs: {durable_refs}, "
+        f"by: {row.get('created_by_role')})"
     )

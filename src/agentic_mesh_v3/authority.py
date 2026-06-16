@@ -8,6 +8,7 @@ BASE_TOOLS = {
     "artifact.link",
     "blocker.raise",
     "consult.request",
+    "conversation.compact_context",
     "decision.record",
     "document.write_work_item_index",
     "document.write_root_work_item_index",

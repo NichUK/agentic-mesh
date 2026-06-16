@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import asdict
@@ -174,6 +175,17 @@ class V3Database:
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS conversation_summaries (
+                  summary_id TEXT PRIMARY KEY,
+                  conversation_ref TEXT NOT NULL,
+                  visibility TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  source_message_ids_json TEXT NOT NULL,
+                  durable_refs_json TEXT NOT NULL DEFAULT '[]',
+                  created_by_role TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS governance_records (
                   record_id TEXT PRIMARY KEY,
                   work_item_id TEXT NOT NULL,
@@ -196,6 +208,8 @@ class V3Database:
                 "mentioned_roles_json",
                 "TEXT NOT NULL DEFAULT '[]'",
             )
+            _ensure_column(self.connection, "conversations", "text_sha256", "TEXT")
+            _ensure_column(self.connection, "conversations", "raw_expired_at", "TEXT")
 
     def record_event(
         self,
@@ -912,9 +926,9 @@ class V3Database:
                 """
                 INSERT OR IGNORE INTO conversations(
                   message_id, connector, conversation_ref, thread_ref, source_type, sender_ref,
-                  mentioned_roles_json, text
+                  mentioned_roles_json, text, text_sha256
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message_id,
@@ -925,6 +939,7 @@ class V3Database:
                     sender_ref,
                     json.dumps(list(mentioned_roles), sort_keys=True),
                     text,
+                    _sha256(text),
                 ),
             )
             self.record_event(
@@ -947,7 +962,7 @@ class V3Database:
         rows = self.connection.execute(
             """
             SELECT message_id, connector, conversation_ref, thread_ref, source_type, sender_ref,
-                   mentioned_roles_json, text, created_at
+                   mentioned_roles_json, text, text_sha256, raw_expired_at, created_at
             FROM conversations
             WHERE conversation_ref=?
             ORDER BY created_at DESC, message_id DESC
@@ -960,6 +975,113 @@ class V3Database:
             row["mentioned_roles"] = tuple(json.loads(row.pop("mentioned_roles_json") or "[]"))
             messages.append(row)
         return messages
+
+    def compact_conversation_context(
+        self,
+        *,
+        summary_id: str,
+        conversation_ref: str,
+        visibility: str,
+        summary: str,
+        source_message_ids: tuple[str, ...],
+        durable_refs: tuple[str, ...] = (),
+        created_by_role: str,
+    ) -> None:
+        if visibility not in {"private", "shared", "promoted"}:
+            raise ValueError("visibility must be one of private, shared, promoted")
+        if not source_message_ids:
+            raise ValueError("source_message_ids must not be empty")
+        if not summary.strip():
+            raise ValueError("summary must not be empty")
+        if conversation_ref.startswith("dm:") and visibility != "private" and not durable_refs:
+            raise ValueError("DM conversation summaries can only be shared or promoted with durable_refs")
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT OR REPLACE INTO conversation_summaries(
+                  summary_id, conversation_ref, visibility, summary, source_message_ids_json,
+                  durable_refs_json, created_by_role
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    summary_id,
+                    conversation_ref,
+                    visibility,
+                    summary,
+                    json.dumps(list(source_message_ids), sort_keys=True),
+                    json.dumps(list(durable_refs), sort_keys=True),
+                    created_by_role,
+                ),
+            )
+            self.record_event(
+                "conversation.context_compacted",
+                "conversation",
+                conversation_ref,
+                {
+                    "summary_id": summary_id,
+                    "visibility": visibility,
+                    "source_message_ids": list(source_message_ids),
+                    "durable_refs": list(durable_refs),
+                    "created_by_role": created_by_role,
+                },
+            )
+
+    def list_conversation_summaries(self, conversation_ref: str, *, limit: int = 5) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        rows = self.connection.execute(
+            """
+            SELECT summary_id, conversation_ref, visibility, summary, source_message_ids_json,
+                   durable_refs_json, created_by_role, created_at
+            FROM conversation_summaries
+            WHERE conversation_ref=?
+            ORDER BY created_at DESC, summary_id DESC
+            LIMIT ?
+            """,
+            (conversation_ref, limit),
+        )
+        summaries = []
+        for row in reversed([dict(row) for row in rows]):
+            row["source_message_ids"] = tuple(json.loads(row.pop("source_message_ids_json") or "[]"))
+            row["durable_refs"] = tuple(json.loads(row.pop("durable_refs_json") or "[]"))
+            summaries.append(row)
+        return summaries
+
+    def expire_conversation_raw_text(
+        self,
+        *,
+        message_id: str,
+        replacement_text: str = "[expired raw conversation]",
+        expired_at: str | None = None,
+    ) -> None:
+        existing = self.connection.execute(
+            "SELECT text, text_sha256 FROM conversations WHERE message_id=?",
+            (message_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(f"conversation message `{message_id}` was not found")
+        digest = existing["text_sha256"] or _sha256(str(existing["text"]))
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE conversations
+                SET text=?, text_sha256=?, raw_expired_at=?
+                WHERE message_id=?
+                """,
+                (
+                    replacement_text,
+                    digest,
+                    expired_at or datetime.now(timezone.utc).isoformat(),
+                    message_id,
+                ),
+            )
+            self.record_event(
+                "conversation.raw_expired",
+                "conversation",
+                message_id,
+                {"message_id": message_id, "text_sha256": digest},
+            )
 
     def status_snapshot(self, *, project_id: str) -> ReportingSnapshot:
         now = datetime.now(timezone.utc)
@@ -1300,6 +1422,10 @@ def _ensure_column(connection: sqlite3.Connection, table: str, column: str, defi
     columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _governance_context_from_values(

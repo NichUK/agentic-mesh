@@ -12,6 +12,7 @@ DO_TOOLS = {
     "backlog.upsert",
     "blocker.raise",
     "consult.request",
+    "conversation.compact_context",
     "decision.record",
     "document.write_root_work_item_index",
     "document.write_work_item_index",
@@ -50,6 +51,10 @@ TOOL_DESCRIPTIONS = {
     "backlog.upsert": "Create or update a backlog or queue item.",
     "blocker.raise": "Record a blocker, move the work item to blocked, and make the required next action visible.",
     "consult.request": "Request input from a consulted role or stakeholder.",
+    "conversation.compact_context": (
+        "Record a concise, source-linked conversation summary so important stakeholder context can be loaded "
+        "without retaining or rereading the full raw thread."
+    ),
     "decision.record": "Record a durable work-item decision as source-linked governance evidence.",
     "document.write_root_work_item_index": "Regenerate the root work-item index in the document library.",
     "document.write_work_item_index": "Write or update a work-item index document.",
@@ -84,6 +89,7 @@ TOOL_REQUIRED_FIELDS = {
     "backlog.upsert": ("queue_item_id", "title", "summary", "owner_role"),
     "blocker.raise": ("work_item_id", "summary", "next_action"),
     "consult.request": ("work_item_id", "target_role", "question"),
+    "conversation.compact_context": ("conversation_ref", "summary", "source_message_ids", "visibility"),
     "decision.record": ("work_item_id", "summary"),
     "document.write_work_item_index": (
         "work_item_id",
