@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
+
+
+_IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 @dataclass(frozen=True)
@@ -130,6 +134,7 @@ def resolve_project_flow_config_path(
 def load_project_config(path: Path) -> V3ProjectConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     project_id = _required(raw, "project_id")
+    _validate_identifier("project_id", project_id)
     broker_raw = _mapping(raw.get("broker"))
     docs_raw = _mapping(raw.get("document_library"))
     roles_raw = _mapping(raw.get("roles"))
@@ -196,7 +201,13 @@ def _optional_int(value: Any) -> int | None:
     return int(value)
 
 
+def _validate_identifier(field_name: str, value: str) -> None:
+    if not _IDENTIFIER_RE.match(value):
+        raise ValueError(f"{field_name} must match ^[a-z0-9][a-z0-9-]*$")
+
+
 def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, Any]) -> V3RoleInstanceConfig:
+    _validate_identifier(f"roles.{role_id}", role_id)
     worker_raw = _mapping(role_raw.get("worker"))
     auth_raw = _mapping(worker_raw.get("auth"))
     instances = int(role_raw["instances"]) if "instances" in role_raw else 1
