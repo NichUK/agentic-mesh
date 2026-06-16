@@ -421,3 +421,8 @@ V3 role-service status now reports role-specific inbox depth by summing the
 role's direct and relevance consumers. It no longer reports whole-stream depth,
 so `/agents` and hibernation planning do not treat unrelated role messages as
 this agent's backlog.
+
+V3 command deployment targets now convert subprocess timeouts into explicit
+failed `DeploymentResult` values. `release.deploy` therefore records timeout
+failures as release evidence and moves the work item into `recovering` instead
+of losing the failure as an uncaught runtime exception.

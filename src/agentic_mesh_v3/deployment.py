@@ -34,14 +34,23 @@ class CommandDeploymentTarget:
     def deploy(self) -> DeploymentResult:
         if not self.command:
             raise ValueError("deployment command is required")
-        completed = subprocess.run(
-            list(self.command),
-            cwd=self.cwd,
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_seconds,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                list(self.command),
+                cwd=self.cwd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            output = _timeout_output(exc, timeout_seconds=self.timeout_seconds)
+            return DeploymentResult(
+                target_id=self.target_id,
+                status="failed",
+                output=output,
+                rollback_plan=self.rollback_plan,
+            )
         output = (completed.stdout + completed.stderr).strip()
         return DeploymentResult(
             target_id=self.target_id,
@@ -88,3 +97,14 @@ def deployment_targets_from_project_config(config: "V3ProjectConfig") -> dict[st
             continue
         raise ValueError(f"unsupported deployment target type: {target.target_type}")
     return targets
+
+
+def _timeout_output(exc: subprocess.TimeoutExpired, *, timeout_seconds: int) -> str:
+    output_parts = [f"Deployment command timed out after {timeout_seconds} seconds."]
+    for label, value in (("stdout", exc.stdout), ("stderr", exc.stderr)):
+        if value is None:
+            continue
+        text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+        if text.strip():
+            output_parts.append(f"{label}: {text.strip()}")
+    return "\n".join(output_parts)
