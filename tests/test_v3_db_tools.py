@@ -1073,6 +1073,77 @@ def test_v3_tool_service_records_decisions_and_risks_as_governance_evidence(tmp_
     assert records["risk.register"].target_ref == "risk-identity-consent"
 
 
+def test_v3_tool_service_records_project_channel_relevance_without_work_item(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+
+        result = tools.call(
+            role_instance_id="agentic-mesh-dev.qa-engineer.1",
+            tool_name="relevance.record",
+            payload={
+                "source_message_id": "msg-project-1",
+                "conversation_ref": "team:team-1/channel:project",
+                "relevance_score": 15,
+                "rationale": "No QA action yet; monitor until acceptance criteria or test evidence changes.",
+                "route_type": "project_channel_relevance_check",
+            },
+        )
+
+        record = db.connection.execute(
+            """
+            SELECT work_item_id, record_type, role_instance_id, target_ref, summary, status, payload_json
+            FROM governance_records
+            WHERE record_id=?
+            """,
+            (f"governance-{result.call_id}",),
+        ).fetchone()
+        event = db.connection.execute(
+            """
+            SELECT aggregate_type, aggregate_id
+            FROM events
+            WHERE event_type='governance.recorded' AND aggregate_id='message:msg-project-1'
+            """
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert record is not None
+    assert record["work_item_id"] == "message:msg-project-1"
+    assert record["record_type"] == "relevance.record"
+    assert record["role_instance_id"] == "agentic-mesh-dev.qa-engineer.1"
+    assert record["target_ref"] == "msg-project-1"
+    assert record["summary"] == "No QA action yet; monitor until acceptance criteria or test evidence changes."
+    assert record["status"] == "relevance_recorded"
+    assert event is not None
+    assert event["aggregate_type"] == "conversation_message"
+
+
+def test_v3_tool_service_relevance_record_rejects_invalid_score(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.qa-engineer.1",
+                tool_name="relevance.record",
+                payload={
+                    "source_message_id": "msg-project-1",
+                    "relevance_score": 101,
+                    "rationale": "Too high.",
+                },
+            )
+        except ValueError as exc:
+            assert "relevance_score must be between 0 and 100" in str(exc)
+        else:
+            raise AssertionError("relevance.record should reject invalid scores")
+    finally:
+        db.close()
+
+
 def test_v3_tool_service_raises_blocker_with_visible_next_action(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

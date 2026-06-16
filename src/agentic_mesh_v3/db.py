@@ -1050,7 +1050,7 @@ class V3Database:
             )
             self.record_event(
                 "governance.recorded",
-                "work_item",
+                _governance_record_aggregate_type(work_item_id),
                 work_item_id,
                 {
                     "record_id": record_id,
@@ -1689,6 +1689,12 @@ def _agent_run_row(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["tool_calls"] = tuple(json.loads(data.pop("tool_calls_json") or "[]"))
     return data
+
+
+def _governance_record_aggregate_type(work_item_id: str) -> str:
+    if work_item_id.startswith("message:"):
+        return "conversation_message"
+    return "work_item"
 
 
 def _agent_run_status(row: sqlite3.Row) -> AgentRunStatus:

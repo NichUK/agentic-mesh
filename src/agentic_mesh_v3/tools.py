@@ -289,6 +289,7 @@ class V3ToolService:
             "governance.record_exception",
             "decision.record",
             "risk.register",
+            "relevance.record",
         }:
             self._record_governance_tool(
                 call_id=call_id,
@@ -590,9 +591,11 @@ class V3ToolService:
             _validate_decision_record(payload)
         elif tool_name == "risk.register":
             _validate_risk_register(payload)
+        elif tool_name == "relevance.record":
+            _validate_relevance_record(payload)
         self.db.record_governance_record(
             record_id=str(payload.get("record_id") or f"governance-{call_id}"),
-            work_item_id=_required(payload, "work_item_id"),
+            work_item_id=_governance_record_scope(payload),
             record_type=tool_name,
             role_instance_id=role_instance_id,
             target_ref=_target_ref(payload),
@@ -687,15 +690,20 @@ def _handoff_governance(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _target_ref(payload: dict[str, Any]) -> str | None:
-    return _optional(payload.get("target_ref") or payload.get("target_role") or payload.get("stakeholder_ref"))
+    return _optional(
+        payload.get("target_ref")
+        or payload.get("target_role")
+        or payload.get("stakeholder_ref")
+        or payload.get("source_message_id")
+    )
 
 
 def _summary(payload: dict[str, Any]) -> str:
-    for key in ("summary", "question", "reason", "required_next_action", "message"):
+    for key in ("summary", "question", "reason", "required_next_action", "message", "rationale"):
         value = payload.get(key)
         if value is not None and str(value):
             return str(value)
-    raise ValueError("summary, question, reason, required_next_action, or message is required")
+    raise ValueError("summary, question, reason, required_next_action, message, or rationale is required")
 
 
 def _validate_handoff_requirements(payload: dict[str, Any]) -> None:
@@ -772,6 +780,25 @@ def _validate_risk_register(payload: dict[str, Any]) -> None:
     _required(payload, "summary")
 
 
+def _validate_relevance_record(payload: dict[str, Any]) -> None:
+    _required(payload, "source_message_id")
+    _required(payload, "relevance_score")
+    _required(payload, "rationale")
+    score = int(_required(payload, "relevance_score"))
+    if score < 0 or score > 100:
+        raise ValueError("relevance_score must be between 0 and 100")
+
+
+def _governance_record_scope(payload: dict[str, Any]) -> str:
+    work_item_id = _optional(payload.get("work_item_id"))
+    if work_item_id is not None:
+        return work_item_id
+    source_message_id = _optional(payload.get("source_message_id"))
+    if source_message_id is not None:
+        return f"message:{source_message_id}"
+    return _required(payload, "work_item_id")
+
+
 def _default_governance_status(tool_name: str) -> str:
     return {
         "blocker.raise": "blocked",
@@ -782,4 +809,5 @@ def _default_governance_status(tool_name: str) -> str:
         "risk.register": "risk_open",
         "stakeholder.ask_question": "requested",
         "governance.record_exception": "exception_recorded",
+        "relevance.record": "relevance_recorded",
     }.get(tool_name, "recorded")

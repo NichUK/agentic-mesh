@@ -18,6 +18,7 @@ BASE_TOOLS = {
     "memory.propose_update",
     "messaging.send",
     "noop",
+    "relevance.record",
     "report.incomplete",
     "risk.register",
     "stakeholder.ask_question",

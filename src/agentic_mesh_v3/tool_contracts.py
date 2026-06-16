@@ -22,6 +22,7 @@ DO_TOOLS = {
     "memory.propose_update",
     "messaging.send",
     "noop",
+    "relevance.record",
     "release.close",
     "release.deploy",
     "release.record",
@@ -68,6 +69,10 @@ TOOL_DESCRIPTIONS = {
     "memory.propose_update": "Record a source-linked role-memory update.",
     "messaging.send": "Send a stakeholder-facing message through a configured connector.",
     "noop": "Record that no durable action is appropriate. Requires `reason`.",
+    "relevance.record": (
+        "Record a role's relevance score and rationale for a shared project-channel or direct context message. "
+        "Use this when a role decides whether it has something useful to add without creating fake work."
+    ),
     "release.close": "Close release work after deployment or no-deployment evidence exists.",
     "release.deploy": "Execute a configured deployment target or no-deployment disposition.",
     "release.record": "Record release evidence without executing a deployment target.",
@@ -119,6 +124,7 @@ TOOL_REQUIRED_FIELDS = {
     "memory.propose_update": ("summary", "source_ref"),
     "messaging.send": ("connector", "target_ref", "text_markdown"),
     "noop": ("reason",),
+    "relevance.record": ("source_message_id", "relevance_score", "rationale"),
     "release.close": ("work_item_id",),
     "release.deploy": ("work_item_id", "target_id"),
     "release.record": ("work_item_id", "scope", "deployment_result", "rollback_plan"),
