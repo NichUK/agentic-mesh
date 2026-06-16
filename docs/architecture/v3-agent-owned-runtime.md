@@ -153,6 +153,11 @@ findings without manually scripting against the broker.
 Every work item carries a governance context: accountable role, responsible
 roles, consulted roles, informed roles, sponsor decision points, and required
 evidence before handoff, release, or closure.
+The `work_item.upsert` safe-output tool guarantees that work created through
+the approved agent path is not governance-empty. If an agent omits governance
+metadata, the tool materializes a minimum phase, accountable role, and
+responsible-role context from the work item state and owner while preserving
+any richer RACI fields supplied by the agent.
 
 Consultation is mandatory for RACI `C` roles unless the accountable role records
 a governance exception. Informed roles receive concise notices when state

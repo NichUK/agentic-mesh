@@ -402,3 +402,8 @@ V3 artifact rendering now preserves Mermaid fenced code blocks as controlled
 Mermaid render blocks while continuing to sanitize artifact content with
 `bleach`. The viewer only loads Mermaid when an artifact contains a Mermaid
 fence.
+
+V3 `work_item.upsert` now materializes minimum governance context for
+safe-output-created work items when agents omit it. The tool fills phase,
+accountable role, and responsible role from the work item state/owner while
+preserving richer RACI fields supplied by the agent.

@@ -131,16 +131,24 @@ class V3ToolService:
                 source_ref=_optional(payload.get("source_ref")),
             )
         elif tool_name == "work_item.upsert":
+            owner_role = _required(payload, "owner_role")
+            state = str(payload.get("state") or "queued")
+            current_phase = _optional(payload.get("current_phase"))
             self.db.upsert_work_item(
                 work_item_id=_required(payload, "work_item_id"),
                 queue_item_id=_optional(payload.get("queue_item_id")),
                 title=_required(payload, "title"),
                 description=_required(payload, "description"),
-                state=str(payload.get("state") or "queued"),
-                owner_role=_required(payload, "owner_role"),
-                current_phase=_optional(payload.get("current_phase")),
+                state=state,
+                owner_role=owner_role,
+                current_phase=current_phase,
                 next_action=str(payload.get("next_action") or ""),
-                governance=_dict(payload.get("governance")),
+                governance=_work_item_governance(
+                    payload.get("governance"),
+                    owner_role=owner_role,
+                    state=state,
+                    current_phase=current_phase,
+                ),
             )
         elif tool_name == "work_item.update_state":
             self.db.update_work_item_state(
@@ -502,6 +510,20 @@ def _safe_relative_path(value: str) -> str:
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _work_item_governance(
+    value: Any,
+    *,
+    owner_role: str,
+    state: str,
+    current_phase: str | None,
+) -> dict[str, Any]:
+    governance = dict(_dict(value))
+    governance.setdefault("phase", current_phase or state)
+    governance.setdefault("accountable_role", owner_role)
+    governance.setdefault("responsible_roles", [owner_role])
+    return governance
 
 
 def _target_ref(payload: dict[str, Any]) -> str | None:
