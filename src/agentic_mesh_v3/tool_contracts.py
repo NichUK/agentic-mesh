@@ -27,6 +27,7 @@ DO_TOOLS = {
     "risk.register",
     "stakeholder.ask_question",
     "status.update",
+    "work_item.reopen",
     "work_item.update_state",
     "work_item.upsert",
 }
@@ -71,6 +72,7 @@ TOOL_DESCRIPTIONS = {
     "status.complete": "Report successful completion. Requires `summary`.",
     "status.reply": "Send or record a Markdown reply to a conversation or stakeholder. Requires `text_markdown`.",
     "status.update": "Record progress or status without completing the run.",
+    "work_item.reopen": "Reopen terminal work with explicit product/project/release authority and a recorded reason.",
     "work_item.update_state": "Move a work item to a new state with next-action context.",
     "work_item.upsert": "Create or update a work item.",
 }
@@ -119,6 +121,7 @@ TOOL_REQUIRED_FIELDS = {
     "stakeholder.ask_question": ("work_item_id", "question"),
     "status.complete": ("summary",),
     "status.reply": ("text_markdown",),
+    "work_item.reopen": ("work_item_id", "state", "reason"),
     "work_item.update_state": ("work_item_id", "state"),
     "work_item.upsert": ("work_item_id", "title", "description", "owner_role"),
 }

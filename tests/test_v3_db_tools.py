@@ -403,6 +403,103 @@ def test_v3_db_rejects_invalid_work_item_transition(tmp_path: Path) -> None:
         db.close()
 
 
+def test_v3_tool_service_allows_authorized_terminal_reopen(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_backlog_item(
+            queue_item_id="queue-1",
+            title="Dashboard",
+            summary="Dashboard work.",
+            status="superseded",
+            owner_role="product-manager",
+            linked_work_item_id="work-1",
+        )
+        db.upsert_work_item(
+            work_item_id="work-1",
+            queue_item_id="queue-1",
+            title="Dashboard",
+            description="Incorrectly superseded.",
+            state="superseded",
+            owner_role="product-manager",
+        )
+
+        V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="work_item.reopen",
+            payload={
+                "work_item_id": "work-1",
+                "state": "shaping",
+                "reason": "Sponsor confirmed the product work is still required.",
+                "current_phase": "requirements",
+                "next_action": "Rework product definition.",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+        queue = db.connection.execute(
+            "SELECT status FROM backlog_items WHERE queue_item_id='queue-1'"
+        ).fetchone()
+        event = db.connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='work_item.reopened'"
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "shaping"
+    assert detail.owner_role == "product-manager"
+    assert detail.current_phase == "requirements"
+    assert detail.next_action == "Rework product definition."
+    assert queue["status"] == "shaping"
+    assert "Sponsor confirmed" in event["payload_json"]
+
+
+def test_v3_tool_service_reopen_requires_authority_and_terminal_source(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Active work",
+            description="Already active.",
+            state="active",
+            owner_role="engineering",
+        )
+
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.engineering.1",
+                tool_name="work_item.reopen",
+                payload={
+                    "work_item_id": "work-1",
+                    "state": "active",
+                    "reason": "Try to reopen without authority.",
+                },
+            )
+        except PermissionError as exc:
+            assert "work_item.reopen" in str(exc)
+        else:
+            raise AssertionError("engineering should not have reopen authority")
+
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                tool_name="work_item.reopen",
+                payload={
+                    "work_item_id": "work-1",
+                    "state": "release_review",
+                    "reason": "Release manager correction.",
+                },
+            )
+        except ValueError as exc:
+            assert "is not terminal" in str(exc)
+        else:
+            raise AssertionError("non-terminal work should not be reopened")
+    finally:
+        db.close()
+
+
 def test_v3_tool_service_release_deploy_uses_configured_target(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

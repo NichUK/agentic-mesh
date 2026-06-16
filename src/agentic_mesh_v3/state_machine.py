@@ -24,6 +24,8 @@ WORK_ITEM_STATES = {
 
 TERMINAL_STATES = {"closed", "canceled", "superseded", "failed_terminal"}
 
+REOPEN_TARGET_STATES = {"shaping", "ready", "active", "waiting_agent", "recovering", "release_review"}
+
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "queued": {"shaping", "ready", "active", "canceled", "superseded"},
     "shaping": {"ready", "waiting_human", "waiting_agent", "blocked", "canceled", "superseded"},
