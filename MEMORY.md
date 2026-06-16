@@ -28,6 +28,10 @@ Important V3 decisions:
 - Governance instructions must be explicit in prompts: consult RACI `C` roles,
   inform `I` roles, ask stakeholders for material decisions, and record
   exceptions/evidence.
+- V3 topology validation keeps source repo, deployed runtime, runtime state,
+  organisation config repo, project config repo, and document library as
+  separate roots by default. Identical or nested roots require explicit
+  `local_dev_override`.
 
 ## Current State
 

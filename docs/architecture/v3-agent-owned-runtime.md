@@ -12,6 +12,12 @@ The runtime provides platform services; agents own work progression.
 - Document library: project memory and evidence, initially OneDrive mounted into Teams as Shared Files under `/documents`.
 
 These paths must remain distinct unless a local-dev override is explicit.
+Default topology validation rejects not only identical roots, but also nested
+roots. For example, the project config repo, organisation config repo, runtime
+state, deployed runtime, and document library must not live inside the source
+repo by default. Dogfood or temporary local setups may opt into
+`local_dev_override`, but production/project installs should keep those roots
+separate.
 
 ## Runtime Responsibilities
 

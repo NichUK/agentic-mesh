@@ -41,12 +41,7 @@ def validate_topology(topology: V3Topology) -> list[str]:
         names = list(paths)
         for index, left_name in enumerate(names):
             for right_name in names[index + 1 :]:
-                if paths[left_name] == paths[right_name]:
-                    errors.append(f"{left_name} and {right_name} resolve to the same path: {paths[left_name]}")
-    if _is_relative_to(resolved.runtime_state, resolved.source_repo):
-        errors.append("runtime_state must not live inside the source repo")
-    if _is_relative_to(resolved.document_library_root, resolved.deployed_runtime):
-        errors.append("document_library_root must not live inside the deployed runtime install")
+                errors.extend(_path_boundary_errors(left_name, paths[left_name], right_name, paths[right_name]))
     return errors
 
 
@@ -62,3 +57,13 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _path_boundary_errors(left_name: str, left: Path, right_name: str, right: Path) -> list[str]:
+    if left == right:
+        return [f"{left_name} and {right_name} resolve to the same path: {left}"]
+    if _is_relative_to(left, right):
+        return [f"{left_name} must not live inside {right_name}: {left} is inside {right}"]
+    if _is_relative_to(right, left):
+        return [f"{right_name} must not live inside {left_name}: {right} is inside {left}"]
+    return []
