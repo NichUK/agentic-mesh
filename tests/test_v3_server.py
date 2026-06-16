@@ -82,6 +82,31 @@ def test_artifact_viewer_reads_local_document_library(tmp_path: Path) -> None:
     assert docs.read_text("work-items/work-1/index.md") == "# Work One"
 
 
+def test_artifact_viewer_route_renders_work_item_scoped_artifact(tmp_path: Path) -> None:
+    docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    docs.write_text("work-items/work-1/index.md", "# Work One")
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+    finally:
+        db.close()
+
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.db_path = tmp_path / "v3.sqlite3"
+    Handler.project_id = "agentic-mesh-dev"
+    Handler.document_library = docs
+    handler = object.__new__(Handler)
+    captured: dict[str, str] = {}
+    handler._send_html = lambda content: captured.__setitem__("html", content)  # type: ignore[method-assign]
+
+    handler._render_artifact_route("work-1/index.md")
+
+    assert "<h1>Work One</h1>" in captured["html"]
+    assert "work-items/work-1/index.md" in captured["html"]
+
+
 def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
     db = V3Database(tmp_path / "v3.sqlite3")
