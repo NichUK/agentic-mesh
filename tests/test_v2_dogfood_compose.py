@@ -8,6 +8,7 @@ from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
 
 
 PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml")
+V3_PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml")
 
 
 def test_dogfood_compose_runs_status_server_with_project_file() -> None:
@@ -59,6 +60,56 @@ def test_dogfood_compose_runs_teams_ingress_service() -> None:
     assert service["depends_on"] == ["v2-runtime"]
 
 
+def test_dogfood_compose_defines_v3_runtime_profile() -> None:
+    compose = _load_dogfood_compose()
+    service = compose["services"]["v3-runtime"]
+    command = service["command"]
+
+    assert service["profiles"] == ["v3"]
+    assert service["depends_on"] == ["v3-nats"]
+    assert "--project-config /mesh/project/agentic-mesh/project-v3.yaml" in command
+    assert "python -m agentic_mesh_v3.cli" in command
+    assert "serve --host 0.0.0.0 --port 8080" in command
+    assert service["ports"] == ["${AGENTIC_MESH_V3_STATUS_PORT:-8101}:8080"]
+    assert service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project-v3.yaml"
+    assert service["environment"]["AGENTIC_MESH_STATE_ROOT"] == "/mesh/project/state/v3"
+    assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in service["environment"]
+    assert "AGENTIC_MESH_ONEDRIVE_DRIVE_ID" in service["environment"]
+    assert "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID" in service["environment"]
+
+
+def test_dogfood_compose_defines_v3_nats_profile() -> None:
+    compose = _load_dogfood_compose()
+    service = compose["services"]["v3-nats"]
+
+    assert service["image"] == "nats:2.10-alpine"
+    assert service["command"] == ["-js", "-sd", "/data"]
+    assert service["profiles"] == ["v3", "v3-proof"]
+    assert "${AGENTIC_MESH_NATS_STATE_HOST_PATH:-../../state/v3/nats}:/data" in service["volumes"]
+
+
+def test_dogfood_compose_defines_v3_dogfood_proof_runner() -> None:
+    compose = _load_dogfood_compose()
+    service = compose["services"]["v3-dogfood-proof"]
+    command = service["command"]
+
+    assert service["profiles"] == ["v3-proof"]
+    assert service["depends_on"] == ["v3-nats"]
+    assert "python -m agentic_mesh_v3.cli" in command
+    assert "--project-config /mesh/project/agentic-mesh/project-v3.yaml" in command
+    assert "local-e2e-dogfood --deployment-target-id dogfood-compose" in command
+    assert service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project-v3.yaml"
+
+
+def test_linuxch_overlay_restarts_v3_runtime_and_mounts_docker_for_proof() -> None:
+    overlay = _linuxch_overlay_text()
+
+    assert "  v3-nats:\n    restart: unless-stopped" in overlay
+    assert "  v3-runtime:\n    restart: unless-stopped" in overlay
+    assert "  v3-dogfood-proof:" in overlay
+    assert "/var/run/docker.sock:/var/run/docker.sock" in overlay
+
+
 def test_linuxch_overlay_restarts_project_supervisor_service() -> None:
     overlay = _linuxch_overlay_text()
 
@@ -89,6 +140,10 @@ def test_dogfood_project_config_defines_role_container_lifecycle() -> None:
         "docker-compose.yml",
         "docker-compose.linuxch.yml",
     ]
+
+
+def test_v3_dogfood_project_config_exists_for_compose_profile() -> None:
+    assert V3_PROJECT_FILE.exists()
 
 
 def test_dogfood_compose_runs_one_role_service_per_project_role_instance() -> None:

@@ -35,12 +35,53 @@ x-agentic-mesh-role-service: &agentic-mesh-role-service
   depends_on:
     - v2-runtime
 
+x-agentic-mesh-v3-env: &agentic-mesh-v3-env
+  <<: *agentic-mesh-env
+  AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project-v3.yaml
+  AGENTIC_MESH_STATE_ROOT: /mesh/project/state/v3
+  AGENTIC_MESH_ONEDRIVE_TOKEN: ${AGENTIC_MESH_ONEDRIVE_TOKEN:-}
+  AGENTIC_MESH_ONEDRIVE_DRIVE_ID: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID:-}
+  AGENTIC_MESH_SPONSOR_TEAMS_USER_ID: ${AGENTIC_MESH_SPONSOR_TEAMS_USER_ID:-}
+  AGENTIC_MESH_TEAMS_TOKEN: ${AGENTIC_MESH_TEAMS_TOKEN:-}
+  AGENTIC_MESH_TEAMS_SENDER_USER_ID: ${AGENTIC_MESH_TEAMS_SENDER_USER_ID:-}
+
+x-agentic-mesh-v3-service: &agentic-mesh-v3-service
+  <<: *agentic-mesh-service
+  environment: *agentic-mesh-v3-env
+
 services:
   runtime-image:
     <<: *agentic-mesh-service
     command: python -m agentic_mesh_v2.cli init-db
     profiles:
       - build-image
+
+  v3-nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data"]
+    volumes:
+      - ${AGENTIC_MESH_NATS_STATE_HOST_PATH:-../../state/v3/nats}:/data
+    profiles:
+      - v3
+      - v3-proof
+
+  v3-runtime:
+    <<: *agentic-mesh-v3-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml serve --host 0.0.0.0 --port 8080
+    ports:
+      - "${AGENTIC_MESH_V3_STATUS_PORT:-8101}:8080"
+    depends_on:
+      - v3-nats
+    profiles:
+      - v3
+
+  v3-dogfood-proof:
+    <<: *agentic-mesh-v3-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml local-e2e-dogfood --deployment-target-id dogfood-compose
+    depends_on:
+      - v3-nats
+    profiles:
+      - v3-proof
 
   v2-runtime:
     <<: *agentic-mesh-service
