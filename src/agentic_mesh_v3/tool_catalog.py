@@ -12,6 +12,7 @@ class ToolCatalogEntry:
     allowed: bool
     terminal: bool
     description: str
+    required_fields: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -19,6 +20,7 @@ class ToolCatalogEntry:
             "allowed": self.allowed,
             "terminal": self.terminal,
             "description": self.description,
+            "required_fields": list(self.required_fields),
         }
 
 
@@ -53,6 +55,48 @@ TOOL_DESCRIPTIONS = {
 }
 
 
+TOOL_REQUIRED_FIELDS = {
+    "approval.request": ("work_item_id", "question"),
+    "artifact.link": ("work_item_id", "relative_path"),
+    "backlog.upsert": ("queue_item_id", "title", "summary", "owner_role"),
+    "consult.request": ("work_item_id", "target_role", "question"),
+    "document.write_work_item_index": (
+        "work_item_id",
+        "title",
+        "status",
+        "owner_role",
+        "raci_summary",
+        "governance_state",
+    ),
+    "governance.record_exception": ("work_item_id", "reason"),
+    "handoff.require": (
+        "work_item_id",
+        "target_role",
+        "phase",
+        "accountable_role",
+        "required_next_action",
+        "acceptance_criteria",
+        "evidence_requirements",
+        "artifact_links",
+        "open_decisions",
+        "open_risks",
+        "consulted_roles",
+        "informed_roles",
+        "stakeholder_follow_up",
+    ),
+    "informed.update": ("work_item_id", "target_role", "message"),
+    "memory.propose_update": ("summary", "source_ref"),
+    "messaging.send": ("connector", "target_ref", "text_markdown"),
+    "release.close": ("work_item_id",),
+    "release.deploy": ("work_item_id", "target_id"),
+    "release.record": ("work_item_id", "scope", "deployment_result", "rollback_plan"),
+    "stakeholder.ask_question": ("work_item_id", "question"),
+    "status.reply": (),
+    "work_item.update_state": ("work_item_id", "state"),
+    "work_item.upsert": ("work_item_id", "title", "description", "owner_role"),
+}
+
+
 def tool_catalog_for_role(
     role_id: str,
     *,
@@ -67,6 +111,7 @@ def tool_catalog_for_role(
             allowed=tool_name in allowed,
             terminal=tool_name in TERMINAL_TOOLS,
             description=TOOL_DESCRIPTIONS.get(tool_name, "No description configured."),
+            required_fields=TOOL_REQUIRED_FIELDS.get(tool_name, ()),
         )
         for tool_name in all_tools
     )

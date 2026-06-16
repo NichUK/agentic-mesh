@@ -133,6 +133,8 @@ roles:
     assert "Use approved tools." in product_tools
     assert "Role-Scoped Safe-Output Tool Catalog" in product_tools
     assert "`backlog.upsert`: allowed" in product_tools
+    assert "Required fields: queue_item_id, title, summary, owner_role." in product_tools
+    assert "Required fields: work_item_id, target_role, question." in product_tools
     assert "`release.deploy`: blocked" in product_tools
 
 

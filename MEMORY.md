@@ -479,3 +479,8 @@ V3 DB-backed role-service runs now audit terminal safe-output calls against the
 runtime tool-call table. The worker's returned operational envelope is no
 longer enough on its own; the run must also record a new terminal tool call
 through the approved safe-output service before the inbox message is acked.
+
+V3 tool catalog entries now expose required payload fields through CLI/MCP
+tool discovery, and materialized agent `tools.md` files render those required
+fields beside each role-scoped tool. This keeps prompt context aligned with
+safe-output validation.

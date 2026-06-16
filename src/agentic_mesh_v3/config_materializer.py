@@ -196,5 +196,9 @@ def _role_tool_instructions(role_id: str, base_instructions: str) -> str:
     for entry in tool_catalog_for_role(role_id):
         status = "allowed" if entry.allowed else "blocked"
         terminal = " terminal" if entry.terminal else ""
-        lines.append(f"- `{entry.tool_name}`: {status}{terminal}. {entry.description}")
+        required_fields = ", ".join(entry.required_fields) if entry.required_fields else "none"
+        lines.append(
+            f"- `{entry.tool_name}`: {status}{terminal}. {entry.description} "
+            f"Required fields: {required_fields}."
+        )
     return "\n".join(lines).rstrip()

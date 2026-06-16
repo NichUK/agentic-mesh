@@ -289,7 +289,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   approved pathway. Tool discovery is available through `tool-catalog
   --role-id ...` and the read-only `agentic_mesh_v3.tool_catalog` MCP tool, so
   agents can inspect their role-scoped permissions instead of guessing tool
-  names. Stakeholder-facing delivery tools call the configured bridge and fail
+  names. The catalog also exposes required payload fields, and materialized
+  `tools.md` prompt context renders those fields next to each role-scoped
+  tool. Stakeholder-facing delivery tools call the configured bridge and fail
   when no bridge is configured; agents must not receive successful tool results
   for messages that were not handed to a connector.
   CLI `tool-call` and MCP stdio now build that stakeholder bridge from
