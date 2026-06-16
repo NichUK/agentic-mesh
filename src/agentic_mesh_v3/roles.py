@@ -34,6 +34,28 @@ class RoleTemplate:
         return yaml.safe_dump(self.raw, sort_keys=False).strip() + "\n"
 
 
+def local_documentation_paths(template: RoleTemplate) -> tuple[str, ...]:
+    """Return repo-local documentation paths referenced by a role template."""
+
+    paths: list[str] = []
+    for value in template.raw.get("documentation_obligations") or ():
+        _append_local_doc_path(paths, value)
+    for workflow in template.raw.get("core_workflows") or ():
+        if not isinstance(workflow, dict):
+            continue
+        for value in workflow.get("artifacts") or ():
+            _append_local_doc_path(paths, value)
+    return tuple(dict.fromkeys(paths))
+
+
+def validate_local_documentation_paths(template: RoleTemplate, *, repo_root: Path) -> None:
+    missing = [path for path in local_documentation_paths(template) if not (repo_root / path).exists()]
+    if missing:
+        raise ValueError(
+            f"role template `{template.path}` references missing documentation paths: {', '.join(missing)}"
+        )
+
+
 def load_role_template(path: Path, *, expected_role_id: str | None = None) -> RoleTemplate:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
@@ -82,3 +104,12 @@ def _validate_standards(path: Path, value: Any) -> None:
         for key in ("name", "url", "applies_to"):
             if _is_empty(reference.get(key)):
                 raise ValueError(f"role template `{path}` standards_references[{index}].{key} is required")
+
+
+def _append_local_doc_path(paths: list[str], value: Any) -> None:
+    if not isinstance(value, str):
+        return
+    normalized = value.replace("\\", "/").strip()
+    if not normalized.startswith("docs/") or "{{" in normalized or "}}" in normalized:
+        return
+    paths.append(normalized)

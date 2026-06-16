@@ -70,7 +70,10 @@ Project config supplies role template ids, instance counts, worker/auth
 settings, role instructions, write paths, and connector identities. The runtime
 uses those values to prepare role containers; it must not bake them into the
 image. Role templates are validated before materialization so placeholder
-purpose-only roles cannot be mounted as executable agent identities.
+purpose-only roles cannot be mounted as executable agent identities. Starter
+role templates also keep local documentation obligations pointed at real
+durable documents, so agents are not instructed to write or consult missing
+library locations.
 
 The same mounted folder is used to build the role-service configuration:
 prompt component paths, memory database path, broker stream, and durable
