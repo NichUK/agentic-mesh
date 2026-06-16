@@ -449,3 +449,8 @@ unless an explicit backend URL is present. Same-folder artifacts link as
 `020-product-definition.md`, sibling work items as `../work-id/index.md`, and
 root-level durable docs via `../../...`, so Teams/OneDrive Shared Files remain
 browsable without runtime URL rewriting.
+
+V3 Graph-backed Teams outbound delivery now sanitizes Markdown-rendered HTML
+before posting. Script/style blocks, unsafe attributes, and unsupported HTML are
+stripped while normal Markdown formatting is preserved for stakeholder-facing
+agent replies, approvals, and questions.

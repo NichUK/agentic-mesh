@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import uuid4
+
+import bleach
 
 from agentic_mesh_v3.broker import BrokerAdapter
 
@@ -220,4 +223,35 @@ class UrlLibGraphTeamsTransport:
 def _markdown_to_teams_html(markdown: str) -> str:
     import markdown as markdown_lib
 
-    return markdown_lib.markdown(markdown, extensions=["fenced_code", "tables"])
+    cleaned_source = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1>", "", markdown)
+    rendered = markdown_lib.markdown(cleaned_source, extensions=["fenced_code", "tables"])
+    return bleach.clean(
+        rendered,
+        tags={
+            "a",
+            "blockquote",
+            "br",
+            "code",
+            "em",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "hr",
+            "li",
+            "ol",
+            "p",
+            "pre",
+            "strong",
+            "table",
+            "tbody",
+            "td",
+            "th",
+            "thead",
+            "tr",
+            "ul",
+        },
+        attributes={"a": ["href", "title"], "code": ["class"]},
+        strip=True,
+        strip_comments=True,
+    )
