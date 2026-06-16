@@ -27,6 +27,7 @@ class AgentStatus:
     last_lifecycle_exit_code: int | None = None
     last_lifecycle_executed: bool | None = None
     last_lifecycle_at: str | None = None
+    last_activity_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -169,7 +170,7 @@ def render_status_page(snapshot: ReportingSnapshot) -> str:
 
 def render_agents_page(snapshot: ReportingSnapshot) -> str:
     rows = [
-        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Dead Letters</th><th>Lifecycle</th><th>Memory</th><th>Last Run</th><th>Current Work</th><th>Governance Waits</th></tr>"
+        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Last Activity</th><th>Inbox</th><th>Dead Letters</th><th>Lifecycle</th><th>Memory</th><th>Last Run</th><th>Current Work</th><th>Governance Waits</th></tr>"
     ]
     for agent in snapshot.agents:
         memory = f"{agent.memory_count} entries"
@@ -182,6 +183,7 @@ def render_agents_page(snapshot: ReportingSnapshot) -> str:
             f"<td>{html.escape(agent.role_instance_id)}</td>"
             f"<td>{html.escape(agent.container_state)}</td>"
             f"<td>{html.escape(agent.heartbeat_at or 'unknown')}</td>"
+            f"<td>{html.escape(agent.last_activity_at or '')}</td>"
             f"<td>{agent.inbox_depth}</td>"
             f"<td>{agent.dead_letter_depth}</td>"
             f"<td>{lifecycle}</td>"
