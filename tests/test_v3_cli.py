@@ -575,6 +575,131 @@ def test_cli_lifecycle_apply_dry_runs_compose_actions(tmp_path: Path, capsys) ->
     assert snapshot.agents[0].container_state == "hibernated"
 
 
+def test_cli_project_supervisor_tick_combines_lifecycle_and_sweep(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  project-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                container_state="hibernated",
+                heartbeat_at="2026-06-15T10:00:00+00:00",
+                inbox_depth=1,
+            )
+        )
+        db.upsert_work_item(
+            work_item_id="work-blocked",
+            title="Blocked work",
+            description="Blocked.",
+            state="blocked",
+            owner_role="engineering",
+            next_action="Chase blocker.",
+        )
+    finally:
+        db.close()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "run-project-supervisor-tick",
+            "--compose-file",
+            str(tmp_path / "compose.yml"),
+            "--working-directory",
+            str(tmp_path),
+            "--publish-sweep-to-project-manager",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert output["lifecycle"]["result_count"] == 1
+    assert output["lifecycle"]["results"][0]["action"] == "wake"
+    assert output["lifecycle"]["results"][0]["executed"] is False
+    assert output["sweep"]["finding_count"] == 1
+    assert output["sweep"]["findings"][0]["work_item_id"] == "work-blocked"
+    assert output["sweep"]["published_message_count"] == 1
+
+    db = V3Database(db_path)
+    try:
+        events = db.connection.execute(
+            "SELECT event_type, aggregate_id FROM events WHERE event_type='project_supervisor.tick'"
+        ).fetchall()
+    finally:
+        db.close()
+    assert [(row["event_type"], row["aggregate_id"]) for row in events] == [
+        ("project_supervisor.tick", "agentic-mesh-dev")
+    ]
+
+
+def test_cli_project_supervisor_loop_runs_bounded_cycles(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  project-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "run-project-supervisor-loop",
+            "--cycles",
+            "2",
+            "--poll-seconds",
+            "0",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert output["cycle_count"] == 2
+    assert output["lifecycle_result_count"] == 0
+    assert output["sweep_finding_count"] == 0
+
+
+def test_cli_project_supervisor_rejects_missing_project_config() -> None:
+    try:
+        main(["run-project-supervisor-tick"])
+    except ValueError as exc:
+        assert "--project-config is required" in str(exc)
+    else:
+        raise AssertionError("supervisor tick should require project config")
+
+
 def test_cli_teams_activity_router_is_none_without_project_config() -> None:
     assert _teams_activity_router(argparse.Namespace(project_config=None)) is None
 

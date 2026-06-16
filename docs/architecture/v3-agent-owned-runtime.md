@@ -135,6 +135,13 @@ stops role containers when `--execute` is passed. It records planned or
 executed lifecycle actions into the event log; successful executed actions
 update the agent container-state projection, and failures show as
 `lifecycle_failed` on `/agents`.
+`run-project-supervisor-tick` composes lifecycle maintenance with the Project
+Manager sweep in one bounded runtime maintenance pass. It can dry-run or execute
+Compose lifecycle actions, publish sweep findings to the Project Manager inbox,
+and records a `project_supervisor.tick` event. `run-project-supervisor-loop`
+repeats the same bounded tick for a configured number of cycles so operators or
+host supervisors can run regular maintenance without adding project decision
+logic to the runtime.
 The V3 Compose renderer converts materialized role container specs into one
 Compose service per role instance, using the generated `run-agent-service`
 command and the same mounted path contract.
@@ -296,6 +303,8 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev serve --docum
 agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev lifecycle-plan --idle-after-seconds 1800 --min-warm-instances-per-role 1
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev lifecycle-apply --compose-file .tmp/v3-compose/roles.yml --working-directory . --idle-after-seconds 1800 --min-warm-instances-per-role 1
+agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-project-supervisor-tick --compose-file .tmp/v3-compose/roles.yml --working-directory . --publish-sweep-to-project-manager
+agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-project-supervisor-loop --cycles 10 --poll-seconds 30 --compose-file .tmp/v3-compose/roles.yml --working-directory . --publish-sweep-to-project-manager
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml broker-inspect --consumer agentic-mesh-dev.product-manager.1
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-once --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-service --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state --idle-exit-seconds 300
