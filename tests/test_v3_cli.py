@@ -11,6 +11,7 @@ from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.project_config import load_project_config
+from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.worker_adapters import CodexCliWorker
 from agentic_mesh_v3.worker_adapters import SafeOutputSubprocessWorker
 
@@ -184,6 +185,62 @@ def test_cli_broker_inspect_requires_project_config() -> None:
         assert str(exc) == "--project-config is required for broker-inspect"
     else:
         raise AssertionError("broker-inspect should require --project-config")
+
+
+def test_cli_lifecycle_plan_reports_decisions_from_agent_snapshot(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.engineering.1",
+                container_state="running",
+                heartbeat_at="2000-01-01T00:00:00+00:00",
+                inbox_depth=0,
+            )
+        )
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.engineering.2",
+                container_state="running",
+                heartbeat_at="2000-01-01T00:00:00+00:00",
+                inbox_depth=0,
+            )
+        )
+    finally:
+        db.close()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-id",
+            "agentic-mesh-dev",
+            "lifecycle-plan",
+            "--idle-after-seconds",
+            "1",
+            "--min-warm-instances-per-role",
+            "1",
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert '"action": "hibernate"' in output
+    assert '"minimum warm pool would be violated"' in output
+    assert '"role_instance_id": "agentic-mesh-dev.engineering.1"' in output
+    assert '"role_instance_id": "agentic-mesh-dev.engineering.2"' in output
+
+
+def test_cli_lifecycle_plan_rejects_invalid_policy() -> None:
+    try:
+        main(["lifecycle-plan", "--idle-after-seconds", "0"])
+    except ValueError as exc:
+        assert str(exc) == "--idle-after-seconds must be positive"
+    else:
+        raise AssertionError("lifecycle-plan should reject invalid idle threshold")
 
 
 def test_cli_teams_activity_router_is_none_without_project_config() -> None:

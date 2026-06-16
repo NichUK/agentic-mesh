@@ -25,6 +25,8 @@ from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import build_document_library_adapter
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
+from agentic_mesh_v3.lifecycle import HibernationPolicy
+from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
 from agentic_mesh_v3.observability import TelemetrySettings
 from agentic_mesh_v3.observability import configure_observability
 from agentic_mesh_v3.project_config import load_project_config
@@ -59,6 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     broker_inspect_parser.add_argument("--stream")
     broker_inspect_parser.add_argument("--consumer")
     broker_inspect_parser.add_argument("--limit", type=int, default=20)
+    lifecycle_plan_parser = subparsers.add_parser("lifecycle-plan")
+    lifecycle_plan_parser.add_argument("--idle-after-seconds", type=int, default=1800)
+    lifecycle_plan_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
     approval_parser = subparsers.add_parser("record-approval-response")
     approval_parser.add_argument("--approval-id", required=True)
     approval_parser.add_argument("--status", required=True, choices=["approved", "rejected", "changes_requested"])
@@ -227,6 +232,39 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        return 0
+    if args.command == "lifecycle-plan":
+        if args.idle_after_seconds < 1:
+            raise ValueError("--idle-after-seconds must be positive")
+        if args.min_warm_instances_per_role < 0:
+            raise ValueError("--min-warm-instances-per-role must be non-negative")
+        db = V3Database(args.db)
+        try:
+            db.migrate()
+            snapshot = db.status_snapshot(project_id=args.project_id)
+            decisions = plan_lifecycle_actions(
+                snapshot.agents,
+                policy=HibernationPolicy(
+                    idle_after_seconds=args.idle_after_seconds,
+                    min_warm_instances_per_role=args.min_warm_instances_per_role,
+                ),
+            )
+            print(
+                json.dumps(
+                    {
+                        "project_id": snapshot.project_id,
+                        "policy": {
+                            "idle_after_seconds": args.idle_after_seconds,
+                            "min_warm_instances_per_role": args.min_warm_instances_per_role,
+                        },
+                        "decisions": [decision.__dict__ for decision in decisions],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        finally:
+            db.close()
         return 0
     if args.command == "record-approval-response":
         db = V3Database(args.db)
