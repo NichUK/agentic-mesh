@@ -9,9 +9,11 @@ from pathlib import Path
 from agentic_mesh_v3.agent import AgentMemory
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
+from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import RoleAgentService
 from agentic_mesh_v3.agent import AgentStatusReporter
+from agentic_mesh_v3.agent import WorkItemGovernanceContextProvider
 from agentic_mesh_v3.broker import build_broker_adapter
 from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.broker import BrokerMessage
@@ -635,6 +637,7 @@ def _run_agent_once(args: argparse.Namespace):
             broker=broker,
             memory=DatabaseRoleMemory(db),
             conversation_context=DatabaseConversationContext(db),
+            work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
             status_reporter=DatabaseAgentStatusReporter(db),
         )
         return service.run_until_idle(max_messages=args.max_messages)
@@ -667,6 +670,7 @@ def _run_agent_service(args: argparse.Namespace):
             broker=broker,
             memory=DatabaseRoleMemory(db),
             conversation_context=DatabaseConversationContext(db),
+            work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
             status_reporter=DatabaseAgentStatusReporter(db),
         )
         idle_since: float | None = None
@@ -697,6 +701,7 @@ def _build_role_agent_service(
     broker: BrokerAdapter,
     memory: AgentMemory,
     conversation_context: DatabaseConversationContext,
+    work_item_governance_context: WorkItemGovernanceContextProvider,
     status_reporter: AgentStatusReporter | None = None,
 ) -> RoleAgentService:
     service_config = build_role_instance_config(
@@ -716,6 +721,7 @@ def _build_role_agent_service(
         worker=_worker_from_args(args, project_config=project_config),
         memory=memory,
         conversation_context=conversation_context,
+        work_item_governance_context=work_item_governance_context,
         max_delivery_attempts=args.max_delivery_attempts,
         **kwargs,
     )

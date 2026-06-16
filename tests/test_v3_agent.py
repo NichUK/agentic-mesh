@@ -2,6 +2,7 @@ from pathlib import Path
 
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseConversationContext
+from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import InMemoryRoleMemory
 from agentic_mesh_v3.agent import RoleAgentService
@@ -309,6 +310,51 @@ def test_role_agent_prompt_includes_governance_checklist(tmp_path: Path) -> None
     assert "Missing consultation evidence for `product-manager`" in worker.prompt
     assert "Missing informed-update evidence for `delivery-manager`" in worker.prompt
     assert "Pending sponsor/stakeholder decision `requirements-signoff`" in worker.prompt
+
+
+def test_role_agent_prompt_loads_database_work_item_governance_context(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"work_item_id": "work-123"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-123",
+            title="Shape product",
+            description="Shape the product scope.",
+            state="shaping",
+            owner_role="product-manager",
+            current_phase="requirements",
+            governance={
+                "phase": "requirements",
+                "accountable_role": "project-manager",
+                "responsible_roles": ["business-analyst"],
+                "consulted_roles": ["product-manager"],
+                "informed_roles": ["delivery-manager"],
+                "sponsor_decision_points": ["requirements-signoff"],
+            },
+        )
+        worker = CapturingWorker()
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=worker,
+            memory=InMemoryRoleMemory(),
+            work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
+        )
+
+        result = service.run_once()
+
+        assert result is not None
+        assert result.status == "completed"
+        assert "<governance-context>" in worker.prompt
+        assert "'work_item_id': 'work-123'" in worker.prompt
+        assert "Missing consultation evidence for `product-manager`" in worker.prompt
+        assert "Missing informed-update evidence for `delivery-manager`" in worker.prompt
+        assert "Pending sponsor/stakeholder decision `requirements-signoff`" in worker.prompt
+    finally:
+        db.close()
 
 
 def test_role_agent_prompt_uses_supplied_governance_checklist(tmp_path: Path) -> None:

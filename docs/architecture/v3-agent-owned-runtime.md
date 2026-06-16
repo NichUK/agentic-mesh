@@ -155,6 +155,11 @@ The runtime database can derive the same checklist from the work-item read
 model, recorded governance safe-output calls, and approval records. This keeps
 dashboards and prompt builders aligned without giving the database authority to
 close or advance work.
+Normal `run-agent-once` and `run-agent-service` executions now use that
+database-derived work-item governance context automatically when an inbox
+message carries `work_item_id`. Agents still decide what to do, but they are no
+longer dependent on an operator or caller manually injecting the current
+governance checklist into each run.
 
 Tool authority is role-scoped. All roles can communicate, consult, hand off,
 record governance evidence, update document indexes, and report status.
