@@ -1,8 +1,10 @@
+import sys
 from pathlib import Path
 
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.deployment import CommandDeploymentTarget
 from agentic_mesh_v3.deployment import NoDeploymentDisposition
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.tools import V3ToolService
@@ -249,6 +251,52 @@ def test_v3_tool_service_release_deploy_uses_configured_target(tmp_path: Path) -
         db.close()
 
     assert release_count == 1
+
+
+def test_v3_release_deploy_failure_moves_work_to_recovering(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Deploy runtime",
+            description="Needs runtime deployment.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+        tools = V3ToolService(
+            db,
+            deployment_targets={
+                "failing-target": CommandDeploymentTarget(
+                    target_id="failing-target",
+                    command=(sys.executable, "-c", "import sys; print('deploy failed'); sys.exit(7)"),
+                    rollback_plan="Keep previous runtime active.",
+                )
+            },
+        )
+
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.deploy",
+            payload={
+                "work_item_id": "work-1",
+                "target_id": "failing-target",
+                "scope": "Runtime release",
+                "residual_risks": "Deployment failed.",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "recovering"
+    assert detail.owner_role == "release-manager"
+    assert detail.current_phase == "deployment"
+    assert "Deployment target `failing-target` failed." in detail.next_action
+    assert "deploy failed" in detail.next_action
+    assert detail.releases[0].status == "failed"
+    assert detail.releases[0].rollback_plan == "Keep previous runtime active."
 
 
 def test_v3_release_close_requires_release_disposition(tmp_path: Path) -> None:

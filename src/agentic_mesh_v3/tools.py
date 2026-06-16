@@ -186,15 +186,24 @@ class V3ToolService:
             if target is None:
                 raise ValueError(f"deployment target is not configured: {target_id}")
             result = target.deploy()
+            work_item_id = _required(payload, "work_item_id")
             self.db.record_release(
                 release_id=str(payload.get("release_id") or f"release-{uuid4().hex}"),
-                work_item_id=_required(payload, "work_item_id"),
+                work_item_id=work_item_id,
                 status=result.status,
                 scope=str(payload.get("scope") or f"Deployment target {target_id}"),
                 deployment_result=result.output,
                 rollback_plan=result.rollback_plan,
                 residual_risks=str(payload.get("residual_risks") or "None recorded"),
             )
+            if result.status == "failed":
+                self.db.update_work_item_state(
+                    work_item_id=work_item_id,
+                    state="recovering",
+                    owner_role=role_from_instance(role_instance_id),
+                    current_phase="deployment",
+                    next_action=f"Deployment target `{target_id}` failed. {result.output or 'No output recorded.'}",
+                )
         elif tool_name == "release.close":
             work_item_id = _required(payload, "work_item_id")
             if not self.db.has_release_disposition(work_item_id):

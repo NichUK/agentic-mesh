@@ -285,6 +285,9 @@ The `/status` page also separates attention-needed work, stale work, and
 agent governance waits from the general active-work list. Work-item status
 rows carry `updated_at` and `attention_reason` so stuck work is visible without
 running a separate Project Manager sweep first.
+V3 `release.deploy` now records failed deployment targets as release rows with
+status `failed` and moves the work item to `recovering`, preserving deployment
+output in `next_action` for Release Manager/operator follow-up.
 
 Starter role documentation obligations now have concrete durable document
 targets, and role validation can check repo-local documentation paths. This
