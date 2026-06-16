@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agentic_mesh_v3.agent import RoleInstanceConfig
+from agentic_mesh_v3.documents import framework_for
 from agentic_mesh_v3.governance import RaciMatrix
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
 from agentic_mesh_v3.project_config import V3ProjectConfig
@@ -157,7 +158,11 @@ def materialize_project_agent_configs(
                 role_prompt=_read_role_template(role_templates_dir, role),
                 organisation_instructions=organisation_instructions,
                 project_instructions=_role_project_instructions(role, project_config),
-                tool_instructions=_role_tool_instructions(role.role_id, tool_instructions),
+                tool_instructions=_role_tool_instructions(
+                    role.role_id,
+                    tool_instructions,
+                    document_framework_id=project_config.document_library.structure_policy,
+                ),
                 raci=raci,
             )
             materialized.append(
@@ -207,7 +212,8 @@ def _role_project_instructions(role: V3RoleInstanceConfig, project_config: V3Pro
     return "\n".join(lines)
 
 
-def _role_tool_instructions(role_id: str, base_instructions: str) -> str:
+def _role_tool_instructions(role_id: str, base_instructions: str, *, document_framework_id: str) -> str:
+    framework = framework_for(document_framework_id)
     lines = [
         base_instructions.rstrip(),
         "",
@@ -233,4 +239,19 @@ def _role_tool_instructions(role_id: str, base_instructions: str) -> str:
             f"- `{entry.tool_name}`: {status}{terminal}; categories: {categories}. {entry.description} "
             f"Required fields: {required_fields}."
         )
+    lines.extend(
+        [
+            "",
+            "## Document Framework Catalog",
+            "",
+            f"Selected framework: `{framework.framework_id}`.",
+            "Use these `document_type` values and paths when calling `artifact.link` for typed document-library evidence.",
+            "Use `artifact` only for supporting evidence with no standard document slot yet.",
+        ]
+    )
+    for rule in framework.document_types:
+        if rule.path_template is None:
+            lines.append(f"- `{rule.document_type}`: {rule.title}; path: flexible supporting artifact.")
+        else:
+            lines.append(f"- `{rule.document_type}`: {rule.title}; path: `{rule.path_template}`.")
     return "\n".join(lines).rstrip()

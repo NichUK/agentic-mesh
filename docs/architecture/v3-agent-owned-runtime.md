@@ -121,7 +121,9 @@ initial `togaf-sdlc-v1` policy, typed work-item evidence such as product
 definitions, solution designs, implementation logs, QA evidence, and release
 records must use the configured work-item dossier paths. Generic artifacts are
 still allowed for screenshots, exports, or supporting evidence that has no
-standard document slot yet.
+standard document slot yet. The same catalog is materialized into each agent's
+`tools.md` file so roles see the `artifact.link` document types and paths
+before they write or link evidence.
 
 The same mounted folder is used to build the role-service configuration:
 prompt component paths, memory database path, broker stream, and durable

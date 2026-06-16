@@ -159,6 +159,11 @@ roles:
     assert "`blocker.raise`: allowed; categories: DO, REPLY." in product_tools
     assert "`release.deploy`: blocked" in product_tools
     assert "`release.deploy`: blocked; categories: DO." in product_tools
+    assert "Document Framework Catalog" in product_tools
+    assert "Selected framework: `togaf-sdlc-v1`." in product_tools
+    assert "`product_definition`: Product definition; path: `work-items/{work_item_id}/020-product-definition.md`." in product_tools
+    assert "`implementation_log`: Implementation log; path: `work-items/{work_item_id}/100-implementation-log.md`." in product_tools
+    assert "`artifact`: Generic artifact; path: flexible supporting artifact." in product_tools
 
 
 def _role_template(role_id: str) -> str:
