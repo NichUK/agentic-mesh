@@ -184,7 +184,11 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
 ## Adapter Status
 
 - Broker: V3 defines the broker port, local contract adapter, and NATS
-  JetStream adapter/factory.
+  JetStream adapter/factory. The port covers stream setup, durable consumers,
+  publish, fetch, ack, retry/nack, pending inspection, inbox depth, and
+  dead-letter operations. The local adapter fully exercises the contract for
+  tests; enterprise adapters can map the same operations onto their native
+  broker semantics.
 - Agent tools: V3 exposes tool calls through CLI and MCP-compatible JSON-RPC
   stdio so Codex, other workers, and external automation can use the same
   approved pathway. Tool discovery is available through `tool-catalog

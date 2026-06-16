@@ -59,6 +59,15 @@ class BrokerAdapter(Protocol):
     def nack(self, stream: str, consumer: str, message_id: str, *, reason: str) -> None:
         """Reject processing and leave the message available for retry/dead-letter policy."""
 
+    def dead_letter(self, stream: str, consumer: str, message_id: str, *, reason: str) -> None:
+        """Move an in-flight message to dead letter storage."""
+
+    def pending(self, stream: str, consumer: str | None = None, *, limit: int = 20) -> list[BrokerMessage]:
+        """Inspect queued and in-flight pending messages without claiming more work."""
+
+    def dead_letters(self, stream: str, *, limit: int = 20) -> list[BrokerMessage]:
+        """Inspect dead-lettered messages for operator/agent recovery."""
+
     def depth(self, stream: str) -> BrokerDepth:
         """Return inspectable pending depth for reporting and hibernation decisions."""
 
@@ -71,6 +80,7 @@ class InMemoryBrokerAdapter:
         self._messages: dict[str, deque[BrokerMessage]] = defaultdict(deque)
         self._consumers: dict[tuple[str, str], BrokerConsumer] = {}
         self._inflight: dict[tuple[str, str], dict[str, BrokerMessage]] = defaultdict(dict)
+        self._dead_letters: dict[str, deque[BrokerMessage]] = defaultdict(deque)
 
     def ensure_stream(self, stream: str, subjects: list[str]) -> None:
         if not stream:
@@ -141,6 +151,43 @@ class InMemoryBrokerAdapter:
         )
         self._messages[stream].appendleft(retried)
 
+    def dead_letter(self, stream: str, consumer: str, message_id: str, *, reason: str) -> None:
+        message = self._inflight[(stream, consumer)].pop(message_id, None)
+        if message is None:
+            return
+        dead = BrokerMessage(
+            message_id=message.message_id,
+            subject=message.subject,
+            payload={**message.payload, "dead_letter_reason": reason},
+            created_at=message.created_at,
+            delivery_count=message.delivery_count,
+        )
+        self._dead_letters[stream].append(dead)
+
+    def pending(self, stream: str, consumer: str | None = None, *, limit: int = 20) -> list[BrokerMessage]:
+        if stream not in self._messages:
+            raise ValueError(f"stream does not exist: {stream}")
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        messages: list[BrokerMessage] = []
+        if consumer is None:
+            messages.extend(list(self._messages[stream]))
+            for (candidate_stream, _), inflight in self._inflight.items():
+                if candidate_stream == stream:
+                    messages.extend(inflight.values())
+        else:
+            broker_consumer = self._consumers.get((stream, consumer))
+            if broker_consumer is None:
+                raise ValueError(f"consumer does not exist: {stream}/{consumer}")
+            messages.extend(message for message in self._messages[stream] if self._matches(broker_consumer, message))
+            messages.extend(self._inflight[(stream, consumer)].values())
+        return messages[:limit]
+
+    def dead_letters(self, stream: str, *, limit: int = 20) -> list[BrokerMessage]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        return list(self._dead_letters[stream])[:limit]
+
     def depth(self, stream: str) -> BrokerDepth:
         if stream not in self._messages:
             raise ValueError(f"stream does not exist: {stream}")
@@ -196,6 +243,43 @@ class NatsJetStreamAdapter:
         if message is not None:
             asyncio.run(_nak_nats_message(message, reason=reason))
 
+    def dead_letter(self, stream: str, consumer: str, message_id: str, *, reason: str) -> None:
+        message = self._acked_messages.pop((stream, consumer, message_id), None)
+        if message is not None:
+            asyncio.run(self._dead_letter(stream, consumer, message_id, message, reason=reason))
+
+    def pending(self, stream: str, consumer: str | None = None, *, limit: int = 20) -> list[BrokerMessage]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        if consumer is None:
+            messages = [
+                message
+                for (candidate_stream, _, _), message in self._acked_messages.items()
+                if candidate_stream == stream
+            ]
+        else:
+            messages = [
+                message
+                for (candidate_stream, candidate_consumer, _), message in self._acked_messages.items()
+                if candidate_stream == stream and candidate_consumer == consumer
+            ]
+        return [
+            BrokerMessage(
+                message_id=message_id,
+                subject=getattr(raw, "subject", ""),
+                payload={},
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            for (_, _, message_id), raw in self._acked_messages.items()
+            if raw in messages
+        ][:limit]
+
+    def dead_letters(self, stream: str, *, limit: int = 20) -> list[BrokerMessage]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        del stream
+        return []
+
     def depth(self, stream: str) -> BrokerDepth:
         return asyncio.run(self._depth(stream))
 
@@ -207,11 +291,12 @@ class NatsJetStreamAdapter:
         nc = await self._connect()
         try:
             js = nc.jetstream()
+            stream_subjects = list(dict.fromkeys([*subjects, f"deadletter.{stream}.*"]))
             try:
                 await js.stream_info(stream)
-                await js.update_stream(name=stream, subjects=subjects)
+                await js.update_stream(name=stream, subjects=stream_subjects)
             except Exception:
-                await js.add_stream(name=stream, subjects=subjects)
+                await js.add_stream(name=stream, subjects=stream_subjects)
         finally:
             await nc.close()
 
@@ -270,6 +355,28 @@ class NatsJetStreamAdapter:
                     )
                 )
             return messages
+        finally:
+            await nc.close()
+
+    async def _dead_letter(
+        self,
+        stream: str,
+        consumer: str,
+        message_id: str,
+        message: object,
+        *,
+        reason: str,
+    ) -> None:
+        import json
+
+        nc = await self._connect()
+        try:
+            js = nc.jetstream()
+            await js.publish(
+                f"deadletter.{stream}.{consumer}",
+                json.dumps({"message_id": message_id, "reason": reason}).encode("utf-8"),
+            )
+            await message.ack()  # type: ignore[attr-defined]
         finally:
             await nc.close()
 
