@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
+from agentic_mesh_v3.authority import ToolAuthorityPolicy
+from agentic_mesh_v3.authority import role_from_instance
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
@@ -36,10 +38,12 @@ class V3ToolService:
         db: V3Database,
         document_library: DocumentLibraryAdapter | None = None,
         deployment_targets: dict[str, DeploymentTarget] | None = None,
+        authority_policy: ToolAuthorityPolicy | None = None,
     ) -> None:
         self.db = db
         self.document_library = document_library
         self.deployment_targets = deployment_targets or {}
+        self.authority_policy = authority_policy or ToolAuthorityPolicy.default()
 
     def call(
         self,
@@ -49,6 +53,7 @@ class V3ToolService:
         payload: dict[str, Any],
         terminal: bool | None = None,
     ) -> ToolResult:
+        self.authority_policy.assert_allowed(role_instance_id=role_instance_id, tool_name=tool_name)
         call_id = f"call-{uuid4().hex}"
         is_terminal = bool(terminal) or tool_name in TERMINAL_TOOLS
         self.db.record_tool_call(
@@ -113,7 +118,7 @@ class V3ToolService:
             self.db.request_approval(
                 approval_id=str(payload.get("approval_id") or f"approval-{uuid4().hex}"),
                 work_item_id=_required(payload, "work_item_id"),
-                requested_by_role=_role_from_instance(role_instance_id),
+                requested_by_role=role_from_instance(role_instance_id),
                 question=_required(payload, "question"),
             )
         elif tool_name == "release.record":
@@ -187,7 +192,7 @@ class V3ToolService:
             relative_path=ref.relative_path,
             document_type="work_item_index",
             status="published",
-            created_by_role=_role_from_instance(role_instance_id),
+            created_by_role=role_from_instance(role_instance_id),
         )
 
     def _write_root_work_item_index(self) -> None:
@@ -224,8 +229,3 @@ def _optional(value: Any) -> str | None:
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
-
-
-def _role_from_instance(role_instance_id: str) -> str:
-    parts = role_instance_id.split(".")
-    return parts[-2] if len(parts) >= 2 else role_instance_id
