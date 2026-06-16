@@ -101,6 +101,12 @@ release_deployment_targets:
   planning-only:
     type: no-deployment
     description: Planning and analysis artifacts only.
+stakeholder_contacts:
+  sponsor:
+    display_name: Nicholas Overend
+    connector: teams
+    target_ref: chat:sponsor-chat
+    importance: high
 roles:
   product-manager:
     template: product-manager
@@ -154,6 +160,9 @@ roles:
     assert "Document library root path: `/documents`" in engineering_project
     assert "/documents/work-items/{work_item_id}" in engineering_project
     assert "/documents/work-items/index.md" in engineering_project
+    assert "Stakeholder Contacts" in engineering_project
+    assert "`sponsor` (Nicholas Overend): connector `teams`, target_ref `chat:sponsor-chat`." in engineering_project
+    assert "Default importance: `high`" in engineering_project
     assert "Release Deployment Targets" in engineering_project
     assert "`dogfood-compose`: type `command`." in engineering_project
     assert "Command: `./scripts/release-compose.sh`" in engineering_project

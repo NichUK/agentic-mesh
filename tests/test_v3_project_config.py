@@ -61,6 +61,13 @@ release_deployment_targets:
   planning-only:
     type: no_deployment
     reason: Planning-only slice.
+stakeholder_contacts:
+  sponsor:
+    display_name: Nicholas Overend
+    connector: teams
+    target_ref: chat:sponsor-chat
+    thread_ref: sponsor-thread
+    importance: high
 connectors:
   teams:
     adapter: teams-bot-connector
@@ -115,6 +122,14 @@ connectors:
     assert targets["local-smoke"].rollback_plan == "Re-run the previous image."
     assert targets["planning-only"].target_type == "no_deployment"
     assert targets["planning-only"].reason == "Planning-only slice."
+    assert len(config.stakeholder_contacts) == 1
+    sponsor = config.stakeholder_contacts[0]
+    assert sponsor.contact_id == "sponsor"
+    assert sponsor.display_name == "Nicholas Overend"
+    assert sponsor.connector == "teams"
+    assert sponsor.target_ref == "chat:sponsor-chat"
+    assert sponsor.thread_ref == "sponsor-thread"
+    assert sponsor.importance == "high"
 
 
 def test_resolve_project_flow_config_path_prefers_v3_sdlc_template(tmp_path: Path) -> None:
@@ -375,6 +390,25 @@ roles:
     )
 
     with pytest.raises(ValueError, match=r"release_deployment_targets.Runtime Deploy must match"):
+        load_project_config(project_file)
+
+
+def test_load_project_config_rejects_unsafe_stakeholder_contact_id(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+stakeholder_contacts:
+  Main Sponsor:
+    target_ref: chat:sponsor
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"stakeholder_contacts.Main Sponsor must match"):
         load_project_config(project_file)
 
 
