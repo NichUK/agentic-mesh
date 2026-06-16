@@ -7,6 +7,7 @@ from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import CommandDeploymentTarget
 from agentic_mesh_v3.deployment import NoDeploymentDisposition
+from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.tools import V3ToolService
 
@@ -390,6 +391,60 @@ def test_v3_tool_service_writes_work_item_index_and_refreshes_root_index(tmp_pat
     )
 
 
+def test_v3_tool_service_records_document_library_url_for_work_item_index(tmp_path: Path) -> None:
+    class UrlReturningDocumentLibrary:
+        framework_id = "togaf-sdlc-v1"
+
+        def __init__(self) -> None:
+            self.content_by_path: dict[str, str] = {}
+
+        def write_text(self, relative_path: str, content: str) -> DocumentRef:
+            self.content_by_path[relative_path] = content
+            return DocumentRef(
+                relative_path=relative_path,
+                title=Path(relative_path).name,
+                url=f"https://example.test/documents/{relative_path}",
+            )
+
+        def read_text(self, relative_path: str) -> str:
+            return self.content_by_path[relative_path]
+
+        def exists(self, relative_path: str) -> bool:
+            return relative_path in self.content_by_path
+
+    db = V3Database(tmp_path / "v3.sqlite3")
+    docs = UrlReturningDocumentLibrary()
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Add status page",
+            description="Build the V3 status page.",
+            state="active",
+            owner_role="engineering",
+        )
+        V3ToolService(db, docs).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="document.write_work_item_index",
+            payload={
+                "work_item_id": "work-1",
+                "title": "Add status page",
+                "status": "active",
+                "owner_role": "engineering",
+                "raci_summary": "engineering A/R",
+                "governance_state": "qa consulted",
+                "evidence": ["Focused status page tests passed."],
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.artifacts[0].url == "https://example.test/documents/work-items/work-1/index.md"
+
+
 def test_v3_tool_service_links_existing_artifact(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
@@ -410,6 +465,7 @@ def test_v3_tool_service_links_existing_artifact(tmp_path: Path) -> None:
                 "title": "Implementation log",
                 "document_type": "implementation_log",
                 "status": "published",
+                "url": "https://example.test/documents/work-items/work-1/100-implementation-log.md",
             },
         )
 
@@ -426,6 +482,7 @@ def test_v3_tool_service_links_existing_artifact(tmp_path: Path) -> None:
     assert artifact.document_type == "implementation_log"
     assert artifact.status == "published"
     assert artifact.created_by_role == "engineering"
+    assert artifact.url == "https://example.test/documents/work-items/work-1/100-implementation-log.md"
 
 
 def test_v3_tool_service_rejects_framework_artifact_path_mismatch(tmp_path: Path) -> None:

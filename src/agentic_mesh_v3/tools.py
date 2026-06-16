@@ -539,6 +539,7 @@ class V3ToolService:
             document_type=document_type,
             status=str(payload.get("status") or "linked"),
             created_by_role=role_from_instance(role_instance_id),
+            url=_optional(payload.get("url")),
         )
 
     def _write_work_item_index(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
@@ -579,6 +580,7 @@ class V3ToolService:
             document_type="work_item_index",
             status="published",
             created_by_role=role_from_instance(role_instance_id),
+            url=ref.url,
         )
 
     def _write_root_work_item_index(self) -> None:

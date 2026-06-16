@@ -154,6 +154,7 @@ class V3Database:
                   filename TEXT NOT NULL,
                   title TEXT NOT NULL,
                   relative_path TEXT NOT NULL,
+                  url TEXT,
                   document_type TEXT NOT NULL,
                   status TEXT NOT NULL,
                   created_by_role TEXT NOT NULL,
@@ -247,6 +248,7 @@ class V3Database:
             _ensure_column(self.connection, "releases", "approval_ref", "TEXT NOT NULL DEFAULT 'not-recorded'")
             _ensure_column(self.connection, "releases", "smoke_evidence", "TEXT NOT NULL DEFAULT 'not-recorded'")
             _ensure_column(self.connection, "releases", "closure_state", "TEXT NOT NULL DEFAULT 'open'")
+            _ensure_column(self.connection, "artifacts", "url", "TEXT")
 
     def record_event(
         self,
@@ -808,30 +810,42 @@ class V3Database:
         document_type: str,
         status: str,
         created_by_role: str,
+        url: str | None = None,
     ) -> None:
         with self.connection:
             self.connection.execute(
                 """
                 INSERT INTO artifacts(
                   artifact_id, work_item_id, filename, title, relative_path,
-                  document_type, status, created_by_role
+                  url, document_type, status, created_by_role
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(artifact_id) DO UPDATE SET
                   filename=excluded.filename,
                   title=excluded.title,
                   relative_path=excluded.relative_path,
+                  url=excluded.url,
                   document_type=excluded.document_type,
                   status=excluded.status,
                   created_by_role=excluded.created_by_role
                 """,
-                (artifact_id, work_item_id, filename, title, relative_path, document_type, status, created_by_role),
+                (
+                    artifact_id,
+                    work_item_id,
+                    filename,
+                    title,
+                    relative_path,
+                    url,
+                    document_type,
+                    status,
+                    created_by_role,
+                ),
             )
             self.record_event(
                 "artifact.recorded",
                 "work_item",
                 work_item_id,
-                {"artifact_id": artifact_id, "relative_path": relative_path, "status": status},
+                {"artifact_id": artifact_id, "relative_path": relative_path, "url": url, "status": status},
             )
 
     def request_approval(
@@ -1433,7 +1447,7 @@ class V3Database:
     def artifact_for(self, work_item_id: str, filename: str) -> dict[str, Any] | None:
         row = self.connection.execute(
             """
-            SELECT artifact_id, work_item_id, filename, title, relative_path, document_type, status, created_by_role
+            SELECT artifact_id, work_item_id, filename, title, relative_path, url, document_type, status, created_by_role
             FROM artifacts
             WHERE work_item_id=? AND filename=?
             ORDER BY created_at DESC
@@ -1462,10 +1476,11 @@ class V3Database:
                 document_type=row["document_type"],
                 status=row["status"],
                 created_by_role=row["created_by_role"],
+                url=row["url"],
             )
             for row in self.connection.execute(
                 """
-                SELECT filename, title, relative_path, document_type, status, created_by_role
+                SELECT filename, title, relative_path, url, document_type, status, created_by_role
                 FROM artifacts
                 WHERE work_item_id=?
                 ORDER BY created_at ASC, filename ASC
