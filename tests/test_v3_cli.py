@@ -780,6 +780,9 @@ roles:
             str(compose_output),
             "--compose-network",
             "mesh-test",
+            "--compose-include-nats",
+            "--compose-nats-port",
+            "14222:4222",
         ]
     )
 
@@ -792,8 +795,12 @@ roles:
         encoding="utf-8"
     )
     assert "System rule." in (tmp_path / "agents" / "engineering" / "1" / "system.md").read_text(encoding="utf-8")
-    assert "run-agent-service" in compose_output.read_text(encoding="utf-8")
-    assert "mesh-test" in compose_output.read_text(encoding="utf-8")
+    compose_text = compose_output.read_text(encoding="utf-8")
+    assert "run-agent-service" in compose_text
+    assert "mesh-test" in compose_text
+    assert "nats:2.10-alpine" in compose_text
+    assert "14222:4222" in compose_text
+    assert "depends_on" in compose_text
 
 
 def test_cli_materialize_agent_configs_rejects_collapsed_topology(tmp_path: Path) -> None:
