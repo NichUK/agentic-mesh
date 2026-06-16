@@ -107,3 +107,20 @@ def test_database_role_memory_deduplicates_agent_observations(tmp_path: Path) ->
         assert memory.load_summary("agentic-mesh-dev.product-manager.1").count("Processed message msg-123.") == 1
     finally:
         db.close()
+
+
+def test_database_role_memory_records_observation_source_ref(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        memory = DatabaseRoleMemory(db)
+
+        memory.record_observation(
+            "agentic-mesh-dev.product-manager.1",
+            "Processed message msg-123.",
+            source_ref="work-item:work-123",
+        )
+
+        assert "source: work-item:work-123" in memory.load_summary("agentic-mesh-dev.product-manager.1")
+    finally:
+        db.close()

@@ -234,7 +234,7 @@ def test_database_status_reporter_updates_agent_read_model(tmp_path: Path) -> No
 def test_role_agent_can_use_configured_sqlite_memory(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
-    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status", "work_item_id": "work-123"})
     config = _config(tmp_path)
     memory = build_role_memory(config)
     service = RoleAgentService(
@@ -248,7 +248,63 @@ def test_role_agent_can_use_configured_sqlite_memory(tmp_path: Path) -> None:
 
     assert result is not None
     assert result.status == "completed"
-    assert "processed" in memory.load_summary("agentic-mesh-dev.product-manager.1")
+    summary = memory.load_summary("agentic-mesh-dev.product-manager.1")
+    assert "processed" in summary
+    assert "source: work-item:work-123" in summary
+
+
+def test_role_agent_records_run_memory_with_conversation_source(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {"request": "status", "conversation_ref": "dm:product-manager"},
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=EchoWorker(),
+            memory=DatabaseRoleMemory(db),
+        )
+
+        result = service.run_once()
+        records = db.list_role_memory("agentic-mesh-dev.product-manager.1")
+
+        assert result is not None
+        assert result.status == "completed"
+        assert len(records) == 1
+        assert records[0]["source_ref"] == "conversation:dm:product-manager"
+    finally:
+        db.close()
+
+
+def test_role_agent_records_run_memory_with_broker_source_when_payload_has_no_context(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=EchoWorker(),
+            memory=DatabaseRoleMemory(db),
+        )
+
+        result = service.run_once()
+        records = db.list_role_memory("agentic-mesh-dev.product-manager.1")
+
+        assert result is not None
+        assert result.status == "completed"
+        assert len(records) == 1
+        assert records[0]["source_ref"] == f"broker-message:{published.message_id}"
+    finally:
+        db.close()
 
 
 def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -> None:

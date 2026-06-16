@@ -56,12 +56,12 @@ class SQLiteRoleMemory:
         )
         return "\n".join(f"- {row['summary']} (source: {row['source_ref']})" for row in rows)
 
-    def record_observation(self, role_instance_id: str, observation: str) -> None:
+    def record_observation(self, role_instance_id: str, observation: str, *, source_ref: str = "agent-run") -> None:
         self.record(
             RoleMemoryRecord(
                 role_instance_id=role_instance_id,
                 summary=observation,
-                source_ref="agent-run",
+                source_ref=source_ref,
             )
         )
 
@@ -90,12 +90,12 @@ class DatabaseRoleMemory:
         rows = self.db.list_role_memory(role_instance_id)
         return "\n".join(f"- {row['summary']} (source: {row['source_ref']})" for row in rows)
 
-    def record_observation(self, role_instance_id: str, observation: str) -> None:
+    def record_observation(self, role_instance_id: str, observation: str, *, source_ref: str = "agent-run") -> None:
         self.record(
             RoleMemoryRecord(
                 role_instance_id=role_instance_id,
                 summary=observation,
-                source_ref="agent-run",
+                source_ref=source_ref,
             )
         )
 
