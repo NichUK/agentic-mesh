@@ -83,6 +83,9 @@
     },
     "release_deployment_targets": {
       "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9_-]*$"
+      },
       "additionalProperties": { "$ref": "#/$defs/releaseDeploymentTarget" }
     },
     "connectors": {

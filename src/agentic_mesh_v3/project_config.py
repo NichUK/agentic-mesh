@@ -9,6 +9,7 @@ import yaml
 
 
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_CONFIG_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 @dataclass(frozen=True)
@@ -206,6 +207,11 @@ def _validate_identifier(field_name: str, value: str) -> None:
         raise ValueError(f"{field_name} must match ^[a-z0-9][a-z0-9-]*$")
 
 
+def _validate_config_key(field_name: str, value: str) -> None:
+    if not _CONFIG_KEY_RE.match(value):
+        raise ValueError(f"{field_name} must match ^[a-z0-9][a-z0-9_-]*$")
+
+
 def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, Any]) -> V3RoleInstanceConfig:
     _validate_identifier(f"roles.{role_id}", role_id)
     worker_raw = _mapping(role_raw.get("worker"))
@@ -236,6 +242,7 @@ def _load_release_deployment_target(
     target_id: str,
     target_raw: dict[str, Any],
 ) -> V3ReleaseDeploymentTargetConfig:
+    _validate_config_key(f"release_deployment_targets.{target_id}", target_id)
     return V3ReleaseDeploymentTargetConfig(
         target_id=target_id,
         target_type=str(target_raw.get("type") or "command"),
