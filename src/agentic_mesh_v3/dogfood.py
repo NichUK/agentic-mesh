@@ -57,15 +57,22 @@ def run_local_e2e_dogfood_slice(
         )
     )
 
-    configured_targets = deployment_targets or {
-        deployment_target_id: CommandDeploymentTarget(
-            target_id=deployment_target_id,
-            command=(sys.executable, "-c", "print('v3 local smoke deployed')"),
-            rollback_plan="Re-run the previous known-good local command target.",
-        )
-    }
-    if deployment_target_id not in configured_targets:
-        raise ValueError(f"deployment target is not configured: {deployment_target_id}")
+    if deployment_targets is None:
+        if deployment_target_id != "local-smoke":
+            raise ValueError(
+                f"deployment_target_id '{deployment_target_id}' requires deployment_targets to be provided"
+            )
+        configured_targets: dict[str, DeploymentTarget] = {
+            "local-smoke": CommandDeploymentTarget(
+                target_id="local-smoke",
+                command=(sys.executable, "-c", "print('v3 local smoke deployed')"),
+                rollback_plan="Re-run the previous known-good local command target.",
+            )
+        }
+    else:
+        configured_targets = deployment_targets
+        if deployment_target_id not in configured_targets:
+            raise ValueError(f"deployment target is not configured: {deployment_target_id}")
     tools = V3ToolService(
         db,
         document_library=document_library,
