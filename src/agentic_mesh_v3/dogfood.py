@@ -61,8 +61,8 @@ def run_local_e2e_dogfood_slice(
             "project.context",
         ],
     )
-    teams = stakeholder_bridge or LocalTeamsBridge(broker, stream=broker_stream)
-    teams.route_inbound(
+    local_bridge = LocalTeamsBridge(broker, stream=broker_stream)
+    local_bridge.route_inbound(
         StakeholderMessage(
             connector="teams",
             message_id="msg-v3-local-e2e",
@@ -93,7 +93,7 @@ def run_local_e2e_dogfood_slice(
         db,
         document_library=document_library,
         deployment_targets=configured_targets,
-        stakeholder_bridge=teams,
+        stakeholder_bridge=stakeholder_bridge or local_bridge,
         broker=broker,
         broker_stream=broker_stream,
     )
@@ -188,7 +188,7 @@ def run_local_e2e_dogfood_slice(
             reply_thread_ref=sponsor_contact.thread_ref,
         )
         DatabaseApprovalResponseRecorder(db.path, broker=broker, stream=broker_stream).record(approval_message)
-        teams.route_inbound(approval_message)
+        local_bridge.route_inbound(approval_message)
 
     tools.call(
         role_instance_id=f"{project_id}.product-manager.1",

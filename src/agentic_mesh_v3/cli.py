@@ -838,8 +838,10 @@ def _dogfood_sponsor_contact(args: argparse.Namespace) -> DogfoodSponsorContact 
         return None
     sponsor = next(
         (contact for contact in config.stakeholder_contacts if contact.contact_id == "sponsor"),
-        config.stakeholder_contacts[0],
+        None,
     )
+    if sponsor is None:
+        return None
     return DogfoodSponsorContact(
         connector=sponsor.connector,
         target_ref=sponsor.target_ref,
