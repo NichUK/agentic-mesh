@@ -36,7 +36,7 @@ core_workflows:
       - Confidence assessment
       - Recommendations and open questions
     artifacts:
-      - docs/research/findings.md
+      - documents/research/findings.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -60,8 +60,8 @@ standing_instructions:
   - Own future research into optional stock enterprise flow catalogs and the patterns they should represent.
   - Preserve work_item_id, work_item_type, lifecycle_state, sources, confidence, and decision implications in every handoff.
 documentation_obligations:
-  - docs/research/findings.md
-  - docs/research/sources.md
+  - documents/research/findings.md
+  - documents/research/sources.md
 handoff_targets:
   - business-analyst
   - product-manager
