@@ -605,7 +605,12 @@ class V3Database:
         responder_ref: str,
     ) -> None:
         existing = self.connection.execute(
-            "SELECT work_item_id FROM approvals WHERE approval_id=?",
+            """
+            SELECT a.work_item_id, a.requested_by_role, wi.state, wi.current_phase
+            FROM approvals a
+            LEFT JOIN work_items wi ON wi.work_item_id = a.work_item_id
+            WHERE a.approval_id=?
+            """,
             (approval_id,),
         ).fetchone()
         if existing is None:
@@ -632,6 +637,17 @@ class V3Database:
                     "responder_ref": responder_ref,
                 },
             )
+            if existing["state"] == "waiting_human":
+                self.update_work_item_state(
+                    work_item_id=existing["work_item_id"],
+                    state="waiting_agent",
+                    owner_role=existing["requested_by_role"],
+                    current_phase=existing["current_phase"],
+                    next_action=(
+                        f"Approval `{approval_id}` recorded as `{status}`; "
+                        f"awaiting {existing['requested_by_role']} to continue."
+                    ),
+                )
 
     def approval_detail(self, approval_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(

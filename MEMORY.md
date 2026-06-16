@@ -500,3 +500,8 @@ V3 `status.update` now has a visible work-item effect. It can still be used as
 an audit-only non-terminal progress call without `work_item_id`, but when a
 work item is supplied it updates that item's next action/current phase without
 performing a lifecycle state transition.
+
+V3 approval responses now hand visible ownership back to the requesting agent
+when the work item was in `waiting_human`. The DB records the approval response
+and moves the work item to `waiting_agent` with a next action for the requesting
+role; the role agent remains responsible for deciding the next lifecycle step.
