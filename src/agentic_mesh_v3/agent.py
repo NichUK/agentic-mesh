@@ -96,8 +96,8 @@ class TerminalToolCallAudit(Protocol):
     def snapshot(self, role_instance_id: str) -> object:
         """Capture terminal tool-call state before a worker run."""
 
-    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> None:
-        """Verify the run recorded a terminal tool call through approved tools."""
+    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> tuple[str, ...]:
+        """Verify the run recorded terminal calls and return audited call ids/names."""
 
 
 class AgentRunRecorder(Protocol):
@@ -147,7 +147,7 @@ class NullTerminalToolCallAudit:
         del role_instance_id
         return None
 
-    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> None:
+    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> tuple[str, ...]:
         del role_instance_id, before
         if not _has_terminal_tool_call(tool_calls):
             raise ValueError("agent did not call a terminal safe-output tool")
@@ -155,6 +155,7 @@ class NullTerminalToolCallAudit:
             raise ValueError("agent did not call a DO safe-output tool")
         if not any(_tool_call_name(call) in REPLY_TOOLS for call in tool_calls):
             raise ValueError("agent did not call a REPLY safe-output tool")
+        return tuple(tool_calls)
 
 
 class DatabaseTerminalToolCallAudit:
@@ -164,7 +165,7 @@ class DatabaseTerminalToolCallAudit:
     def snapshot(self, role_instance_id: str) -> frozenset[str]:
         return frozenset(self._tool_call_ids(role_instance_id))
 
-    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> None:
+    def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> tuple[str, ...]:
         del tool_calls
         before_ids = set(before) if isinstance(before, (frozenset, set)) else set()
         new_calls = self._new_tool_calls(role_instance_id, before_ids)
@@ -174,6 +175,7 @@ class DatabaseTerminalToolCallAudit:
             raise ValueError("agent did not record a DO safe-output tool call")
         if not any(str(row.get("tool_name")) in REPLY_TOOLS for row in new_calls):
             raise ValueError("agent did not record a REPLY safe-output tool call")
+        return tuple(str(row["call_id"]) for row in new_calls)
 
     def _tool_call_ids(self, role_instance_id: str) -> tuple[str, ...]:
         return tuple(
@@ -375,14 +377,14 @@ class RoleAgentService:
             tool_calls = self.worker.run(prompt, agent_message)
             if not tool_calls:
                 raise ValueError("agent did not call any tool")
-            self.terminal_tool_call_audit.verify_terminal_call(
+            audited_tool_calls = self.terminal_tool_call_audit.verify_terminal_call(
                 self.config.role_instance_id,
                 terminal_audit_snapshot,
                 tool_calls,
             )
             self.memory.record_observation(
                 self.config.role_instance_id,
-                f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(tool_calls)} tool calls",
+                f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(audited_tool_calls)} audited tool calls",
                 source_ref=_message_memory_source_ref(message),
             )
             self.run_recorder.record(
@@ -392,13 +394,13 @@ class RoleAgentService:
                 subject=message.subject,
                 status="completed",
                 work_item_id=_message_work_item_id(message.payload),
-                tool_calls=tuple(tool_calls),
+                tool_calls=audited_tool_calls,
                 started_at=run_started_at,
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
             self.broker.ack(self.config.inbox_stream, claimed.consumer, message.message_id)
             self._report_status(container_state="running", current_work=None)
-            return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=tuple(tool_calls))
+            return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=audited_tool_calls)
         except Exception as exc:
             if message.delivery_count + 1 >= self.max_delivery_attempts:
                 self.broker.dead_letter(

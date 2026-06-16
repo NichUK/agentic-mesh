@@ -68,6 +68,12 @@ class RecordingTerminalWorker:
         return [do_result.call_id, reply_result.call_id]
 
 
+class RecordingTerminalWorkerWithClaimMismatch(RecordingTerminalWorker):
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        super().run(prompt, message)
+        return ["terminal:status.reply", "call-claimed-but-not-recorded"]
+
+
 class RecordingReplyOnlyWorker:
     def __init__(self, tools: V3ToolService, role_instance_id: str) -> None:
         self.tools = tools
@@ -806,6 +812,43 @@ def test_role_agent_accepts_terminal_call_recorded_through_tool_service(tmp_path
     assert calls_by_name["noop"]["terminal"] is True
     assert calls_by_name["status.reply"]["terminal"] is True
     assert broker.depth("agent-inbox").pending == 0
+
+
+def test_role_agent_uses_audited_tool_calls_not_worker_stdout_claims(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status", "work_item_id": "work-123"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-123",
+            title="Shape product",
+            description="Shape the product scope.",
+            state="shaping",
+            owner_role="product-manager",
+        )
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingTerminalWorkerWithClaimMismatch(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        result = service.run_once()
+        recorded_tool_calls = tuple(str(call["call_id"]) for call in db.list_tool_calls())
+        runs = db.list_agent_runs(role_instance_id)
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert result.tool_calls == recorded_tool_calls
+    assert runs[0]["tool_calls"] == recorded_tool_calls
+    assert "call-claimed-but-not-recorded" not in result.tool_calls
 
 
 def test_role_agent_records_successful_run_to_database(tmp_path: Path) -> None:
