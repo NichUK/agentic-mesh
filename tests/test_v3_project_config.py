@@ -412,6 +412,44 @@ roles:
         load_project_config(project_file)
 
 
+def test_load_project_config_rejects_missing_stakeholder_connector(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+stakeholder_contacts:
+  sponsor:
+    target_ref: chat:sponsor-chat
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"stakeholder_contacts.sponsor.connector is required"):
+        load_project_config(project_file)
+
+
+def test_load_project_config_rejects_missing_stakeholder_target_ref(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+stakeholder_contacts:
+  sponsor:
+    connector: teams
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"stakeholder_contacts.sponsor.target_ref is required"):
+        load_project_config(project_file)
+
+
 def test_load_project_config_rejects_unsafe_teams_role_bot_id(tmp_path: Path) -> None:
     project_file = tmp_path / "project.yaml"
     project_file.write_text(

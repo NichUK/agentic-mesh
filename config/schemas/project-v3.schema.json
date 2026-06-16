@@ -196,7 +196,7 @@
     "stakeholderContact": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["target_ref"],
+      "required": ["connector", "target_ref"],
       "properties": {
         "display_name": { "type": "string" },
         "connector": { "type": "string" },

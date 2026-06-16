@@ -272,6 +272,26 @@ def test_project_v3_schema_rejects_unsafe_stakeholder_contact_ids() -> None:
     assert "does not match" in errors[0].message
 
 
+def test_project_v3_schema_rejects_missing_stakeholder_connector() -> None:
+    project = {
+        "project_id": "agentic-mesh-dev",
+        "stakeholder_contacts": {
+            "sponsor": {
+                "target_ref": "chat:sponsor-chat",
+            },
+        },
+        "roles": {
+            "product-manager": {"instances": 1},
+        },
+    }
+
+    validator = jsonschema.Draft202012Validator(_schema())
+    errors = sorted(validator.iter_errors(project), key=lambda item: item.json_path)
+
+    assert errors
+    assert any("connector" in e.message for e in errors)
+
+
 def test_project_v3_schema_rejects_unsafe_teams_role_bot_ids() -> None:
     project = {
         "project_id": "agentic-mesh-dev",

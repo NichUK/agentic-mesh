@@ -290,11 +290,17 @@ def _load_stakeholder_contact(
     contact_raw: dict[str, Any],
 ) -> V3StakeholderContactConfig:
     _validate_config_key(f"stakeholder_contacts.{contact_id}", contact_id)
+    connector = contact_raw.get("connector")
+    if not connector or str(connector) == "":
+        raise ValueError(f"stakeholder_contacts.{contact_id}.connector is required")
+    target_ref = contact_raw.get("target_ref")
+    if not target_ref or str(target_ref) == "":
+        raise ValueError(f"stakeholder_contacts.{contact_id}.target_ref is required")
     return V3StakeholderContactConfig(
         contact_id=contact_id,
         display_name=str(contact_raw.get("display_name") or contact_id),
-        connector=str(contact_raw.get("connector") or "teams"),
-        target_ref=_required(contact_raw, "target_ref"),
+        connector=str(connector),
+        target_ref=str(target_ref),
         thread_ref=_optional(contact_raw.get("thread_ref")),
         importance=str(contact_raw.get("importance") or "high"),
     )
