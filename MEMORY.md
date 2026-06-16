@@ -426,3 +426,9 @@ V3 command deployment targets now convert subprocess timeouts into explicit
 failed `DeploymentResult` values. `release.deploy` therefore records timeout
 failures as release evidence and moves the work item into `recovering` instead
 of losing the failure as an uncaught runtime exception.
+
+V3 release deployment state is now visible in the work-item lifecycle:
+`release.deploy` moves work into `deploying` while the configured target runs
+and moves successful deployment or no-deployment dispositions to `released`.
+`release.close` then performs the separate final `closed` transition, including
+when the item is already in `released`.

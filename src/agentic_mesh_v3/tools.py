@@ -193,8 +193,15 @@ class V3ToolService:
             target = self.deployment_targets.get(target_id)
             if target is None:
                 raise ValueError(f"deployment target is not configured: {target_id}")
-            result = target.deploy()
             work_item_id = _required(payload, "work_item_id")
+            self.db.update_work_item_state(
+                work_item_id=work_item_id,
+                state="deploying",
+                owner_role=role_from_instance(role_instance_id),
+                current_phase="deployment",
+                next_action=f"Deployment target `{target_id}` is running.",
+            )
+            result = target.deploy()
             self.db.record_release(
                 release_id=str(payload.get("release_id") or f"release-{uuid4().hex}"),
                 work_item_id=work_item_id,
@@ -212,17 +219,32 @@ class V3ToolService:
                     current_phase="deployment",
                     next_action=f"Deployment target `{target_id}` failed. {result.output or 'No output recorded.'}",
                 )
+            else:
+                self.db.update_work_item_state(
+                    work_item_id=work_item_id,
+                    state="released",
+                    owner_role=role_from_instance(role_instance_id),
+                    current_phase="deployment",
+                    next_action=(
+                        f"Release disposition `{result.status}` recorded for target `{target_id}`; "
+                        "ready for closure."
+                    ),
+                )
         elif tool_name == "release.close":
             work_item_id = _required(payload, "work_item_id")
             if not self.db.has_release_disposition(work_item_id):
                 raise ValueError(f"work item `{work_item_id}` has no deployment or no-deployment release disposition")
-            self.db.update_work_item_state(
-                work_item_id=work_item_id,
-                state="released",
-                owner_role=role_from_instance(role_instance_id),
-                current_phase="deployment",
-                next_action=str(payload.get("release_note") or "Release disposition recorded; ready for closure."),
-            )
+            detail = self.db.work_item_detail(work_item_id)
+            if detail is None:
+                raise ValueError(f"work item `{work_item_id}` was not found")
+            if detail.state != "released":
+                self.db.update_work_item_state(
+                    work_item_id=work_item_id,
+                    state="released",
+                    owner_role=role_from_instance(role_instance_id),
+                    current_phase="deployment",
+                    next_action=str(payload.get("release_note") or "Release disposition recorded; ready for closure."),
+                )
             self.db.update_work_item_state(
                 work_item_id=work_item_id,
                 state="closed",

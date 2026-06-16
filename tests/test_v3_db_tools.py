@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -317,10 +318,72 @@ def test_v3_tool_service_release_deploy_uses_configured_target(tmp_path: Path) -
             },
         )
         release_count = db.connection.execute("SELECT COUNT(*) AS count FROM releases").fetchone()["count"]
+        detail = db.work_item_detail("work-1")
     finally:
         db.close()
 
     assert release_count == 1
+    assert detail is not None
+    assert detail.state == "released"
+    assert detail.owner_role == "release-manager"
+    assert detail.current_phase == "deployment"
+    assert "Release disposition `no_deployment` recorded" in detail.next_action
+
+
+def test_v3_release_deploy_success_moves_work_to_released(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Deploy runtime",
+            description="Needs runtime deployment.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+        tools = V3ToolService(
+            db,
+            deployment_targets={
+                "runtime": CommandDeploymentTarget(
+                    target_id="runtime",
+                    command=(sys.executable, "-c", "print('deployment ok')"),
+                    rollback_plan="Restore previous runtime image.",
+                )
+            },
+        )
+
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.deploy",
+            payload={
+                "work_item_id": "work-1",
+                "target_id": "runtime",
+                "scope": "Runtime release",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+        state_events = [
+            json.loads(row["payload_json"])["state"]
+            for row in db.connection.execute(
+                """
+                SELECT payload_json
+                FROM events
+                WHERE event_type='work_item.state_updated' AND aggregate_id='work-1'
+                ORDER BY event_id
+                """
+            ).fetchall()
+        ]
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "released"
+    assert detail.owner_role == "release-manager"
+    assert detail.current_phase == "deployment"
+    assert detail.next_action == "Release disposition `deployed` recorded for target `runtime`; ready for closure."
+    assert detail.releases[0].status == "deployed"
+    assert detail.releases[0].deployment_result == "deployment ok"
+    assert state_events == ["deploying", "released"]
 
 
 def test_v3_release_deploy_failure_moves_work_to_recovering(tmp_path: Path) -> None:
@@ -494,6 +557,47 @@ def test_v3_release_close_closes_after_no_deployment_disposition(tmp_path: Path)
     assert detail.state == "closed"
     assert detail.owner_role == "project-manager"
     assert snapshot.backlog == ()
+
+
+def test_v3_release_close_closes_already_released_work(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Close deployed work",
+            description="Deployment is already recorded.",
+            state="released",
+            owner_role="release-manager",
+        )
+        db.record_release(
+            release_id="release-1",
+            work_item_id="work-1",
+            status="deployed",
+            scope="Runtime release",
+            deployment_result="ok",
+            rollback_plan="Restore previous image.",
+            residual_risks="None.",
+        )
+        tools = V3ToolService(db)
+
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.close",
+            payload={
+                "work_item_id": "work-1",
+                "closure_note": "Release deployed and closed.",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "closed"
+    assert detail.owner_role == "project-manager"
+    assert detail.current_phase == "project-closure"
+    assert detail.next_action == "Release deployed and closed."
 
 
 def test_v3_terminal_work_item_state_syncs_linked_backlog_item(tmp_path: Path) -> None:
