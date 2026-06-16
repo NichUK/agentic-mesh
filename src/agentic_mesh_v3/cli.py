@@ -30,6 +30,7 @@ from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
 from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.deployment import deployment_targets_from_project_config
+from agentic_mesh_v3.dogfood import DogfoodSponsorContact
 from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import build_document_library_adapter
@@ -525,12 +526,17 @@ def main(argv: list[str] | None = None) -> int:
         try:
             db.migrate()
             deployment_targets = _deployment_targets(args)
+            broker, broker_stream = _tool_broker(args)
             work_item_id = run_local_e2e_dogfood_slice(
                 db=db,
                 project_id=args.project_id,
                 document_library=_document_library_adapter(args, required=True),
                 deployment_targets=deployment_targets or None,
                 deployment_target_id=_dogfood_deployment_target_id(args, deployment_targets),
+                broker=broker,
+                broker_stream=broker_stream or "agent-inbox",
+                stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
+                sponsor_contact=_dogfood_sponsor_contact(args),
             )
         finally:
             db.close()
@@ -821,6 +827,25 @@ def _dogfood_deployment_target_id(args: argparse.Namespace, deployment_targets: 
     if deployment_targets:
         return next(iter(deployment_targets))
     return "local-smoke"
+
+
+def _dogfood_sponsor_contact(args: argparse.Namespace) -> DogfoodSponsorContact | None:
+    project_config = getattr(args, "project_config", None)
+    if project_config is None:
+        return None
+    config = load_project_config(project_config)
+    if not config.stakeholder_contacts:
+        return None
+    sponsor = next(
+        (contact for contact in config.stakeholder_contacts if contact.contact_id == "sponsor"),
+        config.stakeholder_contacts[0],
+    )
+    return DogfoodSponsorContact(
+        connector=sponsor.connector,
+        target_ref=sponsor.target_ref,
+        thread_ref=sponsor.thread_ref,
+        responder_ref=sponsor.contact_id,
+    )
 
 
 def _tool_broker(args: argparse.Namespace) -> tuple[BrokerAdapter | None, str | None]:

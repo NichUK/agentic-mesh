@@ -1,17 +1,29 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import sys
 
+from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.connectors import StakeholderMessage
+from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import CommandDeploymentTarget
 from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
+from agentic_mesh_v3.teams_ingress import DatabaseApprovalResponseRecorder
 from agentic_mesh_v3.tools import V3ToolService
+
+
+@dataclass(frozen=True)
+class DogfoodSponsorContact:
+    connector: str
+    target_ref: str
+    thread_ref: str | None = None
+    responder_ref: str = "sponsor"
 
 
 def run_local_e2e_dogfood_slice(
@@ -21,6 +33,10 @@ def run_local_e2e_dogfood_slice(
     project_id: str = "agentic-mesh-dev",
     deployment_targets: dict[str, DeploymentTarget] | None = None,
     deployment_target_id: str = "local-smoke",
+    broker: BrokerAdapter | None = None,
+    broker_stream: str = "agent-inbox",
+    stakeholder_bridge: StakeholderBridge | None = None,
+    sponsor_contact: DogfoodSponsorContact | None = None,
 ) -> str:
     """Run one local V3 dogfood path with role-owned tool calls.
 
@@ -31,9 +47,9 @@ def run_local_e2e_dogfood_slice(
 
     queue_item_id = "queue-v3-local-e2e"
     work_item_id = "work-v3-local-e2e"
-    broker = InMemoryBrokerAdapter()
+    broker = broker or InMemoryBrokerAdapter()
     broker.ensure_stream(
-        "agent-inbox",
+        broker_stream,
         [
             "agent.delivery-manager",
             "agent.engineering",
@@ -45,7 +61,7 @@ def run_local_e2e_dogfood_slice(
             "project.context",
         ],
     )
-    teams = LocalTeamsBridge(broker)
+    teams = stakeholder_bridge or LocalTeamsBridge(broker, stream=broker_stream)
     teams.route_inbound(
         StakeholderMessage(
             connector="teams",
@@ -77,8 +93,9 @@ def run_local_e2e_dogfood_slice(
         db,
         document_library=document_library,
         deployment_targets=configured_targets,
+        stakeholder_bridge=teams,
         broker=broker,
-        broker_stream="agent-inbox",
+        broker_stream=broker_stream,
     )
 
     product_governance = GovernanceContext.from_assignment(
@@ -115,16 +132,32 @@ def run_local_e2e_dogfood_slice(
             "governance": product_governance.handoff_requirements(),
         },
     )
+    approval_payload = {
+        "approval_id": "approval-v3-local-product",
+        "work_item_id": work_item_id,
+        "question": "Approve the tiny V3 local dogfood release scope?",
+        "current_phase": "requirements",
+        "next_action": "Sponsor approval is required before implementation starts.",
+    }
+    if sponsor_contact is not None:
+        approval_payload.update(
+            {
+                "connector": sponsor_contact.connector,
+                "target_ref": sponsor_contact.target_ref,
+                "thread_ref": sponsor_contact.thread_ref,
+                "text_markdown": (
+                    "**Product sign-off requested: V3 local dogfood release**\n\n"
+                    "Please review the product scope and approve the local V3 dogfood release proof.\n\n"
+                    f"Work item: `{work_item_id}`\n\n"
+                    "Document: `work-items/work-v3-local-e2e/index.md`\n\n"
+                    "Respond with: `approval-v3-local-product approved`"
+                ),
+            }
+        )
     tools.call(
         role_instance_id=f"{project_id}.product-manager.1",
         tool_name="approval.request",
-        payload={
-            "approval_id": "approval-v3-local-product",
-            "work_item_id": work_item_id,
-            "question": "Approve the tiny V3 local dogfood release scope?",
-            "current_phase": "requirements",
-            "next_action": "Sponsor approval is required before implementation starts.",
-        },
+        payload=approval_payload,
     )
     _write_index(
         tools,
@@ -136,12 +169,26 @@ def run_local_e2e_dogfood_slice(
         next_action="Sponsor approval before implementation.",
         approvals=("approval-v3-local-product requested for product sign-off.",),
     )
-    db.record_approval_response(
-        approval_id="approval-v3-local-product",
-        status="approved",
-        response="Approved for the local V3 dogfood release proof.",
-        responder_ref="sponsor",
-    )
+    if sponsor_contact is None:
+        db.record_approval_response(
+            approval_id="approval-v3-local-product",
+            status="approved",
+            response="Approved for the local V3 dogfood release proof.",
+            responder_ref="sponsor",
+        )
+    else:
+        approval_message = StakeholderMessage(
+            connector=sponsor_contact.connector,
+            message_id="msg-v3-local-e2e-approval",
+            source_type="dm",
+            sender_ref=sponsor_contact.responder_ref,
+            conversation_ref="dm:product-manager",
+            text="approval-v3-local-product approved",
+            reply_target_ref=sponsor_contact.target_ref,
+            reply_thread_ref=sponsor_contact.thread_ref,
+        )
+        DatabaseApprovalResponseRecorder(db.path, broker=broker, stream=broker_stream).record(approval_message)
+        teams.route_inbound(approval_message)
 
     tools.call(
         role_instance_id=f"{project_id}.product-manager.1",
