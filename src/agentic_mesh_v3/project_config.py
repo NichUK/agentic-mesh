@@ -145,6 +145,9 @@ def load_project_config(path: Path) -> V3ProjectConfig:
     release_targets_raw = _mapping(raw.get("release_deployment_targets"))
     teams_raw = _mapping(_mapping(raw.get("connectors")).get("teams"))
     flow_raw = _mapping(raw.get("flow"))
+    flow_template = _optional(flow_raw.get("template"))
+    if flow_template is not None:
+        _validate_identifier("flow.template", flow_template)
     target_repositories_raw = _target_repositories_raw(raw)
     return V3ProjectConfig(
         project_id=project_id,
@@ -169,7 +172,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
             graph_base_url=str(teams_raw.get("graph_base_url") or "https://graph.microsoft.com/v1.0"),
         ),
         flow=V3FlowConfig(
-            template=_optional(flow_raw.get("template")),
+            template=flow_template,
             path=Path(str(flow_raw["path"])) if flow_raw.get("path") else None,
         ),
         target_repositories=tuple(
