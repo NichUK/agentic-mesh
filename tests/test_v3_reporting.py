@@ -1,5 +1,6 @@
 from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.reporting import AgentStatus
+from agentic_mesh_v3.reporting import ArtifactStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
 from agentic_mesh_v3.reporting import GovernanceRecordStatus
 from agentic_mesh_v3.reporting import ReleaseStatus
@@ -244,3 +245,42 @@ def test_work_item_detail_page_shows_release_metadata() -> None:
     assert "approval-release-1" in html
     assert "Smoke: GET /healthz passed." in html
     assert "release_disposition_recorded" in html
+
+
+def test_work_item_detail_page_shows_document_framework_artifact_paths() -> None:
+    detail = WorkItemDetail(
+        work_item_id="work-1",
+        title="Documented work",
+        description="Needs artifact visibility.",
+        state="active",
+        owner_role="product-manager",
+        current_phase="shaping",
+        next_action="Review product definition.",
+        governance={},
+        artifacts=(
+            ArtifactStatus(
+                filename="020-product-definition.md",
+                title="Product definition",
+                relative_path="work-items/work-1/020-product-definition.md",
+                document_type="product_definition",
+                status="published",
+                created_by_role="product-manager",
+            ),
+            ArtifactStatus(
+                filename="sketch.png",
+                title="Sketch",
+                relative_path="work-items/work-1/sketch.png",
+                document_type="artifact",
+                status="published",
+                created_by_role="ux-designer",
+            ),
+        ),
+    )
+
+    html = render_work_item_detail_page(detail, "work-1", document_framework_id="togaf-sdlc-v1")
+
+    assert "Document framework" in html
+    assert "togaf-sdlc-v1" in html
+    assert "Framework Path" in html
+    assert "work-items/work-1/020-product-definition.md" in html
+    assert "Flexible supporting artifact" in html
