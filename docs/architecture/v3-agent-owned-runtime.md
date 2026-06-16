@@ -125,7 +125,10 @@ Operators can inspect the read-only plan with `lifecycle-plan`, which reads the
 agent status projection and returns proposed start, wake, hibernate, or no-op
 decisions without changing container state. `lifecycle-apply` maps actionable
 decisions to Docker Compose commands, dry-runs by default, and only starts or
-stops role containers when `--execute` is passed.
+stops role containers when `--execute` is passed. It records planned or
+executed lifecycle actions into the event log; successful executed actions
+update the agent container-state projection, and failures show as
+`lifecycle_failed` on `/agents`.
 The V3 Compose renderer converts materialized role container specs into one
 Compose service per role instance, using the generated `run-agent-service`
 command and the same mounted path contract.

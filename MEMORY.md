@@ -464,3 +464,8 @@ V3 Project Manager sweep findings now include the work-item status URL and
 artifact count in the broker payload. The runtime still performs a read-only
 scan; the Project Manager agent receives enough context to chase, unblock, or
 close work through normal tools.
+
+V3 lifecycle apply now records planned or executed Compose lifecycle actions
+into the event log. Executed successes update the agent container-state
+projection to `running` or `hibernated`; executed failures show as
+`lifecycle_failed` with the failure detail on `/agents`.

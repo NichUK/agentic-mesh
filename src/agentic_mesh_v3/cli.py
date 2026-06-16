@@ -315,6 +315,19 @@ def main(argv: list[str] | None = None) -> int:
                     timeout_seconds=args.timeout_seconds,
                 )
             ).apply(decisions, execute=args.execute)
+            for result in results:
+                db.record_agent_lifecycle_result(
+                    role_instance_id=result.decision.role_instance_id,
+                    action=result.decision.action,
+                    reason=result.decision.reason,
+                    service_name=result.service_name,
+                    command=result.command,
+                    working_directory=str(result.working_directory) if result.working_directory else None,
+                    exit_code=result.exit_code,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    executed=result.executed,
+                )
             print(
                 json.dumps(
                     {

@@ -2,6 +2,7 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
+from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
 from agentic_mesh_v3.lifecycle import ComposeLifecycleExecutor
@@ -262,3 +263,55 @@ def test_compose_lifecycle_executor_executes_with_injected_runner(tmp_path: Path
             7,
         )
     ]
+
+
+def test_lifecycle_results_update_agent_status_projection(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.engineering.1",
+                container_state="running",
+                heartbeat_at="2026-06-15T10:00:00+00:00",
+            )
+        )
+
+        db.record_agent_lifecycle_result(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            action="hibernate",
+            reason="idle",
+            service_name="agentic-mesh-dev-engineering-1",
+            command=("docker", "compose", "stop", "agentic-mesh-dev-engineering-1"),
+            working_directory=None,
+            exit_code=0,
+            executed=True,
+        )
+
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+        assert snapshot.agents[0].container_state == "hibernated"
+
+        db.record_agent_lifecycle_result(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            action="wake",
+            reason="pending inbox messages",
+            service_name="agentic-mesh-dev-engineering-1",
+            command=("docker", "compose", "up", "-d", "agentic-mesh-dev-engineering-1"),
+            working_directory=None,
+            exit_code=1,
+            stderr="compose failed",
+            executed=True,
+        )
+
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+        events = db.connection.execute(
+            "SELECT COUNT(*) AS count FROM events WHERE event_type='agent.lifecycle_action_recorded'"
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert snapshot.agents[0].container_state == "lifecycle_failed"
+    assert snapshot.agents[0].governance_waits == (
+        "Lifecycle wake failed for agentic-mesh-dev-engineering-1: compose failed",
+    )
+    assert events["count"] == 2
