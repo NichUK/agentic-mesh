@@ -32,6 +32,7 @@ from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.deployment import deployment_targets_from_project_config
 from agentic_mesh_v3.dogfood import DogfoodSponsorContact
 from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
+from agentic_mesh_v3.dogfood_agent_service import run_agent_service_e2e_dogfood_slice
 from agentic_mesh_v3.dogfood_audit import audit_v3_dogfood_completion
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import build_document_library_adapter
@@ -139,6 +140,10 @@ def main(argv: list[str] | None = None) -> int:
     dogfood_parser = subparsers.add_parser("local-e2e-dogfood")
     dogfood_parser.add_argument("--document-library-root", type=Path)
     dogfood_parser.add_argument("--deployment-target-id")
+    agent_dogfood_parser = subparsers.add_parser("agent-e2e-dogfood")
+    agent_dogfood_parser.add_argument("--document-library-root", type=Path)
+    agent_dogfood_parser.add_argument("--deployment-target-id")
+    agent_dogfood_parser.add_argument("--runtime-state-dir", type=Path, required=True)
     dogfood_audit_parser = subparsers.add_parser("audit-dogfood")
     dogfood_audit_parser.add_argument("--document-library-root", type=Path)
     dogfood_audit_parser.add_argument("--work-item-id", default="work-v3-local-e2e")
@@ -550,6 +555,36 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "database": str(args.db),
                     "status": "local_e2e_dogfood_complete",
+                    "work_item_id": work_item_id,
+                }
+            )
+        )
+        return 0
+    if args.command == "agent-e2e-dogfood":
+        db = V3Database(args.db)
+        try:
+            db.migrate()
+            deployment_targets = _deployment_targets(args)
+            broker, broker_stream = _tool_broker(args)
+            work_item_id = run_agent_service_e2e_dogfood_slice(
+                db=db,
+                project_id=args.project_id,
+                document_library=_document_library_adapter(args, required=True),
+                runtime_state_dir=args.runtime_state_dir,
+                deployment_targets=deployment_targets or None,
+                deployment_target_id=_dogfood_deployment_target_id(args, deployment_targets),
+                broker=broker,
+                broker_stream=broker_stream or "agent-inbox",
+                stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
+                sponsor_contact=_dogfood_sponsor_contact(args),
+            )
+        finally:
+            db.close()
+        print(
+            json.dumps(
+                {
+                    "database": str(args.db),
+                    "status": "agent_e2e_dogfood_complete",
                     "work_item_id": work_item_id,
                 }
             )

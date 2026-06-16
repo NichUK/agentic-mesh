@@ -42,6 +42,8 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 init-db
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev demo-slice --document-library-root .tmp/v3-documents
 agentic-mesh-v3 --db .tmp/v3-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml local-e2e-dogfood --deployment-target-id dogfood-compose
 agentic-mesh-v3 --db .tmp/v3-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml audit-dogfood
+agentic-mesh-v3 --db .tmp/v3-agent-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml agent-e2e-dogfood --runtime-state-dir .tmp/v3-agent-dogfood-runtime --deployment-target-id dogfood-compose
+agentic-mesh-v3 --db .tmp/v3-agent-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml audit-dogfood --work-item-id work-v3-agent-service-e2e
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev status-json
 agentic-mesh --db .tmp/v2.sqlite3 init-db
 agentic-mesh --db .tmp/v2.sqlite3 demo-slice

@@ -16,6 +16,7 @@ from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.dogfood_agent_service import WORK_ITEM_ID as AGENT_DOGFOOD_WORK_ITEM_ID
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.worker_adapters import CodexCliWorker
@@ -372,6 +373,84 @@ def test_cli_audit_dogfood_returns_failure_for_missing_evidence(tmp_path: Path, 
     assert result == 1
     assert output["passed"] is False
     assert output["checks"][0]["check_id"] == "work_item.exists"
+
+
+def test_cli_agent_e2e_dogfood_passes_completion_audit(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    docs_root = tmp_path / "documents"
+    project_config = tmp_path / "project.yaml"
+    python_exe = sys.executable.replace("\\", "/")
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+            "solution-architect",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+connectors:
+  teams:
+    adapter: local
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: dm:sponsor
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - '{python_exe}'
+      - -c
+      - print('agent-service dogfood deployed')
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "--project-config",
+                str(project_config),
+                "agent-e2e-dogfood",
+                "--runtime-state-dir",
+                str(tmp_path / "runtime"),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "audit-dogfood",
+            "--work-item-id",
+            AGENT_DOGFOOD_WORK_ITEM_ID,
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert output["passed"] is True
 
 
 def test_cli_local_e2e_dogfood_requires_onedrive_token_for_project_document_library(
