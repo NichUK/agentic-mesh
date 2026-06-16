@@ -59,6 +59,9 @@ facts, preferences, prior handoffs, and recurring risks. Agents update memory
 through `memory.propose_update`, and runtime role services load those records
 from the runtime database into future prompts for the same role instance. Every
 memory entry must cite a work item, document, event, or conversation source.
+Automatic role-service run observations are source-linked too: the service
+records the current work item, conversation, source message, or broker message
+that produced the observation rather than a generic run label.
 
 ## Agent Configuration And Lifecycle
 

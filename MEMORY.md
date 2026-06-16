@@ -438,3 +438,8 @@ Project Manager are peer roles: Project Manager owns project control and may
 consult Prompt Engineer for prompt/tool/agent-behaviour blockers, while Prompt
 Engineer owns prompt-contract specialist advice without taking over project
 sequencing.
+
+V3 role-service automatic run observations now record source-linked memory
+provenance. The service cites the work item, conversation, source message, or
+broker message that produced the observation instead of using a generic
+`agent-run` source.

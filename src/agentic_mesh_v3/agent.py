@@ -70,7 +70,7 @@ class AgentMemory(Protocol):
     def load_summary(self, role_instance_id: str) -> str:
         """Load concise source-linked memory for this role instance."""
 
-    def record_observation(self, role_instance_id: str, observation: str) -> None:
+    def record_observation(self, role_instance_id: str, observation: str, *, source_ref: str = "agent-run") -> None:
         """Record a source-linked memory observation."""
 
 
@@ -109,7 +109,8 @@ class InMemoryRoleMemory:
     def load_summary(self, role_instance_id: str) -> str:
         return "\n".join(self._memory.get(role_instance_id, []))
 
-    def record_observation(self, role_instance_id: str, observation: str) -> None:
+    def record_observation(self, role_instance_id: str, observation: str, *, source_ref: str = "agent-run") -> None:
+        del source_ref
         self._memory.setdefault(role_instance_id, []).append(observation)
 
 
@@ -232,6 +233,7 @@ class RoleAgentService:
             self.memory.record_observation(
                 self.config.role_instance_id,
                 f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(tool_calls)} tool calls",
+                source_ref=_message_memory_source_ref(message),
             )
             self.broker.ack(self.config.inbox_stream, claimed.consumer, message.message_id)
             self._report_status(container_state="running", current_work=None)
@@ -386,6 +388,18 @@ class RoleAgentService:
 def _message_work_ref(payload: dict[str, object]) -> str | None:
     value = payload.get("work_item_id") or payload.get("source_message_id")
     return None if value is None else str(value)
+
+
+def _message_memory_source_ref(message: BrokerMessage) -> str:
+    for key, prefix in (
+        ("work_item_id", "work-item"),
+        ("conversation_ref", "conversation"),
+        ("source_message_id", "source-message"),
+    ):
+        value = message.payload.get(key)
+        if value is not None and str(value).strip():
+            return f"{prefix}:{value}"
+    return f"broker-message:{message.message_id}"
 
 
 def _has_terminal_tool_call(tool_calls: list[str]) -> bool:
