@@ -193,7 +193,10 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
                 "work_item_id": "work-1",
                 "status": "ready",
                 "scope": "Status page",
+                "version_ref": "commit:abc123",
+                "approval_ref": "approval-release-1",
                 "deployment_result": "staging smoke passed",
+                "smoke_evidence": "GET /status passed in staging.",
                 "rollback_plan": "restart previous image",
             },
         )

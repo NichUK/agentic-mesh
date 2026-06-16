@@ -232,7 +232,11 @@ roles:
             "--tool-name",
             "release.deploy",
             "--payload-json",
-            '{"work_item_id":"work-1","target_id":"local-smoke","scope":"CLI configured deployment"}',
+            (
+                '{"work_item_id":"work-1","target_id":"local-smoke",'
+                '"scope":"CLI configured deployment","version_ref":"commit:abc123",'
+                '"approval_ref":"approval-cli-release-1","smoke_evidence":"CLI smoke passed."}'
+            ),
         ]
     )
 

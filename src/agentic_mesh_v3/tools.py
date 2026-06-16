@@ -200,6 +200,10 @@ class V3ToolService:
                 deployment_result=_required(payload, "deployment_result"),
                 rollback_plan=_required(payload, "rollback_plan"),
                 residual_risks=str(payload.get("residual_risks") or "None recorded"),
+                version_ref=_required(payload, "version_ref"),
+                approval_ref=_required(payload, "approval_ref"),
+                smoke_evidence=_required(payload, "smoke_evidence"),
+                closure_state=str(payload.get("closure_state") or "open"),
             )
         elif tool_name == "release.deploy":
             target_id = _required(payload, "target_id")
@@ -223,6 +227,10 @@ class V3ToolService:
                 deployment_result=result.output,
                 rollback_plan=result.rollback_plan,
                 residual_risks=str(payload.get("residual_risks") or "None recorded"),
+                version_ref=_required(payload, "version_ref"),
+                approval_ref=_required(payload, "approval_ref"),
+                smoke_evidence=str(payload.get("smoke_evidence") or result.output or "not-recorded"),
+                closure_state="release_disposition_recorded",
             )
             if result.status == "failed":
                 self.db.update_work_item_state(
@@ -265,6 +273,7 @@ class V3ToolService:
                 current_phase="project-closure",
                 next_action=str(payload.get("closure_note") or "Release closed with deployment disposition recorded."),
             )
+            self.db.update_release_closure_state(work_item_id=work_item_id, closure_state="closed")
         elif tool_name == "memory.propose_update":
             self.db.record_role_memory(
                 memory_id=str(payload.get("memory_id") or f"memory-{call_id}"),

@@ -56,5 +56,20 @@ def test_tool_catalog_allows_release_manager_release_tools() -> None:
     release_tools = {entry.tool_name: entry for entry in tool_catalog_for_role("release-manager")}
 
     assert release_tools["release.deploy"].allowed is True
+    assert release_tools["release.deploy"].required_fields == (
+        "work_item_id",
+        "target_id",
+        "version_ref",
+        "approval_ref",
+    )
+    assert release_tools["release.record"].required_fields == (
+        "work_item_id",
+        "scope",
+        "version_ref",
+        "approval_ref",
+        "deployment_result",
+        "smoke_evidence",
+        "rollback_plan",
+    )
     assert release_tools["release.close"].allowed is True
     assert release_tools["work_item.reopen"].allowed is True
