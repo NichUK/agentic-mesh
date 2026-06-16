@@ -188,6 +188,8 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             _governance_summary_table(detail.governance),
             "<h2>Governance Checklist</h2>",
             _governance_checklist_section(detail.governance_checklist),
+            "<h2>Blockers</h2>",
+            _blocker_table(detail.governance_records),
             "<h2>Governance Records</h2>",
             _governance_record_table(detail.governance_records),
             "<h2>Artifacts</h2>",
@@ -442,6 +444,24 @@ def _governance_record_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
         )
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"5\">No governance records recorded.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _blocker_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
+    rows = ["<tr><th>Role</th><th>Target</th><th>Status</th><th>Summary</th></tr>"]
+    for item in items:
+        if item.record_type != "blocker.raise":
+            continue
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.role_instance_id)}</td>"
+            f"<td>{html.escape(item.target_ref or '')}</td>"
+            f"<td>{html.escape(item.status)}</td>"
+            f"<td>{html.escape(item.summary)}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"4\">No blockers recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 

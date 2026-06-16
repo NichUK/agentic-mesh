@@ -192,6 +192,16 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
                 "rollback_plan": "restart previous image",
             },
         )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.platform-engineer.1",
+            tool_name="blocker.raise",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Deployment target credentials are missing.",
+                "next_action": "Provide staging deployment credentials.",
+                "blocked_role": "platform-engineer",
+            },
+        )
     finally:
         db.close()
 
@@ -227,5 +237,8 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "release-approval" in html
     assert "approval-1" in html
     assert "Approve release?" in html
+    assert "Blockers" in html
+    assert "Deployment target credentials are missing." in html
+    assert "platform-engineer" in html
     assert "release-1" in html
     assert "staging smoke passed" in html
