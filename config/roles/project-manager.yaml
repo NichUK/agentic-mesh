@@ -88,7 +88,7 @@ default_tools:
   - work-item.update-index
   - backlog.read
   - backlog.update
-  - governance.record-exception
+  - governance.record_exception
   - stakeholder.ask-question
   - role-message.send
   - status.update
