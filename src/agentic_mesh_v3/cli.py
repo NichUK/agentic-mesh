@@ -151,6 +151,16 @@ def main(argv: list[str] | None = None) -> int:
     materialize_parser.add_argument("--flow-config", type=Path)
     materialize_parser.add_argument("--compose-output", type=Path)
     materialize_parser.add_argument("--compose-network", default="agentic-mesh")
+    materialize_parser.add_argument("--compose-include-nats", action="store_true")
+    materialize_parser.add_argument("--compose-nats-service-name", default="nats")
+    materialize_parser.add_argument("--compose-nats-image", default="nats:2.10-alpine")
+    materialize_parser.add_argument(
+        "--compose-nats-port",
+        action="append",
+        dest="compose_nats_ports",
+        default=None,
+        help="NATS port mapping to include in generated Compose; repeatable.",
+    )
     materialize_parser.add_argument("--local-dev-override", action="store_true")
 
     tool_parser = subparsers.add_parser("tool-call")
@@ -688,6 +698,10 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
             render_role_services_compose(
                 [item.container_spec for item in materialized],
                 network_name=args.compose_network,
+                include_nats=bool(args.compose_include_nats),
+                nats_service_name=args.compose_nats_service_name,
+                nats_image=args.compose_nats_image,
+                nats_ports=tuple(args.compose_nats_ports or ("4222:4222", "8222:8222")),
             ),
             encoding="utf-8",
         )
