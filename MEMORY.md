@@ -505,3 +505,8 @@ V3 approval responses now hand visible ownership back to the requesting agent
 when the work item was in `waiting_human`. The DB records the approval response
 and moves the work item to `waiting_agent` with a next action for the requesting
 role; the role agent remains responsible for deciding the next lifecycle step.
+
+V3 `approval.request` now projects the human wait into the work-item read
+model. The tool records the approval request and moves existing work to
+`waiting_human` with sponsor ownership/next action in the same transaction, so
+status pages show that the sponsor is the current blocker.

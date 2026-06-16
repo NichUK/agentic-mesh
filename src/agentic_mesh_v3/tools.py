@@ -377,6 +377,12 @@ class V3ToolService:
             work_item_id=work_item_id,
             requested_by_role=role_from_instance(role_instance_id),
             question=question,
+            waiting_owner_role=str(payload.get("waiting_owner_role") or "sponsor"),
+            current_phase=_optional(payload.get("current_phase")),
+            next_action=str(
+                payload.get("next_action")
+                or f"Approval `{approval_id}` requested by {role_from_instance(role_instance_id)}; awaiting sponsor response."
+            ),
         )
         if target_ref is None:
             return
