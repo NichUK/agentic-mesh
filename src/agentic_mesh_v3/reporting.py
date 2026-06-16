@@ -69,6 +69,10 @@ class ReleaseStatus:
     deployment_result: str
     rollback_plan: str
     residual_risks: str
+    version_ref: str = "not-recorded"
+    approval_ref: str = "not-recorded"
+    smoke_evidence: str = "not-recorded"
+    closure_state: str = "open"
 
 
 @dataclass(frozen=True)
@@ -466,21 +470,27 @@ def _approval_table(items: tuple[ApprovalStatus, ...]) -> str:
 
 def _release_table(items: tuple[ReleaseStatus, ...]) -> str:
     rows = [
-        "<tr><th>Release</th><th>Status</th><th>Scope</th><th>Deployment</th><th>Rollback</th><th>Risks</th></tr>"
+        "<tr><th>Release</th><th>Status</th><th>Scope</th><th>Version</th><th>Approval</th><th>Deployment / Smoke</th><th>Rollback</th><th>Risks</th><th>Closure</th></tr>"
     ]
     for item in items:
+        deployment = html.escape(item.deployment_result)
+        if item.smoke_evidence:
+            deployment = f"{deployment}<br><small>Smoke: {html.escape(item.smoke_evidence)}</small>"
         rows.append(
             "<tr>"
             f"<td>{html.escape(item.release_id)}</td>"
             f"<td>{html.escape(item.status)}</td>"
             f"<td>{html.escape(item.scope)}</td>"
-            f"<td>{html.escape(item.deployment_result)}</td>"
+            f"<td>{html.escape(item.version_ref)}</td>"
+            f"<td>{html.escape(item.approval_ref)}</td>"
+            f"<td>{deployment}</td>"
             f"<td>{html.escape(item.rollback_plan)}</td>"
             f"<td>{html.escape(item.residual_risks)}</td>"
+            f"<td>{html.escape(item.closure_state)}</td>"
             "</tr>"
         )
     if len(rows) == 1:
-        rows.append("<tr><td colspan=\"6\">No releases recorded.</td></tr>")
+        rows.append("<tr><td colspan=\"9\">No releases recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 

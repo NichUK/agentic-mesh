@@ -176,9 +176,13 @@ class V3Database:
                   work_item_id TEXT NOT NULL,
                   status TEXT NOT NULL,
                   scope TEXT NOT NULL,
+                  version_ref TEXT NOT NULL DEFAULT 'not-recorded',
+                  approval_ref TEXT NOT NULL DEFAULT 'not-recorded',
                   deployment_result TEXT NOT NULL,
+                  smoke_evidence TEXT NOT NULL DEFAULT 'not-recorded',
                   rollback_plan TEXT NOT NULL,
                   residual_risks TEXT NOT NULL,
+                  closure_state TEXT NOT NULL DEFAULT 'open',
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -239,6 +243,10 @@ class V3Database:
             _ensure_column(self.connection, "conversations", "text_sha256", "TEXT")
             _ensure_column(self.connection, "conversations", "raw_expired_at", "TEXT")
             _ensure_column(self.connection, "agent_runs", "work_item_id", "TEXT")
+            _ensure_column(self.connection, "releases", "version_ref", "TEXT NOT NULL DEFAULT 'not-recorded'")
+            _ensure_column(self.connection, "releases", "approval_ref", "TEXT NOT NULL DEFAULT 'not-recorded'")
+            _ensure_column(self.connection, "releases", "smoke_evidence", "TEXT NOT NULL DEFAULT 'not-recorded'")
+            _ensure_column(self.connection, "releases", "closure_state", "TEXT NOT NULL DEFAULT 'open'")
 
     def record_event(
         self,
@@ -966,20 +974,56 @@ class V3Database:
         deployment_result: str,
         rollback_plan: str,
         residual_risks: str,
+        version_ref: str = "not-recorded",
+        approval_ref: str = "not-recorded",
+        smoke_evidence: str = "not-recorded",
+        closure_state: str = "open",
     ) -> None:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT INTO releases(release_id, work_item_id, status, scope, deployment_result, rollback_plan, residual_risks)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO releases(
+                  release_id, work_item_id, status, scope, version_ref, approval_ref,
+                  deployment_result, smoke_evidence, rollback_plan, residual_risks, closure_state
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (release_id, work_item_id, status, scope, deployment_result, rollback_plan, residual_risks),
+                (
+                    release_id,
+                    work_item_id,
+                    status,
+                    scope,
+                    version_ref,
+                    approval_ref,
+                    deployment_result,
+                    smoke_evidence,
+                    rollback_plan,
+                    residual_risks,
+                    closure_state,
+                ),
             )
             self.record_event(
                 "release.recorded",
                 "work_item",
                 work_item_id,
                 {"release_id": release_id, "status": status, "deployment_result": deployment_result},
+            )
+
+    def update_release_closure_state(self, *, work_item_id: str, closure_state: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE releases
+                SET closure_state=?
+                WHERE work_item_id=?
+                """,
+                (closure_state, work_item_id),
+            )
+            self.record_event(
+                "release.closure_state_updated",
+                "work_item",
+                work_item_id,
+                {"closure_state": closure_state},
             )
 
     def has_release_disposition(self, work_item_id: str) -> bool:
@@ -1455,10 +1499,15 @@ class V3Database:
                 deployment_result=row["deployment_result"],
                 rollback_plan=row["rollback_plan"],
                 residual_risks=row["residual_risks"],
+                version_ref=row["version_ref"],
+                approval_ref=row["approval_ref"],
+                smoke_evidence=row["smoke_evidence"],
+                closure_state=row["closure_state"],
             )
             for row in self.connection.execute(
                 """
-                SELECT release_id, status, scope, deployment_result, rollback_plan, residual_risks
+                SELECT release_id, status, scope, version_ref, approval_ref, deployment_result,
+                       smoke_evidence, rollback_plan, residual_risks, closure_state
                 FROM releases
                 WHERE work_item_id=?
                 ORDER BY created_at ASC, release_id ASC

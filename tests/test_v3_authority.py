@@ -30,7 +30,13 @@ def test_authority_allows_release_manager_to_deploy(tmp_path: Path) -> None:
         ).call(
             role_instance_id="agentic-mesh-dev.release-manager.1",
             tool_name="release.deploy",
-            payload={"work_item_id": "work-1", "target_id": "planning-only", "scope": "No deployment."},
+            payload={
+                "work_item_id": "work-1",
+                "target_id": "planning-only",
+                "scope": "No deployment.",
+                "version_ref": "no-code-change:authority-test",
+                "approval_ref": "approval-authority-test",
+            },
         )
         calls = db.list_tool_calls()
     finally:

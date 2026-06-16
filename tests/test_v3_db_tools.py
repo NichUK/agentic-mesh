@@ -63,7 +63,10 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
             payload={
                 "work_item_id": "work-1",
                 "scope": "Status page",
+                "version_ref": "commit:abc123",
+                "approval_ref": "approval-release-1",
                 "deployment_result": "deployed locally",
+                "smoke_evidence": "GET /status passed.",
                 "rollback_plan": "restart previous image",
             },
         )
@@ -157,6 +160,38 @@ def test_v3_tool_service_rejects_missing_contract_fields_before_recording(tmp_pa
         db.close()
 
     assert calls == []
+
+
+def test_v3_release_record_requires_evidence_metadata_before_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                tool_name="release.record",
+                payload={
+                    "work_item_id": "work-1",
+                    "scope": "Status page",
+                    "deployment_result": "deployed locally",
+                    "smoke_evidence": "GET /status passed.",
+                    "rollback_plan": "restart previous image",
+                },
+            )
+        except ValueError as exc:
+            assert "version_ref is required for release.record" in str(exc)
+        else:
+            raise AssertionError("release.record should require version evidence")
+
+        calls = db.list_tool_calls()
+        release_count = db.connection.execute("SELECT COUNT(*) AS count FROM releases").fetchone()["count"]
+    finally:
+        db.close()
+
+    assert calls == []
+    assert release_count == 0
 
 
 def test_v3_tool_service_rejects_unknown_tools_before_recording(tmp_path: Path) -> None:
@@ -579,6 +614,8 @@ def test_v3_tool_service_release_deploy_uses_configured_target(tmp_path: Path) -
                 "work_item_id": "work-1",
                 "target_id": "planning-only",
                 "scope": "No deployment design slice",
+                "version_ref": "no-code-change:design-only",
+                "approval_ref": "approval-design-release-1",
             },
         )
         release_count = db.connection.execute("SELECT COUNT(*) AS count FROM releases").fetchone()["count"]
@@ -623,6 +660,9 @@ def test_v3_release_deploy_success_moves_work_to_released(tmp_path: Path) -> Non
                 "work_item_id": "work-1",
                 "target_id": "runtime",
                 "scope": "Runtime release",
+                "version_ref": "commit:abc123",
+                "approval_ref": "approval-release-1",
+                "smoke_evidence": "GET /healthz passed.",
             },
         )
         detail = db.work_item_detail("work-1")
@@ -646,6 +686,10 @@ def test_v3_release_deploy_success_moves_work_to_released(tmp_path: Path) -> Non
     assert detail.current_phase == "deployment"
     assert detail.next_action == "Release disposition `deployed` recorded for target `runtime`; ready for closure."
     assert detail.releases[0].status == "deployed"
+    assert detail.releases[0].version_ref == "commit:abc123"
+    assert detail.releases[0].approval_ref == "approval-release-1"
+    assert detail.releases[0].smoke_evidence == "GET /healthz passed."
+    assert detail.releases[0].closure_state == "release_disposition_recorded"
     assert detail.releases[0].deployment_result == "deployment ok"
     assert state_events == ["deploying", "released"]
 
@@ -679,6 +723,8 @@ def test_v3_release_deploy_failure_moves_work_to_recovering(tmp_path: Path) -> N
                 "work_item_id": "work-1",
                 "target_id": "failing-target",
                 "scope": "Runtime release",
+                "version_ref": "commit:abc123",
+                "approval_ref": "approval-release-1",
                 "residual_risks": "Deployment failed.",
             },
         )
@@ -726,6 +772,8 @@ def test_v3_release_deploy_timeout_moves_work_to_recovering(tmp_path: Path) -> N
                 "work_item_id": "work-1",
                 "target_id": "slow-target",
                 "scope": "Runtime release",
+                "version_ref": "commit:abc123",
+                "approval_ref": "approval-release-1",
                 "residual_risks": "Deployment timed out.",
             },
         )
@@ -804,6 +852,8 @@ def test_v3_release_close_closes_after_no_deployment_disposition(tmp_path: Path)
                 "work_item_id": "work-1",
                 "target_id": "planning-only",
                 "scope": "Planning-only release",
+                "version_ref": "no-code-change:planning-only",
+                "approval_ref": "approval-planning-release-1",
             },
         )
         tools.call(
@@ -820,6 +870,7 @@ def test_v3_release_close_closes_after_no_deployment_disposition(tmp_path: Path)
     assert detail is not None
     assert detail.state == "closed"
     assert detail.owner_role == "project-manager"
+    assert detail.releases[0].closure_state == "closed"
     assert snapshot.backlog == ()
 
 
@@ -842,6 +893,10 @@ def test_v3_release_close_closes_already_released_work(tmp_path: Path) -> None:
             deployment_result="ok",
             rollback_plan="Restore previous image.",
             residual_risks="None.",
+            version_ref="commit:abc123",
+            approval_ref="approval-release-1",
+            smoke_evidence="GET /healthz passed.",
+            closure_state="release_disposition_recorded",
         )
         tools = V3ToolService(db)
 
@@ -862,6 +917,7 @@ def test_v3_release_close_closes_already_released_work(tmp_path: Path) -> None:
     assert detail.owner_role == "project-manager"
     assert detail.current_phase == "project-closure"
     assert detail.next_action == "Release deployed and closed."
+    assert detail.releases[0].closure_state == "closed"
 
 
 def test_v3_terminal_work_item_state_syncs_linked_backlog_item(tmp_path: Path) -> None:

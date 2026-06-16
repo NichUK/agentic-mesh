@@ -328,6 +328,9 @@ def run_local_e2e_dogfood_slice(
             "work_item_id": work_item_id,
             "target_id": "local-smoke",
             "scope": "Local V3 dogfood release smoke.",
+            "version_ref": "local-dogfood-command",
+            "approval_ref": "approval-v3-local-product",
+            "smoke_evidence": "Local command target printed v3 local smoke deployed.",
             "residual_risks": "Live Teams, OneDrive, and NATS credentials still require environment-specific validation.",
         },
     )

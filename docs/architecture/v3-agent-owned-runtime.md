@@ -465,7 +465,12 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   before the work item can be moved to released/closed. `release.deploy` moves
   work visibly into `deploying` while the target runs and then to `released`
   when deployment or a no-deployment disposition is recorded; `release.close`
-  performs the separate final closure. Project
+  performs the separate final closure. Release evidence is explicit: release
+  tools require a version or commit reference, an approval reference, deployment
+  result, smoke evidence, rollback plan, residual risk notes, and a final
+  closure state. For command deployments, the deployment output can satisfy
+  smoke evidence when the release manager records it as the smoke proof.
+  Project
   `release_deployment_targets` are loaded from `project.yaml` and passed into
   the safe-output tool service, so `release.deploy` uses configured project
   targets rather than ad hoc runtime commands. If a deployment target fails,

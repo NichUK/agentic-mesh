@@ -78,6 +78,10 @@ def run_demo_slice(
         deployment_result="No deployment required for read-model demo seed.",
         rollback_plan="Delete demo seed rows from the local V3 database.",
         residual_risks="Real connector and deployment adapters remain follow-up slices.",
+        version_ref="demo-seed:no-code-change",
+        approval_ref="demo-seed:local",
+        smoke_evidence="Read-model demo seed renders status and work-item pages.",
+        closure_state="closed",
     )
     if document_library is not None:
         index = WorkItemIndex(

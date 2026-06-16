@@ -2,6 +2,7 @@ from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
 from agentic_mesh_v3.reporting import GovernanceRecordStatus
+from agentic_mesh_v3.reporting import ReleaseStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import WorkItemStatus
 from agentic_mesh_v3.reporting import artifact_viewer_path
@@ -207,3 +208,39 @@ def test_work_item_detail_page_shows_consultations_and_informed_updates() -> Non
     assert "<h2>Informed Updates</h2>" in html
     assert "project-manager" in html
     assert "System design moved to security review." in html
+
+
+def test_work_item_detail_page_shows_release_metadata() -> None:
+    detail = WorkItemDetail(
+        work_item_id="work-1",
+        title="Release runtime",
+        description="Needs release evidence.",
+        state="released",
+        owner_role="release-manager",
+        current_phase="deployment",
+        next_action="Close release.",
+        governance={},
+        releases=(
+            ReleaseStatus(
+                release_id="release-1",
+                status="deployed",
+                scope="Runtime release",
+                deployment_result="deployment ok",
+                rollback_plan="Restore previous image.",
+                residual_risks="Regression suite still pending.",
+                version_ref="commit:abc123",
+                approval_ref="approval-release-1",
+                smoke_evidence="GET /healthz passed.",
+                closure_state="release_disposition_recorded",
+            ),
+        ),
+    )
+
+    html = render_work_item_detail_page(detail, "work-1")
+
+    assert "Version" in html
+    assert "commit:abc123" in html
+    assert "Approval" in html
+    assert "approval-release-1" in html
+    assert "Smoke: GET /healthz passed." in html
+    assert "release_disposition_recorded" in html
