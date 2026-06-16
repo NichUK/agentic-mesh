@@ -407,3 +407,7 @@ V3 `work_item.upsert` now materializes minimum governance context for
 safe-output-created work items when agents omit it. The tool fills phase,
 accountable role, and responsible role from the work item state/owner while
 preserving richer RACI fields supplied by the agent.
+
+V3 in-memory broker subject matching now follows NATS-style wildcard semantics
+for local contract tests: `*` matches one subject token and `>` matches the
+remaining tail when used at the end of a pattern.
