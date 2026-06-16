@@ -230,7 +230,10 @@ class GraphTeamsBridge:
         if not user_ref:
             raise ValueError("user target_ref requires a user id")
         if not self.sender_user_ref:
-            raise ValueError("sender_user_ref is required for Teams user DM targets")
+            raise ValueError(
+                "sender_user_ref is required for Teams user DM targets; "
+                "set AGENTIC_MESH_TEAMS_SENDER_USER_ID"
+            )
         response = self.transport.post_json(
             f"{self.graph_base_url}/chats",
             {
@@ -256,7 +259,7 @@ def _aad_user_conversation_member(graph_base_url: str, user_ref: str) -> dict[st
     return {
         "@odata.type": "#microsoft.graph.aadUserConversationMember",
         "roles": ["owner"],
-        "user@odata.bind": f"{graph_base_url}/users/{user_ref}",
+        "user@odata.bind": f"{graph_base_url}/users('{user_ref}')",
     }
 
 

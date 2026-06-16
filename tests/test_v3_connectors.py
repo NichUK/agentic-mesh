@@ -174,8 +174,8 @@ def test_graph_teams_bridge_can_send_dm_to_user_target() -> None:
     assert transport.posts[0][1]["chatType"] == "oneOnOne"
     members = transport.posts[0][1]["members"]
     assert isinstance(members, list)
-    assert members[0]["user@odata.bind"] == "https://graph.test/v1.0/users/sender-user"
-    assert members[1]["user@odata.bind"] == "https://graph.test/v1.0/users/sponsor-user"
+    assert members[0]["user@odata.bind"] == "https://graph.test/v1.0/users('sender-user')"
+    assert members[1]["user@odata.bind"] == "https://graph.test/v1.0/users('sponsor-user')"
     assert transport.posts[1][0] == "https://graph.test/v1.0/chats/graph-message-1/messages"
     body = transport.posts[1][1]["body"]
     assert isinstance(body, dict)
