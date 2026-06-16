@@ -135,7 +135,8 @@ def _mentioned_roles(
         mentioned = _mapping(entity.get("mentioned"))
         role = role_by_bot_id.get(_optional_text(mentioned.get("id")) or "")
         if role is None:
-            role = role_by_name.get(str(mentioned.get("name") or "").casefold())
+            mention_name = str(mentioned.get("name") or "")
+            role = role_by_name.get(mention_name.casefold()) or _fallback_role_from_teams_name(mention_name)
         if role and role not in roles:
             roles.append(role)
     return tuple(roles)
@@ -151,7 +152,8 @@ def _recipient_role(
     role = role_by_bot_id.get(_optional_text(recipient.get("id")) or "")
     if role is not None:
         return role
-    return role_by_name.get(str(recipient.get("name") or "").casefold())
+    recipient_name = str(recipient.get("name") or "")
+    return role_by_name.get(recipient_name.casefold()) or _fallback_role_from_teams_name(recipient_name)
 
 
 def _conversation_ref(activity: dict[str, Any], *, source_type: str, recipient_role: str | None) -> str:
@@ -200,6 +202,16 @@ def _conversation_id(activity: dict[str, Any]) -> str:
 
 def _clean_text(text: str) -> str:
     return re.sub(r"</?at>", "", text).strip()
+
+
+def _fallback_role_from_teams_name(display_name: str) -> str | None:
+    text = display_name.strip()
+    for prefix in ("AM-", "AM ", "Agentic Mesh ", "Agentic-Mesh "):
+        if text.casefold().startswith(prefix.casefold()):
+            role = text[len(prefix) :].strip()
+            role_id = re.sub(r"[^a-z0-9]+", "-", role.casefold()).strip("-")
+            return role_id or None
+    return None
 
 
 def _mapping(value: Any) -> dict[str, Any]:
