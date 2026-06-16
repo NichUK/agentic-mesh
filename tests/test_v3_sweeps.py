@@ -167,6 +167,16 @@ def test_project_sweep_publishes_findings_to_project_manager_inbox(tmp_path: Pat
             owner_role="engineering",
             next_action="Chase blocker.",
         )
+        db.add_artifact(
+            artifact_id="artifact-1",
+            work_item_id="work-blocked",
+            filename="index.md",
+            title="Work item index",
+            relative_path="work-items/work-blocked/index.md",
+            document_type="work-item-index",
+            status="accepted",
+            created_by_role="project-manager",
+        )
         service = ProjectSweepService(db)
         findings = service.sweep(now=datetime(2026, 6, 15, tzinfo=timezone.utc))
 
@@ -184,6 +194,8 @@ def test_project_sweep_publishes_findings_to_project_manager_inbox(tmp_path: Pat
     assert len(message_ids) == 1
     assert messages[0].payload["message_type"] == "project_sweep.finding"
     assert messages[0].payload["work_item_id"] == "work-blocked"
+    assert messages[0].payload["artifact_count"] == 1
+    assert messages[0].payload["work_item_url"] == "/work-item/work-blocked"
     assert messages[0].payload["required_action"] == (
         "Review the finding and use normal tools to chase, unblock, rescope, or close the work."
     )
