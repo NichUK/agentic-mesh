@@ -11,6 +11,7 @@ TOOL_DESCRIPTIONS = {
     "approval.request": "Ask a sponsor or stakeholder for approval and optionally deliver the request.",
     "artifact.link": "Link an existing work-item artifact or document-library path into the work-item evidence list.",
     "backlog.upsert": "Create or update a backlog or queue item.",
+    "blocker.raise": "Record a blocker, move the work item to blocked, and make the required next action visible.",
     "consult.request": "Request input from a consulted role or stakeholder.",
     "decision.record": "Record a durable work-item decision as source-linked governance evidence.",
     "document.write_root_work_item_index": "Regenerate the root work-item index in the document library.",
@@ -43,6 +44,7 @@ TOOL_REQUIRED_FIELDS = {
     "approval.request": ("work_item_id", "question"),
     "artifact.link": ("work_item_id", "relative_path"),
     "backlog.upsert": ("queue_item_id", "title", "summary", "owner_role"),
+    "blocker.raise": ("work_item_id", "summary", "next_action"),
     "consult.request": ("work_item_id", "target_role", "question"),
     "decision.record": ("work_item_id", "summary"),
     "document.write_work_item_index": (

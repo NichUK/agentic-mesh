@@ -186,7 +186,10 @@ for these duties: `consult.request`, `informed.update`,
 `document.write_work_item_index`. Agents also have first-class
 `decision.record` and `risk.register` tools so durable decisions and risks can
 be recorded as work-item governance evidence before they are summarized into
-document-library indexes or longer-lived registers.
+document-library indexes or longer-lived registers. `blocker.raise` is the
+first-class path for marking work blocked: it records blocker evidence, moves
+the work item to `blocked`, and surfaces the required next action for the
+Project Manager, sponsor, or owning role to chase.
 
 Governance checklists compare a work item's RACI context with recorded
 consultation, informed-update, exception, and approval evidence. They are
@@ -345,6 +348,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   `artifact.link` lets any role register an existing document-library path as a
   work-item artifact/evidence record without requiring the runtime to infer
   which files matter.
+  `blocker.raise` lets any role stop unsafe or impossible progress with a
+  visible blocker and next action instead of burying the issue inside a final
+  status reply.
   `handoff.require`, `consult.request`, and `informed.update` record governance
   evidence and, when the tool service has a broker, publish a connector-neutral
   message to the target role inbox so agents can coordinate without runtime

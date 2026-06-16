@@ -271,6 +271,7 @@ class V3ToolService:
                 payload=payload,
             )
         elif tool_name in {
+            "blocker.raise",
             "handoff.require",
             "consult.request",
             "informed.update",
@@ -484,7 +485,16 @@ class V3ToolService:
         tool_name: str,
         payload: dict[str, Any],
     ) -> None:
-        if tool_name == "handoff.require":
+        if tool_name == "blocker.raise":
+            _validate_blocker_raise(payload)
+            self.db.update_work_item_state(
+                work_item_id=_required(payload, "work_item_id"),
+                state="blocked",
+                owner_role=str(payload.get("owner_role") or role_from_instance(role_instance_id)),
+                current_phase=_optional(payload.get("current_phase")),
+                next_action=_required(payload, "next_action"),
+            )
+        elif tool_name == "handoff.require":
             _validate_handoff_requirements(payload)
             self.db.update_work_item_state(
                 work_item_id=_required(payload, "work_item_id"),
@@ -635,6 +645,12 @@ def _validate_handoff_requirements(payload: dict[str, Any]) -> None:
     _required(payload, "required_next_action")
 
 
+def _validate_blocker_raise(payload: dict[str, Any]) -> None:
+    _required(payload, "work_item_id")
+    _required(payload, "summary")
+    _required(payload, "next_action")
+
+
 def _validate_consult_request(payload: dict[str, Any]) -> None:
     _required(payload, "work_item_id")
     _required(payload, "target_role")
@@ -669,6 +685,7 @@ def _validate_risk_register(payload: dict[str, Any]) -> None:
 
 def _default_governance_status(tool_name: str) -> str:
     return {
+        "blocker.raise": "blocked",
         "consult.request": "requested",
         "decision.record": "decision_recorded",
         "handoff.require": "required",
