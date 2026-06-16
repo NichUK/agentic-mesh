@@ -536,3 +536,8 @@ V3 project config now exposes target repositories to role containers. Explicit
 resolved relative to `project.yaml` and materialized as mounts under
 `/mesh/workspaces/{repository_id}` so agents have project-granted source access
 without confusing the runtime source mount at `/mesh/source`.
+
+V3 topology validation now includes project target repositories. Target repos
+may match the source repo for dogfood work, but they cannot overlap deployed
+runtime, runtime state, organisation config, project config, document-library
+roots, or each other unless `local_dev_override` is set.

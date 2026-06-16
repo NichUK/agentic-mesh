@@ -477,6 +477,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "validate-topology":
+        project_config = load_project_config(args.project_config) if args.project_config is not None else None
         topology = V3Topology(
             source_repo=args.source_repo,
             deployed_runtime=args.deployed_runtime,
@@ -484,6 +485,7 @@ def main(argv: list[str] | None = None) -> int:
             organisation_config_repo=args.organisation_config_repo,
             project_config_repo=args.project_config_repo,
             document_library_root=args.document_library_root,
+            target_repositories=_target_repository_paths(project_config),
             local_dev_override=args.local_dev_override,
         )
         errors = validate_topology(topology)
@@ -647,6 +649,7 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
     project_config_path = getattr(args, "project_config", None)
     if project_config_path is None:
         raise ValueError("--project-config is required for materialize-agent-configs")
+    config = load_project_config(project_config_path)
     topology = V3Topology(
         source_repo=args.source_repo,
         deployed_runtime=args.deployed_runtime,
@@ -654,12 +657,12 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
         organisation_config_repo=args.organisation_config_repo,
         project_config_repo=args.project_config_repo,
         document_library_root=args.document_library_root,
+        target_repositories=_target_repository_paths(config),
         local_dev_override=args.local_dev_override,
     )
     errors = validate_topology(topology)
     if errors:
         raise ValueError("invalid V3 topology: " + "; ".join(errors))
-    config = load_project_config(project_config_path)
     materialized = materialize_project_agent_configs(
         project_config=config,
         image=args.image,
@@ -694,6 +697,15 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
         "role_instances": [item.container_spec.role_instance_id for item in materialized],
         "written_files": [str(path) for item in materialized for path in item.written_files],
         "compose_output": compose_output,
+    }
+
+
+def _target_repository_paths(project_config: V3ProjectConfig | None) -> dict[str, Path]:
+    if project_config is None:
+        return {}
+    return {
+        repository.repository_id: repository.path
+        for repository in project_config.target_repositories
     }
 
 

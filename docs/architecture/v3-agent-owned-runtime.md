@@ -18,6 +18,9 @@ state, deployed runtime, and document library must not live inside the source
 repo by default. Dogfood or temporary local setups may opt into
 `local_dev_override`, but production/project installs should keep those roots
 separate.
+Project target repositories may intentionally point at the source repo for
+dogfooding, but they must not overlap deployed runtime, runtime state,
+organisation config, project config, document-library roots, or each other.
 
 ## Runtime Responsibilities
 
