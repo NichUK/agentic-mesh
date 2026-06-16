@@ -107,6 +107,66 @@ def test_v3_tool_service_writes_work_item_index_and_refreshes_root_index(tmp_pat
     )
 
 
+def test_v3_tool_service_links_existing_artifact(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Add status page",
+            description="Build the V3 status page.",
+            state="active",
+            owner_role="engineering",
+        )
+        V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="artifact.link",
+            payload={
+                "work_item_id": "work-1",
+                "relative_path": "work-items/work-1/100-implementation-log.md",
+                "title": "Implementation log",
+                "document_type": "implementation_log",
+                "status": "published",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert len(detail.artifacts) == 1
+    artifact = detail.artifacts[0]
+    assert artifact.filename == "100-implementation-log.md"
+    assert artifact.title == "Implementation log"
+    assert artifact.relative_path == "work-items/work-1/100-implementation-log.md"
+    assert artifact.document_type == "implementation_log"
+    assert artifact.status == "published"
+    assert artifact.created_by_role == "engineering"
+
+
+def test_v3_tool_service_rejects_artifact_paths_outside_document_library(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.engineering.1",
+                tool_name="artifact.link",
+                payload={
+                    "work_item_id": "work-1",
+                    "relative_path": "../secrets.md",
+                },
+            )
+        except ValueError as exc:
+            assert "relative_path must stay inside the document library" in str(exc)
+        else:
+            raise AssertionError("artifact.link should reject paths outside the document library")
+    finally:
+        db.close()
+
+
 def test_v3_tool_service_rejects_disallowed_or_unknown_tool(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

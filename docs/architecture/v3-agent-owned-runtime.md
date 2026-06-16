@@ -228,6 +228,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   present, sends the sponsor-facing approval request through the bridge.
   `stakeholder.ask_question` records governance evidence and, when target
   metadata is present, sends the question through the bridge.
+  `artifact.link` lets any role register an existing document-library path as a
+  work-item artifact/evidence record without requiring the runtime to infer
+  which files matter.
   Materialized agent `tools.md` files include the same role-scoped catalog so
   each worker sees allowed and blocked tool authority in its prompt context.
 - Worker adapters: V3 provides an echo worker for local smoke tests, a

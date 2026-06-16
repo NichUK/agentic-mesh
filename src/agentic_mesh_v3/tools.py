@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 from uuid import uuid4
 
@@ -156,6 +157,8 @@ class V3ToolService:
                     governance_waits=tuple(str(item) for item in payload.get("governance_waits") or ()),
                 )
             )
+        elif tool_name == "artifact.link":
+            self._link_artifact(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "document.write_work_item_index":
             self._write_work_item_index(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "document.write_root_work_item_index":
@@ -334,6 +337,22 @@ class V3ToolService:
             )
         )
 
+    def _link_artifact(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
+        relative_path = _safe_relative_path(_required(payload, "relative_path"))
+        filename = str(payload.get("filename") or PurePosixPath(relative_path).name)
+        if not filename:
+            raise ValueError("filename is required")
+        self.db.add_artifact(
+            artifact_id=str(payload.get("artifact_id") or f"artifact-{call_id}"),
+            work_item_id=_required(payload, "work_item_id"),
+            filename=filename,
+            title=str(payload.get("title") or filename),
+            relative_path=relative_path,
+            document_type=str(payload.get("document_type") or "artifact"),
+            status=str(payload.get("status") or "linked"),
+            created_by_role=role_from_instance(role_instance_id),
+        )
+
     def _write_work_item_index(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         if self.document_library is None:
             raise ValueError("document library is not configured")
@@ -422,6 +441,14 @@ def _optional(value: Any) -> str | None:
         return None
     text = str(value)
     return text if text else None
+
+
+def _safe_relative_path(value: str) -> str:
+    text = value.replace("\\", "/").lstrip("/")
+    parts = PurePosixPath(text).parts
+    if not text or "\x00" in text or any(part == ".." for part in parts):
+        raise ValueError("relative_path must stay inside the document library")
+    return text
 
 
 def _dict(value: Any) -> dict[str, Any]:

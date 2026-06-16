@@ -61,5 +61,6 @@ def test_authority_rejects_product_manager_release_deploy(tmp_path: Path) -> Non
 def test_authority_allows_all_roles_to_consult_and_handoff() -> None:
     policy = ToolAuthorityPolicy.default()
 
+    assert "artifact.link" in policy.allowed_tools_for_role("business-analyst")
     assert "consult.request" in policy.allowed_tools_for_role("business-analyst")
     assert "handoff.require" in policy.allowed_tools_for_role("ux-designer")
