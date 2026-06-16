@@ -53,6 +53,7 @@ from agentic_mesh_v3.sweeps import ProjectSweepService
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 from agentic_mesh_v3.teams_ingress import DatabaseApprovalResponseRecorder
 from agentic_mesh_v3.teams_ingress import DatabaseConversationRecorder
+from agentic_mesh_v3.teams_ingress import DatabaseStakeholderQuestionResponseRecorder
 from agentic_mesh_v3.teams_ingress import teams_role_identities_from_project_config
 from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
 from agentic_mesh_v3.tool_catalog import tool_catalog_for_role
@@ -870,6 +871,11 @@ def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | No
         conversation_recorder=DatabaseConversationRecorder(db_path) if db_path is not None else None,
         approval_response_recorder=(
             DatabaseApprovalResponseRecorder(db_path, broker=broker, stream=config.broker.stream)
+            if db_path is not None
+            else None
+        ),
+        question_response_recorder=(
+            DatabaseStakeholderQuestionResponseRecorder(db_path, broker=broker, stream=config.broker.stream)
             if db_path is not None
             else None
         ),

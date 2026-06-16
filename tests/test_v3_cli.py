@@ -1687,3 +1687,89 @@ connectors:
     assert approval is not None
     assert approval["status"] == "approved"
     assert pending[0].payload["message_type"] == "approval.response_recorded"
+
+
+def test_cli_teams_activity_router_records_stakeholder_question_responses(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import agentic_mesh_v3.cli as cli_module
+
+    db_path = tmp_path / "v3.sqlite3"
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+roles:
+  product-manager:
+    instances: 1
+connectors:
+  teams:
+    role_bots:
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: bot-product
+""",
+        encoding="utf-8",
+    )
+    broker = InMemoryBrokerAdapter()
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Question work",
+            description="Needs sponsor answer.",
+            state="waiting_human",
+            owner_role="sponsor",
+            current_phase="product-shaping",
+        )
+        db.record_governance_record(
+            record_id="question-1",
+            work_item_id="work-1",
+            record_type="stakeholder.ask_question",
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            target_ref="dm:sponsor",
+            summary="Use DMs for approvals?",
+            status="requested",
+            payload={"question": "Use DMs for approvals?"},
+        )
+    finally:
+        db.close()
+    monkeypatch.setattr(cli_module, "build_broker_adapter", lambda **_: broker)
+
+    router = _teams_activity_router(
+        argparse.Namespace(
+            db=db_path,
+            project_config=project_config,
+        )
+    )
+    assert router is not None
+
+    subjects = router.route_activity(
+        {
+            "id": "msg-question-answer",
+            "text": "question-1: yes, use DMs for approvals.",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        }
+    )
+
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+    pending = broker.pending("agent-inbox")
+
+    assert subjects == ["agent.product-manager"]
+    assert detail is not None
+    assert detail.state == "waiting_agent"
+    assert detail.owner_role == "product-manager"
+    assert pending[0].payload["message_type"] == "stakeholder.question_answered"
+    assert pending[0].payload["question_id"] == "question-1"

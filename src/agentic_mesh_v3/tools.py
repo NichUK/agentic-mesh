@@ -70,6 +70,9 @@ class V3ToolService:
         payload: dict[str, Any],
         terminal: bool | None = None,
     ) -> ToolResult:
+        payload = dict(payload)
+        if tool_name == "stakeholder.ask_question" and not payload.get("record_id"):
+            payload["record_id"] = f"question-{uuid4().hex}"
         with self.telemetry.span(
             "v3.tool_call",
             role_instance_id=role_instance_id,
@@ -429,7 +432,10 @@ class V3ToolService:
         )
         if not should_deliver:
             return
-        text_markdown = _optional(payload.get("text_markdown")) or f"**Question**\n\n{question}"
+        question_id = str(payload.get("record_id"))
+        text_markdown = _optional(payload.get("text_markdown")) or (
+            f"**Question**\n\n{question}\n\nQuestion ID: `{question_id}`"
+        )
         receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
