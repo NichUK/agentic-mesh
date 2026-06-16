@@ -283,12 +283,7 @@ class NatsJetStreamAdapter:
                 if candidate_stream == stream and candidate_consumer == consumer
             ]
         return [
-            BrokerMessage(
-                message_id=message_id,
-                subject=getattr(raw, "subject", ""),
-                payload={},
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
+            _nats_broker_message_record(message_id=message_id, message=raw)
             for (_, _, message_id), raw in self._acked_messages.items()
             if raw in messages
         ][:limit]
@@ -427,6 +422,17 @@ def _import_nats():
 
 
 def _nats_dead_letter_record(*, message_id: str, message: object, reason: str) -> BrokerMessage:
+    record = _nats_broker_message_record(message_id=message_id, message=message)
+    return BrokerMessage(
+        message_id=record.message_id,
+        subject=record.subject,
+        payload={**record.payload, "dead_letter_reason": reason},
+        created_at=record.created_at,
+        delivery_count=record.delivery_count,
+    )
+
+
+def _nats_broker_message_record(*, message_id: str, message: object) -> BrokerMessage:
     import json
 
     payload: object = {}
@@ -441,7 +447,7 @@ def _nats_dead_letter_record(*, message_id: str, message: object, reason: str) -
     return BrokerMessage(
         message_id=message_id,
         subject=getattr(message, "subject", ""),
-        payload={**payload, "dead_letter_reason": reason},
+        payload=payload,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
 
