@@ -47,7 +47,7 @@ class RecordingTerminalWorker:
         result = self.tools.call(
             role_instance_id=self.role_instance_id,
             tool_name="status.reply",
-            payload={"message": f"Processed {message.message_id}"},
+            payload={"text_markdown": f"Processed {message.message_id}"},
         )
         return [result.call_id]
 

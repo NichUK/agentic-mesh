@@ -73,7 +73,7 @@ def test_v3_mcp_records_tool_call(tmp_path: Path) -> None:
                     "arguments": {
                         "role_instance_id": "agentic-mesh-dev.product-manager.1",
                         "tool_name": "status.reply",
-                        "payload": {"message": "Product reply through MCP."},
+                        "payload": {"text_markdown": "Product reply through MCP."},
                     },
                 },
             },
@@ -87,7 +87,7 @@ def test_v3_mcp_records_tool_call(tmp_path: Path) -> None:
     assert response["result"]["structuredContent"]["terminal"] is True
     assert len(calls) == 1
     assert calls[0]["tool_name"] == "status.reply"
-    assert calls[0]["payload"]["message"] == "Product reply through MCP."
+    assert calls[0]["payload"]["text_markdown"] == "Product reply through MCP."
 
 
 def test_v3_mcp_stdio_handles_jsonrpc_lines(tmp_path: Path) -> None:
