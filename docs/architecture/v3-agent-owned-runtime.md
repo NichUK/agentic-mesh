@@ -247,6 +247,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   still comes from safe-output tools. `run-agent-once` uses the role worker
   configured in `project.yaml` when no worker override is supplied, falling
   back to the echo worker only for unconfigured local smoke runs.
+  The CLI `tool-call` command and MCP stdio runner both construct the tool
+  service from project config so document-library and release deployment target
+  adapters are available through either approved front door.
 - Role service loop: `run-agent-service` keeps a configured role instance
   alive, polls its broker inbox, records heartbeat/status into the reporting
   database, and can exit after an idle window so the runtime can hibernate the

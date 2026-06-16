@@ -294,3 +294,7 @@ V3 project config now loads `release_deployment_targets` and the CLI safe-output
 tool path passes them into `V3ToolService`. Release Manager `release.deploy`
 can therefore execute configured command targets or explicit no-deployment
 targets from `project.yaml`.
+
+The V3 MCP stdio runner now uses the same project-config-backed `V3ToolService`
+wiring as CLI `tool-call`, including document-library and release deployment
+target adapters.
