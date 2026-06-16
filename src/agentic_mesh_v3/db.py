@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,8 @@ from agentic_mesh_v3.state_machine import validate_transition
 
 
 SCHEMA_VERSION = 1
+ATTENTION_STATES = {"blocked", "waiting_human", "waiting_agent", "waiting_external", "recovering"}
+STATUS_STALE_AFTER_SECONDS = 3600
 
 
 class V3Database:
@@ -717,6 +722,7 @@ class V3Database:
         return list(reversed([dict(row) for row in rows]))
 
     def status_snapshot(self, *, project_id: str) -> ReportingSnapshot:
+        now = datetime.now(timezone.utc)
         backlog = tuple(
             BacklogItemStatus(
                 queue_item_id=row["queue_item_id"],
@@ -742,10 +748,12 @@ class V3Database:
                 owner_role=row["owner_role"],
                 next_action=row["next_action"],
                 artifact_count=row["artifact_count"],
+                updated_at=row["updated_at"],
+                attention_reason=_work_item_attention_reason(row=dict(row), now=now),
             )
             for row in self.connection.execute(
                 """
-                SELECT wi.work_item_id, wi.title, wi.state, wi.owner_role, wi.next_action,
+                SELECT wi.work_item_id, wi.title, wi.state, wi.owner_role, wi.next_action, wi.updated_at,
                        COUNT(a.artifact_id) AS artifact_count
                 FROM work_items wi
                 LEFT JOIN artifacts a ON a.work_item_id = wi.work_item_id
@@ -763,10 +771,11 @@ class V3Database:
                 owner_role=row["owner_role"],
                 next_action=row["next_action"],
                 artifact_count=row["artifact_count"],
+                updated_at=row["updated_at"],
             )
             for row in self.connection.execute(
                 """
-                SELECT wi.work_item_id, wi.title, wi.state, wi.owner_role, wi.next_action,
+                SELECT wi.work_item_id, wi.title, wi.state, wi.owner_role, wi.next_action, wi.updated_at,
                        COUNT(a.artifact_id) AS artifact_count
                 FROM work_items wi
                 LEFT JOIN artifacts a ON a.work_item_id = wi.work_item_id
@@ -972,6 +981,32 @@ def _tuple_strings(value: object) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value if str(item))
     return (str(value),)
+
+
+def _work_item_attention_reason(*, row: dict[str, Any], now: datetime) -> str:
+    state = str(row["state"])
+    if state in ATTENTION_STATES:
+        return f"work item is in {state}"
+    updated_at = _parse_sqlite_timestamp(str(row["updated_at"]))
+    if updated_at is None:
+        return "work item updated_at timestamp is unreadable"
+    age = now - updated_at
+    if age >= timedelta(seconds=STATUS_STALE_AFTER_SECONDS):
+        return f"work item has not changed for {int(age.total_seconds())} seconds"
+    return ""
+
+
+def _parse_sqlite_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:

@@ -214,6 +214,10 @@ Initial reporting routes are:
 
 The report plane reads projections and document-library metadata. It does not
 own lifecycle decisions.
+The `/status` page shows the backlog/queue, attention-needed work,
+stale non-terminal work, governance waits, active work, and recent completions
+as separate sections so operators and sponsors can see stuck work without
+running an out-of-band sweep command.
 Status tables link active, recent, and queue-linked work items to their
 `/work-item/{work-item-id}` detail pages so sponsors can move from summary
 state to evidence without copying IDs.

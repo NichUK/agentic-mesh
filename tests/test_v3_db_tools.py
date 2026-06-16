@@ -363,6 +363,42 @@ def test_v3_terminal_work_item_state_syncs_linked_backlog_item(tmp_path: Path) -
     assert snapshot.backlog == ()
 
 
+def test_v3_status_snapshot_marks_attention_and_stale_work(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-blocked",
+            title="Blocked release",
+            description="Needs release fix.",
+            state="blocked",
+            owner_role="release-manager",
+            next_action="Fix deployment target.",
+        )
+        db.upsert_work_item(
+            work_item_id="work-stale",
+            title="Stale implementation",
+            description="No movement.",
+            state="active",
+            owner_role="engineering",
+            next_action="Chase owner.",
+        )
+        db.connection.execute(
+            "UPDATE work_items SET updated_at='2000-01-01 00:00:00' WHERE work_item_id='work-stale'"
+        )
+        db.connection.commit()
+
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    attention = {item.work_item_id: item.attention_reason for item in snapshot.work_items}
+    timestamps = {item.work_item_id: item.updated_at for item in snapshot.work_items}
+    assert attention["work-blocked"] == "work item is in blocked"
+    assert attention["work-stale"].startswith("work item has not changed for ")
+    assert timestamps["work-stale"] == "2000-01-01 00:00:00"
+
+
 def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

@@ -274,6 +274,10 @@ subjects, and source context without letting the runtime interpret the work.
 V3 status tables now link work-item IDs and queue-linked work items to the
 corresponding `/work-item/{work_item_id}` detail route, making the reporting
 plane easier for sponsors and operators to traverse.
+The `/status` page also separates attention-needed work, stale work, and
+agent governance waits from the general active-work list. Work-item status
+rows carry `updated_at` and `attention_reason` so stuck work is visible without
+running a separate Project Manager sweep first.
 
 Starter role documentation obligations now have concrete durable document
 targets, and role validation can check repo-local documentation paths. This
