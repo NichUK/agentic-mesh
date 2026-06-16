@@ -61,6 +61,9 @@
     },
     "target_repositories": {
       "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9-]*$"
+      },
       "additionalProperties": { "$ref": "#/$defs/targetRepository" }
     },
     "workspace": {
@@ -71,6 +74,9 @@
         "default_repository": { "type": "string" },
         "repositories": {
           "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
           "additionalProperties": { "$ref": "#/$defs/targetRepository" }
         }
       }

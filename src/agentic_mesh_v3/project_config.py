@@ -279,6 +279,7 @@ def _load_target_repository(
     repository_raw: dict[str, Any],
     project_config_dir: Path,
 ) -> V3TargetRepositoryConfig:
+    _validate_identifier(f"target_repositories.{repository_id}", repository_id)
     raw_path = _required(repository_raw, "path")
     path = Path(raw_path)
     return V3TargetRepositoryConfig(

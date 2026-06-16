@@ -242,3 +242,42 @@ roles:
 
     with pytest.raises(ValueError, match=r"roles.Product Manager must match"):
         load_project_config(project_file)
+
+
+def test_load_project_config_rejects_unsafe_target_repository_id(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+target_repositories:
+  App Source:
+    path: ../app
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"target_repositories.App Source must match"):
+        load_project_config(project_file)
+
+
+def test_load_project_config_rejects_unsafe_workspace_repository_id(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+workspace:
+  repositories:
+    App Source:
+      path: ../app
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"target_repositories.App Source must match"):
+        load_project_config(project_file)
