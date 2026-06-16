@@ -6,6 +6,8 @@ from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.documents import OneDriveDocumentLibraryAdapter
 from agentic_mesh_v3.documents import WorkItemIndex
 from agentic_mesh_v3.documents import build_document_library_adapter
+from agentic_mesh_v3.documents import framework_for
+from agentic_mesh_v3.documents import validate_framework_artifact_path
 from agentic_mesh_v3.documents import work_item_index_path
 from agentic_mesh_v3.documents import write_root_work_item_index
 from agentic_mesh_v3.documents import write_work_item_index
@@ -14,6 +16,57 @@ from agentic_mesh_v3.project_config import V3DocumentLibraryConfig
 
 def test_work_item_index_path_uses_documents_work_item_shape() -> None:
     assert work_item_index_path("work-123") == "work-items/work-123/index.md"
+
+
+def test_togaf_sdlc_framework_defines_core_work_item_paths() -> None:
+    framework = framework_for("togaf-sdlc-v1")
+
+    assert framework.rule_for("product_definition").path_for(work_item_id="work-123") == (
+        "work-items/work-123/020-product-definition.md"
+    )
+    assert framework.rule_for("implementation-log").path_for(work_item_id="work-123") == (
+        "work-items/work-123/100-implementation-log.md"
+    )
+    assert framework.rule_for("release_record").path_for(work_item_id="work-123") == (
+        "work-items/work-123/140-release-record.md"
+    )
+
+
+def test_framework_artifact_validation_rejects_wrong_typed_work_item_path() -> None:
+    try:
+        validate_framework_artifact_path(
+            framework_id="togaf-sdlc-v1",
+            document_type="product_definition",
+            work_item_id="work-123",
+            relative_path="work-items/work-123/product.md",
+        )
+    except DocumentLibraryError as exc:
+        assert "020-product-definition.md" in str(exc)
+    else:
+        raise AssertionError("typed work-item documents should use the framework path")
+
+
+def test_framework_artifact_validation_allows_generic_artifacts() -> None:
+    validate_framework_artifact_path(
+        framework_id="togaf-sdlc-v1",
+        document_type="artifact",
+        work_item_id="work-123",
+        relative_path="work-items/work-123/screenshots/status.png",
+    )
+
+
+def test_framework_artifact_validation_rejects_unknown_typed_documents() -> None:
+    try:
+        validate_framework_artifact_path(
+            framework_id="togaf-sdlc-v1",
+            document_type="mystery_report",
+            work_item_id="work-123",
+            relative_path="work-items/work-123/mystery.md",
+        )
+    except DocumentLibraryError as exc:
+        assert "unknown document type" in str(exc)
+    else:
+        raise AssertionError("unknown framework document types should be rejected")
 
 
 def test_write_work_item_index(tmp_path: Path) -> None:
@@ -228,6 +281,7 @@ def test_document_library_factory_builds_local_adapter(tmp_path: Path) -> None:
 
     ref = adapter.write_text("work-items/work-1/index.md", "# Work One")
 
+    assert adapter.framework_id == "togaf-sdlc-v1"
     assert ref.relative_path == "work-items/work-1/index.md"
     assert (tmp_path / "documents" / "work-items" / "work-1" / "index.md").exists()
 
@@ -244,6 +298,17 @@ def test_document_library_factory_builds_onedrive_adapter() -> None:
     assert transport.puts[0][0] == (
         "https://graph.microsoft.com/v1.0/drives/drive-123/root:/documents/work-items/work-1/index.md:/content"
     )
+
+
+def test_document_library_factory_rejects_unknown_framework(tmp_path: Path) -> None:
+    try:
+        build_document_library_adapter(
+            V3DocumentLibraryConfig(adapter="filesystem", root=tmp_path / "documents", structure_policy="unknown-v1")
+        )
+    except DocumentLibraryError as exc:
+        assert "unsupported document framework" in str(exc)
+    else:
+        raise AssertionError("unsupported document frameworks should fail before document writes")
 
 
 def test_document_library_factory_requires_onedrive_token_without_custom_transport() -> None:

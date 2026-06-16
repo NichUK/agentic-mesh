@@ -428,6 +428,37 @@ def test_v3_tool_service_links_existing_artifact(tmp_path: Path) -> None:
     assert artifact.created_by_role == "engineering"
 
 
+def test_v3_tool_service_rejects_framework_artifact_path_mismatch(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Shape product",
+            description="Define the product slice.",
+            state="active",
+            owner_role="product-manager",
+        )
+        tools = V3ToolService(db, document_library=LocalDocumentLibraryAdapter(tmp_path / "documents"))
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="artifact.link",
+                payload={
+                    "work_item_id": "work-1",
+                    "relative_path": "work-items/work-1/product.md",
+                    "title": "Product definition",
+                    "document_type": "product_definition",
+                },
+            )
+        except ValueError as exc:
+            assert "020-product-definition.md" in str(exc)
+        else:
+            raise AssertionError("typed artifacts should follow the configured document framework")
+    finally:
+        db.close()
+
+
 def test_v3_tool_service_rejects_artifact_paths_outside_document_library(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
