@@ -110,6 +110,20 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_loop_parser.add_argument("--working-directory", type=Path)
     supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_loop_parser.add_argument("--execute", action="store_true")
+    supervisor_service_parser = subparsers.add_parser("run-project-supervisor-service")
+    supervisor_service_mode = supervisor_service_parser.add_mutually_exclusive_group(required=True)
+    supervisor_service_mode.add_argument("--continuous", action="store_true")
+    supervisor_service_mode.add_argument("--cycles", type=int)
+    supervisor_service_parser.add_argument("--poll-seconds", type=float, default=5.0)
+    supervisor_service_parser.add_argument("--stale-after-seconds", type=int, default=3600)
+    supervisor_service_parser.add_argument("--publish-sweep-to-project-manager", action="store_true")
+    supervisor_service_parser.add_argument("--project-manager-role-id", default="project-manager")
+    supervisor_service_parser.add_argument("--idle-after-seconds", type=int, default=1800)
+    supervisor_service_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    supervisor_service_parser.add_argument("--compose-file", type=Path, action="append")
+    supervisor_service_parser.add_argument("--working-directory", type=Path)
+    supervisor_service_parser.add_argument("--timeout-seconds", type=int, default=300)
+    supervisor_service_parser.add_argument("--execute", action="store_true")
     approval_parser = subparsers.add_parser("record-approval-response")
     approval_parser.add_argument("--approval-id", required=True)
     approval_parser.add_argument("--status", required=True, choices=["approved", "rejected", "changes_requested"])
@@ -383,6 +397,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run-project-supervisor-loop":
         print(json.dumps(_run_project_supervisor_loop(args), indent=2, sort_keys=True))
         return 0
+    if args.command == "run-project-supervisor-service":
+        print(json.dumps(_run_project_supervisor_service(args), indent=2, sort_keys=True))
+        return 0
     if args.command == "record-approval-response":
         db = V3Database(args.db)
         try:
@@ -591,6 +608,41 @@ def _run_project_supervisor_loop(args: argparse.Namespace) -> dict[str, object]:
             time.sleep(args.poll_seconds)
     return {
         "project_id": args.project_id,
+        "cycles": cycles,
+        "cycle_count": len(cycles),
+        "lifecycle_result_count": sum(
+            int(cycle["lifecycle"]["result_count"]) for cycle in cycles  # type: ignore[index]
+        ),
+        "sweep_finding_count": sum(
+            int(cycle["sweep"]["finding_count"]) for cycle in cycles  # type: ignore[index]
+        ),
+        "published_sweep_message_count": sum(
+            int(cycle["sweep"]["published_message_count"]) for cycle in cycles  # type: ignore[index]
+        ),
+    }
+
+
+def _run_project_supervisor_service(args: argparse.Namespace) -> dict[str, object]:
+    if args.poll_seconds < 0:
+        raise ValueError("--poll-seconds must be non-negative")
+    if args.cycles is not None:
+        return {
+            **_run_project_supervisor_loop(args),
+            "mode": "bounded",
+            "interrupted": False,
+        }
+    cycles: list[dict[str, object]] = []
+    interrupted = False
+    try:
+        while True:
+            cycles.append(_run_project_supervisor_tick(args))
+            time.sleep(args.poll_seconds)
+    except KeyboardInterrupt:
+        interrupted = True
+    return {
+        "project_id": args.project_id,
+        "mode": "continuous",
+        "interrupted": interrupted,
         "cycles": cycles,
         "cycle_count": len(cycles),
         "lifecycle_result_count": sum(

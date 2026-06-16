@@ -691,6 +691,46 @@ roles:
     assert output["sweep_finding_count"] == 0
 
 
+def test_cli_project_supervisor_service_runs_bounded_mode(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  project-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "run-project-supervisor-service",
+            "--cycles",
+            "1",
+            "--poll-seconds",
+            "0",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert output["mode"] == "bounded"
+    assert output["interrupted"] is False
+    assert output["cycle_count"] == 1
+
+
 def test_cli_project_supervisor_rejects_missing_project_config() -> None:
     try:
         main(["run-project-supervisor-tick"])
