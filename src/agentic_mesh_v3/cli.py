@@ -14,6 +14,8 @@ from agentic_mesh_v3.agent import AgentStatusReporter
 from agentic_mesh_v3.broker import build_broker_adapter
 from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.config_materializer import build_role_instance_config
+from agentic_mesh_v3.config_materializer import materialize_project_agent_configs
+from agentic_mesh_v3.compose import render_role_services_compose
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
@@ -21,6 +23,7 @@ from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import build_document_library_adapter
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.observability import TelemetrySettings
 from agentic_mesh_v3.observability import configure_observability
 from agentic_mesh_v3.project_config import load_project_config
@@ -92,6 +95,20 @@ def main(argv: list[str] | None = None) -> int:
     run_service_parser.add_argument("--worker-model")
     run_service_parser.add_argument("--worker-reasoning-effort")
     run_service_parser.add_argument("--worker-sandbox-mode")
+
+    materialize_parser = subparsers.add_parser("materialize-agent-configs")
+    materialize_parser.add_argument("--image", required=True)
+    materialize_parser.add_argument("--source-repo", type=Path, required=True)
+    materialize_parser.add_argument("--organisation-config-repo", type=Path, required=True)
+    materialize_parser.add_argument("--project-config-repo", type=Path, required=True)
+    materialize_parser.add_argument("--agent-config-root", type=Path, required=True)
+    materialize_parser.add_argument("--runtime-state-dir", type=Path, required=True)
+    materialize_parser.add_argument("--document-library-root", type=Path, required=True)
+    materialize_parser.add_argument("--role-templates-dir", type=Path, required=True)
+    materialize_parser.add_argument("--organisation-instructions-file", type=Path)
+    materialize_parser.add_argument("--tool-instructions-file", type=Path)
+    materialize_parser.add_argument("--compose-output", type=Path)
+    materialize_parser.add_argument("--compose-network", default="agentic-mesh")
 
     tool_parser = subparsers.add_parser("tool-call")
     tool_parser.add_argument("--role-instance-id", required=True)
@@ -191,6 +208,10 @@ def main(argv: list[str] | None = None) -> int:
         results = _run_agent_service(args)
         print(json.dumps({"results": [result.__dict__ for result in results]}, indent=2))
         return 0
+    if args.command == "materialize-agent-configs":
+        result = _materialize_agent_configs(args)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
     if args.command == "tool-call":
         db = V3Database(args.db)
         try:
@@ -289,6 +310,56 @@ def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | No
         LocalTeamsBridge(broker, stream=config.broker.stream, role_ids=role_ids),
         role_identities=teams_role_identities_from_project_config(config),
     )
+
+
+def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
+    project_config_path = getattr(args, "project_config", None)
+    if project_config_path is None:
+        raise ValueError("--project-config is required for materialize-agent-configs")
+    config = load_project_config(project_config_path)
+    materialized = materialize_project_agent_configs(
+        project_config=config,
+        image=args.image,
+        source_repo=args.source_repo,
+        organisation_config_repo=args.organisation_config_repo,
+        project_config_repo=args.project_config_repo,
+        agent_config_root=args.agent_config_root,
+        runtime_state_dir=args.runtime_state_dir,
+        document_library_root=args.document_library_root,
+        role_templates_dir=args.role_templates_dir,
+        organisation_instructions=_read_text_or_default(
+            args.organisation_instructions_file,
+            "No organisation-specific instructions configured.",
+        ),
+        raci=DEFAULT_SDLC_RACI,
+        tool_instructions=_read_text_or_default(
+            args.tool_instructions_file,
+            "Use approved Agentic Mesh safe-output tools for durable effects.",
+        ),
+    )
+    compose_output = None
+    if args.compose_output is not None:
+        args.compose_output.parent.mkdir(parents=True, exist_ok=True)
+        args.compose_output.write_text(
+            render_role_services_compose(
+                [item.container_spec for item in materialized],
+                network_name=args.compose_network,
+            ),
+            encoding="utf-8",
+        )
+        compose_output = str(args.compose_output)
+    return {
+        "project_id": config.project_id,
+        "role_instances": [item.container_spec.role_instance_id for item in materialized],
+        "written_files": [str(path) for item in materialized for path in item.written_files],
+        "compose_output": compose_output,
+    }
+
+
+def _read_text_or_default(path: Path | None, default: str) -> str:
+    if path is None:
+        return default
+    return path.read_text(encoding="utf-8")
 
 
 def _run_agent_once(args: argparse.Namespace):

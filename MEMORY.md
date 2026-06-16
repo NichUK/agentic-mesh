@@ -169,3 +169,8 @@ V3 now has a Compose renderer for role services. It turns materialized
 `RoleContainerSpec` values into one Docker Compose service per role instance,
 using the generated `run-agent-service` command, stable mounts, environment,
 and a configured network name.
+
+The `materialize-agent-configs` CLI command now materializes per-role agent
+config folders from `project.yaml`, role templates, organisation/tool
+instruction files, and explicit external path mounts. It can also write the
+Compose role-services YAML in the same run via `--compose-output`.
