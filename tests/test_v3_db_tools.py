@@ -369,6 +369,51 @@ def test_v3_release_deploy_failure_moves_work_to_recovering(tmp_path: Path) -> N
     assert detail.releases[0].rollback_plan == "Keep previous runtime active."
 
 
+def test_v3_release_deploy_timeout_moves_work_to_recovering(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Deploy runtime",
+            description="Needs runtime deployment.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+        tools = V3ToolService(
+            db,
+            deployment_targets={
+                "slow-target": CommandDeploymentTarget(
+                    target_id="slow-target",
+                    command=(sys.executable, "-c", "import time; time.sleep(5)"),
+                    rollback_plan="Keep previous runtime active.",
+                    timeout_seconds=1,
+                )
+            },
+        )
+
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.deploy",
+            payload={
+                "work_item_id": "work-1",
+                "target_id": "slow-target",
+                "scope": "Runtime release",
+                "residual_risks": "Deployment timed out.",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "recovering"
+    assert "Deployment target `slow-target` failed." in detail.next_action
+    assert "timed out after 1 seconds" in detail.next_action
+    assert detail.releases[0].status == "failed"
+    assert detail.releases[0].deployment_result.startswith("Deployment command timed out")
+
+
 def test_v3_release_close_requires_release_disposition(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

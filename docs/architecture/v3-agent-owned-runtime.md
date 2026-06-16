@@ -363,10 +363,10 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   `release_deployment_targets` are loaded from `project.yaml` and passed into
   the safe-output tool service, so `release.deploy` uses configured project
   targets rather than ad hoc runtime commands. If a deployment target fails,
-  the release record is still written with status `failed` and the work item is
-  moved to `recovering` with the deployment output in `next_action`, so the
-  Release Manager can coordinate rollback or retry instead of leaving a silent
-  failed release record.
+  including timeout failures, the release record is still written with status
+  `failed` and the work item is moved to `recovering` with the deployment
+  output in `next_action`, so the Release Manager can coordinate rollback or
+  retry instead of leaving a silent failed release record.
 
 ## Artifact Library
 
