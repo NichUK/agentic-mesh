@@ -5,6 +5,7 @@ from pathlib import Path
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
 from agentic_mesh_v3.lifecycle import plan_lifecycle_action
+from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
 from agentic_mesh_v3.reporting import AgentStatus
 
 
@@ -110,3 +111,61 @@ def test_lifecycle_keeps_minimum_warm_instance_running() -> None:
 
     assert decision.action == "none"
     assert "minimum warm pool" in decision.reason
+
+
+def test_lifecycle_batch_hibernates_only_idle_instances_above_warm_pool() -> None:
+    decisions = plan_lifecycle_actions(
+        [
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.engineering.1",
+                container_state="running",
+                heartbeat_at="2026-06-15T10:00:00+00:00",
+                inbox_depth=0,
+            ),
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.engineering.2",
+                container_state="running",
+                heartbeat_at="2026-06-15T10:00:00+00:00",
+                inbox_depth=0,
+            ),
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.engineering.3",
+                container_state="running",
+                heartbeat_at="2026-06-15T10:00:00+00:00",
+                inbox_depth=0,
+            ),
+        ],
+        policy=HibernationPolicy(idle_after_seconds=60, min_warm_instances_per_role=1),
+        now=datetime(2026, 6, 15, 10, 5, tzinfo=timezone.utc),
+    )
+
+    assert [decision.action for decision in decisions].count("hibernate") == 2
+    assert decisions[-1].action == "none"
+    assert "minimum warm pool" in decisions[-1].reason
+
+
+def test_lifecycle_batch_accounts_for_wakes_before_hibernating_idle_instances() -> None:
+    decisions = plan_lifecycle_actions(
+        [
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                container_state="running",
+                heartbeat_at="2026-06-15T10:00:00+00:00",
+                inbox_depth=0,
+            ),
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.product-manager.2",
+                container_state="hibernated",
+                heartbeat_at="2026-06-15T10:00:00+00:00",
+                inbox_depth=1,
+            ),
+        ],
+        policy=HibernationPolicy(idle_after_seconds=60, min_warm_instances_per_role=1),
+        now=datetime(2026, 6, 15, 10, 5, tzinfo=timezone.utc),
+    )
+
+    actions_by_agent = {decision.role_instance_id: decision.action for decision in decisions}
+    assert actions_by_agent == {
+        "agentic-mesh-dev.product-manager.2": "wake",
+        "agentic-mesh-dev.product-manager.1": "hibernate",
+    }

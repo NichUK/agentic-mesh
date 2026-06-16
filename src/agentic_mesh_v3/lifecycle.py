@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from pathlib import Path
+from typing import Iterable
 
 from agentic_mesh_v3.reporting import AgentStatus
 
@@ -104,6 +105,51 @@ def plan_lifecycle_action(
     if idle_for >= timedelta(seconds=policy.idle_after_seconds):
         return LifecycleDecision("hibernate", status.role_instance_id, f"idle for {int(idle_for.total_seconds())} seconds")
     return LifecycleDecision("none", status.role_instance_id, "idle threshold not reached")
+
+
+def plan_lifecycle_actions(
+    statuses: Iterable[AgentStatus],
+    *,
+    policy: HibernationPolicy,
+    now: datetime | None = None,
+) -> tuple[LifecycleDecision, ...]:
+    """Plan lifecycle actions across role groups while preserving warm pools."""
+
+    grouped: dict[str, list[AgentStatus]] = {}
+    for status in statuses:
+        role_id, _ = _role_and_instance(status.role_instance_id)
+        grouped.setdefault(role_id, []).append(status)
+
+    decisions: list[LifecycleDecision] = []
+    for role_id in sorted(grouped):
+        role_statuses = sorted(grouped[role_id], key=lambda status: status.role_instance_id)
+        warm_instances = sum(1 for status in role_statuses if status.container_state == "running")
+        non_running = [status for status in role_statuses if status.container_state != "running"]
+        running = [status for status in role_statuses if status.container_state == "running"]
+
+        for status in non_running:
+            decision = plan_lifecycle_action(
+                status=status,
+                policy=policy,
+                now=now,
+                warm_instances_for_role=warm_instances,
+            )
+            decisions.append(decision)
+            if decision.action in {"start", "wake"}:
+                warm_instances += 1
+
+        for status in running:
+            decision = plan_lifecycle_action(
+                status=status,
+                policy=policy,
+                now=now,
+                warm_instances_for_role=warm_instances,
+            )
+            decisions.append(decision)
+            if decision.action == "hibernate":
+                warm_instances -= 1
+
+    return tuple(decisions)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
