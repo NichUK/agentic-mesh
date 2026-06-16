@@ -26,30 +26,39 @@ BASE_TOOLS = {
     "status.update",
 }
 
+WORK_PROGRESSION_ROLES = {
+    "business-analyst",
+    "delivery-manager",
+    "engineering",
+    "enterprise-architect",
+    "platform-engineer",
+    "product-manager",
+    "project-manager",
+    "prompt-engineer",
+    "qa-engineer",
+    "release-manager",
+    "research-analyst",
+    "security-architect",
+    "solution-architect",
+    "technical-writer",
+    "ux-designer",
+}
+
 ROLE_TOOLS = {
     "project-manager": {
         "approval.request",
         "backlog.upsert",
         "work_item.reopen",
-        "work_item.update_state",
         "work_item.upsert",
     },
     "product-manager": {
         "approval.request",
         "backlog.upsert",
         "work_item.reopen",
-        "work_item.update_state",
         "work_item.upsert",
-    },
-    "delivery-manager": {
-        "work_item.update_state",
-    },
-    "engineering": {
-        "work_item.update_state",
     },
     "qa-engineer": {
         "approval.request",
-        "work_item.update_state",
     },
     "release-manager": {
         "approval.request",
@@ -57,9 +66,11 @@ ROLE_TOOLS = {
         "release.deploy",
         "release.record",
         "work_item.reopen",
-        "work_item.update_state",
     },
 }
+
+for _role_id in WORK_PROGRESSION_ROLES:
+    ROLE_TOOLS.setdefault(_role_id, set()).add("work_item.update_state")
 
 
 @dataclass(frozen=True)
