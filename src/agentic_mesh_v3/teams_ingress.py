@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+from typing import Protocol
 
 from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.connectors import StakeholderMessage
+from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.project_config import V3ProjectConfig
 
 
@@ -16,6 +19,32 @@ class TeamsRoleIdentity:
     bot_id: str | None = None
 
 
+class ConversationRecorder(Protocol):
+    def record(self, message: StakeholderMessage) -> None:
+        """Persist an inbound stakeholder message for later agent context."""
+
+
+class DatabaseConversationRecorder:
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = Path(db_path)
+
+    def record(self, message: StakeholderMessage) -> None:
+        db = V3Database(self.db_path)
+        try:
+            db.migrate()
+            db.record_conversation_message(
+                message_id=message.message_id,
+                connector=message.connector,
+                conversation_ref=message.conversation_ref,
+                source_type=message.source_type,
+                sender_ref=message.sender_ref,
+                text=message.text,
+                thread_ref=message.thread_ref,
+            )
+        finally:
+            db.close()
+
+
 class TeamsActivityRouter:
     """Route Bot Framework Teams activities into the connector-neutral bridge."""
 
@@ -24,12 +53,16 @@ class TeamsActivityRouter:
         bridge: StakeholderBridge,
         *,
         role_identities: tuple[TeamsRoleIdentity, ...] = (),
+        conversation_recorder: ConversationRecorder | None = None,
     ) -> None:
         self.bridge = bridge
         self.role_identities = role_identities
+        self.conversation_recorder = conversation_recorder
 
     def route_activity(self, activity: dict[str, Any]) -> list[str]:
         message = normalize_teams_activity(activity, role_identities=self.role_identities)
+        if self.conversation_recorder is not None:
+            self.conversation_recorder.record(message)
         return self.bridge.route_inbound(message)
 
 
