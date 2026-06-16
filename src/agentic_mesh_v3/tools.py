@@ -327,6 +327,7 @@ class V3ToolService:
         tool_name: str,
         payload: dict[str, Any],
     ) -> None:
+        _validate_stakeholder_question(payload)
         target_ref = _target_ref(payload)
         should_deliver = _optional(payload.get("target_ref") or payload.get("stakeholder_ref")) is not None
         if should_deliver and self.stakeholder_bridge is None:
@@ -464,6 +465,12 @@ class V3ToolService:
     ) -> None:
         if tool_name == "handoff.require":
             _validate_handoff_requirements(payload)
+        elif tool_name == "consult.request":
+            _validate_consult_request(payload)
+        elif tool_name == "informed.update":
+            _validate_informed_update(payload)
+        elif tool_name == "governance.record_exception":
+            _validate_governance_exception(payload)
         self.db.record_governance_record(
             record_id=str(payload.get("record_id") or f"governance-{call_id}"),
             work_item_id=_required(payload, "work_item_id"),
@@ -594,6 +601,28 @@ def _validate_handoff_requirements(payload: dict[str, Any]) -> None:
     _required(payload, "phase")
     _required(payload, "accountable_role")
     _required(payload, "required_next_action")
+
+
+def _validate_consult_request(payload: dict[str, Any]) -> None:
+    _required(payload, "work_item_id")
+    _required(payload, "target_role")
+    _required(payload, "question")
+
+
+def _validate_informed_update(payload: dict[str, Any]) -> None:
+    _required(payload, "work_item_id")
+    _required(payload, "target_role")
+    _required(payload, "message")
+
+
+def _validate_stakeholder_question(payload: dict[str, Any]) -> None:
+    _required(payload, "work_item_id")
+    _required(payload, "question")
+
+
+def _validate_governance_exception(payload: dict[str, Any]) -> None:
+    _required(payload, "work_item_id")
+    _required(payload, "reason")
 
 
 def _default_governance_status(tool_name: str) -> str:

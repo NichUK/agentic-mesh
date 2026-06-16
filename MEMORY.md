@@ -469,3 +469,8 @@ V3 lifecycle apply now records planned or executed Compose lifecycle actions
 into the event log. Executed successes update the agent container-state
 projection to `running` or `hibernated`; executed failures show as
 `lifecycle_failed` with the failure detail on `/agents`.
+
+V3 governance communication tools now validate minimum useful payloads before
+recording evidence: consults require a target role and question, informed
+updates require a target role and message, stakeholder questions require a
+question, and governance exceptions require a reason.

@@ -745,7 +745,7 @@ def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> No
             payload={
                 "work_item_id": "work-1",
                 "target_role": "project-manager",
-                "summary": "Development governance evidence is ready.",
+                "message": "Development governance evidence is ready.",
             },
         )
         tools.call(
@@ -913,6 +913,48 @@ def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path)
             assert "handoff.require requires phase" in str(exc)
         else:
             raise AssertionError("incomplete handoff requirements should fail validation")
+    finally:
+        db.close()
+
+
+def test_v3_tool_service_rejects_incomplete_governance_communication_payloads(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+        cases = [
+            (
+                "consult.request",
+                {"work_item_id": "work-1", "question": "Review this?"},
+                "target_role is required",
+            ),
+            (
+                "informed.update",
+                {"work_item_id": "work-1", "target_role": "project-manager"},
+                "message is required",
+            ),
+            (
+                "stakeholder.ask_question",
+                {"work_item_id": "work-1"},
+                "question is required",
+            ),
+            (
+                "governance.record_exception",
+                {"work_item_id": "work-1"},
+                "reason is required",
+            ),
+        ]
+        for tool_name, payload, expected_message in cases:
+            try:
+                tools.call(
+                    role_instance_id="agentic-mesh-dev.engineering.1",
+                    tool_name=tool_name,
+                    payload=payload,
+                )
+            except ValueError as exc:
+                assert expected_message in str(exc)
+            else:
+                raise AssertionError(f"{tool_name} should reject incomplete governance payload")
     finally:
         db.close()
 

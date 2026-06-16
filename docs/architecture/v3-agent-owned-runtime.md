@@ -306,7 +306,11 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   project broker config is available, publishes the response to the role that
   requested the approval so the agent can continue the work.
   `stakeholder.ask_question` records governance evidence and, when target
-  metadata is present, sends the question through the bridge.
+  metadata is present, sends the question through the bridge. Governance
+  communication tools validate their minimum routable payloads:
+  `consult.request` needs a target role and question, `informed.update` needs
+  a target role and message, stakeholder questions need a question, and
+  governance exceptions need a reason.
   `artifact.link` lets any role register an existing document-library path as a
   work-item artifact/evidence record without requiring the runtime to infer
   which files matter.
