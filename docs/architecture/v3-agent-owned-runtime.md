@@ -287,10 +287,11 @@ library, sanitizes artifact content with `bleach`, and preserves Mermaid code
 fences as controlled Mermaid render blocks so lifecycle and architecture
 diagrams can be read directly from work-item evidence.
 The `/agents` page includes each role instance's inbox/dead-letter depths,
-current work, governance waits, and database-derived memory status. Memory
-counts and last-memory timestamps come from the `role_memory` table rather
-than agent-supplied heartbeat fields, so the reporting plane reflects the
-actual source-linked cache loaded into future prompts.
+current work, last projected activity, governance waits, and database-derived
+memory status. Memory counts and last-memory timestamps come from the
+`role_memory` table rather than agent-supplied heartbeat fields, so the
+reporting plane reflects the actual source-linked cache loaded into future
+prompts.
 
 V3 observability starts with a shared telemetry facade configured from
 environment variables. Safe-output tool calls emit OpenTelemetry spans,
