@@ -19,6 +19,7 @@ from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import WorkItemDetail
 from agentic_mesh_v3.reporting import WorkItemStatus
 from agentic_mesh_v3.state_machine import StateTransition
+from agentic_mesh_v3.state_machine import TERMINAL_STATES
 from agentic_mesh_v3.state_machine import validate_state
 from agentic_mesh_v3.state_machine import validate_transition
 
@@ -296,6 +297,7 @@ class V3Database:
                     json.dumps(governance or {}, sort_keys=True),
                 ),
             )
+            self._sync_linked_backlog_item_state(work_item_id=work_item_id, state=state)
             self.record_event(
                 "work_item.upserted",
                 "work_item",
@@ -339,12 +341,40 @@ class V3Database:
                 """,
                 (state, owner_role, current_phase, next_action, work_item_id),
             )
+            self._sync_linked_backlog_item_state(work_item_id=work_item_id, state=state)
             self.record_event(
                 "work_item.state_updated",
                 "work_item",
                 work_item_id,
                 {"state": state, "owner_role": owner_role, "current_phase": current_phase, "next_action": next_action},
             )
+
+    def _sync_linked_backlog_item_state(self, *, work_item_id: str, state: str) -> None:
+        if state not in TERMINAL_STATES:
+            return
+        row = self.connection.execute(
+            """
+            SELECT queue_item_id
+            FROM backlog_items
+            WHERE linked_work_item_id=?
+            """,
+            (work_item_id,),
+        ).fetchone()
+        if row is None:
+            return
+        self.connection.execute(
+            """
+            UPDATE backlog_items SET status=?, updated_at=CURRENT_TIMESTAMP
+            WHERE queue_item_id=?
+            """,
+            (state, row["queue_item_id"]),
+        )
+        self.record_event(
+            "backlog_item.state_synced",
+            "backlog_item",
+            row["queue_item_id"],
+            {"linked_work_item_id": work_item_id, "status": state},
+        )
 
     def upsert_agent_status(self, status: AgentStatus) -> None:
         role_id = status.role_instance_id.split(".")[-2] if "." in status.role_instance_id else status.role_instance_id

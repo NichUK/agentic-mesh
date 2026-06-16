@@ -282,8 +282,17 @@ def test_v3_release_close_closes_after_no_deployment_disposition(tmp_path: Path)
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
         db.migrate()
+        db.upsert_backlog_item(
+            queue_item_id="queue-1",
+            title="Planning release",
+            summary="Planning-only.",
+            status="promoted",
+            owner_role="product-manager",
+            linked_work_item_id="work-1",
+        )
         db.upsert_work_item(
             work_item_id="work-1",
+            queue_item_id="queue-1",
             title="Planning release",
             description="Planning-only.",
             state="release_review",
@@ -314,12 +323,44 @@ def test_v3_release_close_closes_after_no_deployment_disposition(tmp_path: Path)
         )
 
         detail = db.work_item_detail("work-1")
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
     finally:
         db.close()
 
     assert detail is not None
     assert detail.state == "closed"
     assert detail.owner_role == "project-manager"
+    assert snapshot.backlog == ()
+
+
+def test_v3_terminal_work_item_state_syncs_linked_backlog_item(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_backlog_item(
+            queue_item_id="queue-1",
+            title="Build a status row",
+            summary="Add a small status row.",
+            status="promoted",
+            owner_role="product-manager",
+            linked_work_item_id="work-1",
+        )
+        db.upsert_work_item(
+            work_item_id="work-1",
+            queue_item_id="queue-1",
+            title="Build a status row",
+            description="Add a small status row.",
+            state="active",
+            owner_role="engineering",
+        )
+
+        db.update_work_item_state(work_item_id="work-1", state="superseded", next_action="Superseded by work-2.")
+
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    assert snapshot.backlog == ()
 
 
 def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None:

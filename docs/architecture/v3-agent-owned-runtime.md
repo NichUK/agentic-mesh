@@ -171,6 +171,9 @@ Work-item state is explicit and validated. V3 states are `queued`, `shaping`,
 `ready`, `active`, `waiting_human`, `waiting_agent`, `waiting_external`,
 `blocked`, `recovering`, `release_review`, `deploying`, `released`, `closed`,
 `canceled`, `superseded`, and `failed_terminal`.
+When a linked work item reaches a terminal state, the runtime read model syncs
+the associated queue/backlog item to the same terminal status so current-queue
+views do not show completed or superseded work as still active.
 
 ## Reporting
 
