@@ -149,6 +149,70 @@ def test_graph_teams_bridge_posts_threaded_markdown_reply() -> None:
     assert "<strong>Approved</strong>" in str(body["content"])
 
 
+def test_graph_teams_bridge_routes_inbound_through_configured_bridge() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    inbound_bridge = LocalTeamsBridge(broker)
+    bridge = GraphTeamsBridge(
+        transport=FakeGraphTeamsTransport(),
+        graph_base_url="https://graph.test/v1.0",
+        inbound_bridge=inbound_bridge,
+    )
+
+    subjects = bridge.route_inbound(
+        StakeholderMessage(
+            connector="teams",
+            message_id="msg-1",
+            source_type="dm",
+            sender_ref="sponsor",
+            conversation_ref="dm:product-manager",
+            text="Please respond.",
+        )
+    )
+
+    assert subjects == ["agent.product-manager"]
+    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
+    assert broker.fetch("agent-inbox", "pm")[0].payload["text"] == "Please respond."
+
+
+def test_graph_teams_bridge_can_create_broker_backed_inbound_bridge() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["project.context", "agent.product-manager.relevance"])
+    bridge = GraphTeamsBridge(
+        transport=FakeGraphTeamsTransport(),
+        graph_base_url="https://graph.test/v1.0",
+        inbound_broker=broker,
+        role_ids=("product-manager",),
+    )
+
+    subjects = bridge.route_inbound(
+        StakeholderMessage(
+            connector="teams",
+            message_id="msg-1",
+            source_type="channel",
+            sender_ref="sponsor",
+            conversation_ref="team:project/channel:project",
+            text="General project context.",
+        )
+    )
+
+    assert subjects == ["project.context", "agent.product-manager.relevance"]
+
+
+def test_graph_teams_bridge_rejects_ambiguous_inbound_configuration() -> None:
+    broker = InMemoryBrokerAdapter()
+    try:
+        GraphTeamsBridge(
+            transport=FakeGraphTeamsTransport(),
+            inbound_bridge=LocalTeamsBridge(broker),
+            inbound_broker=broker,
+        )
+    except ValueError as error:
+        assert "either inbound_bridge or inbound_broker" in str(error)
+    else:
+        raise AssertionError("ambiguous inbound configuration should fail")
+
+
 def test_graph_teams_bridge_sanitizes_agent_markdown_html() -> None:
     transport = FakeGraphTeamsTransport()
     bridge = GraphTeamsBridge(transport=transport, graph_base_url="https://graph.test/v1.0")

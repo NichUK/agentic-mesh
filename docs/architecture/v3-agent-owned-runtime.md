@@ -402,10 +402,14 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   read model so future role prompts can include recent context for the same DM
   or project-channel conversation. Recorded context preserves mentioned-role
   metadata, so agents can distinguish general project context from messages
-  explicitly aimed at one or more roles. Graph-backed outbound Teams messages render
-  agent Markdown through the existing Markdown library and sanitize the
-  resulting HTML before posting, so role replies and approvals can preserve
-  formatting without sending raw agent-authored script/style markup.
+  explicitly aimed at one or more roles. Graph-backed Teams deployments use the
+  same inbound bridge contract as local Teams routing; live inbound events must
+  provide either an explicit inbound bridge or a broker-backed bridge so
+  normalized messages are delivered to agent inboxes instead of stopping at the
+  connector boundary. Graph-backed outbound Teams messages render agent
+  Markdown through the existing Markdown library and sanitize the resulting
+  HTML before posting, so role replies and approvals can preserve formatting
+  without sending raw agent-authored script/style markup.
 - OneDrive: V3 defines the document-library port and Graph-backed OneDrive
   adapter with injectable transport. Work-item files live under
   `/documents/work-items/{work_item_id}`. Live OneDrive/SharePoint adapters
