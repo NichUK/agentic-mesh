@@ -340,6 +340,7 @@ class V3Database:
         owner_role: str | None = None,
         current_phase: str | None = None,
         next_action: str = "",
+        governance: dict[str, Any] | None = None,
     ) -> None:
         existing = self.connection.execute(
             "SELECT state FROM work_items WHERE work_item_id=?",
@@ -356,24 +357,45 @@ class V3Database:
             )
         )
         with self.connection:
-            self.connection.execute(
-                """
-                UPDATE work_items SET
-                  state=?,
-                  owner_role=COALESCE(?, owner_role),
-                  current_phase=COALESCE(?, current_phase),
-                  next_action=?,
-                  updated_at=CURRENT_TIMESTAMP
-                WHERE work_item_id=?
-                """,
-                (state, owner_role, current_phase, next_action, work_item_id),
-            )
+            if governance is None:
+                self.connection.execute(
+                    """
+                    UPDATE work_items SET
+                      state=?,
+                      owner_role=COALESCE(?, owner_role),
+                      current_phase=COALESCE(?, current_phase),
+                      next_action=?,
+                      updated_at=CURRENT_TIMESTAMP
+                    WHERE work_item_id=?
+                    """,
+                    (state, owner_role, current_phase, next_action, work_item_id),
+                )
+            else:
+                self.connection.execute(
+                    """
+                    UPDATE work_items SET
+                      state=?,
+                      owner_role=COALESCE(?, owner_role),
+                      current_phase=COALESCE(?, current_phase),
+                      next_action=?,
+                      governance_json=?,
+                      updated_at=CURRENT_TIMESTAMP
+                    WHERE work_item_id=?
+                    """,
+                    (state, owner_role, current_phase, next_action, json.dumps(governance, sort_keys=True), work_item_id),
+                )
             self._sync_linked_backlog_item_state(work_item_id=work_item_id, state=state)
             self.record_event(
                 "work_item.state_updated",
                 "work_item",
                 work_item_id,
-                {"state": state, "owner_role": owner_role, "current_phase": current_phase, "next_action": next_action},
+                {
+                    "state": state,
+                    "owner_role": owner_role,
+                    "current_phase": current_phase,
+                    "next_action": next_action,
+                    "governance": governance,
+                },
             )
 
     def reopen_work_item(

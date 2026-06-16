@@ -1238,6 +1238,12 @@ def test_v3_tool_service_records_handoff_requirements_payload(tmp_path: Path) ->
     assert detail.owner_role == "engineering"
     assert detail.current_phase == "development"
     assert detail.next_action == "Implement the signed-off product slice."
+    assert detail.governance["phase"] == "development"
+    assert detail.governance["accountable_role"] == "engineering"
+    assert detail.governance["responsible_roles"] == ["engineering"]
+    assert detail.governance["consulted_roles"] == ["qa-engineer", "solution-architect"]
+    assert detail.governance["informed_roles"] == ["project-manager", "delivery-manager"]
+    assert detail.governance["required_evidence"] == ["Implementation log and focused tests are linked."]
     assert len(detail.governance_records) == 1
     record = detail.governance_records[0]
     assert record.record_type == "handoff.require"
