@@ -7,6 +7,7 @@ from datetime import timedelta
 from datetime import timezone
 from typing import Any
 
+from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.db import V3Database
 
 
@@ -65,6 +66,35 @@ class ProjectSweepService:
                 )
             )
         return tuple(findings)
+
+    def publish_findings(
+        self,
+        broker: BrokerAdapter,
+        *,
+        stream: str,
+        findings: tuple[SweepFinding, ...],
+        project_manager_role_id: str = "project-manager",
+    ) -> tuple[str, ...]:
+        broker.ensure_stream(stream, [f"agent.{project_manager_role_id}"])
+        message_ids: list[str] = []
+        for finding in findings:
+            message = broker.publish(
+                stream,
+                f"agent.{project_manager_role_id}",
+                {
+                    "message_type": "project_sweep.finding",
+                    "work_item_id": finding.work_item_id,
+                    "title": finding.title,
+                    "state": finding.state,
+                    "owner_role": finding.owner_role,
+                    "reason": finding.reason,
+                    "next_action": finding.next_action,
+                    "updated_at": finding.updated_at,
+                    "required_action": "Review the finding and use normal tools to chase, unblock, rescope, or close the work.",
+                },
+            )
+            message_ids.append(message.message_id)
+        return tuple(message_ids)
 
 
 def _reason_for(*, row: dict[str, Any], stale_after_seconds: int, now: datetime) -> str | None:

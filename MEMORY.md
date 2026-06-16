@@ -220,3 +220,8 @@ include work item, target role, phase, accountable role, next action,
 acceptance/evidence requirements, artifact links, open decisions/risks,
 consulted/informed roles, and stakeholder follow-up, even when some lists are
 intentionally empty.
+
+Project Manager sweeps can now publish `project_sweep.finding` messages to the
+Project Manager agent inbox. The sweep remains read-only; the Project Manager
+agent receives the finding and must use normal tools to chase, unblock,
+rescope, hand off, or close work.

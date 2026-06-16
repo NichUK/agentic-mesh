@@ -4,6 +4,7 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
+from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.sweeps import ProjectSweepService
@@ -86,3 +87,38 @@ def test_cli_sweep_project_outputs_findings(tmp_path: Path, capsys) -> None:  # 
     output = capsys.readouterr().out
     assert "work-blocked" in output
     assert "work item is in blocked" in output
+
+
+def test_project_sweep_publishes_findings_to_project_manager_inbox(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-blocked",
+            title="Blocked work",
+            description="Blocked.",
+            state="blocked",
+            owner_role="engineering",
+            next_action="Chase blocker.",
+        )
+        service = ProjectSweepService(db)
+        findings = service.sweep(now=datetime(2026, 6, 15, tzinfo=timezone.utc))
+
+        message_ids = service.publish_findings(
+            broker,
+            stream="agent-inbox",
+            findings=findings,
+            project_manager_role_id="project-manager",
+        )
+        broker.ensure_consumer("agent-inbox", "pm-sweep", filter_subject="agent.project-manager")
+        messages = broker.fetch("agent-inbox", "pm-sweep")
+    finally:
+        db.close()
+
+    assert len(message_ids) == 1
+    assert messages[0].payload["message_type"] == "project_sweep.finding"
+    assert messages[0].payload["work_item_id"] == "work-blocked"
+    assert messages[0].payload["required_action"] == (
+        "Review the finding and use normal tools to chase, unblock, rescope, or close the work."
+    )
