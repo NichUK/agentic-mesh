@@ -79,6 +79,34 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
     assert snapshot.agents[0].last_memory_at is not None
 
 
+def test_v3_tool_service_rejects_missing_contract_fields_before_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="backlog.upsert",
+                payload={
+                    "queue_item_id": "queue-1",
+                    "title": "Add status page",
+                    "owner_role": "product-manager",
+                },
+            )
+        except ValueError as exc:
+            assert "summary is required for backlog.upsert" in str(exc)
+        else:
+            raise AssertionError("backlog.upsert should require summary")
+
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert calls == []
+
+
 def test_v3_work_item_upsert_materializes_minimum_governance_context(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
@@ -910,7 +938,7 @@ def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path)
                 },
             )
         except ValueError as exc:
-            assert "handoff.require requires phase" in str(exc)
+            assert "phase is required for handoff.require" in str(exc)
         else:
             raise AssertionError("incomplete handoff requirements should fail validation")
     finally:

@@ -484,3 +484,8 @@ V3 tool catalog entries now expose required payload fields through CLI/MCP
 tool discovery, and materialized agent `tools.md` files render those required
 fields beside each role-scoped tool. This keeps prompt context aligned with
 safe-output validation.
+
+V3 tool contract metadata is now shared by catalog discovery and runtime
+safe-output enforcement. `V3ToolService` validates required payload fields
+before recording a durable tool call, so incomplete tool attempts fail without
+leaving misleading call records.
