@@ -82,6 +82,15 @@ decisions. It owns the quality of prompt contracts and advises other roles when
 agent behaviour, safe-output tools, context loading, role memory, or prompt
 regression evidence affects the work.
 
+Prompt Engineer and Project Manager are peers, not parent/child roles. Project
+Manager owns project control, stale-work sweeps, governance hygiene, and
+escalation; Prompt Engineer owns specialist diagnosis and design for prompts
+and agent behaviour. Project Manager may consult Prompt Engineer when a delivery
+blocker appears to be caused by prompt wording, missing context, tool-contract
+confusion, or invalid agent output, but the consultation does not give Project
+Manager authority over prompt-design decisions or give Prompt Engineer
+authority over project sequencing.
+
 Use this role when a slice changes:
 
 - role prompts or prompt components
