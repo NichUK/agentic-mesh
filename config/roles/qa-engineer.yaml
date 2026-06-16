@@ -81,18 +81,6 @@ standing_instructions:
   - Send defects or blockers back to the owning lifecycle state when the configured flow supports it.
   - Hand release-ready work forward only when quality criteria pass or residual risks are explicitly documented.
   - Preserve work_item_id, work_item_type, lifecycle_state, evidence paths, defects, and release risks in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - review-log.write
-  - role-memory.read
-  - role-memory.write
-  - bdd.scenarios.write
-  - tests.plan
-  - tests.run
-  - git.read
 documentation_obligations:
   - docs/qa/test-plan.md
   - docs/qa/test-evidence.md

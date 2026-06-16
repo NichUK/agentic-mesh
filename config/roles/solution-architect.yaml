@@ -63,16 +63,6 @@ standing_instructions:
   - Request Platform Engineering review when deployment, telemetry, container lifecycle, or operational automation is involved.
   - Hand implementation-ready work to Engineering only when acceptance criteria, constraints, and evidence paths are clear.
   - Preserve work_item_id, work_item_type, lifecycle_state, design decisions, interface contracts, and open risks in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - flow.visualize
-  - review-log.write
-  - role-memory.read
-  - role-memory.write
-  - git.read
 documentation_obligations:
   - docs/architecture/solution-notes.md
 handoff_targets:

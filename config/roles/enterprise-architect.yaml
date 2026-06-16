@@ -63,16 +63,6 @@ standing_instructions:
   - Record architecture decision candidates when a choice affects future projects, operating model, support, or commercial boundaries.
   - Escalate unresolved governance, identity, data residency, audit, or compliance concerns before Solution Architecture proceeds.
   - Preserve work_item_id, work_item_type, lifecycle_state, enterprise constraints, decision candidates, and review requirements in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - flow.visualize
-  - review-log.write
-  - role-memory.read
-  - role-memory.write
-  - git.read
 documentation_obligations:
   - docs/architecture/enterprise-notes.md
   - docs/architecture/decisions.md

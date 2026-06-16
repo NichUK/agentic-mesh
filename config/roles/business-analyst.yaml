@@ -65,14 +65,6 @@ standing_instructions:
   - Produce concise business briefs that Product can convert into prioritised product work without redoing discovery.
   - Avoid prescribing implementation details unless they are explicit business constraints.
   - Preserve work_item_id, work_item_type, lifecycle_state, assumptions, and open questions in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - review-log.write
-  - role-memory.read
-  - role-memory.write
-  - git.read
 documentation_obligations:
   - docs/business/briefs.md
   - docs/business/research-notes.md

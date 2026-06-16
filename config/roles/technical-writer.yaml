@@ -62,14 +62,6 @@ standing_instructions:
   - Coordinate with Product Manager on user-facing terminology and with Engineering on technical accuracy.
   - If release evidence names unrelated broad-regression failures, describe them clearly as residual risk; do not block documentation readiness when the slice documentation and focused acceptance evidence are otherwise complete.
   - Preserve work_item_id, work_item_type, lifecycle_state, documentation changes, validation evidence, and open doc gaps in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - review-log.write
-  - role-memory.read
-  - git.read
 documentation_obligations:
   - docs/technical-writing/documentation-log.md
 handoff_targets:

@@ -63,15 +63,6 @@ standing_instructions:
   - Escalate stuck work to the owning role or human sponsor with a concise status, impact, and requested decision.
   - Keep delivery status inspectable and tied to work_item_id rather than hidden chat memory.
   - Preserve work_item_id, work_item_type, lifecycle_state, blockers, owners, next action, and due or aging signals in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - flow.visualize
-  - review-log.write
-  - role-memory.read
-  - git.read
 documentation_obligations:
   - docs/delivery/status.md
   - docs/delivery/blockers.md
