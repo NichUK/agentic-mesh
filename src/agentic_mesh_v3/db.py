@@ -14,6 +14,7 @@ from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import evaluate_governance_checklist
 from agentic_mesh_v3.reporting import AgentStatus
+from agentic_mesh_v3.reporting import AgentRunStatus
 from agentic_mesh_v3.reporting import ApprovalStatus
 from agentic_mesh_v3.reporting import ArtifactStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
@@ -109,6 +110,19 @@ class V3Database:
                   dead_letter_depth INTEGER NOT NULL DEFAULT 0,
                   governance_waits_json TEXT NOT NULL DEFAULT '[]',
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_runs (
+                  run_id TEXT PRIMARY KEY,
+                  role_instance_id TEXT NOT NULL,
+                  message_id TEXT NOT NULL,
+                  work_item_id TEXT,
+                  subject TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  tool_calls_json TEXT NOT NULL DEFAULT '[]',
+                  error TEXT,
+                  started_at TEXT NOT NULL,
+                  completed_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -210,6 +224,7 @@ class V3Database:
             )
             _ensure_column(self.connection, "conversations", "text_sha256", "TEXT")
             _ensure_column(self.connection, "conversations", "raw_expired_at", "TEXT")
+            _ensure_column(self.connection, "agent_runs", "work_item_id", "TEXT")
 
     def record_event(
         self,
@@ -613,6 +628,69 @@ class V3Database:
                 governance_waits=governance_waits,
             )
         )
+
+    def record_agent_run(
+        self,
+        *,
+        run_id: str,
+        role_instance_id: str,
+        message_id: str,
+        subject: str,
+        status: str,
+        work_item_id: str | None = None,
+        tool_calls: tuple[str, ...] = (),
+        error: str | None = None,
+        started_at: str,
+        completed_at: str,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO agent_runs(
+                  run_id, role_instance_id, message_id, work_item_id, subject, status,
+                  tool_calls_json, error, started_at, completed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  role_instance_id=excluded.role_instance_id,
+                  message_id=excluded.message_id,
+                  work_item_id=excluded.work_item_id,
+                  subject=excluded.subject,
+                  status=excluded.status,
+                  tool_calls_json=excluded.tool_calls_json,
+                  error=excluded.error,
+                  started_at=excluded.started_at,
+                  completed_at=excluded.completed_at
+                """,
+                (
+                    run_id,
+                    role_instance_id,
+                    message_id,
+                    work_item_id,
+                    subject,
+                    status,
+                    json.dumps(list(tool_calls), sort_keys=True),
+                    error,
+                    started_at,
+                    completed_at,
+                ),
+            )
+            self.record_event(
+                "agent.run_recorded",
+                "agent",
+                role_instance_id,
+                {
+                    "run_id": run_id,
+                    "message_id": message_id,
+                    "work_item_id": work_item_id,
+                    "subject": subject,
+                    "status": status,
+                    "tool_call_count": len(tool_calls),
+                    "error": error,
+                    "started_at": started_at,
+                    "completed_at": completed_at,
+                },
+            )
 
     def record_tool_call(
         self,
@@ -1176,18 +1254,9 @@ class V3Database:
                 """
             )
         )
+        latest_runs = self._latest_agent_runs()
         agents = tuple(
-            AgentStatus(
-                role_instance_id=row["role_instance_id"],
-                container_state=row["container_state"],
-                heartbeat_at=row["heartbeat_at"],
-                current_work=row["current_work"],
-                inbox_depth=row["inbox_depth"],
-                dead_letter_depth=row["dead_letter_depth"],
-                governance_waits=tuple(json.loads(row["governance_waits_json"] or "[]")),
-                memory_count=row["memory_count"],
-                last_memory_at=row["last_memory_at"],
-            )
+            self._agent_status_from_row(row, latest_runs.get(row["role_instance_id"]))
             for row in self.connection.execute(
                 """
                 SELECT
@@ -1314,6 +1383,19 @@ class V3Database:
                 (work_item_id,),
             )
         )
+        agent_runs = tuple(
+            _agent_run_status(row)
+            for row in self.connection.execute(
+                """
+                SELECT run_id, role_instance_id, message_id, work_item_id, subject, status,
+                       tool_calls_json, error, started_at, completed_at
+                FROM agent_runs
+                WHERE work_item_id=?
+                ORDER BY completed_at ASC, run_id ASC
+                """,
+                (work_item_id,),
+            )
+        )
         governance = json.loads(work["governance_json"] or "{}")
         context = _governance_context_from_values(
             work_item_id=work["work_item_id"],
@@ -1340,6 +1422,7 @@ class V3Database:
             approvals=approvals,
             releases=releases,
             governance_records=governance_records,
+            agent_runs=agent_runs,
             governance_checklist=governance_checklist,
         )
 
@@ -1376,6 +1459,58 @@ class V3Database:
             )
         ]
 
+    def list_agent_runs(self, role_instance_id: str | None = None) -> list[dict[str, Any]]:
+        if role_instance_id is None:
+            rows = self.connection.execute(
+                """
+                SELECT run_id, role_instance_id, message_id, work_item_id, subject, status,
+                       tool_calls_json, error, started_at, completed_at
+                FROM agent_runs
+                ORDER BY completed_at ASC, run_id ASC
+                """
+            )
+        else:
+            rows = self.connection.execute(
+                """
+                SELECT run_id, role_instance_id, message_id, work_item_id, subject, status,
+                       tool_calls_json, error, started_at, completed_at
+                FROM agent_runs
+                WHERE role_instance_id=?
+                ORDER BY completed_at ASC, run_id ASC
+                """,
+                (role_instance_id,),
+            )
+        return [_agent_run_row(row) for row in rows]
+
+    def _latest_agent_runs(self) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for row in self.connection.execute(
+            """
+            SELECT run_id, role_instance_id, message_id, work_item_id, subject, status,
+                   tool_calls_json, error, started_at, completed_at
+            FROM agent_runs
+            ORDER BY completed_at ASC, run_id ASC
+            """
+        ):
+            latest[row["role_instance_id"]] = _agent_run_row(row)
+        return latest
+
+    def _agent_status_from_row(self, row: sqlite3.Row, latest_run: dict[str, Any] | None) -> AgentStatus:
+        return AgentStatus(
+            role_instance_id=row["role_instance_id"],
+            container_state=row["container_state"],
+            heartbeat_at=row["heartbeat_at"],
+            current_work=row["current_work"],
+            inbox_depth=row["inbox_depth"],
+            dead_letter_depth=row["dead_letter_depth"],
+            governance_waits=tuple(json.loads(row["governance_waits_json"] or "[]")),
+            memory_count=row["memory_count"],
+            last_memory_at=row["last_memory_at"],
+            last_run_status=str(latest_run["status"]) if latest_run else None,
+            last_run_at=str(latest_run["completed_at"]) if latest_run else None,
+            last_run_error=str(latest_run["error"]) if latest_run and latest_run.get("error") else None,
+        )
+
 
 def _tuple_strings(value: object) -> tuple[str, ...]:
     if value is None:
@@ -1385,6 +1520,28 @@ def _tuple_strings(value: object) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value if str(item))
     return (str(value),)
+
+
+def _agent_run_row(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["tool_calls"] = tuple(json.loads(data.pop("tool_calls_json") or "[]"))
+    return data
+
+
+def _agent_run_status(row: sqlite3.Row) -> AgentRunStatus:
+    data = _agent_run_row(row)
+    return AgentRunStatus(
+        run_id=data["run_id"],
+        role_instance_id=data["role_instance_id"],
+        message_id=data["message_id"],
+        work_item_id=data["work_item_id"],
+        subject=data["subject"],
+        status=data["status"],
+        tool_calls=data["tool_calls"],
+        error=data["error"],
+        started_at=data["started_at"],
+        completed_at=data["completed_at"],
+    )
 
 
 def _governance_attention_reason(checklist: GovernanceChecklist | None) -> str:
