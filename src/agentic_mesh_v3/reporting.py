@@ -17,6 +17,8 @@ class AgentStatus:
     inbox_depth: int = 0
     dead_letter_depth: int = 0
     governance_waits: tuple[str, ...] = ()
+    memory_count: int = 0
+    last_memory_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -128,9 +130,12 @@ def render_status_page(snapshot: ReportingSnapshot) -> str:
 
 def render_agents_page(snapshot: ReportingSnapshot) -> str:
     rows = [
-        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Dead Letters</th><th>Current Work</th><th>Governance Waits</th></tr>"
+        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Dead Letters</th><th>Memory</th><th>Current Work</th><th>Governance Waits</th></tr>"
     ]
     for agent in snapshot.agents:
+        memory = f"{agent.memory_count} entries"
+        if agent.last_memory_at:
+            memory = f"{memory}<br><small>Last: {html.escape(agent.last_memory_at)}</small>"
         rows.append(
             "<tr>"
             f"<td>{html.escape(agent.role_instance_id)}</td>"
@@ -138,6 +143,7 @@ def render_agents_page(snapshot: ReportingSnapshot) -> str:
             f"<td>{html.escape(agent.heartbeat_at or 'unknown')}</td>"
             f"<td>{agent.inbox_depth}</td>"
             f"<td>{agent.dead_letter_depth}</td>"
+            f"<td>{memory}</td>"
             f"<td>{html.escape(agent.current_work or '')}</td>"
             f"<td>{html.escape(', '.join(agent.governance_waits))}</td>"
             "</tr>"
