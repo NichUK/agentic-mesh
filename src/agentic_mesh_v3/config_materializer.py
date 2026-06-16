@@ -156,7 +156,7 @@ def materialize_project_agent_configs(
                 system_instructions=system_instructions,
                 role_prompt=_read_role_template(role_templates_dir, role),
                 organisation_instructions=organisation_instructions,
-                project_instructions=_role_project_instructions(role),
+                project_instructions=_role_project_instructions(role, project_config),
                 tool_instructions=_role_tool_instructions(role.role_id, tool_instructions),
                 raci=raci,
             )
@@ -187,10 +187,24 @@ def _read_role_template(role_templates_dir: Path, role: V3RoleInstanceConfig) ->
     return load_role_template(path, expected_role_id=template_id).as_prompt_text()
 
 
-def _role_project_instructions(role: V3RoleInstanceConfig) -> str:
+def _role_project_instructions(role: V3RoleInstanceConfig, project_config: V3ProjectConfig) -> str:
+    lines = [
+        "## Project Document Library",
+        "",
+        f"- Document library root path: `{project_config.document_library.root_path}`",
+        f"- Documentation framework: `{project_config.document_library.structure_policy}`",
+        "- Work-item dossiers live under `/documents/work-items/{work_item_id}`.",
+        "- Each work-item dossier must maintain `index.md`; the root work-item index is `/documents/work-items/index.md`.",
+        "- Durable system, architecture, product, engineering, QA, operations, release, risk, decision, and programming documentation also belongs in the document library.",
+        "",
+        "## Role Instructions",
+        "",
+    ]
     if not role.instructions:
-        return "No project-specific role instructions."
-    return "\n".join(f"- {instruction}" for instruction in role.instructions)
+        lines.append("- No project-specific role instructions.")
+    else:
+        lines.extend(f"- {instruction}" for instruction in role.instructions)
+    return "\n".join(lines)
 
 
 def _role_tool_instructions(role_id: str, base_instructions: str) -> str:

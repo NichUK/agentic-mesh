@@ -48,6 +48,11 @@
         "root": { "type": "string" },
         "drive_id": { "type": "string" },
         "root_path": { "type": "string", "default": "/documents" },
+        "structure_policy": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "default": "togaf-sdlc-v1"
+        },
         "graph_base_url": { "type": "string", "default": "https://graph.microsoft.com/v1.0" }
       }
     },

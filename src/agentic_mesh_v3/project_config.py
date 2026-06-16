@@ -25,6 +25,7 @@ class V3DocumentLibraryConfig:
     root: Path | None = None
     drive_id: str | None = None
     root_path: str = "/documents"
+    structure_policy: str = "togaf-sdlc-v1"
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,8 @@ def load_project_config(path: Path) -> V3ProjectConfig:
     flow_template = _optional(flow_raw.get("template"))
     if flow_template is not None:
         _validate_identifier("flow.template", flow_template)
+    structure_policy = str(docs_raw.get("structure_policy") or "togaf-sdlc-v1")
+    _validate_identifier("document_library.structure_policy", structure_policy)
     target_repositories_raw = _target_repositories_raw(raw)
     return V3ProjectConfig(
         project_id=project_id,
@@ -161,6 +164,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
             root=Path(str(docs_raw["root"])) if docs_raw.get("root") else None,
             drive_id=_optional(docs_raw.get("drive_id")),
             root_path=str(docs_raw.get("root_path") or "/documents"),
+            structure_policy=structure_policy,
         ),
         roles=tuple(_load_role(role_id, _mapping(role_raw), raw) for role_id, role_raw in sorted(roles_raw.items())),
         release_deployment_targets=tuple(
