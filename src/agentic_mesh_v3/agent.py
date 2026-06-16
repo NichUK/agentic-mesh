@@ -496,6 +496,7 @@ class RoleAgentService:
         memory_summary = self.memory.load_summary(self.config.role_instance_id)
         conversation_summary = self._conversation_summary(message)
         reply_routing = _reply_routing_prompt_section(message.payload)
+        relevance_guidance = _relevance_check_prompt_section(message)
         lines = [
             "<agentic-mesh-v3-agent>",
             f"<role-instance>{self.config.role_instance_id}</role-instance>",
@@ -522,6 +523,7 @@ class RoleAgentService:
                 conversation_summary or "No recent conversation context recorded.",
                 "</conversation-context>",
                 reply_routing,
+                relevance_guidance,
                 "<message-metadata>",
                 f"<message-id>{message.message_id}</message-id>",
                 f"<subject>{message.subject}</subject>",
@@ -595,6 +597,29 @@ def _reply_routing_prompt_section(payload: dict[str, object]) -> str:
         lines.append(f"<reply-thread-ref>{thread_ref}</reply-thread-ref>")
     lines.append("</reply-routing>")
     return "\n".join(lines)
+
+
+def _relevance_check_prompt_section(message: AgentMessage) -> str:
+    route_type = _optional_prompt_value(message.payload.get("route_type"))
+    if route_type not in {"project_channel_relevance_check", "team_wide_relevance_check"}:
+        return "<relevance-check>Not a relevance-check assignment.</relevance-check>"
+    source_message_id = _optional_prompt_value(message.payload.get("source_message_id")) or message.message_id
+    conversation_ref = _optional_prompt_value(message.payload.get("conversation_ref")) or "unspecified"
+    return "\n".join(
+        [
+            "<relevance-check>",
+            f"<route-type>{route_type}</route-type>",
+            f"<source-message-id>{source_message_id}</source-message-id>",
+            f"<conversation-ref>{conversation_ref}</conversation-ref>",
+            "This is a lightweight project-channel relevance check, not automatic durable work.",
+            "First decide whether your role has material specialist input for this message.",
+            "Always call `relevance.record` with `source_message_id`, `conversation_ref`, `relevance_score` from 0 to 100, and `rationale`.",
+            "If you have useful specialist input for the human/channel, call `status.reply` using the provided reply-routing context.",
+            "If you have no useful specialist input, do not send a stakeholder/channel reply; finish with `status.complete` summarising that no response was needed.",
+            "If the message reveals durable work, use the appropriate backlog/work/governance tools and then confirm what you did.",
+            "</relevance-check>",
+        ]
+    )
 
 
 def _optional_prompt_value(value: object) -> str | None:
