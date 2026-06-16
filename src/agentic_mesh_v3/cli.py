@@ -52,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("status-json")
     sweep_parser = subparsers.add_parser("sweep-project")
     sweep_parser.add_argument("--stale-after-seconds", type=int, default=3600)
+    sweep_parser.add_argument("--publish-to-project-manager", action="store_true")
+    sweep_parser.add_argument("--project-manager-role-id", default="project-manager")
     approval_parser = subparsers.add_parser("record-approval-response")
     approval_parser.add_argument("--approval-id", required=True)
     approval_parser.add_argument("--status", required=True, choices=["approved", "rejected", "changes_requested"])
@@ -166,8 +168,32 @@ def main(argv: list[str] | None = None) -> int:
         db = V3Database(args.db)
         try:
             db.migrate()
-            findings = ProjectSweepService(db).sweep(stale_after_seconds=args.stale_after_seconds)
-            print(json.dumps({"findings": [finding.to_dict() for finding in findings]}, indent=2))
+            service = ProjectSweepService(db)
+            findings = service.sweep(stale_after_seconds=args.stale_after_seconds)
+            published_message_ids: tuple[str, ...] = ()
+            if args.publish_to_project_manager:
+                if args.project_config is None:
+                    raise ValueError("--project-config is required when publishing sweep findings")
+                project_config = load_project_config(args.project_config)
+                broker = build_broker_adapter(
+                    adapter=project_config.broker.adapter,
+                    servers=project_config.broker.servers,
+                )
+                published_message_ids = service.publish_findings(
+                    broker,
+                    stream=project_config.broker.stream,
+                    findings=findings,
+                    project_manager_role_id=args.project_manager_role_id,
+                )
+            print(
+                json.dumps(
+                    {
+                        "findings": [finding.to_dict() for finding in findings],
+                        "published_message_ids": list(published_message_ids),
+                    },
+                    indent=2,
+                )
+            )
         finally:
             db.close()
         return 0

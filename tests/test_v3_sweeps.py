@@ -89,6 +89,71 @@ def test_cli_sweep_project_outputs_findings(tmp_path: Path, capsys) -> None:  # 
     assert "work item is in blocked" in output
 
 
+def test_cli_sweep_project_can_publish_findings_to_project_manager(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: {(tmp_path / "documents").as_posix()}
+roles:
+  project-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-blocked",
+            title="Blocked work",
+            description="Blocked.",
+            state="blocked",
+            owner_role="project-manager",
+        )
+    finally:
+        db.close()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "sweep-project",
+            "--publish-to-project-manager",
+        ]
+    )
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "work-blocked" in output
+    assert "published_message_ids" in output
+    assert "msg-" in output
+
+
+def test_cli_sweep_project_publish_requires_project_config(tmp_path: Path) -> None:
+    db_path = tmp_path / "v3.sqlite3"
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+    finally:
+        db.close()
+
+    try:
+        main(["--db", str(db_path), "sweep-project", "--publish-to-project-manager"])
+    except ValueError as exc:
+        assert "--project-config is required" in str(exc)
+    else:
+        raise AssertionError("publishing sweep findings should require project config")
+
+
 def test_project_sweep_publishes_findings_to_project_manager_inbox(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     db = V3Database(tmp_path / "v3.sqlite3")

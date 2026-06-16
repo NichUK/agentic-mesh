@@ -225,3 +225,8 @@ Project Manager sweeps can now publish `project_sweep.finding` messages to the
 Project Manager agent inbox. The sweep remains read-only; the Project Manager
 agent receives the finding and must use normal tools to chase, unblock,
 rescope, hand off, or close work.
+
+The V3 CLI exposes sweep publication through `sweep-project
+--publish-to-project-manager` using the configured project broker. This gives
+operators and future schedulers a standard route to wake the Project Manager
+agent for stale/blocked work without giving the runtime lifecycle authority.

@@ -94,7 +94,9 @@ tools. The sweep service does not auto-close, auto-reopen, or silently advance
 work. Sweep findings can be published to the Project Manager inbox as
 `project_sweep.finding` messages, giving the agent the work item, owner,
 reason, next action, and required follow-up while preserving agent ownership of
-the response.
+the response. Operators or schedulers can use `sweep-project
+--publish-to-project-manager` with project broker config to enqueue those
+findings without manually scripting against the broker.
 
 ## Governance
 
