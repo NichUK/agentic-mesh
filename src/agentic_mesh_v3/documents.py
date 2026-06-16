@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from typing import TYPE_CHECKING
 from urllib.parse import quote
+
+if TYPE_CHECKING:
+    from agentic_mesh_v3.project_config import V3DocumentLibraryConfig
 
 
 @dataclass(frozen=True)
@@ -201,6 +205,31 @@ class UrlLibGraphDocumentTransport:
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
         return headers
+
+
+def build_document_library_adapter(
+    config: "V3DocumentLibraryConfig",
+    *,
+    access_token: str | None = None,
+    graph_base_url: str = "https://graph.microsoft.com/v1.0",
+    transport: GraphDocumentTransport | None = None,
+) -> DocumentLibraryAdapter:
+    adapter = config.adapter.casefold().replace("_", "-")
+    if adapter in {"local", "filesystem", "file", "git"}:
+        if config.root is None:
+            raise ValueError("document_library.root is required for local/filesystem/git document libraries")
+        return LocalDocumentLibraryAdapter(config.root)
+    if adapter in {"onedrive", "sharepoint"}:
+        if not config.drive_id:
+            raise ValueError("document_library.drive_id is required for OneDrive/SharePoint document libraries")
+        return OneDriveDocumentLibraryAdapter(
+            config.drive_id,
+            access_token=access_token,
+            root_path=config.root_path,
+            graph_base_url=graph_base_url,
+            transport=transport,
+        )
+    raise ValueError(f"unsupported document library adapter: {config.adapter}")
 
 
 def work_item_index_path(work_item_id: str) -> str:

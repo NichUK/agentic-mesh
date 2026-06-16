@@ -37,7 +37,7 @@ def test_status_handler_snapshot_uses_v3_db(tmp_path: Path) -> None:
 
     Handler.db_path = tmp_path / "v3.sqlite3"
     Handler.project_id = "agentic-mesh-dev"
-    Handler.document_library_root = tmp_path / "documents"
+    Handler.document_library = LocalDocumentLibraryAdapter(tmp_path / "documents")
 
     # Bypass BaseHTTPRequestHandler construction; _snapshot only uses class attrs.
     handler = object.__new__(Handler)

@@ -13,7 +13,6 @@ import markdown
 
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
-from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.reporting import artifact_viewer_path
 from agentic_mesh_v3.reporting import render_agents_page
 from agentic_mesh_v3.reporting import render_status_page
@@ -23,7 +22,7 @@ from agentic_mesh_v3.reporting import render_work_item_page
 class V3StatusHandler(BaseHTTPRequestHandler):
     db_path: Path
     project_id: str
-    document_library_root: Path | None = None
+    document_library: DocumentLibraryAdapter | None = None
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -82,11 +81,10 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         finally:
             db.close()
         relative_path = artifact["relative_path"] if artifact else artifact_viewer_path(work_item_id, filename)
-        root = self.document_library_root
-        if root is None:
+        adapter = self.document_library
+        if adapter is None:
             self.send_error(HTTPStatus.NOT_FOUND, "document library root is not configured")
             return
-        adapter = LocalDocumentLibraryAdapter(root)
         if not adapter.exists(relative_path):
             self.send_error(HTTPStatus.NOT_FOUND, f"artifact not found: {relative_path}")
             return
@@ -130,14 +128,14 @@ def serve(
     project_id: str,
     host: str = "127.0.0.1",
     port: int = 8080,
-    document_library_root: Path | None = None,
+    document_library: DocumentLibraryAdapter | None = None,
 ) -> None:
     class Handler(V3StatusHandler):
         pass
 
     Handler.db_path = db_path
     Handler.project_id = project_id
-    Handler.document_library_root = document_library_root
+    Handler.document_library = document_library
     server = ThreadingHTTPServer((host, port), Handler)
     server.serve_forever()
 

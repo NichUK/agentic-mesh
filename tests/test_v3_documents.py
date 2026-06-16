@@ -4,9 +4,11 @@ from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.documents import OneDriveDocumentLibraryAdapter
 from agentic_mesh_v3.documents import WorkItemIndex
+from agentic_mesh_v3.documents import build_document_library_adapter
 from agentic_mesh_v3.documents import work_item_index_path
 from agentic_mesh_v3.documents import write_root_work_item_index
 from agentic_mesh_v3.documents import write_work_item_index
+from agentic_mesh_v3.project_config import V3DocumentLibraryConfig
 
 
 def test_work_item_index_path_uses_documents_work_item_shape() -> None:
@@ -92,3 +94,28 @@ def test_onedrive_document_library_uses_documents_root_and_graph_paths() -> None
     content_url = "https://graph.test/v1.0/drives/drive-123/root:/documents/work-items/work-1/index.md:/content"
     assert adapter.read_text("work-items/work-1/index.md") == "# Work One"
     assert transport.text_by_url[content_url] == "# Work One"
+
+
+def test_document_library_factory_builds_local_adapter(tmp_path: Path) -> None:
+    adapter = build_document_library_adapter(
+        V3DocumentLibraryConfig(adapter="filesystem", root=tmp_path / "documents")
+    )
+
+    ref = adapter.write_text("work-items/work-1/index.md", "# Work One")
+
+    assert ref.relative_path == "work-items/work-1/index.md"
+    assert (tmp_path / "documents" / "work-items" / "work-1" / "index.md").exists()
+
+
+def test_document_library_factory_builds_onedrive_adapter() -> None:
+    transport = FakeGraphDocumentTransport()
+    adapter = build_document_library_adapter(
+        V3DocumentLibraryConfig(adapter="onedrive", drive_id="drive-123", root_path="/documents"),
+        transport=transport,
+    )
+
+    adapter.write_text("work-items/work-1/index.md", "# Work One")
+
+    assert transport.puts[0][0] == (
+        "https://graph.microsoft.com/v1.0/drives/drive-123/root:/documents/work-items/work-1/index.md:/content"
+    )
