@@ -205,6 +205,85 @@ roles:
     assert (docs_root / "work-items" / "index.md").exists()
 
 
+def test_cli_local_e2e_dogfood_uses_project_sponsor_contact_for_approval(
+    tmp_path: Path,
+    capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    docs_root = tmp_path / "project-documents"
+    project_config = tmp_path / "project.yaml"
+    python_exe = sys.executable.replace("\\", "/")
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+connectors:
+  teams:
+    adapter: local
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: dm:sponsor
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - '{python_exe}'
+      - -c
+      - print('configured sponsor dogfood deployed')
+    timeout_seconds: 30
+    rollback_summary: Re-run the previous configured dogfood target.
+roles:
+  product-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "local-e2e-dogfood",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        approval = db.approval_detail("approval-v3-local-product")
+        deliveries = db.list_outbound_deliveries(work_item_id="work-v3-local-e2e")
+        release = db.connection.execute(
+            """
+            SELECT status, deployment_result
+            FROM releases
+            WHERE work_item_id=?
+            """,
+            ("work-v3-local-e2e",),
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert result == 0
+    assert output["status"] == "local_e2e_dogfood_complete"
+    assert approval is not None
+    assert approval["status"] == "approved"
+    assert approval["response"] == "approval-v3-local-product approved"
+    assert any(delivery["purpose"] == "approval.request" for delivery in deliveries)
+    assert any(delivery["purpose"] == "messaging.send" for delivery in deliveries)
+    assert any(delivery["target_ref"] == "dm:sponsor" for delivery in deliveries)
+    assert release["status"] == "deployed"
+    assert "configured sponsor dogfood deployed" in release["deployment_result"]
+
+
 def test_cli_local_e2e_dogfood_requires_onedrive_token_for_project_document_library(
     tmp_path: Path,
     monkeypatch,
