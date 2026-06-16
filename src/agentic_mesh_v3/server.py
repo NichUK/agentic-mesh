@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import html
 import re
+from dataclasses import asdict
+from dataclasses import is_dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -41,6 +43,10 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             return
         if path == "/healthz":
             self._send_json({"status": "ok", "runtime": "agentic_mesh_v3"})
+            return
+        if path.startswith("/work-item/") and path.endswith(".json"):
+            work_item_id = unquote(path.removeprefix("/work-item/")[: -len(".json")]).strip("/")
+            self._send_json_work_item(work_item_id)
             return
         if path.startswith("/work-item/"):
             work_item_id = unquote(path.removeprefix("/work-item/")).strip("/")
@@ -86,6 +92,30 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             detail,
             work_item_id,
             document_framework_id=getattr(self.document_library, "framework_id", "togaf-sdlc-v1"),
+        )
+
+    def _send_json_work_item(self, work_item_id: str) -> None:
+        db = V3Database(self.db_path)
+        try:
+            db.migrate()
+            detail = db.work_item_detail(work_item_id)
+        finally:
+            db.close()
+        if detail is None:
+            self._send_json(
+                {
+                    "status": "not_found",
+                    "work_item_id": work_item_id,
+                },
+                status=HTTPStatus.NOT_FOUND,
+            )
+            return
+        self._send_json(
+            {
+                "status": "ok",
+                "work_item": _jsonable(detail),
+                "document_framework_id": getattr(self.document_library, "framework_id", "togaf-sdlc-v1"),
+            }
         )
 
     def _render_artifact_route(self, route_path: str) -> None:
@@ -146,11 +176,11 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             raise ValueError("JSON body must be an object")
         return payload
 
-    def _send_json(self, payload: dict[str, object]) -> None:
+    def _send_json(self, payload: dict[str, object], *, status: HTTPStatus = HTTPStatus.OK) -> None:
         import json
 
         body = json.dumps(payload, indent=2).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -188,6 +218,16 @@ def serve(
 def _teams_activity_response(activity: dict[str, Any], router: TeamsActivityRouter) -> dict[str, object]:
     subjects = router.route_activity(activity)
     return {"status": "routed", "subjects": subjects}
+
+
+def _jsonable(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return _jsonable(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _jsonable(raw) for key, raw in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(raw) for raw in value]
+    return value
 
 
 def _artifact_page(relative_path: str, content: str) -> str:

@@ -294,3 +294,67 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "approval.request" in html
     assert "dm:sponsor" in html
     assert "Thread: thread-1" in html
+
+
+def test_work_item_json_endpoint_returns_detail_evidence(tmp_path: Path) -> None:
+    docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db, docs)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="work_item.upsert",
+            payload={
+                "work_item_id": "work-1",
+                "title": "Add status page",
+                "description": "Build the V3 status page.",
+                "state": "active",
+                "owner_role": "engineering",
+                "current_phase": "development",
+                "next_action": "Implement the status page.",
+                "governance": {
+                    "phase": "development",
+                    "accountable_role": "engineering",
+                    "responsible_roles": ["engineering"],
+                    "consulted_roles": ["qa-engineer"],
+                    "informed_roles": ["project-manager"],
+                    "required_evidence": ["implementation log"],
+                },
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="artifact.link",
+            payload={
+                "work_item_id": "work-1",
+                "relative_path": "work-items/work-1/100-implementation-log.md",
+                "title": "Implementation log",
+                "document_type": "implementation_log",
+                "status": "published",
+            },
+        )
+    finally:
+        db.close()
+
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.db_path = tmp_path / "v3.sqlite3"
+    Handler.project_id = "agentic-mesh-dev"
+    Handler.document_library = docs
+    handler = object.__new__(Handler)
+    captured: dict[str, object] = {}
+    handler._send_json = lambda payload, **kwargs: captured.update(payload)  # type: ignore[method-assign]
+
+    handler._send_json_work_item("work-1")
+
+    assert captured["status"] == "ok"
+    assert captured["document_framework_id"] == "togaf-sdlc-v1"
+    work_item = captured["work_item"]
+    assert isinstance(work_item, dict)
+    assert work_item["work_item_id"] == "work-1"
+    assert work_item["title"] == "Add status page"
+    assert work_item["governance"]["accountable_role"] == "engineering"
+    assert work_item["governance_checklist"]["missing_consultations"] == ["qa-engineer"]
+    assert work_item["artifacts"][0]["relative_path"] == "work-items/work-1/100-implementation-log.md"
