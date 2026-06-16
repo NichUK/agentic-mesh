@@ -32,6 +32,7 @@ from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.deployment import deployment_targets_from_project_config
 from agentic_mesh_v3.dogfood import DogfoodSponsorContact
 from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
+from agentic_mesh_v3.dogfood_audit import audit_v3_dogfood_completion
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import build_document_library_adapter
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
@@ -138,6 +139,10 @@ def main(argv: list[str] | None = None) -> int:
     dogfood_parser = subparsers.add_parser("local-e2e-dogfood")
     dogfood_parser.add_argument("--document-library-root", type=Path)
     dogfood_parser.add_argument("--deployment-target-id")
+    dogfood_audit_parser = subparsers.add_parser("audit-dogfood")
+    dogfood_audit_parser.add_argument("--document-library-root", type=Path)
+    dogfood_audit_parser.add_argument("--work-item-id", default="work-v3-local-e2e")
+    dogfood_audit_parser.add_argument("--require-onedrive-artifacts", action="store_true")
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
@@ -550,6 +555,22 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "audit-dogfood":
+        db = V3Database(args.db)
+        try:
+            db.migrate()
+            result = audit_v3_dogfood_completion(
+                db=db,
+                document_library=_document_library_adapter(args, required=True),
+                work_item_id=args.work_item_id,
+                require_onedrive_artifacts=(
+                    args.require_onedrive_artifacts or _project_uses_onedrive_document_library(args)
+                ),
+            )
+        finally:
+            db.close()
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0 if result.passed else 1
     if args.command == "validate-topology":
         project_config = load_project_config(args.project_config) if args.project_config is not None else None
         topology = V3Topology(
@@ -811,6 +832,14 @@ def _document_library_adapter(args: argparse.Namespace, *, required: bool = Fals
     if required:
         raise ValueError("--document-library-root or --project-config is required")
     return None
+
+
+def _project_uses_onedrive_document_library(args: argparse.Namespace) -> bool:
+    project_config = getattr(args, "project_config", None)
+    if project_config is None:
+        return False
+    adapter = load_project_config(project_config).document_library.adapter.casefold().replace("_", "-")
+    return adapter in {"onedrive", "sharepoint"}
 
 
 def _deployment_targets(args: argparse.Namespace) -> dict[str, DeploymentTarget]:
