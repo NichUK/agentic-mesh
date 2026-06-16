@@ -26,6 +26,7 @@ class RoleInstanceConfig:
     memory_db_path: Path
     inbox_stream: str
     inbox_consumer: str
+    system_prompt_path: Path | None = None
     organisation_prompt_path: Path | None = None
     project_prompt_path: Path | None = None
     raci_path: Path | None = None
@@ -295,6 +296,7 @@ class RoleAgentService:
         governance_checklist: GovernanceChecklist | None = None,
     ) -> str:
         role_prompt = self.config.role_prompt_path.read_text(encoding="utf-8")
+        system_prompt = _read_optional(self.config.system_prompt_path)
         organisation_prompt = _read_optional(self.config.organisation_prompt_path)
         project_prompt = _read_optional(self.config.project_prompt_path)
         raci_prompt = _read_optional(self.config.raci_path)
@@ -308,6 +310,7 @@ class RoleAgentService:
             role_prompt,
             "</role>",
         ]
+        _append_optional_section(lines, "system", system_prompt)
         _append_optional_section(lines, "organisation", organisation_prompt)
         _append_optional_section(lines, "project", project_prompt)
         _append_optional_section(lines, "raci", raci_prompt)

@@ -641,6 +641,8 @@ roles:
     (roles_dir / "engineering.yaml").write_text(_role_template("engineering"), encoding="utf-8")
     org_file = tmp_path / "org.md"
     org_file.write_text("Organisation rule.", encoding="utf-8")
+    system_file = tmp_path / "system.md"
+    system_file.write_text("System rule.", encoding="utf-8")
     tools_file = tmp_path / "tools.md"
     tools_file.write_text("Use safe-output tools.", encoding="utf-8")
     compose_output = tmp_path / "deploy" / "compose.yaml"
@@ -666,6 +668,8 @@ roles:
             str(tmp_path / "documents"),
             "--role-templates-dir",
             str(roles_dir),
+            "--system-instructions-file",
+            str(system_file),
             "--organisation-instructions-file",
             str(org_file),
             "--tool-instructions-file",
@@ -685,6 +689,7 @@ roles:
     assert "Organisation rule." in (tmp_path / "agents" / "engineering" / "1" / "organisation.md").read_text(
         encoding="utf-8"
     )
+    assert "System rule." in (tmp_path / "agents" / "engineering" / "1" / "system.md").read_text(encoding="utf-8")
     assert "run-agent-service" in compose_output.read_text(encoding="utf-8")
     assert "mesh-test" in compose_output.read_text(encoding="utf-8")
 
@@ -818,6 +823,10 @@ roles:
     assert "agentic-mesh-dev.release-manager.1" in capsys.readouterr().out
     assert deployment["accountable"] == "release-manager"
     assert deployment["responsible"] == ["platform-engineer", "engineering"]
+    system_prompt = (tmp_path / "agents" / "release-manager" / "1" / "system.md").read_text(encoding="utf-8")
+    tools_prompt = (tmp_path / "agents" / "release-manager" / "1" / "tools.md").read_text(encoding="utf-8")
+    assert "Do not expose credentials" in system_prompt
+    assert "Every worker run must emit both" in tools_prompt
 
 
 def _role_template(role_id: str) -> str:
