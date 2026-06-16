@@ -251,7 +251,29 @@ def test_role_agent_processes_relevance_inbox_messages(tmp_path: Path) -> None:
     assert result.message_id == published.message_id
     assert "<subject>agent.product-manager.relevance</subject>" in worker.prompt
     assert "project_channel_relevance_check" in worker.prompt
+    assert "<relevance-check>" in worker.prompt
+    assert "Always call `relevance.record`" in worker.prompt
+    assert "do not send a stakeholder/channel reply" in worker.prompt
     assert broker.depth("agent-inbox").pending == 0
+
+
+def test_role_agent_prompt_marks_non_relevance_assignments(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "<relevance-check>Not a relevance-check assignment.</relevance-check>" in worker.prompt
 
 
 def test_role_agent_prioritizes_direct_messages_over_relevance_checks(tmp_path: Path) -> None:
