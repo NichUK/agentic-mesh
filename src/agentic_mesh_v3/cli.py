@@ -143,10 +143,12 @@ def main(argv: list[str] | None = None) -> int:
     dogfood_parser = subparsers.add_parser("local-e2e-dogfood")
     dogfood_parser.add_argument("--document-library-root", type=Path)
     dogfood_parser.add_argument("--deployment-target-id")
+    dogfood_parser.add_argument("--broker-stream")
     agent_dogfood_parser = subparsers.add_parser("agent-e2e-dogfood")
     agent_dogfood_parser.add_argument("--document-library-root", type=Path)
     agent_dogfood_parser.add_argument("--deployment-target-id")
     agent_dogfood_parser.add_argument("--runtime-state-dir", type=Path, required=True)
+    agent_dogfood_parser.add_argument("--broker-stream")
     dogfood_audit_parser = subparsers.add_parser("audit-dogfood")
     dogfood_audit_parser.add_argument("--document-library-root", type=Path)
     dogfood_audit_parser.add_argument("--work-item-id", default="work-v3-local-e2e")
@@ -958,8 +960,9 @@ def _tool_broker(args: argparse.Namespace) -> tuple[BrokerAdapter | None, str | 
         return None, None
     config = load_project_config(project_config)
     broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
-    _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=tuple(role.role_id for role in config.roles))
-    return broker, config.broker.stream
+    stream = getattr(args, "broker_stream", None) or config.broker.stream
+    _ensure_agent_stream(broker, stream=stream, role_ids=tuple(role.role_id for role in config.roles))
+    return broker, stream
 
 
 def _stakeholder_bridge(
@@ -974,27 +977,41 @@ def _stakeholder_bridge(
     adapter = (config.teams_connector.adapter or "").casefold().replace("_", "-")
     if adapter in {"", "none"}:
         return None
+    role_ids = tuple(role.role_id for role in config.roles)
+    stream = getattr(args, "broker_stream", None) or config.broker.stream
+    if broker is not None:
+        _ensure_agent_stream(broker, stream=stream, role_ids=role_ids)
     if adapter in {"local", "local-teams", "in-memory"}:
         if broker is None:
             broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
             _ensure_agent_stream(
                 broker,
-                stream=config.broker.stream,
-                role_ids=tuple(role.role_id for role in config.roles),
+                stream=stream,
+                role_ids=role_ids,
             )
         return LocalTeamsBridge(
             broker,
-            stream=config.broker.stream,
-            role_ids=tuple(role.role_id for role in config.roles),
+            stream=stream,
+            role_ids=role_ids,
         )
     if adapter in {"graph", "microsoft-graph", "teams-graph", "teams-bot-connector"}:
         access_token = os.environ.get("AGENTIC_MESH_TEAMS_TOKEN")
         if not access_token:
             raise ValueError("AGENTIC_MESH_TEAMS_TOKEN is required for Graph-backed Teams outbound messaging")
+        if broker is None:
+            broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
+            _ensure_agent_stream(
+                broker,
+                stream=stream,
+                role_ids=role_ids,
+            )
         return GraphTeamsBridge(
             transport=UrlLibGraphTeamsTransport(access_token=access_token),
             graph_base_url=config.teams_connector.graph_base_url,
             sender_user_ref=os.environ.get("AGENTIC_MESH_TEAMS_SENDER_USER_ID"),
+            inbound_broker=broker,
+            inbound_stream=stream,
+            role_ids=role_ids,
         )
     raise ValueError(f"unsupported Teams connector adapter: {config.teams_connector.adapter}")
 

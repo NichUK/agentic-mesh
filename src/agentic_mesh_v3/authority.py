@@ -10,6 +10,7 @@ BASE_TOOLS = {
     "consult.request",
     "conversation.compact_context",
     "decision.record",
+    "document.write_artifact",
     "document.write_work_item_index",
     "document.write_root_work_item_index",
     "governance.record_exception",

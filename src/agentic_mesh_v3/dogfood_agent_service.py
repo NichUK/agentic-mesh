@@ -21,6 +21,7 @@ from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import CommandDeploymentTarget
 from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
+from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.dogfood import DogfoodSponsorContact
 from agentic_mesh_v3.memory import DatabaseRoleMemory
 from agentic_mesh_v3.teams_ingress import DatabaseApprovalResponseRecorder
@@ -31,6 +32,7 @@ WORK_ITEM_ID = "work-v3-agent-service-e2e"
 QUEUE_ITEM_ID = "queue-v3-agent-service-e2e"
 RELEASE_ID = "release-v3-agent-service-e2e"
 PRODUCT_APPROVAL_ID = "approval-v3-agent-service-product"
+PRODUCT_DEFINITION_PATH = f"work-items/{WORK_ITEM_ID}/020-product-definition.md"
 
 
 def run_agent_service_e2e_dogfood_slice(
@@ -84,89 +86,79 @@ def run_agent_service_e2e_dogfood_slice(
         broker_stream=broker_stream,
     )
 
-    teams.route_inbound(
-        StakeholderMessage(
-            connector="teams",
-            message_id="msg-v3-agent-service-e2e",
-            source_type="dm",
-            sender_ref="sponsor",
-            conversation_ref="dm:product-manager",
-            text="Please run the V3 agent-service dogfood release proof.",
-            reply_target_ref=sponsor_contact.target_ref if sponsor_contact is not None else None,
-            reply_thread_ref=sponsor_contact.thread_ref if sponsor_contact is not None else None,
+    product_approved = _product_approval_recorded(db)
+    if not product_approved:
+        teams.route_inbound(
+            StakeholderMessage(
+                connector="teams",
+                message_id="msg-v3-agent-service-e2e",
+                source_type="dm",
+                sender_ref="sponsor",
+                conversation_ref="dm:product-manager",
+                text="Please run the V3 agent-service dogfood release proof.",
+                reply_target_ref=sponsor_contact.target_ref if sponsor_contact is not None else None,
+                reply_thread_ref=sponsor_contact.thread_ref if sponsor_contact is not None else None,
+            )
         )
-    )
-
-    _run_role(
-        db=db,
-        broker=broker,
-        stream=broker_stream,
-        runtime_state_dir=runtime_state_dir,
-        project_id=project_id,
-        role_id="product-manager",
-        worker=_ProductManagerWorker(tools, project_id=project_id, sponsor_contact=sponsor_contact),
-    )
-    _record_product_approval(
-        db=db,
-        broker=broker,
-        stream=broker_stream,
-        sponsor_contact=sponsor_contact,
-    )
-    _run_role(
-        db=db,
-        broker=broker,
-        stream=broker_stream,
-        runtime_state_dir=runtime_state_dir,
-        project_id=project_id,
-        role_id="product-manager",
-        worker=_ProductManagerWorker(tools, project_id=project_id, sponsor_contact=sponsor_contact),
-    )
-    _run_role(
-        db=db,
-        broker=broker,
-        stream=broker_stream,
-        runtime_state_dir=runtime_state_dir,
-        project_id=project_id,
-        role_id="engineering",
-        worker=_EngineeringWorker(tools, project_id=project_id),
-    )
-    _run_role(
-        db=db,
-        broker=broker,
-        stream=broker_stream,
-        runtime_state_dir=runtime_state_dir,
-        project_id=project_id,
-        role_id="solution-architect",
-        worker=_SolutionArchitectWorker(tools, project_id=project_id),
-    )
-    _run_role(
-        db=db,
-        broker=broker,
-        stream=broker_stream,
-        runtime_state_dir=runtime_state_dir,
-        project_id=project_id,
-        role_id="qa-engineer",
-        worker=_QaWorker(tools, project_id=project_id),
-    )
-    _run_role(
-        db=db,
-        broker=broker,
-        stream=broker_stream,
-        runtime_state_dir=runtime_state_dir,
-        project_id=project_id,
-        role_id="release-manager",
-        worker=_ReleaseManagerWorker(tools, project_id=project_id, deployment_target_id=deployment_target_id),
-    )
-    _run_role(
-        db=db,
-        broker=broker,
-        stream=broker_stream,
-        runtime_state_dir=runtime_state_dir,
-        project_id=project_id,
-        role_id="project-manager",
-        worker=_ProjectManagerWorker(tools, project_id=project_id, sponsor_contact=sponsor_contact),
-    )
+        _run_role(
+            db=db,
+            broker=broker,
+            stream=broker_stream,
+            runtime_state_dir=runtime_state_dir,
+            project_id=project_id,
+            role_id="product-manager",
+            worker=_ProductManagerWorker(tools, project_id=project_id, sponsor_contact=sponsor_contact),
+        )
+        _record_product_approval(
+            db=db,
+            broker=broker,
+            stream=broker_stream,
+            sponsor_contact=sponsor_contact,
+        )
+    role_sequence: list[tuple[str, object]] = [
+        ("product-manager", _ProductManagerWorker(tools, project_id=project_id, sponsor_contact=sponsor_contact)),
+        ("engineering", _EngineeringWorker(tools, project_id=project_id)),
+        ("solution-architect", _SolutionArchitectWorker(tools, project_id=project_id)),
+        ("qa-engineer", _QaWorker(tools, project_id=project_id)),
+        ("release-manager", _ReleaseManagerWorker(tools, project_id=project_id, deployment_target_id=deployment_target_id)),
+        ("project-manager", _ProjectManagerWorker(tools, project_id=project_id, sponsor_contact=sponsor_contact)),
+    ]
+    for role_id, worker in role_sequence[_resume_role_index(db) :]:
+        _run_role(
+            db=db,
+            broker=broker,
+            stream=broker_stream,
+            runtime_state_dir=runtime_state_dir,
+            project_id=project_id,
+            role_id=role_id,
+            worker=worker,
+        )
     return WORK_ITEM_ID
+
+
+def _product_approval_recorded(db: V3Database) -> bool:
+    approval = db.approval_detail(PRODUCT_APPROVAL_ID)
+    return approval is not None and str(approval.get("status")) == "approved"
+
+
+def _resume_role_index(db: V3Database) -> int:
+    detail = db.work_item_detail(WORK_ITEM_ID)
+    if detail is None:
+        return 0
+    if detail.state in {"closed", "canceled", "superseded", "failed_terminal"}:
+        return 6
+    if detail.state == "waiting_human":
+        return 0
+    role_order = {
+        "product-manager": 0,
+        "sponsor": 0,
+        "engineering": 1,
+        "solution-architect": 2,
+        "qa-engineer": 3,
+        "release-manager": 4,
+        "project-manager": 5,
+    }
+    return role_order.get(detail.owner_role, 0)
 
 
 @dataclass
@@ -182,6 +174,16 @@ class _ProductManagerWorker:
     def run(self, prompt: str, message: AgentMessage) -> list[str]:
         del prompt
         if message.payload.get("message_type") == "stakeholder.message":
+            if self.tools.db.work_item_detail(WORK_ITEM_ID) is not None:
+                approval = self.tools.db.approval_detail(PRODUCT_APPROVAL_ID)
+                if approval is not None and str(approval.get("status")) == "approved":
+                    return self._promote_after_approval(message)
+                return _status_reply(
+                    self.tools,
+                    self.role_instance_id,
+                    message,
+                    "Product shaping already exists for this dogfood proof; awaiting sponsor sign-off.",
+                )
             return self._start_product_shaping(message)
         if message.payload.get("message_type") == "approval.response_recorded":
             return self._promote_after_approval(message)
@@ -227,9 +229,16 @@ class _ProductManagerWorker:
                         "consulted_roles": ["sponsor"],
                         "informed_roles": ["delivery-manager"],
                         "sponsor_decision_points": ["product-signoff"],
-                        "required_evidence": [f"work-items/{WORK_ITEM_ID}/index.md"],
+                        "required_evidence": [PRODUCT_DEFINITION_PATH, f"work-items/{WORK_ITEM_ID}/index.md"],
                     },
                 },
+            ).call_id
+        )
+        calls.append(
+            self.tools.call(
+                role_instance_id=self.role_instance_id,
+                tool_name="document.write_artifact",
+                payload=_product_definition_payload(),
             ).call_id
         )
         approval_payload = {
@@ -271,16 +280,20 @@ class _ProductManagerWorker:
                 evidence=["Product Manager created the backlog item, work item, and sign-off request."],
                 decisions=["Use the agent-service dogfood proof to validate V3 role-owned progression."],
                 risks=["Downstream work must not start until sponsor approval is recorded."],
+                artifacts=[DocumentRef(relative_path=PRODUCT_DEFINITION_PATH, title="Product definition")],
             )
         )
         calls.append(_status_reply(self.tools, self.role_instance_id, message, "Product shaping started and sponsor sign-off requested."))
         return calls
 
     def _promote_after_approval(self, message: AgentMessage) -> list[str]:
-        if (
-            message.payload.get("approval_id") != PRODUCT_APPROVAL_ID
-            or message.payload.get("status") != "approved"
-        ):
+        approval = self.tools.db.approval_detail(PRODUCT_APPROVAL_ID)
+        approval_recorded = approval is not None and str(approval.get("status")) == "approved"
+        is_current_approval_message = (
+            message.payload.get("approval_id") == PRODUCT_APPROVAL_ID
+            and message.payload.get("status") == "approved"
+        )
+        if not (is_current_approval_message or approval_recorded):
             return _complete_noop(
                 self.tools,
                 self.role_instance_id,
@@ -288,6 +301,13 @@ class _ProductManagerWorker:
                 message=message,
             )
         calls = []
+        calls.append(
+            self.tools.call(
+                role_instance_id=self.role_instance_id,
+                tool_name="document.write_artifact",
+                payload=_product_definition_payload(),
+            ).call_id
+        )
         calls.append(
             self.tools.call(
                 role_instance_id=self.role_instance_id,
@@ -508,69 +528,81 @@ class _ReleaseManagerWorker:
 
     def run(self, prompt: str, message: AgentMessage) -> list[str]:
         del prompt, message
-        return [
-            self.tools.call(
-                role_instance_id=self.role_instance_id,
-                tool_name="work_item.update_state",
-                payload={
-                    "work_item_id": WORK_ITEM_ID,
-                    "state": "release_review",
-                    "owner_role": "release-manager",
-                    "current_phase": "deployment",
-                    "next_action": f"Deploying `{self.deployment_target_id}`.",
-                },
-            ).call_id,
-            self.tools.call(
-                role_instance_id=self.role_instance_id,
-                tool_name="release.deploy",
-                payload={
-                    "release_id": RELEASE_ID,
-                    "work_item_id": WORK_ITEM_ID,
-                    "target_id": self.deployment_target_id,
-                    "scope": "Local V3 agent-service dogfood release smoke.",
-                    "version_ref": "local-agent-service-dogfood",
-                    "approval_ref": PRODUCT_APPROVAL_ID,
-                    "smoke_evidence": f"Deployment target `{self.deployment_target_id}` completed.",
-                    "residual_risks": "Live Teams, OneDrive, and NATS credentials still require environment-specific validation.",
-                },
-            ).call_id,
-            self.tools.call(
-                role_instance_id=self.role_instance_id,
-                tool_name="release.close",
-                payload={
-                    "work_item_id": WORK_ITEM_ID,
-                    "closure_owner_role": "project-manager",
-                    "closure_note": "Release closed after local agent-service deployment smoke.",
-                },
-            ).call_id,
-            _write_index(
-                self.tools,
-                self.role_instance_id,
-                "closed",
-                "project-manager",
-                "Release deployed and closed; Project Manager closure update required.",
-                next_action="Project Manager updates backlog closure and notifies the sponsor when configured.",
-                consultations=["QA consultation requested before release deployment."],
-                approvals=[f"{PRODUCT_APPROVAL_ID} approved."],
-                evidence=[f"Release Manager deployed `{self.deployment_target_id}` and closed the release."],
-                decisions=["Release Manager completed deployment and release closure."],
-                risks=["Live Teams, OneDrive, and NATS credentials still require environment-specific validation."],
-            ),
-            self.tools.call(
-                role_instance_id=self.role_instance_id,
-                tool_name="informed.update",
-                payload={
-                    "work_item_id": WORK_ITEM_ID,
-                    "target_role": "project-manager",
-                    "message": "Release deployed and closed; update backlog and notify sponsor.",
-                },
-            ).call_id,
-            self.tools.call(
-                role_instance_id=self.role_instance_id,
-                tool_name="status.complete",
-                payload={"summary": "Release deployed and closed; Project Manager informed."},
-            ).call_id,
-        ]
+        calls = []
+        detail = self.tools.db.work_item_detail(WORK_ITEM_ID)
+        current_state = detail.state if detail is not None else None
+        if current_state not in {"release_review", "deploying", "recovering", "released"}:
+            calls.append(
+                self.tools.call(
+                    role_instance_id=self.role_instance_id,
+                    tool_name="work_item.update_state",
+                    payload={
+                        "work_item_id": WORK_ITEM_ID,
+                        "state": "release_review",
+                        "owner_role": "release-manager",
+                        "current_phase": "deployment",
+                        "next_action": f"Deploying `{self.deployment_target_id}`.",
+                    },
+                ).call_id
+            )
+        if current_state != "released":
+            calls.append(
+                self.tools.call(
+                    role_instance_id=self.role_instance_id,
+                    tool_name="release.deploy",
+                    payload={
+                        "release_id": RELEASE_ID,
+                        "work_item_id": WORK_ITEM_ID,
+                        "target_id": self.deployment_target_id,
+                        "scope": "Local V3 agent-service dogfood release smoke.",
+                        "version_ref": "local-agent-service-dogfood",
+                        "approval_ref": PRODUCT_APPROVAL_ID,
+                        "smoke_evidence": f"Deployment target `{self.deployment_target_id}` completed.",
+                        "residual_risks": "Live Teams, OneDrive, and NATS credentials still require environment-specific validation.",
+                    },
+                ).call_id
+            )
+        calls.extend(
+            [
+                self.tools.call(
+                    role_instance_id=self.role_instance_id,
+                    tool_name="release.close",
+                    payload={
+                        "work_item_id": WORK_ITEM_ID,
+                        "closure_owner_role": "project-manager",
+                        "closure_note": "Release closed after local agent-service deployment smoke.",
+                    },
+                ).call_id,
+                _write_index(
+                    self.tools,
+                    self.role_instance_id,
+                    "closed",
+                    "project-manager",
+                    "Release deployed and closed; Project Manager closure update required.",
+                    next_action="Project Manager updates backlog closure and notifies the sponsor when configured.",
+                    consultations=["QA consultation requested before release deployment."],
+                    approvals=[f"{PRODUCT_APPROVAL_ID} approved."],
+                    evidence=[f"Release Manager deployed `{self.deployment_target_id}` and closed the release."],
+                    decisions=["Release Manager completed deployment and release closure."],
+                    risks=["Live Teams, OneDrive, and NATS credentials still require environment-specific validation."],
+                ),
+                self.tools.call(
+                    role_instance_id=self.role_instance_id,
+                    tool_name="informed.update",
+                    payload={
+                        "work_item_id": WORK_ITEM_ID,
+                        "target_role": "project-manager",
+                        "message": "Release deployed and closed; update backlog and notify sponsor.",
+                    },
+                ).call_id,
+                self.tools.call(
+                    role_instance_id=self.role_instance_id,
+                    tool_name="status.complete",
+                    payload={"summary": "Release deployed and closed; Project Manager informed."},
+                ).call_id,
+            ]
+        )
+        return calls
 
 
 @dataclass
@@ -656,6 +688,19 @@ def _run_role(
     )
     result = service.run_once()
     if result is None:
+        detail = db.work_item_detail(WORK_ITEM_ID)
+        if detail is not None and detail.owner_role == role_id:
+            broker.publish(
+                stream,
+                f"agent.{role_id}",
+                {
+                    "message_type": "dogfood.resume",
+                    "work_item_id": WORK_ITEM_ID,
+                    "summary": detail.next_action or f"Resume dogfood work for {role_id}.",
+                },
+            )
+            result = service.run_once()
+    if result is None:
         raise RuntimeError(f"{role_id} had no inbox message to process")
     if result.status != "completed":
         raise RuntimeError(f"{role_id} failed dogfood run: {result.error or result.status}")
@@ -737,6 +782,7 @@ def _write_index(
     consultations: list[str] | None = None,
     approvals: list[str] | None = None,
     evidence: list[str] | None = None,
+    artifacts: list[DocumentRef] | None = None,
 ) -> str:
     return tools.call(
         role_instance_id=role_instance_id,
@@ -754,8 +800,65 @@ def _write_index(
             "evidence": evidence or [],
             "decisions": decisions or [],
             "risks": risks or [],
+            "artifacts": [
+                {"relative_path": artifact.relative_path, "title": artifact.title, "url": artifact.url}
+                for artifact in (artifacts or [])
+            ],
         },
     ).call_id
+
+
+def _product_definition_markdown() -> str:
+    return "\n".join(
+        [
+            "# V3 Agent-Service Dogfood Release Product Definition",
+            "",
+            f"- Work item: `{WORK_ITEM_ID}`",
+            "- Owner role: `product-manager`",
+            "- Lifecycle phase: `requirements`",
+            "- Status: product sign-off requested",
+            "",
+            "## Product Outcome",
+            "",
+            "Prove that Agentic Mesh V3 can carry one small development slice through role-owned work using broker-backed inbox processing, safe-output tools, document-library evidence, QA review, deployment, release recording, and closure.",
+            "",
+            "## Scope",
+            "",
+            "- Create and promote a queue item into a tracked work item.",
+            "- Record sponsor product sign-off before downstream implementation.",
+            "- Hand off from Product Manager to Engineering with evidence requirements.",
+            "- Consult Solution Architecture during implementation evidence review.",
+            "- Hand off to QA, then Release Manager, then Project Manager for closure.",
+            "- Write a work-item index and root work-item index in the document library.",
+            "- Execute the configured deployment target and record release evidence.",
+            "",
+            "## Acceptance Criteria",
+            "",
+            "- Sponsor approval is recorded against the product sign-off request.",
+            "- The work item page links this product definition and the work-item index.",
+            "- Agent runs are recorded for Product Manager, Engineering, Solution Architect, QA Engineer, Release Manager, and Project Manager.",
+            "- QA evidence and release evidence are captured before closure.",
+            "- The release record includes deployment result, smoke evidence, rollback plan, residual risks, and closure state.",
+            "",
+            "## Non-Goals",
+            "",
+            "- This proof does not claim broad enterprise hardening.",
+            "- This proof does not replace the later full Teams/OneDrive live collaboration slice.",
+            "- This proof does not validate every external connector beyond the configured dogfood target.",
+            "",
+        ]
+    )
+
+
+def _product_definition_payload() -> dict[str, str]:
+    return {
+        "artifact_id": f"artifact-{WORK_ITEM_ID}-product-definition",
+        "work_item_id": WORK_ITEM_ID,
+        "relative_path": PRODUCT_DEFINITION_PATH,
+        "title": "Product definition",
+        "document_type": "product_definition",
+        "content_markdown": _product_definition_markdown(),
+    }
 
 
 def _status_reply(tools: V3ToolService, role_instance_id: str, message: AgentMessage, text: str) -> str:

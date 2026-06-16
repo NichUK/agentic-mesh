@@ -14,6 +14,7 @@ DO_TOOLS = {
     "consult.request",
     "conversation.compact_context",
     "decision.record",
+    "document.write_artifact",
     "document.write_root_work_item_index",
     "document.write_work_item_index",
     "governance.record_exception",
@@ -57,6 +58,7 @@ TOOL_DESCRIPTIONS = {
         "without retaining or rereading the full raw thread."
     ),
     "decision.record": "Record a durable work-item decision as source-linked governance evidence.",
+    "document.write_artifact": "Write a typed work-item document-library artifact and link it to the work item.",
     "document.write_root_work_item_index": "Regenerate the root work-item index in the document library.",
     "document.write_work_item_index": "Write or update a work-item index document.",
     "governance.record_exception": "Record a justified governance/RACI exception.",
@@ -96,6 +98,7 @@ TOOL_REQUIRED_FIELDS = {
     "consult.request": ("work_item_id", "target_role", "question"),
     "conversation.compact_context": ("conversation_ref", "summary", "source_message_ids", "visibility"),
     "decision.record": ("work_item_id", "summary"),
+    "document.write_artifact": ("work_item_id", "relative_path", "title", "document_type", "content_markdown"),
     "document.write_work_item_index": (
         "work_item_id",
         "title",

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import shutil
@@ -114,7 +116,16 @@ def _document_env_checks(project_config: V3ProjectConfig, env: dict[str, str]) -
     adapter = project_config.document_library.adapter.casefold().replace("_", "-")
     if adapter not in {"onedrive", "sharepoint"}:
         return []
-    return [_required_env_check(env, "AGENTIC_MESH_ONEDRIVE_TOKEN", "documents.env")]
+    return [
+        _required_env_check(env, "AGENTIC_MESH_ONEDRIVE_TOKEN", "documents.env"),
+        _required_scope_check(
+            env,
+            "AGENTIC_MESH_ONEDRIVE_TOKEN",
+            "documents.env.scopes",
+            any_of={"Files.ReadWrite.All", "Sites.ReadWrite.All"},
+            purpose="write Teams/OneDrive document-library artifacts",
+        ),
+    ]
 
 
 def _teams_config_check(project_config: V3ProjectConfig) -> PreflightCheck:
@@ -140,10 +151,60 @@ def _teams_env_checks(project_config: V3ProjectConfig, env: dict[str, str]) -> l
     adapter = (project_config.teams_connector.adapter or "").casefold().replace("_", "-")
     if adapter not in {"graph", "microsoft-graph", "teams-graph", "teams-bot-connector"}:
         return []
-    return [
+    checks = [
         _required_env_check(env, "AGENTIC_MESH_TEAMS_TOKEN", "teams.env.token"),
+        _required_scope_check(
+            env,
+            "AGENTIC_MESH_TEAMS_TOKEN",
+            "teams.env.scopes.chat",
+            any_of={"Chat.Create", "Chat.ReadWrite"},
+            purpose="create or reuse Teams direct chats",
+        ),
+        _required_scope_check(
+            env,
+            "AGENTIC_MESH_TEAMS_TOKEN",
+            "teams.env.scopes.send",
+            any_of={"ChatMessage.Send", "ChannelMessage.Send"},
+            purpose="send stakeholder-facing Teams messages",
+        ),
         _required_env_check(env, "AGENTIC_MESH_TEAMS_SENDER_USER_ID", "teams.env.sender"),
     ]
+    checks.append(_teams_sender_is_not_sponsor_check(project_config, env))
+    return checks
+
+
+def _teams_sender_is_not_sponsor_check(project_config: V3ProjectConfig, env: dict[str, str]) -> PreflightCheck:
+    sponsor = next(
+        (contact for contact in project_config.stakeholder_contacts if contact.contact_id == "sponsor"),
+        None,
+    )
+    sender_user_id = (env.get("AGENTIC_MESH_TEAMS_SENDER_USER_ID") or "").strip()
+    if sponsor is None or not sender_user_id:
+        return PreflightCheck(
+            "teams.env.sender_not_sponsor",
+            False,
+            "Teams sender/sponsor separation cannot be verified until sender and sponsor are configured.",
+        )
+    sponsor_user_id = _user_id_from_target_ref(sponsor.target_ref)
+    if sponsor_user_id is None:
+        return PreflightCheck(
+            "teams.env.sender_not_sponsor",
+            True,
+            "Sponsor target is not a Teams user target; delegated self-DM guard is not applicable.",
+            sponsor.target_ref,
+        )
+    if sponsor_user_id == sender_user_id:
+        return PreflightCheck(
+            "teams.env.sender_not_sponsor",
+            False,
+            "Teams delegated sender must not be the same user as the sponsor.",
+            "Configure a distinct agent/bot sender, a real bot/proactive messaging path, or an explicit known-safe chat target.",
+        )
+    return PreflightCheck(
+        "teams.env.sender_not_sponsor",
+        True,
+        "Teams delegated sender is distinct from the sponsor user target.",
+    )
 
 
 def _broker_config_check(project_config: V3ProjectConfig, *, check_live: bool) -> PreflightCheck:
@@ -253,7 +314,7 @@ def _stakeholder_contact_checks(project_config: V3ProjectConfig) -> list[Preflig
                 sponsor.connector,
             )
         )
-    elif not sponsor.target_ref:
+    elif not _target_ref_has_value(sponsor.target_ref):
         checks.append(PreflightCheck("stakeholders.sponsor", False, "Sponsor contact target_ref is empty."))
     else:
         checks.append(
@@ -265,6 +326,27 @@ def _stakeholder_contact_checks(project_config: V3ProjectConfig) -> list[Preflig
             )
         )
     return checks
+
+
+def _target_ref_has_value(target_ref: str) -> bool:
+    normalized = target_ref.strip()
+    if not normalized:
+        return False
+    if ":" not in normalized:
+        return True
+    _scheme, value = normalized.split(":", 1)
+    return bool(value.strip())
+
+
+def _user_id_from_target_ref(target_ref: str) -> str | None:
+    normalized = target_ref.strip()
+    if ":" not in normalized:
+        return None
+    scheme, value = normalized.split(":", 1)
+    if scheme != "user":
+        return None
+    value = value.strip()
+    return value or None
 
 
 def _document_library_live_check(document_exists: Callable[[str], bool] | None) -> PreflightCheck:
@@ -285,7 +367,57 @@ def _required_env_check(env: dict[str, str], name: str, check_id: str) -> Prefli
     value = env.get(name)
     if not value:
         return PreflightCheck(check_id, False, f"{name} is required.")
-    return PreflightCheck(check_id, True, f"{name} is present.", _redact(value))
+    return PreflightCheck(check_id, True, f"{name} is present.", "configured")
+
+
+def _required_scope_check(
+    env: dict[str, str],
+    name: str,
+    check_id: str,
+    *,
+    any_of: set[str],
+    purpose: str,
+) -> PreflightCheck:
+    value = env.get(name)
+    if not value:
+        return PreflightCheck(check_id, False, f"{name} is required before checking scopes.")
+    try:
+        scopes = _jwt_scopes(value)
+    except ValueError as exc:
+        return PreflightCheck(check_id, False, f"{name} scopes could not be inspected.", str(exc))
+    if scopes.intersection(any_of):
+        return PreflightCheck(
+            check_id,
+            True,
+            f"{name} has delegated Graph scope for {purpose}.",
+            ", ".join(sorted(scopes.intersection(any_of))),
+        )
+    return PreflightCheck(
+        check_id,
+        False,
+        f"{name} needs delegated Graph scope to {purpose}.",
+        f"requires one of: {', '.join(sorted(any_of))}; token has: {', '.join(sorted(scopes)) or 'none'}",
+    )
+
+
+def _jwt_scopes(token: str) -> set[str]:
+    parts = token.split(".")
+    if len(parts) < 2:
+        raise ValueError("token is not a JWT")
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload.encode("ascii"))
+        claims = json.loads(decoded.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("JWT payload could not be decoded") from exc
+    scopes = claims.get("scp")
+    if isinstance(scopes, str):
+        return set(scopes.split())
+    roles = claims.get("roles")
+    if isinstance(roles, list):
+        return {str(role) for role in roles}
+    return set()
 
 
 def _redact(value: str) -> str:

@@ -143,7 +143,7 @@ class V3ToolService:
             target_id = _required(payload, "target_id")
             if target_id not in self.deployment_targets:
                 raise ValueError(f"deployment target is not configured: {target_id}")
-        if tool_name in {"document.write_work_item_index", "document.write_root_work_item_index"}:
+        if tool_name in {"document.write_artifact", "document.write_work_item_index", "document.write_root_work_item_index"}:
             if self.document_library is None:
                 raise ValueError("document library is not configured")
 
@@ -211,6 +211,8 @@ class V3ToolService:
             )
         elif tool_name == "artifact.link":
             self._link_artifact(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
+        elif tool_name == "document.write_artifact":
+            self._write_artifact(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "document.write_work_item_index":
             self._write_work_item_index(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "document.write_root_work_item_index":
@@ -371,22 +373,38 @@ class V3ToolService:
             raise ValueError("stakeholder bridge is not configured")
         text_markdown = _required(payload, "text_markdown")
         thread_ref = _optional(payload.get("thread_ref")) or _optional(payload.get("reply_thread_ref"))
-        receipt = self.stakeholder_bridge.send(
-            OutboundMessage(
-                connector=_required(payload, "connector"),
-                target_ref=target_ref,
-                text_markdown=text_markdown,
-                thread_ref=thread_ref,
-                importance=str(payload.get("importance") or "normal"),
+        connector = _required(payload, "connector")
+        try:
+            receipt = self.stakeholder_bridge.send(
+                OutboundMessage(
+                    connector=connector,
+                    target_ref=target_ref,
+                    text_markdown=text_markdown,
+                    thread_ref=thread_ref,
+                    importance=str(payload.get("importance") or "normal"),
+                )
             )
-        )
-        self._record_delivery_receipt(
-            receipt=receipt,
-            call_id=call_id,
-            role_instance_id=role_instance_id,
-            purpose="status.reply",
-            payload=payload,
-        )
+        except Exception as exc:
+            self.db.record_outbound_delivery(
+                delivery_id=f"delivery-failed-{call_id}",
+                call_id=call_id,
+                role_instance_id=role_instance_id,
+                purpose="status.reply",
+                connector=connector,
+                target_ref=f"{target_ref} ({type(exc).__name__}: {exc})",
+                thread_ref=thread_ref,
+                work_item_id=_optional(payload.get("work_item_id")),
+                status="failed",
+            )
+            raise
+        else:
+            self._record_delivery_receipt(
+                receipt=receipt,
+                call_id=call_id,
+                role_instance_id=role_instance_id,
+                purpose="status.reply",
+                payload=payload,
+            )
 
     def _update_status(self, payload: dict[str, Any]) -> None:
         work_item_id = _optional(payload.get("work_item_id"))
@@ -560,6 +578,32 @@ class V3ToolService:
             status=str(payload.get("status") or "linked"),
             created_by_role=role_from_instance(role_instance_id),
             url=_optional(payload.get("url")),
+        )
+
+    def _write_artifact(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
+        if self.document_library is None:
+            raise ValueError("document library is not configured")
+        relative_path = _safe_relative_path(_required(payload, "relative_path"))
+        document_type = str(payload.get("document_type") or "artifact")
+        work_item_id = _required(payload, "work_item_id")
+        validate_framework_artifact_path(
+            framework_id=getattr(self.document_library, "framework_id", "togaf-sdlc-v1"),
+            document_type=document_type,
+            work_item_id=work_item_id,
+            relative_path=relative_path,
+        )
+        ref = self.document_library.write_text(relative_path, _required(payload, "content_markdown"))
+        filename = str(payload.get("filename") or PurePosixPath(relative_path).name)
+        self.db.add_artifact(
+            artifact_id=str(payload.get("artifact_id") or f"artifact-{call_id}"),
+            work_item_id=work_item_id,
+            filename=filename,
+            title=str(payload.get("title") or ref.title or filename),
+            relative_path=ref.relative_path,
+            document_type=document_type,
+            status=str(payload.get("status") or "published"),
+            created_by_role=role_from_instance(role_instance_id),
+            url=ref.url,
         )
 
     def _write_work_item_index(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:

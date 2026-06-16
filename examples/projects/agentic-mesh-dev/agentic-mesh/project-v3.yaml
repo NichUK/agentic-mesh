@@ -15,7 +15,7 @@ flow:
 broker:
   adapter: nats-jetstream
   stream: agent-inbox
-  servers: nats://nats:4222
+  servers: nats://v3-nats:4222
 document_library:
   adapter: onedrive
   drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}

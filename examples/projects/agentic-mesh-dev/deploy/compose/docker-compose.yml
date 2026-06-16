@@ -67,9 +67,9 @@ services:
 
   v3-runtime:
     <<: *agentic-mesh-v3-service
-    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml serve --host 0.0.0.0 --port 8080
+    command: sh -c "python -m agentic_mesh_v3.cli --project-config /mesh/project/agentic-mesh/project-v3.yaml preflight-live --check-broker && exec python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml serve --host 0.0.0.0 --port 8080"
     ports:
-      - "${AGENTIC_MESH_V3_STATUS_PORT:-8101}:8080"
+      - "${AGENTIC_MESH_V3_STATUS_PORT:-8100}:8080"
     depends_on:
       - v3-nats
     profiles:
@@ -77,7 +77,7 @@ services:
 
   v3-dogfood-proof:
     <<: *agentic-mesh-v3-service
-    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml agent-e2e-dogfood --runtime-state-dir /mesh/project/state/v3/agent-service-dogfood --deployment-target-id dogfood-compose
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml agent-e2e-dogfood --runtime-state-dir /mesh/project/state/v3/agent-service-dogfood --deployment-target-id dogfood-compose --broker-stream agent-inbox-proof
     depends_on:
       - v3-nats
     profiles:

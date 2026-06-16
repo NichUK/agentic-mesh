@@ -68,9 +68,10 @@ def test_dogfood_compose_defines_v3_runtime_profile() -> None:
     assert service["profiles"] == ["v3"]
     assert service["depends_on"] == ["v3-nats"]
     assert "--project-config /mesh/project/agentic-mesh/project-v3.yaml" in command
+    assert "preflight-live --check-broker && exec" in command
     assert "python -m agentic_mesh_v3.cli" in command
     assert "serve --host 0.0.0.0 --port 8080" in command
-    assert service["ports"] == ["${AGENTIC_MESH_V3_STATUS_PORT:-8101}:8080"]
+    assert service["ports"] == ["${AGENTIC_MESH_V3_STATUS_PORT:-8100}:8080"]
     assert service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project-v3.yaml"
     assert service["environment"]["AGENTIC_MESH_STATE_ROOT"] == "/mesh/project/state/v3"
     assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in service["environment"]
@@ -100,6 +101,7 @@ def test_dogfood_compose_defines_v3_dogfood_proof_runner() -> None:
     assert "agent-e2e-dogfood" in command
     assert "--runtime-state-dir /mesh/project/state/v3/agent-service-dogfood" in command
     assert "--deployment-target-id dogfood-compose" in command
+    assert "--broker-stream agent-inbox-proof" in command
     assert service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project-v3.yaml"
 
 
@@ -110,6 +112,102 @@ def test_linuxch_overlay_restarts_v3_runtime_and_mounts_docker_for_proof() -> No
     assert "  v3-runtime:\n    restart: unless-stopped" in overlay
     assert "  v3-dogfood-proof:" in overlay
     assert "/var/run/docker.sock:/var/run/docker.sock" in overlay
+
+
+def test_linuxch_deploy_script_preserves_v3_live_environment() -> None:
+    script = Path("scripts/deploy-linuxch-compose.sh").read_text(encoding="utf-8")
+
+    for name in [
+        "AGENTIC_MESH_ONEDRIVE_TOKEN",
+        "AGENTIC_MESH_ONEDRIVE_DRIVE_ID",
+        "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
+        "AGENTIC_MESH_TEAMS_TOKEN",
+        "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_V3_STATUS_PORT",
+        "AGENTIC_MESH_NATS_STATE_HOST_PATH",
+    ]:
+        assert f"export {name}" in script
+        assert f"{name}=${name}" in script
+    assert 'chmod 600 "$STAGE_DIR/.env"' in script
+    assert 'AGENTIC_MESH_V3_STATUS_PORT="${AGENTIC_MESH_V3_STATUS_PORT:-8100}"' in script
+    assert "AGENTIC_MESH_FORCE_V3_STATUS_PORT" in script
+
+
+def test_dogfood_compose_env_example_lists_required_v3_live_inputs() -> None:
+    env_example = Path("examples/projects/agentic-mesh-dev/deploy/compose/.env.example").read_text(
+        encoding="utf-8"
+    )
+
+    for name in [
+        "AGENTIC_MESH_ONEDRIVE_TOKEN",
+        "AGENTIC_MESH_ONEDRIVE_DRIVE_ID",
+        "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
+        "AGENTIC_MESH_TEAMS_TOKEN",
+        "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_V3_STATUS_PORT",
+        "AGENTIC_MESH_NATS_STATE_HOST_PATH",
+    ]:
+        assert f"{name}=" in env_example
+    assert "AGENTIC_MESH_V3_STATUS_PORT=8100" in env_example
+
+
+def test_linuxch_graph_env_refresh_helper_requests_required_scopes_and_updates_remote_env() -> None:
+    script = Path("scripts/update-linuxch-v3-graph-env.ps1").read_text(encoding="utf-8")
+
+    for scope in [
+        "https://graph.microsoft.com/Files.ReadWrite.All",
+        "https://graph.microsoft.com/Chat.Create",
+        "https://graph.microsoft.com/Chat.ReadWrite",
+        "https://graph.microsoft.com/ChatMessage.Send",
+        "https://graph.microsoft.com/ChannelMessage.Send",
+    ]:
+        assert scope in script
+    for name in [
+        "AGENTIC_MESH_ONEDRIVE_TOKEN",
+        "AGENTIC_MESH_TEAMS_TOKEN",
+        "AGENTIC_MESH_ONEDRIVE_DRIVE_ID",
+        "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
+        "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_GRAPH_CLIENT_ID",
+        "AGENTIC_MESH_GRAPH_TENANT_ID",
+    ]:
+        assert name in script
+    assert "oauth2/v2.0/devicecode" in script
+    assert "oauth2/v2.0/token" in script
+    assert script.count("-ErrorAction Stop") >= 2
+    assert "ErrorDetails.Message" in script
+    assert '$remoteScript = $remoteScript -replace "`r`n", "`n"' in script
+    assert 'authorization_pending")' in script
+    assert 'slow_down")' in script
+    assert "--use-device-code" not in script
+    assert "SkipDeviceLogin" in script
+    assert "os.chmod(tmp_path, 0o600)" in script
+    assert "Write-Host $token" not in script
+    assert "Write-Output $token" not in script
+
+
+def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
+    script = Path("scripts/release-linuxch-compose.sh").read_text(encoding="utf-8")
+
+    assert 'AGENTIC_MESH_V3_STATUS_PORT:=8100' in script
+    assert 'export AGENTIC_MESH_FORCE_V3_STATUS_PORT="$AGENTIC_MESH_V3_STATUS_PORT"' in script
+    assert 'AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime' in script
+    assert 'AGENTIC_MESH_STOP_LEGACY_SERVICES:=1' in script
+    assert 'docker ps -q --filter "name=agentic-mesh-v2-"' in script
+    assert 'docker ps -q --filter "name=agentic-mesh-agentic-mesh-dev-"' in script
+    assert "mkdir -p" in script and "AGENTIC_MESH_NATS_STATE_HOST_PATH" in script
+    assert "--profile v3 up -d v3-nats" in script
+    assert "--profile v3 run --rm --no-deps v3-runtime" in script
+    assert "preflight-live" in script
+    assert "--check-broker" in script
+    assert "--profile v3 up -d $AGENTIC_MESH_RELEASE_SERVICES" in script
+
+
+def test_v3_dogfood_project_config_uses_compose_nats_service_name() -> None:
+    project_config = V3_PROJECT_FILE.read_text(encoding="utf-8")
+
+    assert "servers: nats://v3-nats:4222" in project_config
+    assert "servers: nats://nats:4222" not in project_config
 
 
 def test_linuxch_overlay_restarts_project_supervisor_service() -> None:

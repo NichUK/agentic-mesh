@@ -124,10 +124,16 @@ def test_local_teams_bridge_records_outbound_delivery() -> None:
 class FakeGraphTeamsTransport:
     def __init__(self) -> None:
         self.posts: list[tuple[str, dict[str, object]]] = []
+        self.gets: list[str] = []
+        self.get_responses: dict[str, dict[str, object]] = {}
 
     def post_json(self, url: str, payload: dict[str, object]) -> dict[str, object]:
         self.posts.append((url, payload))
         return {"id": "graph-message-1"}
+
+    def get_json(self, url: str) -> dict[str, object]:
+        self.gets.append(url)
+        return self.get_responses.get(url, {"value": []})
 
 
 def test_graph_teams_bridge_posts_threaded_markdown_reply() -> None:
@@ -180,6 +186,31 @@ def test_graph_teams_bridge_can_send_dm_to_user_target() -> None:
     body = transport.posts[1][1]["body"]
     assert isinstance(body, dict)
     assert "<strong>Question</strong>" in str(body["content"])
+
+
+def test_graph_teams_bridge_refuses_self_user_target() -> None:
+    transport = FakeGraphTeamsTransport()
+    bridge = GraphTeamsBridge(
+        transport=transport,
+        graph_base_url="https://graph.test/v1.0",
+        sender_user_ref="sender-user",
+    )
+
+    try:
+        bridge.send(
+            OutboundMessage(
+                connector="teams",
+                target_ref="user:sender-user",
+                text_markdown="**Update**\n\nDone.",
+            )
+        )
+    except ValueError as exc:
+        assert "refusing to send Teams delegated DM to the sender user" in str(exc)
+    else:
+        raise AssertionError("delegated Teams self-DM targets must fail closed")
+
+    assert transport.gets == []
+    assert transport.posts == []
 
 
 def test_graph_teams_bridge_user_target_requires_sender_user_ref() -> None:

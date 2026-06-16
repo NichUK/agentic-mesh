@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import base64
 import json
 import subprocess
 import sys
@@ -14,13 +15,21 @@ from agentic_mesh_v3.cli import _stakeholder_bridge
 from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
+from agentic_mesh_v3.connectors import GraphTeamsBridge
 from agentic_mesh_v3.connectors import LocalTeamsBridge
+from agentic_mesh_v3.connectors import StakeholderMessage
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.dogfood_agent_service import WORK_ITEM_ID as AGENT_DOGFOOD_WORK_ITEM_ID
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.worker_adapters import CodexCliWorker
 from agentic_mesh_v3.worker_adapters import SafeOutputSubprocessWorker
+
+
+def _jwt_with_scopes(scopes: str) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode("ascii").rstrip("=")
+    payload = base64.urlsafe_b64encode(json.dumps({"scp": scopes}).encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{header}.{payload}.signature"
 
 
 def test_cli_validate_topology_reports_valid_paths(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -555,8 +564,161 @@ roles:
     assert result == 1
     failed = {check["check_id"] for check in output["checks"] if not check["passed"]}
     assert "documents.env" in failed
+    assert "documents.env.scopes" in failed
     assert "teams.env.token" in failed
+    assert "teams.env.scopes.chat" in failed
+    assert "teams.env.scopes.send" in failed
     assert "teams.env.sender" in failed
+
+
+def test_cli_preflight_live_accepts_graph_token_scopes(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("AGENTIC_MESH_ONEDRIVE_TOKEN", _jwt_with_scopes("Files.ReadWrite.All"))
+    monkeypatch.setenv(
+        "AGENTIC_MESH_TEAMS_TOKEN",
+        _jwt_with_scopes("Chat.Create ChatMessage.Send"),
+    )
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_SENDER_USER_ID", "sender-user")
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    role_bots = "\n".join(
+        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: drive-123
+  root_path: /documents
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    role_bots:
+{role_bots}
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: user:sponsor-user
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert output["passed"] is True
+    passed = {check["check_id"] for check in output["checks"] if check["passed"]}
+    assert "documents.env.scopes" in passed
+    assert "teams.env.scopes.chat" in passed
+    assert "teams.env.scopes.send" in passed
+    details = " ".join(str(check["detail"]) for check in output["checks"])
+    assert "eyJ" not in details
+    assert "configured" in details
+
+
+def test_cli_preflight_live_rejects_sender_user_as_sponsor(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("AGENTIC_MESH_ONEDRIVE_TOKEN", _jwt_with_scopes("Files.ReadWrite.All"))
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_TOKEN", _jwt_with_scopes("Chat.Create ChatMessage.Send"))
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_SENDER_USER_ID", "same-user")
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    role_bots = "\n".join(
+        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: drive-123
+  root_path: /documents
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    role_bots:
+{role_bots}
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: user:same-user
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    failed = {check["check_id"]: check for check in output["checks"] if not check["passed"]}
+    assert "teams.env.sender_not_sponsor" in failed
+    assert "must not be the same user" in failed["teams.env.sender_not_sponsor"]["summary"]
 
 
 def test_cli_preflight_live_reports_missing_config_env_reference(
@@ -588,6 +750,110 @@ roles:
     assert output["passed"] is False
     assert output["checks"][0]["check_id"] == "project_config.load"
     assert "AGENTIC_MESH_ONEDRIVE_DRIVE_ID" in output["checks"][0]["detail"]
+
+
+def test_cli_preflight_live_rejects_empty_sponsor_user_ref(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    docs_root = tmp_path / "documents"
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+connectors:
+  teams:
+    adapter: local
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: "user:"
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    failed = {check["check_id"] for check in output["checks"] if not check["passed"]}
+    assert "stakeholders.sponsor" in failed
+
+
+def test_cli_preflight_live_rejects_empty_sponsor_unknown_scheme_ref(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    docs_root = tmp_path / "documents"
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+connectors:
+  teams:
+    adapter: local
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: "chat:"
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    failed = {check["check_id"] for check in output["checks"] if not check["passed"]}
+    assert "stakeholders.sponsor" in failed
 
 
 def test_cli_preflight_live_passes_local_project_config(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -909,6 +1175,97 @@ roles:
         assert str(exc) == "AGENTIC_MESH_TEAMS_TOKEN is required for Graph-backed Teams outbound messaging"
     else:
         raise AssertionError("Graph-backed stakeholder bridge should require AGENTIC_MESH_TEAMS_TOKEN")
+
+
+def test_cli_graph_stakeholder_bridge_routes_inbound_to_project_broker(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+connectors:
+  teams:
+    adapter: teams-bot-connector
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    broker = InMemoryBrokerAdapter()
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_TOKEN", "token")
+
+    bridge = _stakeholder_bridge(argparse.Namespace(project_config=project_config), broker=broker)
+    subjects = bridge.route_inbound(
+        StakeholderMessage(
+            connector="teams",
+            message_id="msg-1",
+            source_type="dm",
+            sender_ref="user:sponsor",
+            conversation_ref="dm:product-manager",
+            text="Please check this.",
+        )
+    )
+
+    assert isinstance(bridge, GraphTeamsBridge)
+    assert subjects == ["agent.product-manager"]
+    pending = broker.pending("agent-inbox")
+    assert [message.subject for message in pending] == ["agent.product-manager"]
+
+
+def test_cli_stakeholder_bridge_honors_broker_stream_override(tmp_path: Path) -> None:
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+connectors:
+  teams:
+    adapter: local
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    broker = InMemoryBrokerAdapter()
+
+    bridge = _stakeholder_bridge(
+        argparse.Namespace(project_config=project_config, broker_stream="agent-inbox-proof"),
+        broker=broker,
+    )
+    subjects = bridge.route_inbound(
+        StakeholderMessage(
+            connector="teams",
+            message_id="msg-1",
+            source_type="dm",
+            sender_ref="user:sponsor",
+            conversation_ref="dm:product-manager",
+            text="Please check this.",
+        )
+    )
+
+    assert subjects == ["agent.product-manager"]
+    assert broker.pending("agent-inbox-proof")[0].subject == "agent.product-manager"
+    try:
+        broker.pending("agent-inbox")
+    except ValueError as exc:
+        assert "stream does not exist" in str(exc)
+    else:
+        raise AssertionError("stream override should avoid writing to the configured project stream")
 
 
 def test_cli_mcp_stdio_uses_project_config_document_library(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

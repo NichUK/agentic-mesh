@@ -1002,6 +1002,17 @@ class V3Database:
                   deployment_result, smoke_evidence, rollback_plan, residual_risks, closure_state
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(release_id) DO UPDATE SET
+                  work_item_id=excluded.work_item_id,
+                  status=excluded.status,
+                  scope=excluded.scope,
+                  version_ref=excluded.version_ref,
+                  approval_ref=excluded.approval_ref,
+                  deployment_result=excluded.deployment_result,
+                  smoke_evidence=excluded.smoke_evidence,
+                  rollback_plan=excluded.rollback_plan,
+                  residual_risks=excluded.residual_risks,
+                  closure_state=excluded.closure_state
                 """,
                 (
                     release_id,

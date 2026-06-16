@@ -82,6 +82,30 @@ Runtime tokens such as `AGENTIC_MESH_ONEDRIVE_TOKEN` and Graph/Teams
 credentials are supplied by the deployment environment, not committed to the
 project file.
 
+For linuxch, copy `deploy/compose/.env.example` to `deploy/compose/.env` or
+export equivalent environment values before running
+`scripts/release-linuxch-compose.sh`. The V3 release path now rebuilds the
+runtime image, runs `preflight-live` inside the V3 container, and only starts
+`v3-nats` plus `v3-runtime` when the required OneDrive, Teams, sponsor, broker,
+and deployment-target configuration is present. Use `AGENTIC_MESH_RELEASE_SERVICES`
+only when intentionally overriding the default V3 service set.
+The OneDrive token must carry delegated `Files.ReadWrite.All` or
+`Sites.ReadWrite.All`. The Teams token must carry delegated `Chat.Create` or
+`Chat.ReadWrite`, plus `ChatMessage.Send` or `ChannelMessage.Send`, so agents
+can send sponsor DMs and channel notifications during the live proof.
+Refresh the linuxch `.env` tokens from Windows with:
+
+```powershell
+.\scripts\update-linuxch-v3-graph-env.ps1 -GraphClientId <agentic-mesh-public-client-app-id>
+```
+
+The helper uses the Microsoft identity platform device-code flow through the
+configured Agentic Mesh public-client app registration when the scoped token is
+not already available. Azure CLI's first-party client cannot request these
+Graph scopes directly.
+The app registration must allow public-client/device-code flow and expose
+delegated Microsoft Graph permissions for the scopes listed above.
+
 Runtime state is:
 
 ```text

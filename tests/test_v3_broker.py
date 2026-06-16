@@ -1,6 +1,20 @@
+import agentic_mesh_v3.broker as broker_module
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.broker import NatsJetStreamAdapter
 from agentic_mesh_v3.broker import build_broker_adapter
+
+
+class FakeConsumerConfig:
+    def __init__(
+        self,
+        *,
+        durable_name: str,
+        ack_policy: str,
+        filter_subject: str | None = None,
+    ) -> None:
+        self.durable_name = durable_name
+        self.ack_policy = ack_policy
+        self.filter_subject = filter_subject
 
 
 class FakeNatsMessage:
@@ -9,6 +23,100 @@ class FakeNatsMessage:
 
     async def ack(self) -> None:
         self.acked = True
+
+
+class FakeJetStream:
+    def __init__(self, *, consumer_exists: bool = False) -> None:
+        self.consumer_exists = consumer_exists
+        self.added_config: object | None = None
+        self.consumer_info_calls: list[tuple[str, str]] = []
+
+    async def consumer_info(self, stream: str, consumer: str) -> object:
+        self.consumer_info_calls.append((stream, consumer))
+        if self.consumer_exists:
+            return object()
+        raise RuntimeError("consumer not found")
+
+    async def add_consumer(self, stream: str, *, config: object) -> None:
+        self.added_stream = stream
+        self.added_config = config
+
+
+class FakeNatsSequence:
+    stream = 42
+
+
+class FakeNatsMetadata:
+    sequence = FakeNatsSequence()
+    num_delivered = 1
+
+
+class FakeNatsConnection:
+    def __init__(self, jetstream: FakeJetStream) -> None:
+        self._jetstream = jetstream
+        self.closed = False
+
+    def jetstream(self) -> FakeJetStream:
+        return self._jetstream
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakePullNatsMessage:
+    subject = "agent.product-manager"
+    data = b'{"text": "shape"}'
+    metadata = FakeNatsMetadata()
+    acked = False
+
+    async def ack(self) -> None:
+        self.acked = True
+
+
+class FakePullSubscription:
+    async def fetch(self, *, batch: int, timeout: int) -> list[FakePullNatsMessage]:
+        assert batch == 1
+        assert timeout == 1
+        return [FakePullNatsMessage()]
+
+
+class FakePullJetStream(FakeJetStream):
+    def __init__(self) -> None:
+        super().__init__(consumer_exists=True)
+        self.pull_subscribe_calls: list[tuple[str, str, str]] = []
+
+    async def pull_subscribe(self, subject: str, *, durable: str, stream: str) -> FakePullSubscription:
+        self.pull_subscribe_calls.append((subject, durable, stream))
+        return FakePullSubscription()
+
+
+class FakeStreamJetStream(FakeJetStream):
+    def __init__(self, *, existing_subjects: list[str] | None = None) -> None:
+        super().__init__()
+        self.existing_subjects = existing_subjects
+        self.add_stream_calls: list[tuple[str, list[str]]] = []
+        self.update_stream_calls: list[tuple[str, list[str]]] = []
+
+    async def stream_info(self, stream: str) -> object:
+        if self.existing_subjects is not None:
+            config = type("FakeStreamConfig", (), {"subjects": self.existing_subjects})()
+            return type("FakeStreamInfo", (), {"config": config})()
+        raise RuntimeError(f"missing stream: {stream}")
+
+    async def add_stream(self, *, name: str, subjects: list[str]) -> None:
+        self.add_stream_calls.append((name, subjects))
+
+    async def update_stream(self, *, name: str, subjects: list[str]) -> None:
+        self.update_stream_calls.append((name, subjects))
+
+
+class FakeDeadLetterJetStream(FakeJetStream):
+    def __init__(self) -> None:
+        super().__init__()
+        self.publish_calls: list[tuple[str, bytes]] = []
+
+    async def publish(self, subject: str, data: bytes) -> None:
+        self.publish_calls.append((subject, data))
 
 
 def test_in_memory_broker_publish_fetch_ack() -> None:
@@ -113,6 +221,154 @@ def test_build_broker_adapter_supports_in_memory_and_nats() -> None:
     assert isinstance(
         build_broker_adapter(adapter="nats-jetstream", servers="nats://localhost:4222"),
         NatsJetStreamAdapter,
+    )
+
+
+def test_nats_ensure_consumer_uses_nats_consumer_config(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    fake_js = FakeJetStream()
+    fake_connection = FakeNatsConnection(fake_js)
+
+    async def fake_connect() -> FakeNatsConnection:
+        return fake_connection
+
+    monkeypatch.setattr(adapter, "_connect", fake_connect)
+    monkeypatch.setattr(broker_module, "_import_nats_consumer_config", lambda: FakeConsumerConfig)
+
+    consumer = adapter.ensure_consumer(
+        "agent-inbox",
+        "pm-1",
+        filter_subject="agent.product-manager",
+    )
+
+    assert consumer.consumer == "pm-1"
+    assert fake_js.consumer_info_calls == [("agent-inbox", "pm-1")]
+    assert isinstance(fake_js.added_config, FakeConsumerConfig)
+    assert fake_js.added_config.durable_name == "pm-1"
+    assert fake_js.added_config.ack_policy == "explicit"
+    assert fake_js.added_config.filter_subject == "agent.product-manager"
+    assert fake_connection.closed is True
+
+
+def test_nats_ensure_consumer_normalizes_role_instance_consumer_names(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    fake_js = FakeJetStream()
+
+    async def fake_connect() -> FakeNatsConnection:
+        return FakeNatsConnection(fake_js)
+
+    monkeypatch.setattr(adapter, "_connect", fake_connect)
+    monkeypatch.setattr(broker_module, "_import_nats_consumer_config", lambda: FakeConsumerConfig)
+
+    consumer = adapter.ensure_consumer(
+        "agent-inbox",
+        "agentic-mesh-dev.product-manager.1",
+        filter_subject="agent.product-manager",
+    )
+
+    assert consumer.consumer == "agentic-mesh-dev.product-manager.1"
+    assert fake_js.consumer_info_calls == [("agent-inbox", "agentic-mesh-dev_product-manager_1")]
+    assert isinstance(fake_js.added_config, FakeConsumerConfig)
+    assert fake_js.added_config.durable_name == "agentic-mesh-dev_product-manager_1"
+
+
+def test_nats_ensure_consumer_keeps_existing_durable_consumer(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    fake_js = FakeJetStream(consumer_exists=True)
+    fake_connection = FakeNatsConnection(fake_js)
+
+    async def fake_connect() -> FakeNatsConnection:
+        return fake_connection
+
+    monkeypatch.setattr(adapter, "_connect", fake_connect)
+    monkeypatch.setattr(broker_module, "_import_nats_consumer_config", lambda: FakeConsumerConfig)
+
+    adapter.ensure_consumer("agent-inbox", "pm-1", filter_subject="agent.product-manager")
+
+    assert fake_js.consumer_info_calls == [("agent-inbox", "pm-1")]
+    assert fake_js.added_config is None
+    assert fake_connection.closed is True
+
+
+def test_nats_fetch_accepts_property_metadata_and_uses_normalized_durable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    fake_js = FakePullJetStream()
+    fake_connection = FakeNatsConnection(fake_js)
+
+    async def fake_connect() -> FakeNatsConnection:
+        return fake_connection
+
+    monkeypatch.setattr(adapter, "_connect", fake_connect)
+
+    messages = adapter.fetch("agent-inbox", "agentic-mesh-dev.product-manager.1")
+
+    assert fake_js.pull_subscribe_calls == [
+        ("", "agentic-mesh-dev_product-manager_1", "agent-inbox")
+    ]
+    assert len(messages) == 1
+    assert messages[0].message_id == "agent.product-manager:42"
+    assert messages[0].payload == {"text": "shape"}
+    assert messages[0].delivery_count == 0
+    assert fake_connection.closed is False
+    adapter.ack("agent-inbox", "agentic-mesh-dev.product-manager.1", "agent.product-manager:42")
+    assert fake_connection.closed is True
+
+
+def test_nats_ensure_stream_allows_nested_dead_letter_subjects(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    fake_js = FakeStreamJetStream()
+
+    async def fake_connect() -> FakeNatsConnection:
+        return FakeNatsConnection(fake_js)
+
+    monkeypatch.setattr(adapter, "_connect", fake_connect)
+
+    adapter.ensure_stream("agent-inbox", ["agent.>"])
+
+    assert fake_js.add_stream_calls == [
+        ("agent-inbox", ["agent.>", "deadletter.agent-inbox.>"])
+    ]
+
+
+def test_nats_ensure_stream_merges_existing_subjects(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    fake_js = FakeStreamJetStream(existing_subjects=["agent.product-manager"])
+
+    async def fake_connect() -> FakeNatsConnection:
+        return FakeNatsConnection(fake_js)
+
+    monkeypatch.setattr(adapter, "_connect", fake_connect)
+
+    adapter.ensure_stream("agent-inbox", ["agent.engineering"])
+
+    assert fake_js.add_stream_calls == []
+    assert fake_js.update_stream_calls == [
+        ("agent-inbox", ["agent.product-manager", "agent.engineering", "deadletter.agent-inbox.>"])
+    ]
+
+
+def test_nats_dead_letter_uses_normalized_nested_subject(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    fake_js = FakeDeadLetterJetStream()
+
+    async def fake_connect() -> FakeNatsConnection:
+        return FakeNatsConnection(fake_js)
+
+    monkeypatch.setattr(adapter, "_connect", fake_connect)
+
+    adapter._acked_messages[
+        ("agent-inbox", "agentic-mesh-dev.product-manager.1", "agent.product-manager:1")
+    ] = FakeNatsMessage()
+    adapter.dead_letter(
+        "agent-inbox",
+        "agentic-mesh-dev.product-manager.1",
+        "agent.product-manager:1",
+        reason="bad payload",
+    )
+
+    assert fake_js.publish_calls
+    assert fake_js.publish_calls[0][0] == (
+        "deadletter.agent-inbox.agentic-mesh-dev_product-manager_1"
     )
 
 

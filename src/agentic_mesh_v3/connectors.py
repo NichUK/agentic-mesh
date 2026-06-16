@@ -234,6 +234,11 @@ class GraphTeamsBridge:
                 "sender_user_ref is required for Teams user DM targets; "
                 "set AGENTIC_MESH_TEAMS_SENDER_USER_ID"
             )
+        if user_ref == self.sender_user_ref:
+            raise ValueError(
+                "refusing to send Teams delegated DM to the sender user; "
+                "configure a distinct agent/bot sender or an explicit chat target"
+            )
         response = self.transport.post_json(
             f"{self.graph_base_url}/chats",
             {
@@ -253,6 +258,9 @@ class GraphTeamsBridge:
 class GraphTeamsTransport(Protocol):
     def post_json(self, url: str, payload: dict[str, object]) -> dict[str, object]:
         """POST a JSON payload and return parsed response data."""
+
+    def get_json(self, url: str) -> dict[str, object]:
+        """GET JSON data from Microsoft Graph."""
 
 
 def _aad_user_conversation_member(graph_base_url: str, user_ref: str) -> dict[str, object]:
@@ -279,6 +287,21 @@ class UrlLibGraphTeamsTransport:
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self.access_token}",
                 "Content-Type": "application/json; charset=utf-8",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def get_json(self, url: str) -> dict[str, object]:
+        import json
+        import urllib.request
+
+        request = urllib.request.Request(
+            url,
+            method="GET",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.access_token}",
             },
         )
         with urllib.request.urlopen(request, timeout=30) as response:

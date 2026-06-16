@@ -6,6 +6,7 @@ from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import CommandDeploymentTarget
+from agentic_mesh_v3.deployment import DeploymentResult
 from agentic_mesh_v3.deployment import NoDeploymentDisposition
 from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
@@ -485,6 +486,46 @@ def test_v3_tool_service_links_existing_artifact(tmp_path: Path) -> None:
     assert artifact.url == "https://example.test/documents/work-items/work-1/100-implementation-log.md"
 
 
+def test_v3_tool_service_writes_and_links_typed_document_artifact(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Shape product",
+            description="Define the product slice.",
+            state="active",
+            owner_role="product-manager",
+        )
+        V3ToolService(db, document_library=docs).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="document.write_artifact",
+            payload={
+                "work_item_id": "work-1",
+                "relative_path": "work-items/work-1/020-product-definition.md",
+                "title": "Product definition",
+                "document_type": "product_definition",
+                "content_markdown": "# Product definition\n\nUseful product content.",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert docs.read_text("work-items/work-1/020-product-definition.md").startswith("# Product definition")
+    assert detail is not None
+    assert len(detail.artifacts) == 1
+    artifact = detail.artifacts[0]
+    assert artifact.filename == "020-product-definition.md"
+    assert artifact.title == "Product definition"
+    assert artifact.relative_path == "work-items/work-1/020-product-definition.md"
+    assert artifact.document_type == "product_definition"
+    assert artifact.status == "published"
+    assert artifact.created_by_role == "product-manager"
+
+
 def test_v3_tool_service_rejects_framework_artifact_path_mismatch(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
@@ -867,6 +908,75 @@ def test_v3_release_deploy_failure_moves_work_to_recovering(tmp_path: Path) -> N
     assert "deploy failed" in detail.next_action
     assert detail.releases[0].status == "failed"
     assert detail.releases[0].rollback_plan == "Keep previous runtime active."
+
+
+def test_v3_release_deploy_retry_updates_failed_release_record(tmp_path: Path) -> None:
+    class RetryTarget:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def deploy(self) -> DeploymentResult:
+            self.calls += 1
+            if self.calls == 1:
+                return DeploymentResult(
+                    target_id="retry-target",
+                    status="failed",
+                    output="docker socket was unavailable",
+                    rollback_plan="Keep previous runtime active.",
+                )
+            return DeploymentResult(
+                target_id="retry-target",
+                status="deployed",
+                output="runtime restarted and smoke passed",
+                rollback_plan="Restore previous runtime image.",
+            )
+
+    db = V3Database(tmp_path / "v3.sqlite3")
+    target = RetryTarget()
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Deploy runtime",
+            description="Needs runtime deployment.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+        tools = V3ToolService(db, deployment_targets={"retry-target": target})
+        payload = {
+            "release_id": "release-work-1",
+            "work_item_id": "work-1",
+            "target_id": "retry-target",
+            "scope": "Runtime release",
+            "version_ref": "commit:abc123",
+            "approval_ref": "approval-release-1",
+            "smoke_evidence": "GET /healthz passed.",
+        }
+
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.deploy",
+            payload=payload,
+        )
+        first_detail = db.work_item_detail("work-1")
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.deploy",
+            payload=payload,
+        )
+        detail = db.work_item_detail("work-1")
+        release_count = db.connection.execute("SELECT COUNT(*) AS count FROM releases").fetchone()["count"]
+    finally:
+        db.close()
+
+    assert first_detail is not None
+    assert first_detail.state == "recovering"
+    assert detail is not None
+    assert detail.state == "released"
+    assert release_count == 1
+    assert detail.releases[0].status == "deployed"
+    assert detail.releases[0].deployment_result == "runtime restarted and smoke passed"
+    assert detail.releases[0].rollback_plan == "Restore previous runtime image."
 
 
 def test_v3_release_deploy_timeout_moves_work_to_recovering(tmp_path: Path) -> None:
@@ -1945,6 +2055,44 @@ def test_v3_tool_service_status_reply_delivers_when_target_is_present(tmp_path: 
     assert len(deliveries) == 1
     assert deliveries[0]["purpose"] == "status.reply"
     assert deliveries[0]["target_ref"] == "dm:sponsor"
+
+
+def test_v3_tool_service_targeted_status_reply_raises_when_delivery_fails(tmp_path: Path) -> None:
+    class FailingBridge:
+        def send(self, message):  # type: ignore[no-untyped-def]
+            raise RuntimeError("Graph DM failed")
+
+        def route_inbound(self, message):  # type: ignore[no-untyped-def]
+            return []
+
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        try:
+            V3ToolService(db, stakeholder_bridge=FailingBridge()).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="status.reply",
+                payload={
+                    "connector": "teams",
+                    "target_ref": "user:sponsor-user",
+                    "text_markdown": "Product Manager reply.",
+                },
+            )
+        except RuntimeError as exc:
+            assert "Graph DM failed" in str(exc)
+        else:
+            raise AssertionError("targeted status.reply should fail when Teams delivery fails")
+        calls = db.list_tool_calls()
+        deliveries = db.list_outbound_deliveries()
+    finally:
+        db.close()
+
+    assert len(calls) == 1
+    assert calls[0]["tool_name"] == "status.reply"
+    assert len(deliveries) == 1
+    assert deliveries[0]["purpose"] == "status.reply"
+    assert deliveries[0]["status"] == "failed"
+    assert "Graph DM failed" in deliveries[0]["target_ref"]
 
 
 def test_v3_tool_service_status_reply_uses_source_reply_context(tmp_path: Path) -> None:

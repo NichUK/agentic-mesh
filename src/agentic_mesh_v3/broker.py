@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 from datetime import timezone
+import inspect
+import re
 from typing import Protocol
 from uuid import uuid4
 
@@ -231,38 +233,45 @@ class NatsJetStreamAdapter:
         self.servers = servers
         self._acked_messages: dict[tuple[str, str, str], object] = {}
         self._dead_letters: dict[str, deque[BrokerMessage]] = defaultdict(deque)
+        self._loop = asyncio.new_event_loop()
+
+    def _run(self, operation):  # noqa: ANN001
+        if self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+        return self._loop.run_until_complete(operation)
 
     def ensure_stream(self, stream: str, subjects: list[str]) -> None:
-        asyncio.run(self._ensure_stream(stream, subjects))
+        self._run(self._ensure_stream(stream, subjects))
 
     def ensure_consumer(
         self, stream: str, consumer: str, *, filter_subject: str | None = None
     ) -> BrokerConsumer:
-        asyncio.run(self._ensure_consumer(stream, consumer, filter_subject=filter_subject))
+        self._run(self._ensure_consumer(stream, consumer, filter_subject=filter_subject))
         return BrokerConsumer(stream=stream, consumer=consumer, filter_subject=filter_subject)
 
     def publish(
         self, stream: str, subject: str, payload: dict[str, object], *, message_id: str | None = None
     ) -> BrokerMessage:
-        return asyncio.run(self._publish(stream, subject, payload, message_id=message_id))
+        return self._run(self._publish(stream, subject, payload, message_id=message_id))
 
     def fetch(self, stream: str, consumer: str, *, batch: int = 1) -> list[BrokerMessage]:
-        return asyncio.run(self._fetch(stream, consumer, batch=batch))
+        return self._run(self._fetch(stream, consumer, batch=batch))
 
     def ack(self, stream: str, consumer: str, message_id: str) -> None:
-        message = self._acked_messages.pop((stream, consumer, message_id), None)
-        if message is not None:
-            asyncio.run(_ack_nats_message(message))
+        entry = self._acked_messages.pop((stream, consumer, message_id), None)
+        if entry is not None:
+            self._run(_ack_nats_entry(entry))
 
     def nack(self, stream: str, consumer: str, message_id: str, *, reason: str) -> None:
-        message = self._acked_messages.pop((stream, consumer, message_id), None)
-        if message is not None:
-            asyncio.run(_nak_nats_message(message, reason=reason))
+        entry = self._acked_messages.pop((stream, consumer, message_id), None)
+        if entry is not None:
+            self._run(_nak_nats_entry(entry, reason=reason))
 
     def dead_letter(self, stream: str, consumer: str, message_id: str, *, reason: str) -> None:
-        message = self._acked_messages.pop((stream, consumer, message_id), None)
-        if message is not None:
-            asyncio.run(self._dead_letter(stream, consumer, message_id, message, reason=reason))
+        entry = self._acked_messages.pop((stream, consumer, message_id), None)
+        if entry is not None:
+            message = _nats_entry_message(entry)
+            self._run(self._dead_letter(stream, consumer, message_id, entry, reason=reason))
             self._dead_letters[stream].append(
                 _nats_dead_letter_record(message_id=message_id, message=message, reason=reason)
             )
@@ -272,14 +281,14 @@ class NatsJetStreamAdapter:
             raise ValueError("limit must be positive")
         if consumer is None:
             messages = [
-                message
-                for (candidate_stream, _, _), message in self._acked_messages.items()
+                _nats_entry_message(entry)
+                for (candidate_stream, _, _), entry in self._acked_messages.items()
                 if candidate_stream == stream
             ]
         else:
             messages = [
-                message
-                for (candidate_stream, candidate_consumer, _), message in self._acked_messages.items()
+                _nats_entry_message(entry)
+                for (candidate_stream, candidate_consumer, _), entry in self._acked_messages.items()
                 if candidate_stream == stream and candidate_consumer == consumer
             ]
         return [
@@ -294,7 +303,7 @@ class NatsJetStreamAdapter:
         return list(self._dead_letters[stream])[:limit]
 
     def depth(self, stream: str) -> BrokerDepth:
-        return asyncio.run(self._depth(stream))
+        return self._run(self._depth(stream))
 
     async def _connect(self):
         nats = _import_nats()
@@ -304,10 +313,12 @@ class NatsJetStreamAdapter:
         nc = await self._connect()
         try:
             js = nc.jetstream()
-            stream_subjects = list(dict.fromkeys([*subjects, f"deadletter.{stream}.*"]))
+            stream_subjects = list(dict.fromkeys([*subjects, f"deadletter.{stream}.>"]))
             try:
-                await js.stream_info(stream)
-                await js.update_stream(name=stream, subjects=stream_subjects)
+                info = await js.stream_info(stream)
+                existing_subjects = list(getattr(getattr(info, "config", None), "subjects", None) or [])
+                merged_subjects = list(dict.fromkeys([*existing_subjects, *stream_subjects]))
+                await js.update_stream(name=stream, subjects=merged_subjects)
             except Exception:
                 await js.add_stream(name=stream, subjects=stream_subjects)
         finally:
@@ -317,9 +328,18 @@ class NatsJetStreamAdapter:
         nc = await self._connect()
         try:
             js = nc.jetstream()
-            config = {"durable_name": consumer, "ack_policy": "explicit"}
-            if filter_subject:
-                config["filter_subject"] = filter_subject
+            durable_name = _nats_consumer_name(consumer)
+            try:
+                await js.consumer_info(stream, durable_name)
+                return
+            except Exception:
+                pass
+            ConsumerConfig = _import_nats_consumer_config()
+            config = ConsumerConfig(
+                durable_name=durable_name,
+                ack_policy="explicit",
+                filter_subject=filter_subject,
+            )
             await js.add_consumer(stream, config=config)
         finally:
             await nc.close()
@@ -348,16 +368,24 @@ class NatsJetStreamAdapter:
         import json
 
         nc = await self._connect()
+        keep_connection_open = False
         try:
             js = nc.jetstream()
-            subscription = await js.pull_subscribe("", durable=consumer, stream=stream)
-            raw_messages = await subscription.fetch(batch=batch, timeout=1)
+            subscription = await js.pull_subscribe("", durable=_nats_consumer_name(consumer), stream=stream)
+            try:
+                raw_messages = await subscription.fetch(batch=batch, timeout=1)
+            except Exception as exc:
+                if type(exc).__name__ == "TimeoutError":
+                    return []
+                raise
+            keep_connection_open = bool(raw_messages)
             messages: list[BrokerMessage] = []
             for raw in raw_messages:
                 payload = json.loads(raw.data.decode("utf-8")) if raw.data else {}
-                metadata = await raw.metadata
+                metadata_value = raw.metadata
+                metadata = await metadata_value if inspect.isawaitable(metadata_value) else metadata_value
                 message_id = f"{raw.subject}:{metadata.sequence.stream}"
-                self._acked_messages[(stream, consumer, message_id)] = raw
+                self._acked_messages[(stream, consumer, message_id)] = (raw, nc)
                 messages.append(
                     BrokerMessage(
                         message_id=message_id,
@@ -369,29 +397,32 @@ class NatsJetStreamAdapter:
                 )
             return messages
         finally:
-            await nc.close()
+            if not keep_connection_open:
+                await nc.close()
 
     async def _dead_letter(
         self,
         stream: str,
         consumer: str,
         message_id: str,
-        message: object,
+        entry: object,
         *,
         reason: str,
     ) -> None:
         import json
 
+        message = _nats_entry_message(entry)
         nc = await self._connect()
         try:
             js = nc.jetstream()
             await js.publish(
-                f"deadletter.{stream}.{consumer}",
+                f"deadletter.{stream}.{_nats_consumer_name(consumer)}",
                 json.dumps({"message_id": message_id, "reason": reason}).encode("utf-8"),
             )
             await message.ack()  # type: ignore[attr-defined]
         finally:
             await nc.close()
+            await _nats_entry_close(entry)
 
     async def _depth(self, stream: str) -> BrokerDepth:
         nc = await self._connect()
@@ -419,6 +450,21 @@ def _import_nats():
     except ImportError as exc:
         raise RuntimeError("NATS JetStream adapter requires the optional `nats-py` package") from exc
     return nats
+
+
+def _import_nats_consumer_config():
+    try:
+        from nats.js.api import ConsumerConfig
+    except ImportError as exc:
+        raise RuntimeError("NATS JetStream adapter requires the optional `nats-py` package") from exc
+    return ConsumerConfig
+
+
+def _nats_consumer_name(consumer: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_-]+", "_", consumer.strip()).strip("_")
+    if not normalized:
+        raise ValueError("consumer is required")
+    return normalized
 
 
 def _nats_dead_letter_record(*, message_id: str, message: object, reason: str) -> BrokerMessage:
@@ -450,6 +496,32 @@ def _nats_broker_message_record(*, message_id: str, message: object) -> BrokerMe
         payload=payload,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _nats_entry_message(entry: object) -> object:
+    if isinstance(entry, tuple) and entry:
+        return entry[0]
+    return entry
+
+
+async def _nats_entry_close(entry: object) -> None:
+    if isinstance(entry, tuple) and len(entry) > 1:
+        connection = entry[1]
+        await connection.close()  # type: ignore[attr-defined]
+
+
+async def _ack_nats_entry(entry: object) -> None:
+    try:
+        await _ack_nats_message(_nats_entry_message(entry))
+    finally:
+        await _nats_entry_close(entry)
+
+
+async def _nak_nats_entry(entry: object, *, reason: str) -> None:
+    try:
+        await _nak_nats_message(_nats_entry_message(entry), reason=reason)
+    finally:
+        await _nats_entry_close(entry)
 
 
 async def _ack_nats_message(message: object) -> None:

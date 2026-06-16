@@ -53,7 +53,7 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "waiting_agent": {"active", "blocked", "recovering", "release_review", "canceled", "superseded"},
     "waiting_external": {"active", "blocked", "recovering", "release_review", "canceled", "superseded"},
     "blocked": {"recovering", "waiting_human", "waiting_agent", "active", "canceled", "superseded"},
-    "recovering": {"active", "waiting_agent", "blocked", "release_review", "failed_terminal"},
+    "recovering": {"active", "waiting_agent", "blocked", "release_review", "deploying", "failed_terminal"},
     "release_review": {
         "waiting_human",
         "deploying",
