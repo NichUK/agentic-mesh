@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import json
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -186,7 +185,7 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             f"<p><strong>Next action:</strong> {html.escape(detail.next_action)}</p>",
             "</section>",
             "<h2>Governance</h2>",
-            f"<pre>{html.escape(json.dumps(detail.governance, indent=2, sort_keys=True))}</pre>",
+            _governance_summary_table(detail.governance),
             "<h2>Governance Checklist</h2>",
             _governance_checklist_section(detail.governance_checklist),
             "<h2>Governance Records</h2>",
@@ -360,6 +359,61 @@ def _release_table(items: tuple[ReleaseStatus, ...]) -> str:
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"6\">No releases recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
+
+
+def _governance_summary_table(governance: dict[str, object]) -> str:
+    rows = [
+        "<tr><th>Field</th><th>Value</th></tr>",
+        _governance_row("Phase", governance.get("phase")),
+        _governance_row("Accountable", governance.get("accountable_role")),
+        _governance_row("Responsible", governance.get("responsible_roles")),
+        _governance_row("Consulted", governance.get("consulted_roles")),
+        _governance_row("Informed", governance.get("informed_roles")),
+        _governance_row("Sponsor decisions", governance.get("sponsor_decision_points")),
+        _governance_row("Required evidence", governance.get("required_evidence")),
+        _governance_row("Consultation exceptions", governance.get("consultation_exceptions")),
+    ]
+    known = {
+        "phase",
+        "accountable_role",
+        "responsible_roles",
+        "consulted_roles",
+        "informed_roles",
+        "sponsor_decision_points",
+        "required_evidence",
+        "consultation_exceptions",
+    }
+    extra = {key: value for key, value in governance.items() if key not in known}
+    if extra:
+        rows.append(_governance_row("Additional governance data", extra))
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _governance_row(label: str, value: object) -> str:
+    return (
+        "<tr>"
+        f"<td>{html.escape(label)}</td>"
+        f"<td>{_format_governance_value(value)}</td>"
+        "</tr>"
+    )
+
+
+def _format_governance_value(value: object) -> str:
+    if value is None or value == "":
+        return "None"
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return "None"
+        return "<ul>" + "".join(f"<li>{html.escape(str(item))}</li>" for item in value) + "</ul>"
+    if isinstance(value, dict):
+        if not value:
+            return "None"
+        items = "".join(
+            f"<li><strong>{html.escape(str(key))}:</strong> {_format_governance_value(raw)}</li>"
+            for key, raw in sorted(value.items(), key=lambda item: str(item[0]))
+        )
+        return f"<ul>{items}</ul>"
+    return html.escape(str(value))
 
 
 def _governance_record_table(items: tuple[GovernanceRecordStatus, ...]) -> str:

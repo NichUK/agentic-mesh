@@ -140,9 +140,12 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
                 "governance": {
                     "phase": "deployment",
                     "accountable_role": "release-manager",
+                    "responsible_roles": ["platform-engineer", "engineering"],
                     "consulted_roles": ["qa-engineer"],
                     "informed_roles": ["project-manager"],
                     "sponsor_decision_points": ["release-approval"],
+                    "required_evidence": ["smoke evidence", "rollback plan"],
+                    "extra_context": {"risk": "low"},
                 },
             },
         )
@@ -204,7 +207,16 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
 
     assert "Build the V3 status page." in html
     assert "release-manager" in html
+    assert "Accountable" in html
+    assert "Responsible" in html
+    assert "platform-engineer" in html
     assert "qa-engineer" in html
+    assert "Sponsor decisions" in html
+    assert "Required evidence" in html
+    assert "smoke evidence" in html
+    assert "Additional governance data" in html
+    assert "extra_context" in html
+    assert "<pre>" not in html
     assert "Work item index" in html
     assert "/artifact-viewer/work-1/index.md" in html
     assert "consult.request" in html
