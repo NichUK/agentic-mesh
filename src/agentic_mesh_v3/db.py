@@ -530,6 +530,17 @@ class V3Database:
                 },
             )
 
+    def approval_detail(self, approval_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """
+            SELECT approval_id, work_item_id, requested_by_role, question, status, response
+            FROM approvals
+            WHERE approval_id=?
+            """,
+            (approval_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def record_release(
         self,
         *,

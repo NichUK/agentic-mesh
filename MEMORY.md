@@ -320,3 +320,8 @@ V3 work-item terminal states now sync linked queue/backlog item status in the
 runtime read model. When linked work reaches `closed`, `canceled`,
 `superseded`, or `failed_terminal`, the queue item leaves current backlog views
 without requiring a second explicit backlog update.
+
+V3 approval responses recorded through the CLI now wake the requesting role
+when project broker config is supplied. The runtime records the approval
+decision, then publishes an `approval.response_recorded` message to
+`agent.{requested_by_role}` so the role agent can continue the slice.

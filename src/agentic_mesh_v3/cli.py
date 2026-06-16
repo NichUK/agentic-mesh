@@ -281,12 +281,15 @@ def main(argv: list[str] | None = None) -> int:
                 response=args.response,
                 responder_ref=args.responder_ref,
             )
+            approval = db.approval_detail(args.approval_id)
+            published_message_id = _publish_approval_response(args, approval=approval)
             print(
                 json.dumps(
                     {
                         "approval_id": args.approval_id,
                         "status": args.status,
                         "responder_ref": args.responder_ref,
+                        "published_message_id": published_message_id,
                     },
                     indent=2,
                 )
@@ -436,6 +439,32 @@ def _broker_inspection_payload(
         "pending": [_broker_message_dict(message) for message in broker.pending(stream, consumer, limit=limit)],
         "dead_letters": [_broker_message_dict(message) for message in broker.dead_letters(stream, limit=limit)],
     }
+
+
+def _publish_approval_response(args: argparse.Namespace, *, approval: dict[str, object] | None) -> str | None:
+    if approval is None or args.project_config is None:
+        return None
+    project_config = load_project_config(args.project_config)
+    broker = build_broker_adapter(
+        adapter=project_config.broker.adapter,
+        servers=project_config.broker.servers,
+    )
+    role_ids = tuple(role.role_id for role in project_config.roles)
+    _ensure_agent_stream(broker, stream=project_config.broker.stream, role_ids=role_ids)
+    requested_by_role = str(approval["requested_by_role"])
+    message = broker.publish(
+        project_config.broker.stream,
+        f"agent.{requested_by_role}",
+        {
+            "message_type": "approval.response_recorded",
+            "approval_id": str(approval["approval_id"]),
+            "work_item_id": str(approval["work_item_id"]),
+            "status": str(approval["status"]),
+            "response": str(approval.get("response") or ""),
+            "responder_ref": args.responder_ref,
+        },
+    )
+    return message.message_id
 
 
 def _document_library_adapter(args: argparse.Namespace, *, required: bool = False) -> DocumentLibraryAdapter | None:
