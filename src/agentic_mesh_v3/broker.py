@@ -230,6 +230,7 @@ class NatsJetStreamAdapter:
     def __init__(self, servers: str) -> None:
         self.servers = servers
         self._acked_messages: dict[tuple[str, str, str], object] = {}
+        self._dead_letters: dict[str, deque[BrokerMessage]] = defaultdict(deque)
 
     def ensure_stream(self, stream: str, subjects: list[str]) -> None:
         asyncio.run(self._ensure_stream(stream, subjects))
@@ -262,6 +263,9 @@ class NatsJetStreamAdapter:
         message = self._acked_messages.pop((stream, consumer, message_id), None)
         if message is not None:
             asyncio.run(self._dead_letter(stream, consumer, message_id, message, reason=reason))
+            self._dead_letters[stream].append(
+                _nats_dead_letter_record(message_id=message_id, message=message, reason=reason)
+            )
 
     def pending(self, stream: str, consumer: str | None = None, *, limit: int = 20) -> list[BrokerMessage]:
         if limit < 1:
@@ -292,8 +296,7 @@ class NatsJetStreamAdapter:
     def dead_letters(self, stream: str, *, limit: int = 20) -> list[BrokerMessage]:
         if limit < 1:
             raise ValueError("limit must be positive")
-        del stream
-        return []
+        return list(self._dead_letters[stream])[:limit]
 
     def depth(self, stream: str) -> BrokerDepth:
         return asyncio.run(self._depth(stream))
@@ -421,6 +424,26 @@ def _import_nats():
     except ImportError as exc:
         raise RuntimeError("NATS JetStream adapter requires the optional `nats-py` package") from exc
     return nats
+
+
+def _nats_dead_letter_record(*, message_id: str, message: object, reason: str) -> BrokerMessage:
+    import json
+
+    payload: object = {}
+    data = getattr(message, "data", b"")
+    if data:
+        try:
+            payload = json.loads(data.decode("utf-8"))
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+            payload = {"raw": repr(data)}
+    if not isinstance(payload, dict):
+        payload = {"value": payload}
+    return BrokerMessage(
+        message_id=message_id,
+        subject=getattr(message, "subject", ""),
+        payload={**payload, "dead_letter_reason": reason},
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 async def _ack_nats_message(message: object) -> None:

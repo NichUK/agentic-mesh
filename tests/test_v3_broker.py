@@ -3,6 +3,14 @@ from agentic_mesh_v3.broker import NatsJetStreamAdapter
 from agentic_mesh_v3.broker import build_broker_adapter
 
 
+class FakeNatsMessage:
+    subject = "agent.product-manager"
+    data = b'{"text": "hello"}'
+
+    async def ack(self) -> None:
+        self.acked = True
+
+
 def test_in_memory_broker_publish_fetch_ack() -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
@@ -106,6 +114,29 @@ def test_build_broker_adapter_supports_in_memory_and_nats() -> None:
         build_broker_adapter(adapter="nats-jetstream", servers="nats://localhost:4222"),
         NatsJetStreamAdapter,
     )
+
+
+def test_nats_broker_dead_letters_are_inspectable_without_claiming_more_work() -> None:
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+
+    async def fake_dead_letter(stream, consumer, message_id, message, *, reason):  # noqa: ANN001
+        assert stream == "agent-inbox"
+        assert consumer == "pm-1"
+        assert message_id == "agent.product-manager:1"
+        assert reason == "poison message"
+        await message.ack()
+
+    adapter._dead_letter = fake_dead_letter  # type: ignore[method-assign]
+    adapter._acked_messages[("agent-inbox", "pm-1", "agent.product-manager:1")] = FakeNatsMessage()
+
+    adapter.dead_letter("agent-inbox", "pm-1", "agent.product-manager:1", reason="poison message")
+
+    assert adapter.pending("agent-inbox", "pm-1") == []
+    dead = adapter.dead_letters("agent-inbox")
+    assert len(dead) == 1
+    assert dead[0].message_id == "agent.product-manager:1"
+    assert dead[0].subject == "agent.product-manager"
+    assert dead[0].payload == {"text": "hello", "dead_letter_reason": "poison message"}
 
 
 def test_build_broker_adapter_requires_nats_servers() -> None:
