@@ -515,3 +515,8 @@ V3 `handoff.require` now projects visible work ownership to the target role.
 The tool still records governance evidence and publishes the target-role inbox
 message, but it also moves the work item to `waiting_agent`, sets the owner to
 the target role, and uses the handoff's required next action on status pages.
+
+V3 Project Manager sweeps now surface unresolved governance checklists on
+active work. Missing consultations, informed updates, and sponsor decisions
+become `project_sweep.finding` reasons before the work merely ages into a stale
+item, while explicit blocked/waiting states still take priority.
