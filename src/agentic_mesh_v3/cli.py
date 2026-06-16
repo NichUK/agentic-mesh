@@ -31,6 +31,8 @@ from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import build_document_library_adapter
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
+from agentic_mesh_v3.governance import RaciMatrix
+from agentic_mesh_v3.governance import load_raci_matrix_from_flow
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
 from agentic_mesh_v3.memory import DatabaseRoleMemory
@@ -130,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     materialize_parser.add_argument("--role-templates-dir", type=Path, required=True)
     materialize_parser.add_argument("--organisation-instructions-file", type=Path)
     materialize_parser.add_argument("--tool-instructions-file", type=Path)
+    materialize_parser.add_argument("--flow-config", type=Path)
     materialize_parser.add_argument("--compose-output", type=Path)
     materialize_parser.add_argument("--compose-network", default="agentic-mesh")
 
@@ -576,7 +579,7 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
             args.organisation_instructions_file,
             "No organisation-specific instructions configured.",
         ),
-        raci=DEFAULT_SDLC_RACI,
+        raci=_raci_matrix(args),
         tool_instructions=_read_text_or_default(
             args.tool_instructions_file,
             "Use approved Agentic Mesh safe-output tools for durable effects.",
@@ -605,6 +608,13 @@ def _read_text_or_default(path: Path | None, default: str) -> str:
     if path is None:
         return default
     return path.read_text(encoding="utf-8")
+
+
+def _raci_matrix(args: argparse.Namespace) -> RaciMatrix:
+    flow_config = getattr(args, "flow_config", None)
+    if flow_config is None:
+        return DEFAULT_SDLC_RACI
+    return load_raci_matrix_from_flow(flow_config)
 
 
 def _run_agent_once(args: argparse.Namespace):

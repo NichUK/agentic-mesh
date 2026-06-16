@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field
+from pathlib import Path
 from typing import Iterable
 from typing import Mapping
+
+import yaml
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,33 @@ class RaciMatrix:
             if assignment.phase == phase:
                 return assignment
         raise KeyError(f"unknown RACI phase: {phase}")
+
+
+def load_raci_matrix_from_flow(path: Path) -> RaciMatrix:
+    """Load agent-facing RACI assignments from a flow YAML file."""
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("flow config must be a mapping")
+    raci_raw = raw.get("raci")
+    if not isinstance(raci_raw, list):
+        raise ValueError("flow config must contain a raci list")
+    assignments: list[RaciAssignment] = []
+    for index, item in enumerate(raci_raw, start=1):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"raci item {index} must be a mapping")
+        assignments.append(
+            RaciAssignment(
+                phase=_required_text(item, "phase", index=index),
+                accountable=_required_text(item, "accountable", index=index),
+                responsible=_string_tuple(item.get("responsible"), key="responsible", index=index),
+                consulted=_string_tuple(item.get("consulted"), key="consulted", index=index),
+                informed=_string_tuple(item.get("informed"), key="informed", index=index),
+            )
+        )
+    matrix = RaciMatrix(assignments=tuple(assignments))
+    matrix.validate()
+    return matrix
 
 
 @dataclass(frozen=True)
@@ -228,6 +258,21 @@ def _field(record: object, name: str) -> object | None:
     if isinstance(record, Mapping):
         return record.get(name)
     return getattr(record, name, None)
+
+
+def _required_text(item: Mapping[object, object], key: str, *, index: int) -> str:
+    value = item.get(key)
+    if value is None or str(value).strip() == "":
+        raise ValueError(f"raci item {index} requires {key}")
+    return str(value)
+
+
+def _string_tuple(value: object, *, key: str, index: int) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError(f"raci item {index} {key} must be a list")
+    return tuple(str(item) for item in value)
 
 
 DEFAULT_SDLC_RACI = RaciMatrix(

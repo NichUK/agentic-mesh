@@ -337,3 +337,9 @@ broker defaults, document-library defaults, role worker/auth settings, Teams
 connector adapter settings, and release deployment targets. It validates the
 current dogfood project config while staying permissive for broader
 organisation/project fields that V3 has not interpreted yet.
+
+V3 agent config materialization can now load RACI assignments from a flow YAML
+file via `materialize-agent-configs --flow-config config/flows/sdlc-v3.yaml`.
+The mounted `raci.json` therefore follows the project-selected flow instead of
+always using the in-code starter SDLC matrix; omitting `--flow-config` keeps the
+default matrix for local smoke runs.

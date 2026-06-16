@@ -689,6 +689,81 @@ roles:
     assert "mesh-test" in compose_output.read_text(encoding="utf-8")
 
 
+def test_cli_materialize_agent_configs_uses_flow_config_raci(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    flow_config = tmp_path / "flow.yaml"
+    flow_config.write_text(
+        """
+flow_id: test-flow
+raci:
+  - phase: product-shaping
+    accountable: product-manager
+    responsible: [product-manager]
+    consulted: [business-analyst]
+    informed: [project-manager]
+""",
+        encoding="utf-8",
+    )
+    roles_dir = tmp_path / "roles"
+    roles_dir.mkdir()
+    (roles_dir / "product-manager.yaml").write_text(_role_template("product-manager"), encoding="utf-8")
+
+    result = main(
+        [
+            "--project-config",
+            str(project_config),
+            "materialize-agent-configs",
+            "--image",
+            "agentic-mesh-v3:local",
+            "--source-repo",
+            str(tmp_path / "source"),
+            "--organisation-config-repo",
+            str(tmp_path / "org"),
+            "--project-config-repo",
+            str(tmp_path / "project"),
+            "--agent-config-root",
+            str(tmp_path / "agents"),
+            "--runtime-state-dir",
+            str(tmp_path / "state"),
+            "--document-library-root",
+            str(tmp_path / "documents"),
+            "--role-templates-dir",
+            str(roles_dir),
+            "--flow-config",
+            str(flow_config),
+        ]
+    )
+
+    raci = json.loads((tmp_path / "agents" / "product-manager" / "1" / "raci.json").read_text(encoding="utf-8"))
+    assert result == 0
+    assert "agentic-mesh-dev.product-manager.1" in capsys.readouterr().out
+    assert raci == [
+        {
+            "phase": "product-shaping",
+            "accountable": "product-manager",
+            "responsible": ["product-manager"],
+            "consulted": ["business-analyst"],
+            "informed": ["project-manager"],
+        }
+    ]
+
+
 def _role_template(role_id: str) -> str:
     return f"""
 role_id: {role_id}
