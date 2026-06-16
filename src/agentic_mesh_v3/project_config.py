@@ -23,9 +23,36 @@ class V3DocumentLibraryConfig:
 
 
 @dataclass(frozen=True)
+class V3WorkerAuthConfig:
+    credential: str | None = None
+
+
+@dataclass(frozen=True)
+class V3WorkerConfig:
+    adapter: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    sandbox_mode: str | None = None
+    auth: V3WorkerAuthConfig = V3WorkerAuthConfig()
+
+
+@dataclass(frozen=True)
+class V3RoleMessagingIdentity:
+    display_name: str | None = None
+    mention_handle: str | None = None
+    bot_id_ref: str | None = None
+    secret_ref: str | None = None
+
+
+@dataclass(frozen=True)
 class V3RoleInstanceConfig:
     role_id: str
+    template: str | None = None
     instances: int = 1
+    worker: V3WorkerConfig = V3WorkerConfig()
+    instructions: tuple[str, ...] = ()
+    write_paths: tuple[str, ...] = ()
+    messaging_identity: V3RoleMessagingIdentity = V3RoleMessagingIdentity()
 
 
 @dataclass(frozen=True)
@@ -55,10 +82,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
             drive_id=_optional(docs_raw.get("drive_id")),
             root_path=str(docs_raw.get("root_path") or "/documents"),
         ),
-        roles=tuple(
-            V3RoleInstanceConfig(role_id=role_id, instances=int(_mapping(role_raw).get("instances") or 1))
-            for role_id, role_raw in sorted(roles_raw.items())
-        ),
+        roles=tuple(_load_role(role_id, _mapping(role_raw), raw) for role_id, role_raw in sorted(roles_raw.items())),
     )
 
 
@@ -78,3 +102,42 @@ def _optional(value: Any) -> str | None:
         return None
     text = str(value)
     return text if text else None
+
+
+def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, Any]) -> V3RoleInstanceConfig:
+    worker_raw = _mapping(role_raw.get("worker"))
+    auth_raw = _mapping(worker_raw.get("auth"))
+    return V3RoleInstanceConfig(
+        role_id=role_id,
+        template=_optional(role_raw.get("template")),
+        instances=int(role_raw.get("instances") or 1),
+        worker=V3WorkerConfig(
+            adapter=_optional(worker_raw.get("adapter")),
+            model=_optional(worker_raw.get("model")),
+            reasoning_effort=_optional(worker_raw.get("reasoning_effort")),
+            sandbox_mode=_optional(worker_raw.get("sandbox_mode")),
+            auth=V3WorkerAuthConfig(credential=_optional(auth_raw.get("credential"))),
+        ),
+        instructions=tuple(str(value) for value in _list(role_raw.get("instructions"))),
+        write_paths=tuple(str(value) for value in _list(role_raw.get("write_paths"))),
+        messaging_identity=_load_messaging_identity(role_id, project_raw),
+    )
+
+
+def _load_messaging_identity(role_id: str, project_raw: dict[str, Any]) -> V3RoleMessagingIdentity:
+    connectors = _mapping(project_raw.get("connectors"))
+    teams = _mapping(connectors.get("teams"))
+    role_bots = _mapping(teams.get("role_bots"))
+    bot_raw = _mapping(role_bots.get(role_id))
+    display_name = _optional(bot_raw.get("display_name"))
+    mention_handle = f"@{display_name}" if display_name else None
+    return V3RoleMessagingIdentity(
+        display_name=display_name,
+        mention_handle=mention_handle,
+        bot_id_ref=_optional(bot_raw.get("bot_id_ref")),
+        secret_ref=_optional(bot_raw.get("secret_ref")),
+    )
+
+
+def _list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
