@@ -13,6 +13,7 @@ from agentic_mesh_v3.agent import RoleAgentService
 from agentic_mesh_v3.agent import AgentStatusReporter
 from agentic_mesh_v3.broker import build_broker_adapter
 from agentic_mesh_v3.broker import BrokerAdapter
+from agentic_mesh_v3.broker import BrokerMessage
 from agentic_mesh_v3.config_materializer import build_role_instance_config
 from agentic_mesh_v3.config_materializer import materialize_project_agent_configs
 from agentic_mesh_v3.compose import render_role_services_compose
@@ -54,6 +55,10 @@ def main(argv: list[str] | None = None) -> int:
     sweep_parser.add_argument("--stale-after-seconds", type=int, default=3600)
     sweep_parser.add_argument("--publish-to-project-manager", action="store_true")
     sweep_parser.add_argument("--project-manager-role-id", default="project-manager")
+    broker_inspect_parser = subparsers.add_parser("broker-inspect")
+    broker_inspect_parser.add_argument("--stream")
+    broker_inspect_parser.add_argument("--consumer")
+    broker_inspect_parser.add_argument("--limit", type=int, default=20)
     approval_parser = subparsers.add_parser("record-approval-response")
     approval_parser.add_argument("--approval-id", required=True)
     approval_parser.add_argument("--status", required=True, choices=["approved", "rejected", "changes_requested"])
@@ -199,6 +204,30 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             db.close()
         return 0
+    if args.command == "broker-inspect":
+        if args.project_config is None:
+            raise ValueError("--project-config is required for broker-inspect")
+        if args.limit < 1:
+            raise ValueError("--limit must be positive")
+        project_config = load_project_config(args.project_config)
+        broker = build_broker_adapter(
+            adapter=project_config.broker.adapter,
+            servers=project_config.broker.servers,
+        )
+        stream = args.stream or project_config.broker.stream
+        print(
+            json.dumps(
+                _broker_inspection_payload(
+                    broker,
+                    stream=stream,
+                    consumer=args.consumer,
+                    limit=args.limit,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "record-approval-response":
         db = V3Database(args.db)
         try:
@@ -324,6 +353,31 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"valid": not errors, "errors": errors}, indent=2))
         return 1 if errors else 0
     raise AssertionError(f"unhandled command: {args.command}")
+
+
+def _broker_message_dict(message: BrokerMessage) -> dict[str, object]:
+    return {
+        "message_id": message.message_id,
+        "subject": message.subject,
+        "payload": message.payload,
+        "created_at": message.created_at,
+        "delivery_count": message.delivery_count,
+    }
+
+
+def _broker_inspection_payload(
+    broker: BrokerAdapter,
+    *,
+    stream: str,
+    consumer: str | None = None,
+    limit: int = 20,
+) -> dict[str, object]:
+    return {
+        "stream": stream,
+        "consumer": consumer,
+        "pending": [_broker_message_dict(message) for message in broker.pending(stream, consumer, limit=limit)],
+        "dead_letters": [_broker_message_dict(message) for message in broker.dead_letters(stream, limit=limit)],
+    }
 
 
 def _document_library_adapter(args: argparse.Namespace, *, required: bool = False) -> DocumentLibraryAdapter | None:
