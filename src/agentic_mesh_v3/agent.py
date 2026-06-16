@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Protocol
 
 from agentic_mesh_v3.broker import BrokerAdapter
+from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import GovernanceInstructionSet
+from agentic_mesh_v3.governance import evaluate_governance_checklist
 from agentic_mesh_v3.memory import SQLiteRoleMemory
 from agentic_mesh_v3.reporting import AgentStatus
 
@@ -117,18 +119,27 @@ class RoleAgentService:
         *,
         max_messages: int = 10,
         governance_context: GovernanceContext | None = None,
+        governance_checklist: GovernanceChecklist | None = None,
     ) -> tuple[AgentRunResult, ...]:
         if max_messages < 1:
             raise ValueError("max_messages must be positive")
         results: list[AgentRunResult] = []
         for _ in range(max_messages):
-            result = self.run_once(governance_context=governance_context)
+            result = self.run_once(
+                governance_context=governance_context,
+                governance_checklist=governance_checklist,
+            )
             if result is None:
                 break
             results.append(result)
         return tuple(results)
 
-    def run_once(self, *, governance_context: GovernanceContext | None = None) -> AgentRunResult | None:
+    def run_once(
+        self,
+        *,
+        governance_context: GovernanceContext | None = None,
+        governance_checklist: GovernanceChecklist | None = None,
+    ) -> AgentRunResult | None:
         self.broker.ensure_consumer(
             self.config.inbox_stream,
             self.config.inbox_consumer,
@@ -146,7 +157,11 @@ class RoleAgentService:
             subject=message.subject,
             payload=message.payload,
         )
-        prompt = self._build_prompt(agent_message, governance_context=governance_context)
+        prompt = self._build_prompt(
+            agent_message,
+            governance_context=governance_context,
+            governance_checklist=governance_checklist,
+        )
         try:
             tool_calls = self.worker.run(prompt, agent_message)
             if not tool_calls:
@@ -187,7 +202,11 @@ class RoleAgentService:
         )
 
     def _build_prompt(
-        self, message: AgentMessage, *, governance_context: GovernanceContext | None = None
+        self,
+        message: AgentMessage,
+        *,
+        governance_context: GovernanceContext | None = None,
+        governance_checklist: GovernanceChecklist | None = None,
     ) -> str:
         role_prompt = self.config.role_prompt_path.read_text(encoding="utf-8")
         organisation_prompt = _read_optional(self.config.organisation_prompt_path)
@@ -215,6 +234,8 @@ class RoleAgentService:
                     "</governance-context>",
                 ]
             )
+            checklist = governance_checklist or evaluate_governance_checklist(governance_context)
+            lines.append(checklist.as_prompt_section())
         lines.extend(
             [
                 "<memory>",

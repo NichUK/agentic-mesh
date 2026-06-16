@@ -10,6 +10,7 @@ from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
+from agentic_mesh_v3.governance import evaluate_governance_checklist
 
 
 class NoToolWorker:
@@ -201,6 +202,73 @@ def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -
     assert '"phase":"requirements"' in worker.prompt
     assert "<available-tools>" in worker.prompt
     assert "Use safe-output tools." in worker.prompt
+
+
+def test_role_agent_prompt_includes_governance_checklist(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"work_item_id": "work-123"})
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+    context = GovernanceContext(
+        work_item_id="work-123",
+        phase="requirements",
+        accountable_role="project-manager",
+        responsible_roles=("business-analyst",),
+        consulted_roles=("product-manager",),
+        informed_roles=("delivery-manager",),
+        sponsor_decision_points=("requirements-signoff",),
+    )
+
+    result = service.run_once(governance_context=context)
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "<governance-checklist>" in worker.prompt
+    assert "Missing consultation evidence for `product-manager`" in worker.prompt
+    assert "Missing informed-update evidence for `delivery-manager`" in worker.prompt
+    assert "Pending sponsor/stakeholder decision `requirements-signoff`" in worker.prompt
+
+
+def test_role_agent_prompt_uses_supplied_governance_checklist(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"work_item_id": "work-123"})
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+    context = GovernanceContext(
+        work_item_id="work-123",
+        phase="requirements",
+        accountable_role="project-manager",
+        responsible_roles=("business-analyst",),
+        consulted_roles=("product-manager",),
+    )
+    checklist = evaluate_governance_checklist(
+        context,
+        governance_records=(
+            {
+                "record_type": "consult.request",
+                "target_ref": "product-manager",
+                "status": "requested",
+            },
+        ),
+    )
+
+    result = service.run_once(governance_context=context, governance_checklist=checklist)
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "Governance checklist is currently satisfied." in worker.prompt
 
 
 def test_role_agent_requeues_if_worker_calls_no_tools(tmp_path: Path) -> None:
