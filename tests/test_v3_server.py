@@ -99,6 +99,15 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
         )
         tools.call(
             role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="consult.request",
+            payload={
+                "work_item_id": "work-1",
+                "target_role": "qa-engineer",
+                "question": "Confirm smoke evidence remains valid.",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
             tool_name="release.record",
             payload={
                 "release_id": "release-1",
@@ -127,6 +136,8 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "qa-engineer" in html
     assert "Work item index" in html
     assert "/artifact-viewer/work-1/index.md" in html
+    assert "consult.request" in html
+    assert "Confirm smoke evidence remains valid." in html
     assert "approval-1" in html
     assert "Approve release?" in html
     assert "release-1" in html

@@ -55,6 +55,16 @@ class ReleaseStatus:
 
 
 @dataclass(frozen=True)
+class GovernanceRecordStatus:
+    record_id: str
+    record_type: str
+    role_instance_id: str
+    target_ref: str | None
+    summary: str
+    status: str
+
+
+@dataclass(frozen=True)
 class WorkItemDetail:
     work_item_id: str
     title: str
@@ -67,6 +77,7 @@ class WorkItemDetail:
     artifacts: tuple[ArtifactStatus, ...] = ()
     approvals: tuple[ApprovalStatus, ...] = ()
     releases: tuple[ReleaseStatus, ...] = ()
+    governance_records: tuple[GovernanceRecordStatus, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -156,6 +167,8 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             "</section>",
             "<h2>Governance</h2>",
             f"<pre>{html.escape(json.dumps(detail.governance, indent=2, sort_keys=True))}</pre>",
+            "<h2>Governance Records</h2>",
+            _governance_record_table(detail.governance_records),
             "<h2>Artifacts</h2>",
             _artifact_table(detail.work_item_id, detail.artifacts),
             "<h2>Approvals</h2>",
@@ -263,6 +276,23 @@ def _release_table(items: tuple[ReleaseStatus, ...]) -> str:
         )
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"6\">No releases recorded.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _governance_record_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
+    rows = ["<tr><th>Type</th><th>Role</th><th>Target</th><th>Status</th><th>Summary</th></tr>"]
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.record_type)}</td>"
+            f"<td>{html.escape(item.role_instance_id)}</td>"
+            f"<td>{html.escape(item.target_ref or '')}</td>"
+            f"<td>{html.escape(item.status)}</td>"
+            f"<td>{html.escape(item.summary)}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"5\">No governance records recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 
