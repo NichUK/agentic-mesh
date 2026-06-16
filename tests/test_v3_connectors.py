@@ -147,3 +147,34 @@ def test_graph_teams_bridge_posts_threaded_markdown_reply() -> None:
     assert isinstance(body, dict)
     assert body["contentType"] == "html"
     assert "<strong>Approved</strong>" in str(body["content"])
+
+
+def test_graph_teams_bridge_sanitizes_agent_markdown_html() -> None:
+    transport = FakeGraphTeamsTransport()
+    bridge = GraphTeamsBridge(transport=transport, graph_base_url="https://graph.test/v1.0")
+
+    bridge.send(
+        OutboundMessage(
+            connector="teams",
+            target_ref="chat:chat-1",
+            text_markdown=(
+                "**Safe**\n\n"
+                "<script>alert('x')</script>"
+                "<style>body{display:none}</style>"
+                "<img src=x onerror=alert(1)>"
+                "<a href=\"javascript:alert(1)\" onclick=\"bad()\">bad link</a>"
+            ),
+        )
+    )
+
+    body = transport.posts[0][1]["body"]
+    assert isinstance(body, dict)
+    content = str(body["content"])
+    assert "<strong>Safe</strong>" in content
+    assert "script" not in content.casefold()
+    assert "style" not in content.casefold()
+    assert "alert" not in content.casefold()
+    assert "onerror" not in content.casefold()
+    assert "onclick" not in content.casefold()
+    assert "<img" not in content.casefold()
+    assert "<a>bad link</a>" in content

@@ -351,7 +351,10 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   `serve --project-config ...` wires it to the configured broker and role
   identities. Inbound activity is also recorded in the runtime conversation
   read model so future role prompts can include recent context for the same DM
-  or project-channel conversation.
+  or project-channel conversation. Graph-backed outbound Teams messages render
+  agent Markdown through the existing Markdown library and sanitize the
+  resulting HTML before posting, so role replies and approvals can preserve
+  formatting without sending raw agent-authored script/style markup.
 - OneDrive: V3 defines the document-library port and Graph-backed OneDrive
   adapter with injectable transport. Work-item files live under
   `/documents/work-items/{work_item_id}`. Live OneDrive/SharePoint adapters
