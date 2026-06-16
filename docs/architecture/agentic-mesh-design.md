@@ -158,25 +158,52 @@ It defines:
 - default input and output contracts
 - default handoff rules
 - default documentation obligations
-- default tool categories
+- required capabilities and tool-use constraints
 - default telemetry labels
 - default security posture
 
-Example:
+Role templates do not define `default_tools`. V3 tool access is generated at
+runtime from the role charter, role authority, project policy, configured
+connectors, and the V3 tool catalog. This keeps permanent role templates from
+drifting into stale tool inventories while still giving agents explicit,
+auditable tool instructions in their materialized prompt.
+
+Abbreviated example:
 
 ```yaml
 role_id: engineering
 version: 1
 purpose: Implement approved work and hand evidence to QA.
+role_profile: >
+  Engineering owns implementation quality for approved work and records clear
+  evidence before handing to QA.
+accountabilities:
+  - Implement approved source, tests, and engineering documentation.
+  - Record implementation evidence and handoff requirements.
+decision_rights:
+  owns:
+    - Source-level implementation choices inside approved scope.
+  advises:
+    - Feasibility, technical risk, testing strategy, and deployment impact.
+  escalates:
+    - Scope, architecture, security, or release questions outside engineering authority.
 standing_instructions:
   - Only implement work that has passed product, architecture, and delivery readiness.
   - Update implementation notes as work progresses.
   - Hand completed work to qa-engineer with evidence.
-default_tools:
-  - git.read
-  - git.write
-  - shell.workspace
-  - tests.run
+quality_bar:
+  - Changes are focused, tested, and backed by reproducible evidence.
+capabilities:
+  schema_version: role-capability-profile-v0
+  capabilities:
+    - capability_id: source.read
+      category: logical_tool
+      requirement: required
+      display_name: Source read
+    - capability_id: tests.run
+      category: logical_tool
+      requirement: required
+      display_name: Test runner
 documentation_obligations:
   - docs/engineering/implementation-log.md
 handoff_targets:
