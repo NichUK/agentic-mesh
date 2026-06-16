@@ -896,6 +896,7 @@ def test_v3_status_snapshot_marks_unresolved_governance_attention(tmp_path: Path
                 "consulted_roles": ["qa-engineer"],
                 "informed_roles": ["project-manager"],
                 "sponsor_decision_points": ["product-signoff"],
+                "required_evidence": ["100-implementation-log.md"],
             },
         )
 
@@ -906,7 +907,8 @@ def test_v3_status_snapshot_marks_unresolved_governance_attention(tmp_path: Path
     attention = {item.work_item_id: item.attention_reason for item in snapshot.work_items}
     assert attention["work-governance"] == (
         "governance checklist has unresolved items: "
-        "consultations=qa-engineer; informed_updates=project-manager; sponsor_decisions=product-signoff"
+        "consultations=qa-engineer; informed_updates=project-manager; "
+        "sponsor_decisions=product-signoff; required_evidence=100-implementation-log.md"
     )
 
 
@@ -1079,6 +1081,7 @@ def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> No
                 "consulted_roles": ["qa-engineer"],
                 "informed_roles": ["project-manager"],
                 "sponsor_decision_points": ["product-signoff"],
+                "required_evidence": ["100-implementation-log.md"],
             },
         )
 
@@ -1088,8 +1091,19 @@ def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> No
         assert checklist.missing_consultations == ("qa-engineer",)
         assert checklist.missing_informed_updates == ("project-manager",)
         assert checklist.pending_sponsor_decisions == ("product-signoff",)
+        assert checklist.missing_required_evidence == ("100-implementation-log.md",)
 
         tools = V3ToolService(db)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="artifact.link",
+            payload={
+                "work_item_id": "work-1",
+                "relative_path": "work-items/work-1/100-implementation-log.md",
+                "filename": "100-implementation-log.md",
+                "title": "Implementation log",
+            },
+        )
         tools.call(
             role_instance_id="agentic-mesh-dev.engineering.1",
             tool_name="consult.request",
