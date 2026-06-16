@@ -477,6 +477,15 @@ def test_role_agent_prompt_loads_recent_conversation_context(tmp_path: Path) -> 
             text="Give me a status update.",
             mentioned_roles=("product-manager",),
         )
+        db.compact_conversation_context(
+            summary_id="summary-1",
+            conversation_ref="dm:product-manager",
+            visibility="private",
+            summary="Sponsor prefers compact dashboard rows.",
+            source_message_ids=("msg-1",),
+            created_by_role="product-manager",
+        )
+        db.expire_conversation_raw_text(message_id="msg-1", expired_at="2026-06-15T12:00:00+00:00")
         worker = CapturingWorker()
         service = RoleAgentService(
             config=_config(tmp_path),
@@ -491,7 +500,10 @@ def test_role_agent_prompt_loads_recent_conversation_context(tmp_path: Path) -> 
         assert result is not None
         assert result.status == "completed"
         assert "<conversation-context>" in worker.prompt
-        assert "Give me a status update." in worker.prompt
+        assert "<conversation-summaries>" in worker.prompt
+        assert "Sponsor prefers compact dashboard rows." in worker.prompt
+        assert "[expired raw conversation]" in worker.prompt
+        assert "expired=true" in worker.prompt
         assert "message: msg-1" in worker.prompt
         assert "mentions: product-manager" in worker.prompt
     finally:

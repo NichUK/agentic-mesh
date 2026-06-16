@@ -79,6 +79,58 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
     assert snapshot.agents[0].last_memory_at is not None
 
 
+def test_v3_tool_service_compacts_conversation_context_with_privacy_guard(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.record_conversation_message(
+            message_id="msg-1",
+            connector="teams",
+            conversation_ref="dm:product-manager",
+            source_type="dm",
+            sender_ref="sponsor",
+            text="Keep dashboard rows compact.",
+        )
+        tools = V3ToolService(db)
+
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="conversation.compact_context",
+                payload={
+                    "conversation_ref": "dm:product-manager",
+                    "visibility": "shared",
+                    "summary": "Sponsor prefers compact dashboard rows.",
+                    "source_message_ids": ["msg-1"],
+                },
+            )
+        except ValueError as exc:
+            assert "DM conversation summaries can only be shared or promoted with durable_refs" in str(exc)
+        else:
+            raise AssertionError("private DM summaries should not become shared without durable refs")
+
+        tools.call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="conversation.compact_context",
+            payload={
+                "conversation_ref": "dm:product-manager",
+                "visibility": "promoted",
+                "summary": "Sponsor prefers compact dashboard rows.",
+                "source_message_ids": ["msg-1"],
+                "durable_refs": ["work-items/work-1/index.md"],
+            },
+        )
+
+        summaries = db.list_conversation_summaries("dm:product-manager")
+    finally:
+        db.close()
+
+    assert len(summaries) == 1
+    assert summaries[0]["visibility"] == "promoted"
+    assert summaries[0]["source_message_ids"] == ("msg-1",)
+    assert summaries[0]["durable_refs"] == ("work-items/work-1/index.md",)
+
+
 def test_v3_tool_service_rejects_missing_contract_fields_before_recording(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

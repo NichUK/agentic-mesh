@@ -187,6 +187,8 @@ class V3ToolService:
             self._write_root_work_item_index()
         elif tool_name == "approval.request":
             self._request_approval(role_instance_id=role_instance_id, payload=payload)
+        elif tool_name == "conversation.compact_context":
+            self._compact_conversation_context(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "release.record":
             self.db.record_release(
                 release_id=str(payload.get("release_id") or f"release-{uuid4().hex}"),
@@ -409,6 +411,23 @@ class V3ToolService:
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "high"),
             )
+        )
+
+    def _compact_conversation_context(
+        self,
+        *,
+        call_id: str,
+        role_instance_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self.db.compact_conversation_context(
+            summary_id=str(payload.get("summary_id") or f"conversation-summary-{call_id}"),
+            conversation_ref=_required(payload, "conversation_ref"),
+            visibility=_required(payload, "visibility"),
+            summary=_required(payload, "summary"),
+            source_message_ids=tuple(str(item) for item in payload.get("source_message_ids") or ()),
+            durable_refs=tuple(str(item) for item in payload.get("durable_refs") or ()),
+            created_by_role=role_from_instance(role_instance_id),
         )
 
     def _link_artifact(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
