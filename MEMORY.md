@@ -298,3 +298,9 @@ targets from `project.yaml`.
 The V3 MCP stdio runner now uses the same project-config-backed `V3ToolService`
 wiring as CLI `tool-call`, including document-library and release deployment
 target adapters.
+
+V3 role services now use runtime database-backed role memory. Safe-output
+`memory.propose_update` records are loaded into future role-agent prompts for
+the same role instance, and agent-run observations are recorded through the
+same runtime DB memory path. The standalone SQLite memory adapter remains
+available for local adapter use and focused tests.

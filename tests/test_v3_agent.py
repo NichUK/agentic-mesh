@@ -11,6 +11,7 @@ from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import evaluate_governance_checklist
+from agentic_mesh_v3.memory import DatabaseRoleMemory
 
 
 class NoToolWorker:
@@ -206,6 +207,37 @@ def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -
     assert f"<message-id>{published.message_id}</message-id>" in worker.prompt
     assert "<subject>agent.product-manager</subject>" in worker.prompt
     assert '{\n  "request": "shape this"\n}' in worker.prompt
+
+
+def test_role_agent_prompt_loads_runtime_database_role_memory(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.record_role_memory(
+            memory_id="memory-preference",
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            summary="Sponsor prefers compact dashboard rows.",
+            source_ref="work-123/index.md",
+        )
+        worker = CapturingWorker()
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=worker,
+            memory=DatabaseRoleMemory(db),
+        )
+
+        result = service.run_once()
+
+        assert result is not None
+        assert result.status == "completed"
+        assert "Sponsor prefers compact dashboard rows." in worker.prompt
+        assert "source: work-123/index.md" in worker.prompt
+    finally:
+        db.close()
 
 
 def test_role_agent_prompt_includes_governance_checklist(tmp_path: Path) -> None:

@@ -50,8 +50,9 @@ instructions remain outside the runtime image.
 Role memory is DB-backed and source-linked. The document library remains the
 canonical project memory, while each role instance can keep a concise cache of
 facts, preferences, prior handoffs, and recurring risks. Agents update memory
-through `memory.propose_update`, and every memory entry must cite a work item,
-document, event, or conversation source.
+through `memory.propose_update`, and runtime role services load those records
+from the runtime database into future prompts for the same role instance. Every
+memory entry must cite a work item, document, event, or conversation source.
 
 ## Agent Configuration And Lifecycle
 

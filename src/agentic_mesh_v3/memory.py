@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -76,3 +78,40 @@ class SQLiteRoleMemory:
                 """,
                 (record.role_instance_id, record.summary, record.source_ref),
             )
+
+
+class DatabaseRoleMemory:
+    """Role memory adapter backed by the v3 runtime database."""
+
+    def __init__(self, db: Any) -> None:
+        self.db = db
+
+    def load_summary(self, role_instance_id: str) -> str:
+        rows = self.db.list_role_memory(role_instance_id)
+        return "\n".join(f"- {row['summary']} (source: {row['source_ref']})" for row in rows)
+
+    def record_observation(self, role_instance_id: str, observation: str) -> None:
+        self.record(
+            RoleMemoryRecord(
+                role_instance_id=role_instance_id,
+                summary=observation,
+                source_ref="agent-run",
+            )
+        )
+
+    def record(self, record: RoleMemoryRecord) -> None:
+        if not record.summary.strip():
+            raise ValueError("memory summary is required")
+        if not record.source_ref.strip():
+            raise ValueError("memory source_ref is required")
+        self.db.record_role_memory(
+            memory_id=f"memory-{_stable_memory_id(record)}",
+            role_instance_id=record.role_instance_id,
+            summary=record.summary,
+            source_ref=record.source_ref,
+        )
+
+
+def _stable_memory_id(record: RoleMemoryRecord) -> str:
+    payload = "\n".join((record.role_instance_id, record.summary, record.source_ref))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]

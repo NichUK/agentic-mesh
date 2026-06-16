@@ -6,7 +6,7 @@ import os
 import time
 from pathlib import Path
 
-from agentic_mesh_v3.agent import build_role_memory
+from agentic_mesh_v3.agent import AgentMemory
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import RoleAgentService
@@ -29,6 +29,7 @@ from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
+from agentic_mesh_v3.memory import DatabaseRoleMemory
 from agentic_mesh_v3.observability import TelemetrySettings
 from agentic_mesh_v3.observability import configure_observability
 from agentic_mesh_v3.project_config import load_project_config
@@ -521,8 +522,19 @@ def _run_agent_once(args: argparse.Namespace):
     config = load_project_config(project_config_path)
     broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
     _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=tuple(role.role_id for role in config.roles))
-    service = _build_role_agent_service(args, project_config=config, broker=broker)
-    return service.run_until_idle(max_messages=args.max_messages)
+    db = V3Database(args.db)
+    try:
+        db.migrate()
+        service = _build_role_agent_service(
+            args,
+            project_config=config,
+            broker=broker,
+            memory=DatabaseRoleMemory(db),
+            status_reporter=DatabaseAgentStatusReporter(db),
+        )
+        return service.run_until_idle(max_messages=args.max_messages)
+    finally:
+        db.close()
 
 
 def _run_agent_service(args: argparse.Namespace):
@@ -548,6 +560,7 @@ def _run_agent_service(args: argparse.Namespace):
             args,
             project_config=config,
             broker=broker,
+            memory=DatabaseRoleMemory(db),
             status_reporter=DatabaseAgentStatusReporter(db),
         )
         idle_since: float | None = None
@@ -576,6 +589,7 @@ def _build_role_agent_service(
     *,
     project_config: V3ProjectConfig,
     broker: BrokerAdapter,
+    memory: AgentMemory,
     status_reporter: AgentStatusReporter | None = None,
 ) -> RoleAgentService:
     service_config = build_role_instance_config(
@@ -593,7 +607,7 @@ def _build_role_agent_service(
         config=service_config,
         broker=broker,
         worker=_worker_from_args(args, project_config=project_config),
-        memory=build_role_memory(service_config),
+        memory=memory,
         max_delivery_attempts=args.max_delivery_attempts,
         **kwargs,
     )
