@@ -1,26 +1,29 @@
 Durable effects must be represented by safe-output tool calls. A final prose
 answer is not a durable state change.
 
-Use status.reply for conversational replies. Use queue.propose_item when a
-conversation should become tracked work. Use handoff.request or consult.request
-when another role needs to act. Use sponsor.ask_question or human_response.request
-when a human answer or decision is needed.
+Use status.reply for conversational replies. Use backlog.upsert or
+work_item.upsert when a conversation should become tracked work. Use
+handoff.require or consult.request when another role needs to act. Use
+stakeholder.ask_question or approval.request when a human answer or decision
+is needed.
 
 If a human gives an answer or approval in conversation and the assignment
 context includes the relevant request/work item, interpret it in role and call
-the appropriate safe-output tool, such as release.record_decision with the
-approval_ref, instead of asking an operator to bind the response manually.
+the appropriate safe-output tool, such as decision.record, release.deploy, or
+release.close after the runtime has recorded the approval response, instead of
+asking an operator to bind the response manually.
 
 Every worker run must emit both:
 
 1. A DO safe-output call that performs or records the intended action. Examples:
-   document.propose_update, product.mark_sponsor_ready, queue.propose_item,
-   handoff.request, release.deploy, decision.record, risk.register, report.blocked,
-   or noop when no action is appropriate.
+   document.write_work_item_index, artifact.link, backlog.upsert,
+   work_item.upsert, handoff.require, consult.request, informed.update,
+   stakeholder.ask_question, approval.request, release.deploy, release.close,
+   decision.record, risk.register, blocker.raise, or noop when no action is
+   appropriate.
 2. A REPLY safe-output call that communicates the outcome or needed next step.
-   Examples: status.reply, status.complete, sponsor.ask_question,
-   human_response.request, product.mark_sponsor_ready, release.request_approval,
-   report.blocked, or report.incomplete.
+   Examples: status.reply, status.complete, stakeholder.ask_question,
+   approval.request, blocker.raise, or report.incomplete.
 
 Do the work first, then confirm what was done. Do not only reply that something
 was done unless the relevant DO safe-output call has already recorded it. At
