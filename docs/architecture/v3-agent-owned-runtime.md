@@ -107,6 +107,12 @@ Sponsor consultation is required for material changes to scope, priority,
 acceptance criteria, user-visible behavior, release risk, cost, compliance,
 security posture, or delivery commitment.
 
+Governance checklists compare a work item's RACI context with recorded
+consultation, informed-update, exception, and approval evidence. They are
+agent-facing guidance: they tell the accountable role what must still be
+resolved before handoff or phase closure, but they do not advance state or let
+the runtime make the decision.
+
 Tool authority is role-scoped. All roles can communicate, consult, hand off,
 record governance evidence, update document indexes, and report status.
 Product Manager and Project Manager can shape backlog/work-item state. Release

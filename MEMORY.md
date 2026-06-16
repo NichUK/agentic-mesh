@@ -196,3 +196,8 @@ V3 work-item document indexes now validate evidence quality before writing.
 `index.md` records must include more than status metadata, and duplicate
 artifact paths, decisions, or risks are rejected so agents cannot publish
 repeated prose dumps or status-only placeholders as enterprise evidence.
+
+V3 governance now has an agent-facing checklist helper that compares a work
+item's RACI context with recorded consultation, informed-update, exception, and
+approval evidence. The helper reports what remains unresolved for the role to
+act on; it does not move lifecycle state or make governance decisions.

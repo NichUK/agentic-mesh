@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field
+from typing import Iterable
+from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,93 @@ class GovernanceContext:
 
 
 @dataclass(frozen=True)
+class GovernanceChecklist:
+    """Agent-facing evidence checklist for a work item's governance context."""
+
+    missing_consultations: tuple[str, ...] = ()
+    missing_informed_updates: tuple[str, ...] = ()
+    pending_sponsor_decisions: tuple[str, ...] = ()
+    recorded_exceptions: tuple[str, ...] = ()
+
+    @property
+    def is_satisfied(self) -> bool:
+        return not (
+            self.missing_consultations
+            or self.missing_informed_updates
+            or self.pending_sponsor_decisions
+        )
+
+    def as_prompt_section(self) -> str:
+        lines = ["<governance-checklist>"]
+        if self.is_satisfied:
+            lines.append("- Governance checklist is currently satisfied.")
+        else:
+            for role in self.missing_consultations:
+                lines.append(f"- Missing consultation evidence for `{role}`.")
+            for role in self.missing_informed_updates:
+                lines.append(f"- Missing informed-update evidence for `{role}`.")
+            for decision in self.pending_sponsor_decisions:
+                lines.append(f"- Pending sponsor/stakeholder decision `{decision}`.")
+        if self.recorded_exceptions:
+            lines.append("- Recorded governance exceptions:")
+            lines.extend(f"  - {exception}" for exception in self.recorded_exceptions)
+        lines.append("</governance-checklist>")
+        return "\n".join(lines)
+
+
+def evaluate_governance_checklist(
+    context: GovernanceContext,
+    *,
+    governance_records: Iterable[object] = (),
+    approvals: Iterable[object] = (),
+) -> GovernanceChecklist:
+    """Return governance evidence still missing before a phase can close.
+
+    This helper does not advance state or decide whether exceptions are valid.
+    It gives role agents an explicit checklist of the consultations, informed
+    updates, and sponsor decisions they still need to resolve through tools.
+    """
+
+    records = tuple(governance_records)
+    exception_targets = {
+        str(target)
+        for record in records
+        if _field(record, "record_type") == "governance.record_exception"
+        for target in (_field(record, "target_ref"),)
+        if target
+    }
+    recorded_exceptions = tuple(
+        str(_field(record, "summary") or _field(record, "target_ref") or "governance exception recorded")
+        for record in records
+        if _field(record, "record_type") == "governance.record_exception"
+    )
+    consulted_exceptions = set(context.consultation_exceptions) | exception_targets
+    missing_consultations = tuple(
+        role
+        for role in context.consulted_roles
+        if role not in consulted_exceptions
+        and not _has_record(records, record_type="consult.request", target_ref=role)
+    )
+    missing_informed_updates = tuple(
+        role
+        for role in context.informed_roles
+        if role not in exception_targets
+        and not _has_record(records, record_type="informed.update", target_ref=role)
+    )
+    pending_sponsor_decisions = tuple(
+        decision
+        for decision in context.sponsor_decision_points
+        if not _has_resolved_approval(approvals, decision)
+    )
+    return GovernanceChecklist(
+        missing_consultations=missing_consultations,
+        missing_informed_updates=missing_informed_updates,
+        pending_sponsor_decisions=pending_sponsor_decisions,
+        recorded_exceptions=recorded_exceptions,
+    )
+
+
+@dataclass(frozen=True)
 class GovernanceInstructionSet:
     rules: tuple[str, ...] = field(
         default=(
@@ -110,6 +199,34 @@ class GovernanceInstructionSet:
         lines.extend(f"- {rule}" for rule in self.rules)
         lines.append("</governance-instructions>")
         return "\n".join(lines)
+
+
+def _has_record(records: tuple[object, ...], *, record_type: str, target_ref: str) -> bool:
+    for record in records:
+        if _field(record, "record_type") == record_type and _field(record, "target_ref") == target_ref:
+            status = str(_field(record, "status") or "").casefold()
+            if status not in {"canceled", "failed", "rejected"}:
+                return True
+    return False
+
+
+def _has_resolved_approval(approvals: Iterable[object], decision_point: str) -> bool:
+    decision = decision_point.casefold()
+    for approval in approvals:
+        status = str(_field(approval, "status") or "").casefold()
+        if status not in {"approved", "changes_requested", "rejected"}:
+            continue
+        approval_id = str(_field(approval, "approval_id") or "").casefold()
+        question = str(_field(approval, "question") or "").casefold()
+        if approval_id == decision or decision in question:
+            return True
+    return False
+
+
+def _field(record: object, name: str) -> object | None:
+    if isinstance(record, Mapping):
+        return record.get(name)
+    return getattr(record, name, None)
 
 
 DEFAULT_SDLC_RACI = RaciMatrix(
