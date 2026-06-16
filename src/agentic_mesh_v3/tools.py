@@ -218,6 +218,8 @@ class V3ToolService:
             )
         elif tool_name == "messaging.send":
             self._send_message(payload)
+        elif tool_name == "status.reply":
+            self._send_optional_reply(payload)
         elif tool_name in {
             "handoff.require",
             "consult.request",
@@ -244,6 +246,25 @@ class V3ToolService:
                 connector=_required(payload, "connector"),
                 target_ref=_required(payload, "target_ref"),
                 text_markdown=_required(payload, "text_markdown"),
+                thread_ref=_optional(payload.get("thread_ref")),
+                importance=str(payload.get("importance") or "normal"),
+            )
+        )
+
+    def _send_optional_reply(self, payload: dict[str, Any]) -> None:
+        target_ref = _optional(payload.get("target_ref"))
+        if target_ref is None:
+            return
+        if self.stakeholder_bridge is None:
+            raise ValueError("stakeholder bridge is not configured")
+        text_markdown = _optional(payload.get("text_markdown") or payload.get("message"))
+        if text_markdown is None:
+            raise ValueError("text_markdown or message is required")
+        self.stakeholder_bridge.send(
+            OutboundMessage(
+                connector=_required(payload, "connector"),
+                target_ref=target_ref,
+                text_markdown=text_markdown,
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "normal"),
             )
