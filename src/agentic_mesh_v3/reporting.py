@@ -190,6 +190,10 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             _governance_checklist_section(detail.governance_checklist),
             "<h2>Blockers</h2>",
             _blocker_table(detail.governance_records),
+            "<h2>Decisions</h2>",
+            _decision_table(detail.governance_records),
+            "<h2>Risks</h2>",
+            _risk_table(detail.governance_records),
             "<h2>Governance Records</h2>",
             _governance_record_table(detail.governance_records),
             "<h2>Artifacts</h2>",
@@ -448,9 +452,38 @@ def _governance_record_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
 
 
 def _blocker_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
+    return _filtered_governance_record_table(
+        items,
+        record_type="blocker.raise",
+        empty_message="No blockers recorded.",
+    )
+
+
+def _decision_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
+    return _filtered_governance_record_table(
+        items,
+        record_type="decision.record",
+        empty_message="No decisions recorded.",
+    )
+
+
+def _risk_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
+    return _filtered_governance_record_table(
+        items,
+        record_type="risk.register",
+        empty_message="No risks recorded.",
+    )
+
+
+def _filtered_governance_record_table(
+    items: tuple[GovernanceRecordStatus, ...],
+    *,
+    record_type: str,
+    empty_message: str,
+) -> str:
     rows = ["<tr><th>Role</th><th>Target</th><th>Status</th><th>Summary</th></tr>"]
     for item in items:
-        if item.record_type != "blocker.raise":
+        if item.record_type != record_type:
             continue
         rows.append(
             "<tr>"
@@ -461,7 +494,7 @@ def _blocker_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
             "</tr>"
         )
     if len(rows) == 1:
-        rows.append("<tr><td colspan=\"4\">No blockers recorded.</td></tr>")
+        rows.append(f"<tr><td colspan=\"4\">{html.escape(empty_message)}</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 
