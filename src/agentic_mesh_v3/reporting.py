@@ -21,6 +21,12 @@ class AgentStatus:
     last_run_status: str | None = None
     last_run_at: str | None = None
     last_run_error: str | None = None
+    last_lifecycle_action: str | None = None
+    last_lifecycle_reason: str | None = None
+    last_lifecycle_service: str | None = None
+    last_lifecycle_exit_code: int | None = None
+    last_lifecycle_executed: bool | None = None
+    last_lifecycle_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -161,13 +167,14 @@ def render_status_page(snapshot: ReportingSnapshot) -> str:
 
 def render_agents_page(snapshot: ReportingSnapshot) -> str:
     rows = [
-        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Dead Letters</th><th>Memory</th><th>Last Run</th><th>Current Work</th><th>Governance Waits</th></tr>"
+        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Dead Letters</th><th>Lifecycle</th><th>Memory</th><th>Last Run</th><th>Current Work</th><th>Governance Waits</th></tr>"
     ]
     for agent in snapshot.agents:
         memory = f"{agent.memory_count} entries"
         if agent.last_memory_at:
             memory = f"{memory}<br><small>Last: {html.escape(agent.last_memory_at)}</small>"
         last_run = _agent_last_run_cell(agent)
+        lifecycle = _agent_lifecycle_cell(agent)
         rows.append(
             "<tr>"
             f"<td>{html.escape(agent.role_instance_id)}</td>"
@@ -175,6 +182,7 @@ def render_agents_page(snapshot: ReportingSnapshot) -> str:
             f"<td>{html.escape(agent.heartbeat_at or 'unknown')}</td>"
             f"<td>{agent.inbox_depth}</td>"
             f"<td>{agent.dead_letter_depth}</td>"
+            f"<td>{lifecycle}</td>"
             f"<td>{memory}</td>"
             f"<td>{last_run}</td>"
             f"<td>{_agent_current_work_cell(agent.current_work)}</td>"
@@ -293,6 +301,23 @@ def _agent_last_run_cell(agent: AgentStatus) -> str:
         parts.append(f"<br><small>{html.escape(agent.last_run_at)}</small>")
     if agent.last_run_error:
         parts.append(f"<br><small>{html.escape(agent.last_run_error)}</small>")
+    return "".join(parts)
+
+
+def _agent_lifecycle_cell(agent: AgentStatus) -> str:
+    if not agent.last_lifecycle_action:
+        return ""
+    parts = [f"<strong>{html.escape(agent.last_lifecycle_action)}</strong>"]
+    if agent.last_lifecycle_service:
+        parts.append(f"<br><small>{html.escape(agent.last_lifecycle_service)}</small>")
+    if agent.last_lifecycle_at:
+        parts.append(f"<br><small>{html.escape(agent.last_lifecycle_at)}</small>")
+    if agent.last_lifecycle_executed is not None:
+        parts.append(f"<br><small>Executed: {str(agent.last_lifecycle_executed).lower()}</small>")
+    if agent.last_lifecycle_exit_code is not None:
+        parts.append(f"<br><small>Exit: {agent.last_lifecycle_exit_code}</small>")
+    if agent.last_lifecycle_reason:
+        parts.append(f"<br><small>{html.escape(agent.last_lifecycle_reason)}</small>")
     return "".join(parts)
 
 

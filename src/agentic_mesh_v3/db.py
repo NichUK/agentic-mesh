@@ -1328,8 +1328,13 @@ class V3Database:
             )
         )
         latest_runs = self._latest_agent_runs()
+        latest_lifecycle_actions = self._latest_agent_lifecycle_actions()
         agents = tuple(
-            self._agent_status_from_row(row, latest_runs.get(row["role_instance_id"]))
+            self._agent_status_from_row(
+                row,
+                latest_runs.get(row["role_instance_id"]),
+                latest_lifecycle_actions.get(row["role_instance_id"]),
+            )
             for row in self.connection.execute(
                 """
                 SELECT
@@ -1605,7 +1610,27 @@ class V3Database:
             latest[row["role_instance_id"]] = _agent_run_row(row)
         return latest
 
-    def _agent_status_from_row(self, row: sqlite3.Row, latest_run: dict[str, Any] | None) -> AgentStatus:
+    def _latest_agent_lifecycle_actions(self) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for row in self.connection.execute(
+            """
+            SELECT aggregate_id, payload_json, created_at
+            FROM events
+            WHERE event_type='agent.lifecycle_action_recorded'
+            ORDER BY created_at ASC, event_id ASC
+            """
+        ):
+            payload = json.loads(row["payload_json"] or "{}")
+            payload["created_at"] = row["created_at"]
+            latest[row["aggregate_id"]] = payload
+        return latest
+
+    def _agent_status_from_row(
+        self,
+        row: sqlite3.Row,
+        latest_run: dict[str, Any] | None,
+        latest_lifecycle_action: dict[str, Any] | None,
+    ) -> AgentStatus:
         return AgentStatus(
             role_instance_id=row["role_instance_id"],
             container_state=row["container_state"],
@@ -1619,6 +1644,28 @@ class V3Database:
             last_run_status=str(latest_run["status"]) if latest_run else None,
             last_run_at=str(latest_run["completed_at"]) if latest_run else None,
             last_run_error=str(latest_run["error"]) if latest_run and latest_run.get("error") else None,
+            last_lifecycle_action=(
+                str(latest_lifecycle_action["action"]) if latest_lifecycle_action and latest_lifecycle_action.get("action") else None
+            ),
+            last_lifecycle_reason=(
+                str(latest_lifecycle_action["reason"]) if latest_lifecycle_action and latest_lifecycle_action.get("reason") else None
+            ),
+            last_lifecycle_service=(
+                str(latest_lifecycle_action["service_name"])
+                if latest_lifecycle_action and latest_lifecycle_action.get("service_name")
+                else None
+            ),
+            last_lifecycle_exit_code=_optional_int(latest_lifecycle_action.get("exit_code") if latest_lifecycle_action else None),
+            last_lifecycle_executed=(
+                bool(latest_lifecycle_action["executed"])
+                if latest_lifecycle_action and "executed" in latest_lifecycle_action
+                else None
+            ),
+            last_lifecycle_at=(
+                str(latest_lifecycle_action["created_at"])
+                if latest_lifecycle_action and latest_lifecycle_action.get("created_at")
+                else None
+            ),
         )
 
 
@@ -1630,6 +1677,12 @@ def _tuple_strings(value: object) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value if str(item))
     return (str(value),)
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _agent_run_row(row: sqlite3.Row) -> dict[str, Any]:
