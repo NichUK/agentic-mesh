@@ -90,6 +90,17 @@ target_repositories:
     type: git
     path: ../app
     default_branch: develop
+release_deployment_targets:
+  dogfood-compose:
+    type: command
+    command:
+      - ./scripts/release-compose.sh
+    working_directory: ../runtime
+    timeout_seconds: 900
+    rollback_summary: Re-run the previous compose deployment.
+  planning-only:
+    type: no-deployment
+    description: Planning and analysis artifacts only.
 roles:
   product-manager:
     template: product-manager
@@ -143,6 +154,14 @@ roles:
     assert "Document library root path: `/documents`" in engineering_project
     assert "/documents/work-items/{work_item_id}" in engineering_project
     assert "/documents/work-items/index.md" in engineering_project
+    assert "Release Deployment Targets" in engineering_project
+    assert "`dogfood-compose`: type `command`." in engineering_project
+    assert "Command: `./scripts/release-compose.sh`" in engineering_project
+    assert "Working directory: `" in engineering_project
+    assert "Timeout seconds: `900`" in engineering_project
+    assert "Rollback plan: Re-run the previous compose deployment." in engineering_project
+    assert "`planning-only`: type `no-deployment`." in engineering_project
+    assert "No-deployment reason/description: Planning and analysis artifacts only." in engineering_project
     assert "System rules." in (tmp_path / "agents" / "engineering" / "2" / "system.md").read_text(encoding="utf-8")
     container = json.loads((tmp_path / "agents" / "engineering" / "2" / "container.json").read_text(encoding="utf-8"))
     assert container["mounts"][str((project_file.parent / "../app").resolve(strict=False))] == "/mesh/workspaces/app"
