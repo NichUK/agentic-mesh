@@ -78,6 +78,7 @@ def test_codex_cli_worker_wraps_prompt_with_safe_output_contract(tmp_path: Path)
         "assert 'At least one successful call must be a terminal safe-output tool' in prompt\n"
         "assert '\"terminal\":true' in prompt\n"
         "assert 'status.reply' in prompt\n"
+        "assert 'text_markdown' in prompt\n"
         "assert 'msg-1' in prompt\n"
         "print(json.dumps({'tool_calls':['status.reply']}))\n",
         encoding="utf-8",

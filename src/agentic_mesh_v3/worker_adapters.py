@@ -138,7 +138,7 @@ def _codex_prompt_text(prompt: str, message: AgentMessage) -> str:
             prompt,
             "SAFE-OUTPUT TOOL CONTRACT\n"
             "You MUST do durable work by calling approved Agentic Mesh safe-output tools before finishing. "
-            "For conversational work, call status.reply with Markdown. For durable project work, call the "
+            "For conversational work, call status.reply with a text_markdown Markdown payload. For durable project work, call the "
             "appropriate work, handoff, document, governance, approval, release, or memory tools. If no "
             "action is appropriate, call noop with the reason. Do not rely on final prose as the result.\n"
             "At least one successful call must be a terminal safe-output tool: status.reply, status.complete, "

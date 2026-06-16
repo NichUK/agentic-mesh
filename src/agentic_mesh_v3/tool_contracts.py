@@ -33,7 +33,7 @@ TOOL_DESCRIPTIONS = {
     "risk.register": "Register a work-item risk with impact or mitigation context.",
     "stakeholder.ask_question": "Ask a stakeholder a clarification or decision question.",
     "status.complete": "Report successful completion.",
-    "status.reply": "Send or record a Markdown reply to a conversation or stakeholder.",
+    "status.reply": "Send or record a Markdown reply to a conversation or stakeholder. Requires `text_markdown`.",
     "status.update": "Record progress or status without completing the run.",
     "work_item.update_state": "Move a work item to a new state with next-action context.",
     "work_item.upsert": "Create or update a work item.",
@@ -79,7 +79,7 @@ TOOL_REQUIRED_FIELDS = {
     "release.record": ("work_item_id", "scope", "deployment_result", "rollback_plan"),
     "risk.register": ("work_item_id", "summary"),
     "stakeholder.ask_question": ("work_item_id", "question"),
-    "status.reply": (),
+    "status.reply": ("text_markdown",),
     "work_item.update_state": ("work_item_id", "state"),
     "work_item.upsert": ("work_item_id", "title", "description", "owner_role"),
 }

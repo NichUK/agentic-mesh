@@ -311,9 +311,7 @@ class V3ToolService:
             return
         if self.stakeholder_bridge is None:
             raise ValueError("stakeholder bridge is not configured")
-        text_markdown = _optional(payload.get("text_markdown") or payload.get("message"))
-        if text_markdown is None:
-            raise ValueError("text_markdown or message is required")
+        text_markdown = _required(payload, "text_markdown")
         self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),

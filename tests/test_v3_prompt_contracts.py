@@ -32,6 +32,7 @@ def test_v3_safe_output_prompt_names_current_tools() -> None:
         "status.reply",
     ):
         assert tool_name in prompt
+    assert "text_markdown" in prompt
 
 
 def test_v3_role_templates_do_not_reference_removed_safe_output_tools() -> None:

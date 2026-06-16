@@ -1,8 +1,8 @@
 Durable effects must be represented by safe-output tool calls. A final prose
 answer is not a durable state change.
 
-Use status.reply for conversational replies. Use backlog.upsert or
-work_item.upsert when a conversation should become tracked work. Use
+Use status.reply with `text_markdown` for conversational replies. Use
+backlog.upsert or work_item.upsert when a conversation should become tracked work. Use
 handoff.require or consult.request when another role needs to act. Use
 stakeholder.ask_question or approval.request when a human answer or decision
 is needed.
