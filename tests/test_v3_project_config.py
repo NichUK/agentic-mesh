@@ -182,6 +182,24 @@ roles:
     assert resolved == project_file.parent / "flows" / "custom.yaml"
 
 
+def test_load_project_config_rejects_unsafe_flow_template(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+flow:
+  template: ../sdlc
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"flow.template must match"):
+        load_project_config(project_file)
+
+
 def test_load_project_config_rejects_empty_roles(tmp_path: Path) -> None:
     project_file = tmp_path / "project.yaml"
     project_file.write_text(
