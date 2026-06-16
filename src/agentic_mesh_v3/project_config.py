@@ -70,6 +70,14 @@ class V3FlowConfig:
 
 
 @dataclass(frozen=True)
+class V3TargetRepositoryConfig:
+    repository_id: str
+    path: Path
+    repository_type: str = "git"
+    default_branch: str | None = None
+
+
+@dataclass(frozen=True)
 class V3RoleInstanceConfig:
     role_id: str
     template: str | None = None
@@ -89,6 +97,7 @@ class V3ProjectConfig:
     release_deployment_targets: tuple[V3ReleaseDeploymentTargetConfig, ...] = ()
     teams_connector: V3TeamsConnectorConfig = V3TeamsConnectorConfig()
     flow: V3FlowConfig = V3FlowConfig()
+    target_repositories: tuple[V3TargetRepositoryConfig, ...] = ()
 
 
 def resolve_project_flow_config_path(
@@ -127,6 +136,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
     release_targets_raw = _mapping(raw.get("release_deployment_targets"))
     teams_raw = _mapping(_mapping(raw.get("connectors")).get("teams"))
     flow_raw = _mapping(raw.get("flow"))
+    target_repositories_raw = _target_repositories_raw(raw)
     return V3ProjectConfig(
         project_id=project_id,
         broker=V3BrokerConfig(
@@ -152,6 +162,10 @@ def load_project_config(path: Path) -> V3ProjectConfig:
         flow=V3FlowConfig(
             template=_optional(flow_raw.get("template")),
             path=Path(str(flow_raw["path"])) if flow_raw.get("path") else None,
+        ),
+        target_repositories=tuple(
+            _load_target_repository(repository_id, _mapping(repository_raw), path.parent)
+            for repository_id, repository_raw in sorted(target_repositories_raw.items())
         ),
     )
 
@@ -233,6 +247,29 @@ def _load_messaging_identity(role_id: str, project_raw: dict[str, Any]) -> V3Rol
         mention_handle=mention_handle,
         bot_id_ref=_optional(bot_raw.get("bot_id_ref")),
         secret_ref=_optional(bot_raw.get("secret_ref")),
+    )
+
+
+def _target_repositories_raw(project_raw: dict[str, Any]) -> dict[str, Any]:
+    target_repositories = _mapping(project_raw.get("target_repositories"))
+    if target_repositories:
+        return target_repositories
+    workspace_repositories = _mapping(_mapping(project_raw.get("workspace")).get("repositories"))
+    return workspace_repositories
+
+
+def _load_target_repository(
+    repository_id: str,
+    repository_raw: dict[str, Any],
+    project_config_dir: Path,
+) -> V3TargetRepositoryConfig:
+    raw_path = _required(repository_raw, "path")
+    path = Path(raw_path)
+    return V3TargetRepositoryConfig(
+        repository_id=repository_id,
+        path=path if path.is_absolute() else (project_config_dir / path).resolve(strict=False),
+        repository_type=str(repository_raw.get("type") or repository_raw.get("repository_type") or "git"),
+        default_branch=_optional(repository_raw.get("default_branch")),
     )
 
 

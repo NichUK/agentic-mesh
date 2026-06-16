@@ -19,6 +19,11 @@ document_library:
   root_path: /documents
 flow:
   template: sdlc
+target_repositories:
+  app:
+    type: git
+    path: app
+    default_branch: develop
 roles:
   project-manager:
     template: project-manager
@@ -75,6 +80,11 @@ connectors:
     assert config.document_library.root_path == "/documents"
     assert config.flow.template == "sdlc"
     assert config.flow.path is None
+    assert len(config.target_repositories) == 1
+    assert config.target_repositories[0].repository_id == "app"
+    assert config.target_repositories[0].path == (tmp_path / "app").resolve(strict=False)
+    assert config.target_repositories[0].repository_type == "git"
+    assert config.target_repositories[0].default_branch == "develop"
     assert {role.role_id: role.instances for role in config.roles} == {
         "engineering": 2,
         "project-manager": 1,
@@ -120,6 +130,34 @@ roles:
     resolved = resolve_project_flow_config_path(project_file, load_project_config(project_file))
 
     assert resolved == Path("config/flows/sdlc-v3.yaml")
+
+
+def test_load_project_config_reads_workspace_repositories_as_target_repositories(tmp_path: Path) -> None:
+    project_file = tmp_path / "agentic-mesh" / "project.yaml"
+    project_file.parent.mkdir()
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+workspace:
+  repositories:
+    agentic-mesh:
+      type: git
+      path: ../../source
+      default_branch: develop
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    config = load_project_config(project_file)
+
+    assert len(config.target_repositories) == 1
+    repository = config.target_repositories[0]
+    assert repository.repository_id == "agentic-mesh"
+    assert repository.path == (project_file.parent / "../../source").resolve(strict=False)
+    assert repository.default_branch == "develop"
 
 
 def test_resolve_project_flow_config_path_allows_project_relative_path(tmp_path: Path) -> None:

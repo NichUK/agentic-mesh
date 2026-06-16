@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -23,9 +24,10 @@ class RoleContainerSpec:
     runtime_state_dir: Path
     document_library_root: Path
     environment: dict[str, str]
+    target_repositories: dict[str, Path] = field(default_factory=dict)
 
     def volume_mounts(self) -> dict[str, str]:
-        return {
+        mounts = {
             str(self.source_repo): "/mesh/source",
             str(self.organisation_config_repo): "/mesh/org",
             str(self.project_config_repo): "/mesh/project",
@@ -33,6 +35,9 @@ class RoleContainerSpec:
             str(self.runtime_state_dir): "/mesh/state",
             str(self.document_library_root): "/documents",
         }
+        for repository_id, path in sorted(self.target_repositories.items()):
+            mounts[str(path)] = f"/mesh/workspaces/{_safe_mount_name(repository_id)}"
+        return mounts
 
     def service_command(
         self,
@@ -317,6 +322,12 @@ def service_name_for_role(role_instance_id: str) -> str:
     if not role_instance_id.strip():
         raise ValueError("role_instance_id is required")
     return role_instance_id.replace(".", "-")
+
+
+def _safe_mount_name(value: str) -> str:
+    if not value or "/" in value or "\\" in value or value in {".", ".."}:
+        raise ValueError(f"invalid target repository id for mount: {value}")
+    return value
 
 
 def _run_lifecycle_command(

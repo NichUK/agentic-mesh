@@ -23,6 +23,24 @@ def test_project_v3_schema_allows_local_agent_runtime_config() -> None:
         "flow": {
             "template": "sdlc",
         },
+        "target_repositories": {
+            "app": {
+                "type": "git",
+                "path": "../app",
+                "default_branch": "develop",
+            }
+        },
+        "workspace": {
+            "root": "examples/projects/agentic-mesh-dev",
+            "default_repository": "app",
+            "repositories": {
+                "app": {
+                    "type": "git",
+                    "path": "../app",
+                    "default_branch": "develop",
+                }
+            },
+        },
         "connectors": {
             "teams": {
                 "adapter": "local",
