@@ -185,6 +185,44 @@ roles:
     assert (docs_root / "work-items" / "index.md").exists()
 
 
+def test_cli_local_e2e_dogfood_requires_onedrive_token_for_project_document_library(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_TOKEN", raising=False)
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: drive-123
+  root_path: /documents
+roles:
+  product-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        main(
+            [
+                "--db",
+                str(tmp_path / "v3.sqlite3"),
+                "--project-config",
+                str(project_config),
+                "local-e2e-dogfood",
+            ]
+        )
+    except ValueError as exc:
+        assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in str(exc)
+    else:
+        raise AssertionError("OneDrive-backed dogfood runs should require an access token")
+
+
 def test_cli_tool_call_uses_project_config_document_library(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     docs_root = tmp_path / "documents"
