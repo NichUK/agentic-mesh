@@ -4,7 +4,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.connectors import StakeholderMessage
+from agentic_mesh_v3.project_config import V3ProjectConfig
 
 
 @dataclass(frozen=True)
@@ -12,6 +14,39 @@ class TeamsRoleIdentity:
     role_id: str
     display_name: str
     bot_id: str | None = None
+
+
+class TeamsActivityRouter:
+    """Route Bot Framework Teams activities into the connector-neutral bridge."""
+
+    def __init__(
+        self,
+        bridge: StakeholderBridge,
+        *,
+        role_identities: tuple[TeamsRoleIdentity, ...] = (),
+    ) -> None:
+        self.bridge = bridge
+        self.role_identities = role_identities
+
+    def route_activity(self, activity: dict[str, Any]) -> list[str]:
+        message = normalize_teams_activity(activity, role_identities=self.role_identities)
+        return self.bridge.route_inbound(message)
+
+
+def teams_role_identities_from_project_config(config: V3ProjectConfig) -> tuple[TeamsRoleIdentity, ...]:
+    identities: list[TeamsRoleIdentity] = []
+    for role in config.roles:
+        identity = role.messaging_identity
+        if not identity.display_name:
+            continue
+        identities.append(
+            TeamsRoleIdentity(
+                role_id=role.role_id,
+                display_name=identity.display_name,
+                bot_id=identity.bot_id_ref,
+            )
+        )
+    return tuple(identities)
 
 
 def normalize_teams_activity(

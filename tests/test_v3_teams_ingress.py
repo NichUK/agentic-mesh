@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
+from agentic_mesh_v3.project_config import load_project_config
+from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 from agentic_mesh_v3.teams_ingress import TeamsRoleIdentity
 from agentic_mesh_v3.teams_ingress import normalize_teams_activity
+from agentic_mesh_v3.teams_ingress import teams_role_identities_from_project_config
 
 
 def test_normalize_personal_teams_activity_targets_recipient_role() -> None:
@@ -88,3 +91,54 @@ def test_normalized_channel_message_routes_through_local_bridge() -> None:
     subjects = bridge.route_inbound(message)
 
     assert subjects == ["project.context", "agent.product-manager"]
+
+
+def test_teams_activity_router_normalizes_and_routes_to_agent_inbox() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    bridge = LocalTeamsBridge(broker)
+    router = TeamsActivityRouter(
+        bridge,
+        role_identities=(
+            TeamsRoleIdentity("product-manager", "AM-Product Manager", bot_id="bot-product"),
+        ),
+    )
+
+    subjects = router.route_activity(
+        {
+            "id": "msg-3",
+            "text": "Give me a status update.",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        }
+    )
+
+    assert subjects == ["agent.product-manager"]
+    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
+    payload = broker.fetch("agent-inbox", "pm")[0].payload
+    assert payload["route_type"] == "role_dm"
+    assert payload["conversation_ref"] == "dm:product-manager"
+
+
+def test_teams_role_identities_load_from_project_config(tmp_path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+roles:
+  product-manager:
+    instances: 1
+connectors:
+  teams:
+    role_bots:
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: bot-product
+""",
+        encoding="utf-8",
+    )
+
+    identities = teams_role_identities_from_project_config(load_project_config(project_file))
+
+    assert identities == (TeamsRoleIdentity("product-manager", "AM-Product Manager", bot_id="bot-product"),)
