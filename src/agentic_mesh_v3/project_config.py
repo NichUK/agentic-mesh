@@ -302,7 +302,7 @@ def _load_stakeholder_contact(
         contact_id=contact_id,
         display_name=str(contact_raw.get("display_name") or contact_id),
         connector=str(connector),
-        target_ref=str(target_ref),
+        target_ref=_expand_env_refs(str(target_ref)),
         thread_ref=_optional(contact_raw.get("thread_ref")),
         importance=str(contact_raw.get("importance") or "high"),
     )
