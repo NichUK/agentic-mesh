@@ -6,14 +6,37 @@ from typing import Any
 from typing import TextIO
 
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.tool_catalog import tool_catalog_for_role
 from agentic_mesh_v3.tools import V3ToolService
 
 
 V3_TOOL_MCP_TOOL = "agentic_mesh_v3.tool_call"
+V3_TOOL_CATALOG_MCP_TOOL = "agentic_mesh_v3.tool_catalog"
 
 
 def v3_mcp_tools() -> list[dict[str, Any]]:
     return [
+        {
+            "name": V3_TOOL_CATALOG_MCP_TOOL,
+            "description": "List Agentic Mesh V3 safe-output tools allowed for a role.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["role_id"],
+                "properties": {
+                    "role_id": {
+                        "type": "string",
+                        "description": "Role id, for example product-manager or release-manager.",
+                    },
+                },
+            },
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
         {
             "name": V3_TOOL_MCP_TOOL,
             "description": "Record one Agentic Mesh V3 tool call for a role instance.",
@@ -122,6 +145,8 @@ def _handle_tool_call(
     if not isinstance(params, dict):
         raise ValueError("tools/call params must be an object")
     if params.get("name") != V3_TOOL_MCP_TOOL:
+        if params.get("name") == V3_TOOL_CATALOG_MCP_TOOL:
+            return _handle_tool_catalog(request_id=request_id, params=params)
         raise ValueError(f"unsupported MCP tool `{params.get('name')}`")
     arguments = params.get("arguments")
     if not isinstance(arguments, dict):
@@ -147,6 +172,29 @@ def _handle_tool_call(
         "tool_name": tool_name,
         "call_id": receipt.call_id,
         "terminal": receipt.terminal,
+    }
+    return _success_response(
+        request_id,
+        {
+            "content": [{"type": "text", "text": json.dumps(structured, sort_keys=True)}],
+            "structuredContent": structured,
+            "isError": False,
+        },
+    )
+
+
+def _handle_tool_catalog(*, request_id: object, params: object) -> dict[str, Any]:
+    if request_id is None:
+        raise ValueError("tools/call requires a JSON-RPC request id")
+    if not isinstance(params, dict):
+        raise ValueError("tools/call params must be an object")
+    arguments = params.get("arguments")
+    if not isinstance(arguments, dict):
+        raise ValueError("tools/call arguments must be an object")
+    role_id = _required_text(arguments.get("role_id"), "role_id")
+    structured = {
+        "role_id": role_id,
+        "tools": [entry.to_dict() for entry in tool_catalog_for_role(role_id)],
     }
     return _success_response(
         request_id,
