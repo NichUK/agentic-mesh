@@ -55,6 +55,10 @@ def materialize_agent_config(
                 "image": spec.image,
                 "command": spec.service_command(),
                 "mounts": spec.volume_mounts(),
+                "target_repositories": {
+                    repository_id: f"/mesh/workspaces/{repository_id}"
+                    for repository_id in sorted(spec.target_repositories)
+                },
                 "environment": spec.environment,
                 "prompt_paths": {
                     "system": "/mesh/agent/system.md",
@@ -137,6 +141,10 @@ def materialize_project_agent_configs(
                 agent_config_dir=agent_config_dir,
                 runtime_state_dir=runtime_state_dir,
                 document_library_root=document_library_root,
+                target_repositories={
+                    repository.repository_id: repository.path
+                    for repository in project_config.target_repositories
+                },
                 environment={
                     "PROJECT_ID": project_config.project_id,
                     "ROLE_ID": role.role_id,

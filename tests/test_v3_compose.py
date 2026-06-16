@@ -18,6 +18,7 @@ def test_render_role_services_compose_includes_role_service_command_and_mounts(t
         runtime_state_dir=tmp_path / "state",
         document_library_root=tmp_path / "documents",
         environment={"PROJECT_ID": "agentic-mesh-dev", "ROLE_ID": "product-manager"},
+        target_repositories={"app": tmp_path / "app"},
     )
 
     compose = yaml.safe_load(render_role_services_compose([spec], network_name="mesh-test"))
@@ -29,6 +30,7 @@ def test_render_role_services_compose_includes_role_service_command_and_mounts(t
     assert "--role-id" in service["command"]
     assert "product-manager" in service["command"]
     assert str(tmp_path / "documents") + ":/documents" in service["volumes"]
+    assert str(tmp_path / "app") + ":/mesh/workspaces/app" in service["volumes"]
     assert service["environment"] == {
         "PROJECT_ID": "agentic-mesh-dev",
         "ROLE_ID": "product-manager",

@@ -59,6 +59,22 @@
         "path": { "type": "string" }
       }
     },
+    "target_repositories": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/targetRepository" }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "root": { "type": "string" },
+        "default_repository": { "type": "string" },
+        "repositories": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/targetRepository" }
+        }
+      }
+    },
     "release_deployment_targets": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/releaseDeploymentTarget" }
@@ -144,6 +160,23 @@
         "reason": { "type": "string" },
         "rollback_summary": { "type": "string" },
         "rollback_plan": { "type": "string" }
+      }
+    },
+    "targetRepository": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["path"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["git", "filesystem", "local", "remote"]
+        },
+        "repository_type": {
+          "type": "string",
+          "enum": ["git", "filesystem", "local", "remote"]
+        },
+        "path": { "type": "string" },
+        "default_branch": { "type": "string" }
       }
     },
     "teamsConnector": {

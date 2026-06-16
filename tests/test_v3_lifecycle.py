@@ -34,6 +34,47 @@ def test_role_container_spec_declares_expected_mounts(tmp_path: Path) -> None:
     assert mounts[str(tmp_path / "documents")] == "/documents"
 
 
+def test_role_container_spec_mounts_target_repositories(tmp_path: Path) -> None:
+    spec = RoleContainerSpec(
+        role_instance_id="agentic-mesh-dev.engineering.1",
+        image="agentic-mesh:local",
+        source_repo=tmp_path / "source",
+        organisation_config_repo=tmp_path / "org",
+        project_config_repo=tmp_path / "project",
+        agent_config_dir=tmp_path / "agent",
+        runtime_state_dir=tmp_path / "state",
+        document_library_root=tmp_path / "documents",
+        environment={"PROJECT_ID": "agentic-mesh-dev"},
+        target_repositories={"app": tmp_path / "app"},
+    )
+
+    mounts = spec.volume_mounts()
+
+    assert mounts[str(tmp_path / "app")] == "/mesh/workspaces/app"
+
+
+def test_role_container_spec_rejects_unsafe_target_repository_mount_names(tmp_path: Path) -> None:
+    spec = RoleContainerSpec(
+        role_instance_id="agentic-mesh-dev.engineering.1",
+        image="agentic-mesh:local",
+        source_repo=tmp_path / "source",
+        organisation_config_repo=tmp_path / "org",
+        project_config_repo=tmp_path / "project",
+        agent_config_dir=tmp_path / "agent",
+        runtime_state_dir=tmp_path / "state",
+        document_library_root=tmp_path / "documents",
+        environment={"PROJECT_ID": "agentic-mesh-dev"},
+        target_repositories={"../app": tmp_path / "app"},
+    )
+
+    try:
+        spec.volume_mounts()
+    except ValueError as exc:
+        assert "invalid target repository id" in str(exc)
+    else:
+        raise AssertionError("unsafe target repository mount names should be rejected")
+
+
 def test_role_container_spec_generates_service_command(tmp_path: Path) -> None:
     spec = RoleContainerSpec(
         role_instance_id="agentic-mesh-dev.product-manager.1",

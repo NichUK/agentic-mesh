@@ -83,6 +83,11 @@ broker:
 document_library:
   adapter: filesystem
   root: documents
+target_repositories:
+  app:
+    type: git
+    path: ../app
+    default_branch: develop
 roles:
   product-manager:
     template: product-manager
@@ -125,10 +130,16 @@ roles:
     ]
     engineering_2 = materialized[1]
     assert engineering_2.container_spec.agent_config_dir == tmp_path / "agents" / "engineering" / "2"
+    assert engineering_2.container_spec.target_repositories == {
+        "app": (project_file.parent / "../app").resolve(strict=False)
+    }
     assert engineering_2.role_service_config.inbox_consumer == "agentic-mesh-dev.engineering.2"
     assert engineering_2.role_service_config.memory_db_path == tmp_path / "state" / "memory" / "agentic-mesh-dev.engineering.2.sqlite3"
     assert "Build safely." in (tmp_path / "agents" / "engineering" / "2" / "project.md").read_text(encoding="utf-8")
     assert "System rules." in (tmp_path / "agents" / "engineering" / "2" / "system.md").read_text(encoding="utf-8")
+    container = json.loads((tmp_path / "agents" / "engineering" / "2" / "container.json").read_text(encoding="utf-8"))
+    assert container["mounts"][str((project_file.parent / "../app").resolve(strict=False))] == "/mesh/workspaces/app"
+    assert container["target_repositories"] == {"app": "/mesh/workspaces/app"}
     product_tools = (tmp_path / "agents" / "product-manager" / "1" / "tools.md").read_text(encoding="utf-8")
     assert "Use approved tools." in product_tools
     assert "Role-Scoped Safe-Output Tool Catalog" in product_tools

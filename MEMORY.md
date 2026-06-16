@@ -530,3 +530,9 @@ V3 conversation recording now preserves mentioned-role metadata from Teams
 activities. Recent conversation context in role prompts includes the mentioned
 roles, helping agents distinguish shared project-channel context from messages
 aimed at a specific specialist.
+
+V3 project config now exposes target repositories to role containers. Explicit
+`target_repositories` entries, or legacy `workspace.repositories` entries, are
+resolved relative to `project.yaml` and materialized as mounts under
+`/mesh/workspaces/{repository_id}` so agents have project-granted source access
+without confusing the runtime source mount at `/mesh/source`.
