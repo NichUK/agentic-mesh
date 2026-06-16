@@ -187,6 +187,13 @@ class V3ToolService:
                 rollback_plan=result.rollback_plan,
                 residual_risks=str(payload.get("residual_risks") or "None recorded"),
             )
+        elif tool_name == "memory.propose_update":
+            self.db.record_role_memory(
+                memory_id=str(payload.get("memory_id") or f"memory-{call_id}"),
+                role_instance_id=role_instance_id,
+                summary=_required(payload, "summary"),
+                source_ref=_required(payload, "source_ref"),
+            )
         elif tool_name in TERMINAL_TOOLS or tool_name in {
             "messaging.send",
             "handoff.require",

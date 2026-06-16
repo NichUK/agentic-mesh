@@ -4,6 +4,7 @@ from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import InMemoryRoleMemory
 from agentic_mesh_v3.agent import RoleAgentService
 from agentic_mesh_v3.agent import RoleInstanceConfig
+from agentic_mesh_v3.agent import build_role_memory
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
@@ -49,6 +50,26 @@ def test_role_agent_processes_inbox_and_records_memory(tmp_path: Path) -> None:
     assert result is not None
     assert result.status == "completed"
     assert result.tool_calls
+    assert "processed" in memory.load_summary("agentic-mesh-dev.product-manager.1")
+
+
+def test_role_agent_can_use_configured_sqlite_memory(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    config = _config(tmp_path)
+    memory = build_role_memory(config)
+    service = RoleAgentService(
+        config=config,
+        broker=broker,
+        worker=EchoWorker(),
+        memory=memory,
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
     assert "processed" in memory.load_summary("agentic-mesh-dev.product-manager.1")
 
 

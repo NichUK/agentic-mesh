@@ -10,6 +10,7 @@ from typing import Protocol
 from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import GovernanceInstructionSet
+from agentic_mesh_v3.memory import SQLiteRoleMemory
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,10 @@ class InMemoryRoleMemory:
 
     def record_observation(self, role_instance_id: str, observation: str) -> None:
         self._memory.setdefault(role_instance_id, []).append(observation)
+
+
+def build_role_memory(config: RoleInstanceConfig) -> AgentMemory:
+    return SQLiteRoleMemory(config.memory_db_path)
 
 
 class EchoWorker:
