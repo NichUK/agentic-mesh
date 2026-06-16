@@ -394,6 +394,8 @@ class V3ToolService:
         tool_name: str,
         payload: dict[str, Any],
     ) -> None:
+        if tool_name == "handoff.require":
+            _validate_handoff_requirements(payload)
         self.db.record_governance_record(
             record_id=str(payload.get("record_id") or f"governance-{call_id}"),
             work_item_id=_required(payload, "work_item_id"),
@@ -434,6 +436,42 @@ def _summary(payload: dict[str, Any]) -> str:
         if value is not None and str(value):
             return str(value)
     raise ValueError("summary, question, reason, required_next_action, or message is required")
+
+
+def _validate_handoff_requirements(payload: dict[str, Any]) -> None:
+    for key in (
+        "work_item_id",
+        "target_role",
+        "phase",
+        "accountable_role",
+        "required_next_action",
+        "acceptance_criteria",
+        "evidence_requirements",
+        "artifact_links",
+        "open_decisions",
+        "open_risks",
+        "consulted_roles",
+        "informed_roles",
+        "stakeholder_follow_up",
+    ):
+        if key not in payload:
+            raise ValueError(f"handoff.require requires {key}")
+    for key in (
+        "acceptance_criteria",
+        "evidence_requirements",
+        "artifact_links",
+        "open_decisions",
+        "open_risks",
+        "consulted_roles",
+        "informed_roles",
+        "stakeholder_follow_up",
+    ):
+        if not isinstance(payload.get(key), list):
+            raise ValueError(f"handoff.require {key} must be a list")
+    _required(payload, "target_role")
+    _required(payload, "phase")
+    _required(payload, "accountable_role")
+    _required(payload, "required_next_action")
 
 
 def _default_governance_status(tool_name: str) -> str:

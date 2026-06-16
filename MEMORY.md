@@ -214,3 +214,9 @@ rule that agents, not the database, decide how to resolve the checklist.
 V3 work-item detail pages now render the derived governance checklist, making
 missing consultations, informed updates, sponsor decisions, and recorded
 exceptions visible without forcing users or agents to inspect raw JSON.
+
+`handoff.require` is now validated as a full requirements packet. Agents must
+include work item, target role, phase, accountable role, next action,
+acceptance/evidence requirements, artifact links, open decisions/risks,
+consulted/informed roles, and stakeholder follow-up, even when some lists are
+intentionally empty.
