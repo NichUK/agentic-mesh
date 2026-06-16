@@ -433,9 +433,12 @@ class V3ToolService:
         if not should_deliver:
             return
         question_id = str(payload.get("record_id"))
-        text_markdown = _optional(payload.get("text_markdown")) or (
-            f"**Question**\n\n{question}\n\nQuestion ID: `{question_id}`"
-        )
+        question_id_line = f"Question ID: `{question_id}`"
+        text_markdown = _optional(payload.get("text_markdown"))
+        if text_markdown is None:
+            text_markdown = f"**Question**\n\n{question}\n\n{question_id_line}"
+        elif question_id not in text_markdown:
+            text_markdown = f"{text_markdown.rstrip()}\n\n{question_id_line}"
         receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),

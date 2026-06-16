@@ -10,6 +10,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 
+from agentic_mesh_v3.authority import role_from_instance
 from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import evaluate_governance_checklist
@@ -1857,8 +1858,7 @@ def _governance_record_aggregate_type(work_item_id: str) -> str:
 
 
 def role_from_instance_id(role_instance_id: str) -> str:
-    parts = role_instance_id.split(".")
-    return parts[-2] if len(parts) >= 2 else role_instance_id
+    return role_from_instance(role_instance_id)
 
 
 def _agent_run_status(row: sqlite3.Row) -> AgentRunStatus:
