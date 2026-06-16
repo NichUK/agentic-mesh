@@ -33,6 +33,23 @@ def test_normalize_personal_teams_activity_targets_recipient_role() -> None:
     assert message.text == "Give me a status update."
 
 
+def test_normalize_personal_activity_falls_back_to_agent_display_name() -> None:
+    message = normalize_teams_activity(
+        {
+            "id": "msg-1",
+            "text": "Give me a status update.",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1", "name": "Nicholas"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        },
+        role_identities=(),
+    )
+
+    assert message.source_type == "dm"
+    assert message.conversation_ref == "dm:product-manager"
+    assert message.reply_target_ref == "chat:dm-1"
+
+
 def test_normalize_channel_activity_preserves_thread_and_mentions() -> None:
     message = normalize_teams_activity(
         {
@@ -65,6 +82,35 @@ def test_normalize_channel_activity_preserves_thread_and_mentions() -> None:
     assert message.reply_thread_ref == "root-msg-1"
     assert message.mentioned_roles == ("product-manager",)
     assert message.text == "AM-Product Manager please review this."
+
+
+def test_normalize_channel_activity_falls_back_to_agent_mention_name_only() -> None:
+    message = normalize_teams_activity(
+        {
+            "id": "msg-2",
+            "text": "<at>AM-QA Engineer</at> please review this with <at>Nicholas Overend</at>.",
+            "conversation": {"id": "channel-conv", "conversationType": "channel"},
+            "from": {"id": "user-1"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+            "channelData": {
+                "team": {"id": "team-1"},
+                "channel": {"id": "channel-1"},
+            },
+            "entities": [
+                {
+                    "type": "mention",
+                    "mentioned": {"id": "bot-qa", "name": "AM-QA Engineer"},
+                },
+                {
+                    "type": "mention",
+                    "mentioned": {"id": "human-1", "name": "Nicholas Overend"},
+                },
+            ],
+        },
+        role_identities=(),
+    )
+
+    assert message.mentioned_roles == ("qa-engineer",)
 
 
 def test_normalized_channel_message_routes_through_local_bridge() -> None:
