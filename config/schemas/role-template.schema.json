@@ -9,8 +9,17 @@
     "role_id",
     "version",
     "purpose",
+    "role_profile",
+    "accountabilities",
+    "decision_rights",
+    "boundaries",
+    "collaboration_style",
+    "quality_bar",
+    "memory_focus",
+    "core_workflows",
+    "standards_references",
+    "anti_patterns",
     "standing_instructions",
-    "default_tools",
     "documentation_obligations",
     "handoff_targets"
   ],
@@ -29,64 +38,63 @@
     },
     "role_profile": {
       "type": "string",
-      "default": ""
+      "minLength": 1
     },
     "accountabilities": {
       "type": "array",
       "items": { "type": "string" },
-      "default": []
+      "minItems": 1
     },
     "decision_rights": {
       "type": "object",
       "description": "Role decision boundaries, commonly owns/advises/escalates.",
-      "additionalProperties": {
-        "type": "array",
-        "items": { "type": "string" }
-      },
-      "default": {}
+      "additionalProperties": false,
+      "required": ["owns", "advises", "escalates"],
+      "properties": {
+        "owns": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "advises": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "escalates": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
     },
     "boundaries": {
       "type": "array",
       "items": { "type": "string" },
-      "default": []
+      "minItems": 1
     },
     "collaboration_style": {
       "type": "array",
       "items": { "type": "string" },
-      "default": []
+      "minItems": 1
     },
     "quality_bar": {
       "type": "array",
       "items": { "type": "string" },
-      "default": []
+      "minItems": 1
     },
     "memory_focus": {
       "type": "array",
       "items": { "type": "string" },
-      "default": []
+      "minItems": 1
     },
     "core_workflows": {
       "type": "array",
       "items": { "$ref": "#/$defs/coreWorkflow" },
-      "default": []
+      "minItems": 1
     },
     "standards_references": {
       "type": "array",
       "items": { "$ref": "#/$defs/standardsReference" },
-      "default": []
+      "minItems": 1
     },
     "anti_patterns": {
       "type": "array",
       "items": { "type": "string" },
-      "default": []
+      "minItems": 1
     },
     "standing_instructions": {
       "type": "array",
-      "items": { "type": "string" }
-    },
-    "default_tools": {
-      "type": "array",
-      "items": { "type": "string" }
+      "items": { "type": "string" },
+      "minItems": 1
     },
     "documentation_obligations": {
       "type": "array",
@@ -104,7 +112,7 @@
     "coreWorkflow": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workflow_id", "trigger", "outputs"],
+      "required": ["workflow_id", "trigger", "inputs", "outputs", "artifacts"],
       "properties": {
         "workflow_id": {
           "type": "string",
@@ -116,16 +124,17 @@
         "inputs": {
           "type": "array",
           "items": { "type": "string" },
-          "default": []
+          "minItems": 1
         },
         "outputs": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": { "type": "string" },
+          "minItems": 1
         },
         "artifacts": {
           "type": "array",
           "items": { "type": "string" },
-          "default": []
+          "minItems": 1
         }
       }
     },
@@ -153,7 +162,7 @@
         "capability_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$" },
         "category": {
           "type": "string",
-          "enum": ["logical_tool", "skill", "runtime_package", "mount", "external_connector", "validation_command", "worker_capability", "document_library", "compatibility_default_tool"]
+          "enum": ["logical_tool", "skill", "runtime_package", "mount", "external_connector", "validation_command", "worker_capability", "document_library"]
         },
         "requirement": {
           "type": "string",
@@ -230,7 +239,7 @@
     "standardsReference": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "applies_to"],
+      "required": ["name", "url", "applies_to"],
       "properties": {
         "name": {
           "type": "string"

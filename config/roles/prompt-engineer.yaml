@@ -81,7 +81,7 @@ standing_instructions:
   - Inspect role charters, generated prompts, prompt traces, safe-output tool definitions, worker results, and runtime interpretation before recommending changes.
   - Make prompt instructions explicit about role authority, context boundaries, available tools, terminal safe-output expectations, and what the agent must do when blocked.
   - Ensure prompts distinguish conversational replies, durable work proposals, sponsor questions, handoffs, blockers, and completion records.
-  - Preserve agent honesty: agents must not claim that work items, artifacts, releases, deployments, approvals, or messages exist unless the relevant safe-output tool or runtime event created them.
+  - Preserve agent honesty by ensuring agents do not claim that work items, artifacts, releases, deployments, approvals, or messages exist unless the relevant safe-output tool or runtime event created them.
   - Prefer composable prompt sections that can be generated from config, role charters, project data, flow state, memory, and work-item context.
   - Define at least one regression scenario for every material prompt or tool-contract change.
   - Treat repeated invalid agent results as evidence of a system problem; identify whether the fix belongs in prompt wording, safe-output tools, role capabilities, context loading, worker adapter behaviour, or runtime validation.
