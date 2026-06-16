@@ -379,7 +379,16 @@ def test_role_agent_records_run_memory_with_broker_source_when_payload_has_no_co
 def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
-    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "shape this"})
+    published = broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {
+            "request": "shape this",
+            "connector": "teams",
+            "reply_target_ref": "team:team-1/channel:channel-1",
+            "reply_thread_ref": "root-message-1",
+        },
+    )
     config = _config(tmp_path)
     organisation = tmp_path / "organisation.md"
     project = tmp_path / "project.md"
@@ -430,7 +439,31 @@ def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -
     assert "<message-metadata>" in worker.prompt
     assert f"<message-id>{published.message_id}</message-id>" in worker.prompt
     assert "<subject>agent.product-manager</subject>" in worker.prompt
-    assert '{\n  "request": "shape this"\n}' in worker.prompt
+    assert "<reply-routing>" in worker.prompt
+    assert "Use this source reply route for conversational `status.reply`" in worker.prompt
+    assert "<connector>teams</connector>" in worker.prompt
+    assert "<reply-target-ref>team:team-1/channel:channel-1</reply-target-ref>" in worker.prompt
+    assert "<reply-thread-ref>root-message-1</reply-thread-ref>" in worker.prompt
+    assert '"request": "shape this"' in worker.prompt
+
+
+def test_role_agent_prompt_marks_missing_reply_route(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "shape this"})
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "<reply-routing>No source reply route was provided.</reply-routing>" in worker.prompt
 
 
 def test_role_agent_prompt_loads_runtime_database_role_memory(tmp_path: Path) -> None:

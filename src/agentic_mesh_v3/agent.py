@@ -495,6 +495,7 @@ class RoleAgentService:
         tools_prompt = _read_optional(self.config.tools_prompt_path)
         memory_summary = self.memory.load_summary(self.config.role_instance_id)
         conversation_summary = self._conversation_summary(message)
+        reply_routing = _reply_routing_prompt_section(message.payload)
         lines = [
             "<agentic-mesh-v3-agent>",
             f"<role-instance>{self.config.role_instance_id}</role-instance>",
@@ -520,6 +521,7 @@ class RoleAgentService:
                 "<conversation-context>",
                 conversation_summary or "No recent conversation context recorded.",
                 "</conversation-context>",
+                reply_routing,
                 "<message-metadata>",
                 f"<message-id>{message.message_id}</message-id>",
                 f"<subject>{message.subject}</subject>",
@@ -575,6 +577,30 @@ def _message_memory_source_ref(message: BrokerMessage) -> str:
         if value is not None and str(value).strip():
             return f"{prefix}:{value}"
     return f"broker-message:{message.message_id}"
+
+
+def _reply_routing_prompt_section(payload: dict[str, object]) -> str:
+    target_ref = _optional_prompt_value(payload.get("reply_target_ref"))
+    thread_ref = _optional_prompt_value(payload.get("reply_thread_ref"))
+    connector = _optional_prompt_value(payload.get("connector"))
+    if target_ref is None:
+        return "<reply-routing>No source reply route was provided.</reply-routing>"
+    lines = [
+        "<reply-routing>",
+        "Use this source reply route for conversational `status.reply` unless a deliberate override is required.",
+        f"<connector>{connector or 'unspecified'}</connector>",
+        f"<reply-target-ref>{target_ref}</reply-target-ref>",
+    ]
+    if thread_ref is not None:
+        lines.append(f"<reply-thread-ref>{thread_ref}</reply-thread-ref>")
+    lines.append("</reply-routing>")
+    return "\n".join(lines)
+
+
+def _optional_prompt_value(value: object) -> str | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value)
 
 
 def _has_terminal_tool_call(tool_calls: list[str]) -> bool:
