@@ -208,6 +208,60 @@ roles:
     assert '"results": []' in capsys.readouterr().out
 
 
+def test_cli_run_agent_service_reports_idle_agent_status(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    agent_config_dir = tmp_path / "agent"
+    agent_config_dir.mkdir()
+    db_path = tmp_path / "v3.sqlite3"
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "run-agent-service",
+            "--role-id",
+            "product-manager",
+            "--agent-config-dir",
+            str(agent_config_dir),
+            "--runtime-state-dir",
+            str(tmp_path / "state"),
+            "--poll-interval-seconds",
+            "0",
+            "--max-ticks",
+            "1",
+        ]
+    )
+
+    assert result == 0
+    assert '"results": []' in capsys.readouterr().out
+    db = V3Database(db_path)
+    try:
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+    assert len(snapshot.agents) == 1
+    assert snapshot.agents[0].role_instance_id == "agentic-mesh-dev.product-manager.1"
+    assert snapshot.agents[0].container_state == "running"
+    assert snapshot.agents[0].inbox_depth == 0
+
+
 def test_cli_ensure_agent_stream_sets_direct_and_relevance_subjects() -> None:
     broker = InMemoryBrokerAdapter()
 

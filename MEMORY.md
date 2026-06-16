@@ -153,3 +153,9 @@ free-text or legacy result parsing.
 `run-agent-once` now uses the role's configured `worker` block from
 `project.yaml` when no `--worker` override is passed. If a role has no worker
 configured, it falls back to the echo worker for local smoke testing.
+
+V3 also has `run-agent-service`, a bounded long-running role loop for
+containerised role agents. It polls the configured broker inbox, records
+agent heartbeat/status into the runtime DB for `/agents`, uses the same
+project-config worker selection as `run-agent-once`, and can idle-exit for
+hibernation-oriented supervision.
