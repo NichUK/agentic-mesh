@@ -42,8 +42,10 @@ no-op/status tool and explain why.
 
 Agent prompts are assembled from mounted role, organisation, project, RACI, and
 tool-context files plus governance instructions, current assignment context,
-and role memory. Mutable organisation/project instructions remain outside the
-runtime image.
+broker message metadata, and role memory. The assignment payload is rendered as
+deterministic JSON so agents can cite source message ids, preserve connector
+context, and avoid parsing Python repr text. Mutable organisation/project
+instructions remain outside the runtime image.
 
 Role memory is DB-backed and source-linked. The document library remains the
 canonical project memory, while each role instance can keep a concise cache of

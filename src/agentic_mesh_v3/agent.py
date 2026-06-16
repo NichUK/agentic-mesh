@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -257,8 +258,12 @@ class RoleAgentService:
                 "<memory>",
                 memory_summary or "No prior role memory recorded.",
                 "</memory>",
+                "<message-metadata>",
+                f"<message-id>{message.message_id}</message-id>",
+                f"<subject>{message.subject}</subject>",
+                "</message-metadata>",
                 "<assignment>",
-                str(message.payload),
+                json.dumps(message.payload, indent=2, sort_keys=True, default=str),
                 "</assignment>",
                 "</agentic-mesh-v3-agent>",
             ]

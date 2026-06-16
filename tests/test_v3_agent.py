@@ -159,7 +159,7 @@ def test_role_agent_can_use_configured_sqlite_memory(tmp_path: Path) -> None:
 def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
-    broker.publish("agent-inbox", "agent.product-manager", {"request": "shape this"})
+    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "shape this"})
     config = _config(tmp_path)
     organisation = tmp_path / "organisation.md"
     project = tmp_path / "project.md"
@@ -202,6 +202,10 @@ def test_role_agent_prompt_includes_mounted_context_components(tmp_path: Path) -
     assert '"phase":"requirements"' in worker.prompt
     assert "<available-tools>" in worker.prompt
     assert "Use safe-output tools." in worker.prompt
+    assert "<message-metadata>" in worker.prompt
+    assert f"<message-id>{published.message_id}</message-id>" in worker.prompt
+    assert "<subject>agent.product-manager</subject>" in worker.prompt
+    assert '{\n  "request": "shape this"\n}' in worker.prompt
 
 
 def test_role_agent_prompt_includes_governance_checklist(tmp_path: Path) -> None:
