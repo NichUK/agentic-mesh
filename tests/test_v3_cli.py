@@ -140,6 +140,51 @@ def test_cli_local_e2e_dogfood_releases_and_closes_slice(tmp_path: Path, capsys)
     assert (docs_root / "work-items" / "index.md").exists()
 
 
+def test_cli_local_e2e_dogfood_uses_project_config_document_library(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    docs_root = tmp_path / "project-documents"
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+roles:
+  product-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "local-e2e-dogfood",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        detail = db.work_item_detail("work-v3-local-e2e")
+    finally:
+        db.close()
+
+    assert result == 0
+    assert output["status"] == "local_e2e_dogfood_complete"
+    assert detail is not None
+    assert detail.state == "closed"
+    assert (docs_root / "work-items" / "work-v3-local-e2e" / "index.md").exists()
+    assert (docs_root / "work-items" / "index.md").exists()
+
+
 def test_cli_tool_call_uses_project_config_document_library(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     docs_root = tmp_path / "documents"
