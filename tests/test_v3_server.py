@@ -252,6 +252,7 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "<pre>" not in html
     assert "Work item index" in html
     assert "/artifact-viewer/work-1/index.md" in html
+    assert 'target="_blank" rel="noopener noreferrer">Work item index</a>' in html
     assert "consult.request" in html
     assert "Confirm smoke evidence remains valid." in html
     assert "Governance Checklist" in html
