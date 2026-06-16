@@ -2,11 +2,23 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from agentic_mesh_v3.agent import RoleInstanceConfig
 from agentic_mesh_v3.governance import RaciMatrix
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
+from agentic_mesh_v3.project_config import V3ProjectConfig
+from agentic_mesh_v3.project_config import V3RoleInstanceConfig
+
+
+@dataclass(frozen=True)
+class MaterializedRoleInstance:
+    role: V3RoleInstanceConfig
+    instance_index: int
+    container_spec: RoleContainerSpec
+    role_service_config: RoleInstanceConfig
+    written_files: tuple[Path, ...]
 
 
 def materialize_agent_config(
@@ -83,3 +95,82 @@ def build_role_instance_config(
         inbox_stream=inbox_stream,
         inbox_consumer=role_instance_id,
     )
+
+
+def materialize_project_agent_configs(
+    *,
+    project_config: V3ProjectConfig,
+    image: str,
+    source_repo: Path,
+    organisation_config_repo: Path,
+    project_config_repo: Path,
+    agent_config_root: Path,
+    runtime_state_dir: Path,
+    document_library_root: Path,
+    role_templates_dir: Path,
+    organisation_instructions: str,
+    raci: RaciMatrix,
+    tool_instructions: str,
+) -> tuple[MaterializedRoleInstance, ...]:
+    """Materialize config folders for every configured role instance."""
+
+    materialized: list[MaterializedRoleInstance] = []
+    for role in project_config.roles:
+        for instance_index in range(1, role.instances + 1):
+            instance_id = str(instance_index)
+            role_instance_id = f"{project_config.project_id}.{role.role_id}.{instance_id}"
+            agent_config_dir = agent_config_root / role.role_id / instance_id
+            container_spec = RoleContainerSpec(
+                role_instance_id=role_instance_id,
+                image=image,
+                source_repo=source_repo,
+                organisation_config_repo=organisation_config_repo,
+                project_config_repo=project_config_repo,
+                agent_config_dir=agent_config_dir,
+                runtime_state_dir=runtime_state_dir,
+                document_library_root=document_library_root,
+                environment={
+                    "PROJECT_ID": project_config.project_id,
+                    "ROLE_ID": role.role_id,
+                    "ROLE_INSTANCE_ID": role_instance_id,
+                },
+            )
+            written_files = materialize_agent_config(
+                spec=container_spec,
+                role_prompt=_read_role_template(role_templates_dir, role),
+                organisation_instructions=organisation_instructions,
+                project_instructions=_role_project_instructions(role),
+                tool_instructions=tool_instructions,
+                raci=raci,
+            )
+            materialized.append(
+                MaterializedRoleInstance(
+                    role=role,
+                    instance_index=instance_index,
+                    container_spec=container_spec,
+                    role_service_config=build_role_instance_config(
+                        project_id=project_config.project_id,
+                        role_id=role.role_id,
+                        instance_id=instance_id,
+                        agent_config_dir=agent_config_dir,
+                        runtime_state_dir=runtime_state_dir,
+                        inbox_stream=project_config.broker.stream,
+                    ),
+                    written_files=tuple(written_files),
+                )
+            )
+    return tuple(materialized)
+
+
+def _read_role_template(role_templates_dir: Path, role: V3RoleInstanceConfig) -> str:
+    template_id = role.template or role.role_id
+    path = role_templates_dir / f"{template_id}.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"role template `{template_id}` not found at {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _role_project_instructions(role: V3RoleInstanceConfig) -> str:
+    if not role.instructions:
+        return "No project-specific role instructions."
+    return "\n".join(f"- {instruction}" for instruction in role.instructions)

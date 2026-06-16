@@ -72,6 +72,8 @@ image.
 The same mounted folder is used to build the role-service configuration:
 prompt component paths, memory database path, broker stream, and durable
 consumer name are derived from project id, role id, and instance id.
+At startup the runtime materializes one folder and one role-service
+configuration per configured role instance.
 
 Role containers mount source, organisation config, project config, agent config,
 runtime state, and document-library roots at stable paths. Hibernation planning
