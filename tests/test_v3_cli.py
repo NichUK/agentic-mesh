@@ -284,6 +284,96 @@ roles:
     assert "configured sponsor dogfood deployed" in release["deployment_result"]
 
 
+def test_cli_audit_dogfood_passes_after_local_e2e(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    docs_root = tmp_path / "documents"
+    project_config = tmp_path / "project.yaml"
+    python_exe = sys.executable.replace("\\", "/")
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+connectors:
+  teams:
+    adapter: local
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: dm:sponsor
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - '{python_exe}'
+      - -c
+      - print('audit dogfood deployed')
+roles:
+  product-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "--project-config",
+                str(project_config),
+                "local-e2e-dogfood",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "audit-dogfood",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert output["passed"] is True
+    check_ids = {check["check_id"] for check in output["checks"]}
+    assert "release.deployed" in check_ids
+    assert "documents.work_item_index_exists" in check_ids
+
+
+def test_cli_audit_dogfood_returns_failure_for_missing_evidence(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    docs_root = tmp_path / "documents"
+    assert main(["--db", str(db_path), "init-db"]) == 0
+    capsys.readouterr()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "audit-dogfood",
+            "--document-library-root",
+            str(docs_root),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    assert output["passed"] is False
+    assert output["checks"][0]["check_id"] == "work_item.exists"
+
+
 def test_cli_local_e2e_dogfood_requires_onedrive_token_for_project_document_library(
     tmp_path: Path,
     monkeypatch,
