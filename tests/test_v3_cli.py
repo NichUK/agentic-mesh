@@ -1,7 +1,9 @@
 from pathlib import Path
+import argparse
 import subprocess
 import sys
 
+from agentic_mesh_v3.cli import _teams_activity_router
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.db import V3Database
 
@@ -117,6 +119,49 @@ roles:
     assert result == 0
     assert '"tool_name": "document.write_work_item_index"' in capsys.readouterr().out
     assert (docs_root / "work-items" / "work-1" / "index.md").exists()
+
+
+def test_cli_teams_activity_router_is_none_without_project_config() -> None:
+    assert _teams_activity_router(argparse.Namespace(project_config=None)) is None
+
+
+def test_cli_teams_activity_router_uses_project_broker_and_roles(tmp_path: Path) -> None:
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  product-manager:
+    instances: 1
+connectors:
+  teams:
+    role_bots:
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: bot-product
+""",
+        encoding="utf-8",
+    )
+
+    router = _teams_activity_router(argparse.Namespace(project_config=project_config))
+
+    assert router is not None
+    subjects = router.route_activity(
+        {
+            "id": "msg-1",
+            "text": "Status please.",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        }
+    )
+    assert subjects == ["agent.product-manager"]
 
 
 def test_cli_record_approval_response_updates_approval(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
