@@ -141,6 +141,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
     roles_raw = _mapping(raw.get("roles"))
     if not roles_raw:
         raise ValueError("roles must define at least one role")
+    _validate_role_bot_keys(raw, roles_raw)
     release_targets_raw = _mapping(raw.get("release_deployment_targets"))
     teams_raw = _mapping(_mapping(raw.get("connectors")).get("teams"))
     flow_raw = _mapping(raw.get("flow"))
@@ -271,6 +272,19 @@ def _load_messaging_identity(role_id: str, project_raw: dict[str, Any]) -> V3Rol
         bot_id_ref=_optional(bot_raw.get("bot_id_ref")),
         secret_ref=_optional(bot_raw.get("secret_ref")),
     )
+
+
+def _validate_role_bot_keys(project_raw: dict[str, Any], roles_raw: dict[str, Any]) -> None:
+    connectors = _mapping(project_raw.get("connectors"))
+    teams = _mapping(connectors.get("teams"))
+    role_bots = _mapping(teams.get("role_bots"))
+    if not role_bots:
+        return
+    role_ids = set(roles_raw)
+    for role_id in sorted(role_bots):
+        _validate_identifier(f"connectors.teams.role_bots.{role_id}", role_id)
+        if role_id not in role_ids:
+            raise ValueError(f"connectors.teams.role_bots.{role_id} must reference a configured role")
 
 
 def _target_repositories_raw(project_raw: dict[str, Any]) -> dict[str, Any]:
