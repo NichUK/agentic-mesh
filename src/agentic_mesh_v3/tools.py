@@ -484,6 +484,13 @@ class V3ToolService:
     ) -> None:
         if tool_name == "handoff.require":
             _validate_handoff_requirements(payload)
+            self.db.update_work_item_state(
+                work_item_id=_required(payload, "work_item_id"),
+                state="waiting_agent",
+                owner_role=_required(payload, "target_role"),
+                current_phase=_required(payload, "phase"),
+                next_action=_required(payload, "required_next_action"),
+            )
         elif tool_name == "consult.request":
             _validate_consult_request(payload)
         elif tool_name == "informed.update":

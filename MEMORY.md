@@ -510,3 +510,8 @@ V3 `approval.request` now projects the human wait into the work-item read
 model. The tool records the approval request and moves existing work to
 `waiting_human` with sponsor ownership/next action in the same transaction, so
 status pages show that the sponsor is the current blocker.
+
+V3 `handoff.require` now projects visible work ownership to the target role.
+The tool still records governance evidence and publishes the target-role inbox
+message, but it also moves the work item to `waiting_agent`, sets the owner to
+the target role, and uses the handoff's required next action on status pages.
