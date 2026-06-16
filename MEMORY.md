@@ -210,3 +210,7 @@ The V3 database can now derive a work item's governance context and checklist
 from stored work-item governance, governance safe-output records, and approval
 responses. This keeps reporting/prompt consumers aligned while preserving the
 rule that agents, not the database, decide how to resolve the checklist.
+
+V3 work-item detail pages now render the derived governance checklist, making
+missing consultations, informed updates, sponsor decisions, and recorded
+exceptions visible without forcing users or agents to inspect raw JSON.

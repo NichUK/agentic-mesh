@@ -143,6 +143,10 @@ Initial reporting routes are:
 
 The report plane reads projections and document-library metadata. It does not
 own lifecycle decisions.
+Work-item detail pages include the governance checklist derived from the
+runtime read model so sponsors and agents can see unresolved consultations,
+informed updates, sponsor decisions, and recorded exceptions without reading
+raw JSON.
 
 V3 observability starts with a shared telemetry facade configured from
 environment variables. Safe-output tool calls emit OpenTelemetry spans,

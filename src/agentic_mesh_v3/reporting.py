@@ -4,6 +4,8 @@ import html
 import json
 from dataclasses import dataclass
 
+from agentic_mesh_v3.governance import GovernanceChecklist
+
 
 @dataclass(frozen=True)
 class AgentStatus:
@@ -78,6 +80,7 @@ class WorkItemDetail:
     approvals: tuple[ApprovalStatus, ...] = ()
     releases: tuple[ReleaseStatus, ...] = ()
     governance_records: tuple[GovernanceRecordStatus, ...] = ()
+    governance_checklist: GovernanceChecklist | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +170,8 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             "</section>",
             "<h2>Governance</h2>",
             f"<pre>{html.escape(json.dumps(detail.governance, indent=2, sort_keys=True))}</pre>",
+            "<h2>Governance Checklist</h2>",
+            _governance_checklist_section(detail.governance_checklist),
             "<h2>Governance Records</h2>",
             _governance_record_table(detail.governance_records),
             "<h2>Artifacts</h2>",
@@ -294,6 +299,27 @@ def _governance_record_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"5\">No governance records recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
+
+
+def _governance_checklist_section(checklist: GovernanceChecklist | None) -> str:
+    if checklist is None:
+        return "<p>No governance checklist available.</p>"
+    rows = [
+        "<tr><th>Area</th><th>Outstanding</th></tr>",
+        _checklist_row("Consultations", checklist.missing_consultations),
+        _checklist_row("Informed updates", checklist.missing_informed_updates),
+        _checklist_row("Sponsor decisions", checklist.pending_sponsor_decisions),
+    ]
+    if checklist.recorded_exceptions:
+        rows.append(_checklist_row("Recorded exceptions", checklist.recorded_exceptions))
+    if checklist.is_satisfied:
+        rows.append("<tr><td colspan=\"2\">Governance checklist is currently satisfied.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _checklist_row(label: str, values: tuple[str, ...]) -> str:
+    text = ", ".join(values) if values else "None"
+    return f"<tr><td>{html.escape(label)}</td><td>{html.escape(text)}</td></tr>"
 
 
 def _page(title: str, sections: list[str]) -> str:

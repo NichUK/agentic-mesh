@@ -796,6 +796,18 @@ class V3Database:
                 (work_item_id,),
             )
         )
+        governance = json.loads(work["governance_json"] or "{}")
+        context = _governance_context_from_values(
+            work_item_id=work["work_item_id"],
+            governance=governance,
+            current_phase=work["current_phase"],
+            owner_role=work["owner_role"],
+        )
+        governance_checklist = evaluate_governance_checklist(
+            context,
+            governance_records=governance_records,
+            approvals=approvals,
+        )
         return WorkItemDetail(
             work_item_id=work["work_item_id"],
             title=work["title"],
@@ -804,45 +816,30 @@ class V3Database:
             owner_role=work["owner_role"],
             current_phase=work["current_phase"],
             next_action=work["next_action"],
-            governance=json.loads(work["governance_json"] or "{}"),
+            governance=governance,
             artifacts=artifacts,
             approvals=approvals,
             releases=releases,
             governance_records=governance_records,
+            governance_checklist=governance_checklist,
         )
 
     def work_item_governance_context(self, work_item_id: str) -> GovernanceContext | None:
         detail = self.work_item_detail(work_item_id)
         if detail is None:
             return None
-        governance = detail.governance
-        phase = str(governance.get("phase") or detail.current_phase or "")
-        accountable_role = str(governance.get("accountable_role") or detail.owner_role)
-        responsible_roles = _tuple_strings(governance.get("responsible_roles")) or (detail.owner_role,)
-        return GovernanceContext(
+        return _governance_context_from_values(
             work_item_id=detail.work_item_id,
-            phase=phase,
-            accountable_role=accountable_role,
-            responsible_roles=responsible_roles,
-            consulted_roles=_tuple_strings(governance.get("consulted_roles")),
-            informed_roles=_tuple_strings(governance.get("informed_roles")),
-            sponsor_decision_points=_tuple_strings(governance.get("sponsor_decision_points")),
-            required_evidence=_tuple_strings(governance.get("required_evidence")),
-            consultation_exceptions=_tuple_strings(governance.get("consultation_exceptions")),
+            governance=detail.governance,
+            current_phase=detail.current_phase,
+            owner_role=detail.owner_role,
         )
 
     def work_item_governance_checklist(self, work_item_id: str) -> GovernanceChecklist | None:
         detail = self.work_item_detail(work_item_id)
         if detail is None:
             return None
-        context = self.work_item_governance_context(work_item_id)
-        if context is None:
-            return None
-        return evaluate_governance_checklist(
-            context,
-            governance_records=detail.governance_records,
-            approvals=detail.approvals,
-        )
+        return detail.governance_checklist
 
     def list_tool_calls(self) -> list[dict[str, Any]]:
         return [
@@ -869,3 +866,23 @@ def _tuple_strings(value: object) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value if str(item))
     return (str(value),)
+
+
+def _governance_context_from_values(
+    *,
+    work_item_id: str,
+    governance: dict[str, object],
+    current_phase: str | None,
+    owner_role: str,
+) -> GovernanceContext:
+    return GovernanceContext(
+        work_item_id=work_item_id,
+        phase=str(governance.get("phase") or current_phase or ""),
+        accountable_role=str(governance.get("accountable_role") or owner_role),
+        responsible_roles=_tuple_strings(governance.get("responsible_roles")) or (owner_role,),
+        consulted_roles=_tuple_strings(governance.get("consulted_roles")),
+        informed_roles=_tuple_strings(governance.get("informed_roles")),
+        sponsor_decision_points=_tuple_strings(governance.get("sponsor_decision_points")),
+        required_evidence=_tuple_strings(governance.get("required_evidence")),
+        consultation_exceptions=_tuple_strings(governance.get("consultation_exceptions")),
+    )
