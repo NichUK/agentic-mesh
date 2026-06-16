@@ -148,12 +148,29 @@ class GraphTeamsBridge:
         *,
         transport: "GraphTeamsTransport",
         graph_base_url: str = "https://graph.microsoft.com/v1.0",
+        inbound_bridge: StakeholderBridge | None = None,
+        inbound_broker: BrokerAdapter | None = None,
+        inbound_stream: str = "agent-inbox",
+        role_ids: tuple[str, ...] = (),
+        team_wide_trigger: str = "@all-agents",
     ) -> None:
         self.transport = transport
         self.graph_base_url = graph_base_url.rstrip("/")
+        if inbound_bridge is not None and inbound_broker is not None:
+            raise ValueError("configure either inbound_bridge or inbound_broker, not both")
+        self.inbound_bridge = inbound_bridge
+        if inbound_broker is not None:
+            self.inbound_bridge = LocalTeamsBridge(
+                inbound_broker,
+                stream=inbound_stream,
+                role_ids=role_ids,
+                team_wide_trigger=team_wide_trigger,
+            )
 
     def route_inbound(self, message: StakeholderMessage) -> list[str]:
-        raise NotImplementedError("GraphTeamsBridge receives already-normalised inbound events from the listener")
+        if self.inbound_bridge is None:
+            raise RuntimeError("GraphTeamsBridge inbound routing requires inbound_bridge or inbound_broker")
+        return self.inbound_bridge.route_inbound(message)
 
     def send(self, message: OutboundMessage) -> DeliveryReceipt:
         endpoint = self._endpoint_for(message)
