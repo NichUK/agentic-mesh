@@ -525,3 +525,8 @@ The V3 `/status` read model now uses the same unresolved-governance signal for
 active work-item attention reasons. Sponsors and operators can see missing
 consultations, informed updates, or sponsor decisions directly on `/status`
 without waiting for a Project Manager sweep or stale-work timer.
+
+V3 conversation recording now preserves mentioned-role metadata from Teams
+activities. Recent conversation context in role prompts includes the mentioned
+roles, helping agents distinguish shared project-channel context from messages
+aimed at a specific specialist.

@@ -430,6 +430,7 @@ def test_role_agent_prompt_loads_recent_conversation_context(tmp_path: Path) -> 
             source_type="dm",
             sender_ref="sponsor",
             text="Give me a status update.",
+            mentioned_roles=("product-manager",),
         )
         worker = CapturingWorker()
         service = RoleAgentService(
@@ -447,6 +448,7 @@ def test_role_agent_prompt_loads_recent_conversation_context(tmp_path: Path) -> 
         assert "<conversation-context>" in worker.prompt
         assert "Give me a status update." in worker.prompt
         assert "message: msg-1" in worker.prompt
+        assert "mentions: product-manager" in worker.prompt
     finally:
         db.close()
 

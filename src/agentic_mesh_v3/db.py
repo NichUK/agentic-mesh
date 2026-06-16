@@ -168,6 +168,7 @@ class V3Database:
                   thread_ref TEXT,
                   source_type TEXT NOT NULL,
                   sender_ref TEXT NOT NULL,
+                  mentioned_roles_json TEXT NOT NULL DEFAULT '[]',
                   text TEXT NOT NULL,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -188,6 +189,12 @@ class V3Database:
                 """
             )
             _ensure_column(self.connection, "agents", "dead_letter_depth", "INTEGER NOT NULL DEFAULT 0")
+            _ensure_column(
+                self.connection,
+                "conversations",
+                "mentioned_roles_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
 
     def record_event(
         self,
@@ -839,16 +846,27 @@ class V3Database:
         sender_ref: str,
         text: str,
         thread_ref: str | None = None,
+        mentioned_roles: tuple[str, ...] = (),
     ) -> None:
         with self.connection:
             self.connection.execute(
                 """
                 INSERT OR IGNORE INTO conversations(
-                  message_id, connector, conversation_ref, thread_ref, source_type, sender_ref, text
+                  message_id, connector, conversation_ref, thread_ref, source_type, sender_ref,
+                  mentioned_roles_json, text
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (message_id, connector, conversation_ref, thread_ref, source_type, sender_ref, text),
+                (
+                    message_id,
+                    connector,
+                    conversation_ref,
+                    thread_ref,
+                    source_type,
+                    sender_ref,
+                    json.dumps(list(mentioned_roles), sort_keys=True),
+                    text,
+                ),
             )
             self.record_event(
                 "conversation.message_recorded",
@@ -860,6 +878,7 @@ class V3Database:
                     "source_type": source_type,
                     "sender_ref": sender_ref,
                     "thread_ref": thread_ref,
+                    "mentioned_roles": list(mentioned_roles),
                 },
             )
 
@@ -868,7 +887,8 @@ class V3Database:
             raise ValueError("limit must be positive")
         rows = self.connection.execute(
             """
-            SELECT message_id, connector, conversation_ref, thread_ref, source_type, sender_ref, text, created_at
+            SELECT message_id, connector, conversation_ref, thread_ref, source_type, sender_ref,
+                   mentioned_roles_json, text, created_at
             FROM conversations
             WHERE conversation_ref=?
             ORDER BY created_at DESC, message_id DESC
@@ -876,7 +896,11 @@ class V3Database:
             """,
             (conversation_ref, limit),
         )
-        return list(reversed([dict(row) for row in rows]))
+        messages = []
+        for row in reversed([dict(row) for row in rows]):
+            row["mentioned_roles"] = tuple(json.loads(row.pop("mentioned_roles_json") or "[]"))
+            messages.append(row)
+        return messages
 
     def status_snapshot(self, *, project_id: str) -> ReportingSnapshot:
         now = datetime.now(timezone.utc)

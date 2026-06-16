@@ -125,7 +125,7 @@ def test_teams_activity_router_normalizes_and_routes_to_agent_inbox() -> None:
 
 def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_stream("agent-inbox", ["project.context", "agent.product-manager"])
     db_path = tmp_path / "v3.sqlite3"
     router = TeamsActivityRouter(
         LocalTeamsBridge(broker),
@@ -138,24 +138,35 @@ def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
     subjects = router.route_activity(
         {
             "id": "msg-3",
-            "text": "Give me a status update.",
-            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "text": "<at>AM-Product Manager</at> please review this.",
+            "conversation": {"id": "channel-conv", "conversationType": "channel"},
             "from": {"id": "user-1"},
             "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+            "channelData": {
+                "team": {"id": "team-1"},
+                "channel": {"id": "channel-1"},
+            },
+            "entities": [
+                {
+                    "type": "mention",
+                    "mentioned": {"id": "bot-product", "name": "AM-Product Manager"},
+                }
+            ],
         }
     )
 
     db = V3Database(db_path)
     try:
         db.migrate()
-        messages = db.list_conversation_messages("dm:product-manager")
+        messages = db.list_conversation_messages("team:team-1/channel:channel-1")
     finally:
         db.close()
 
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["project.context", "agent.product-manager"]
     assert messages[0]["message_id"] == "msg-3"
-    assert messages[0]["text"] == "Give me a status update."
+    assert messages[0]["text"] == "AM-Product Manager please review this."
     assert messages[0]["sender_ref"] == "user-1"
+    assert messages[0]["mentioned_roles"] == ("product-manager",)
 
 
 def test_teams_role_identities_load_from_project_config(tmp_path) -> None:
