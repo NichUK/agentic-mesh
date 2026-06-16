@@ -253,6 +253,8 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "Informed updates" in html
     assert "project-manager" in html
     assert "release-approval" in html
+    assert "Required evidence" in html
+    assert "smoke evidence" in html
     assert "approval-1" in html
     assert "Approve release?" in html
     assert "Blockers" in html

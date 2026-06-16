@@ -1,3 +1,4 @@
+from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
@@ -5,8 +6,10 @@ from agentic_mesh_v3.reporting import WorkItemStatus
 from agentic_mesh_v3.reporting import artifact_viewer_path
 from agentic_mesh_v3.reporting import render_agents_page
 from agentic_mesh_v3.reporting import render_status_page
+from agentic_mesh_v3.reporting import render_work_item_detail_page
 from agentic_mesh_v3.reporting import render_work_item_page
 from agentic_mesh_v3.reporting import work_item_url
+from agentic_mesh_v3.reporting import WorkItemDetail
 
 
 def test_reporting_pages_include_required_status_data() -> None:
@@ -83,3 +86,22 @@ def test_artifact_viewer_path_is_work_item_scoped() -> None:
 
 def test_work_item_url_escapes_work_item_id() -> None:
     assert work_item_url("work/1") == "/work-item/work%2F1"
+
+
+def test_work_item_detail_page_shows_missing_required_evidence() -> None:
+    detail = WorkItemDetail(
+        work_item_id="work-1",
+        title="Governed work",
+        description="Needs evidence.",
+        state="active",
+        owner_role="engineering",
+        current_phase="development",
+        next_action="Link evidence.",
+        governance={},
+        governance_checklist=GovernanceChecklist(missing_required_evidence=("100-implementation-log.md",)),
+    )
+
+    html = render_work_item_detail_page(detail, "work-1")
+
+    assert "Required evidence" in html
+    assert "100-implementation-log.md" in html
