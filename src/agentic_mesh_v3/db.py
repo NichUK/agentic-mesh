@@ -906,7 +906,13 @@ class V3Database:
                 next_action=row["next_action"],
                 artifact_count=row["artifact_count"],
                 updated_at=row["updated_at"],
-                attention_reason=_work_item_attention_reason(row=dict(row), now=now),
+                attention_reason=_work_item_attention_reason(
+                    row=dict(row),
+                    governance_reason=_governance_attention_reason(
+                        self.work_item_governance_checklist(row["work_item_id"])
+                    ),
+                    now=now,
+                ),
             )
             for row in self.connection.execute(
                 """
@@ -1153,10 +1159,25 @@ def _tuple_strings(value: object) -> tuple[str, ...]:
     return (str(value),)
 
 
-def _work_item_attention_reason(*, row: dict[str, Any], now: datetime) -> str:
+def _governance_attention_reason(checklist: GovernanceChecklist | None) -> str:
+    if checklist is None or checklist.is_satisfied:
+        return ""
+    parts: list[str] = []
+    if checklist.missing_consultations:
+        parts.append(f"consultations={', '.join(checklist.missing_consultations)}")
+    if checklist.missing_informed_updates:
+        parts.append(f"informed_updates={', '.join(checklist.missing_informed_updates)}")
+    if checklist.pending_sponsor_decisions:
+        parts.append(f"sponsor_decisions={', '.join(checklist.pending_sponsor_decisions)}")
+    return "governance checklist has unresolved items: " + "; ".join(parts)
+
+
+def _work_item_attention_reason(*, row: dict[str, Any], governance_reason: str = "", now: datetime) -> str:
     state = str(row["state"])
     if state in ATTENTION_STATES:
         return f"work item is in {state}"
+    if governance_reason:
+        return governance_reason
     updated_at = _parse_sqlite_timestamp(str(row["updated_at"]))
     if updated_at is None:
         return "work item updated_at timestamp is unreadable"

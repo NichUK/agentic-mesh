@@ -781,6 +781,65 @@ def test_v3_status_snapshot_marks_attention_and_stale_work(tmp_path: Path) -> No
     assert timestamps["work-stale"] == "2000-01-01 00:00:00"
 
 
+def test_v3_status_snapshot_marks_unresolved_governance_attention(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-governance",
+            title="Governed work",
+            description="Needs governance evidence.",
+            state="active",
+            owner_role="engineering",
+            current_phase="development",
+            governance={
+                "phase": "development",
+                "accountable_role": "engineering",
+                "responsible_roles": ["engineering"],
+                "consulted_roles": ["qa-engineer"],
+                "informed_roles": ["project-manager"],
+                "sponsor_decision_points": ["product-signoff"],
+            },
+        )
+
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    attention = {item.work_item_id: item.attention_reason for item in snapshot.work_items}
+    assert attention["work-governance"] == (
+        "governance checklist has unresolved items: "
+        "consultations=qa-engineer; informed_updates=project-manager; sponsor_decisions=product-signoff"
+    )
+
+
+def test_v3_status_snapshot_prioritizes_waiting_state_over_governance(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-waiting",
+            title="Waiting work",
+            description="Waiting for another role.",
+            state="waiting_agent",
+            owner_role="engineering",
+            current_phase="development",
+            governance={
+                "phase": "development",
+                "accountable_role": "engineering",
+                "responsible_roles": ["engineering"],
+                "consulted_roles": ["qa-engineer"],
+            },
+        )
+
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    attention = {item.work_item_id: item.attention_reason for item in snapshot.work_items}
+    assert attention["work-waiting"] == "work item is in waiting_agent"
+
+
 def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

@@ -241,6 +241,9 @@ The `/status` page shows the backlog/queue, attention-needed work,
 stale non-terminal work, governance waits, active work, and recent completions
 as separate sections so operators and sponsors can see stuck work without
 running an out-of-band sweep command.
+Attention-needed work includes unresolved governance checklists for otherwise
+active work: missing consultations, informed updates, and sponsor decisions are
+visible before the item merely becomes stale.
 Status tables link active, recent, and queue-linked work items to their
 `/work-item/{work-item-id}` detail pages so sponsors can move from summary
 state to evidence without copying IDs.

@@ -520,3 +520,8 @@ V3 Project Manager sweeps now surface unresolved governance checklists on
 active work. Missing consultations, informed updates, and sponsor decisions
 become `project_sweep.finding` reasons before the work merely ages into a stale
 item, while explicit blocked/waiting states still take priority.
+
+The V3 `/status` read model now uses the same unresolved-governance signal for
+active work-item attention reasons. Sponsors and operators can see missing
+consultations, informed updates, or sponsor decisions directly on `/status`
+without waiting for a Project Manager sweep or stale-work timer.
