@@ -9,6 +9,7 @@ from typing import Any
 
 from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.reporting import work_item_url
 
 
 WATCH_STATES = {"blocked", "waiting_human", "waiting_agent", "waiting_external", "recovering"}
@@ -24,6 +25,8 @@ class SweepFinding:
     reason: str
     next_action: str
     updated_at: str
+    artifact_count: int = 0
+    work_item_url: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -45,10 +48,13 @@ class ProjectSweepService:
         findings: list[SweepFinding] = []
         for row in self.db.connection.execute(
             """
-            SELECT work_item_id, title, state, owner_role, next_action, updated_at
-            FROM work_items
-            WHERE state NOT IN ('closed', 'canceled', 'superseded', 'failed_terminal')
-            ORDER BY updated_at ASC, work_item_id ASC
+            SELECT wi.work_item_id, wi.title, wi.state, wi.owner_role, wi.next_action, wi.updated_at,
+                   COUNT(a.artifact_id) AS artifact_count
+            FROM work_items wi
+            LEFT JOIN artifacts a ON a.work_item_id = wi.work_item_id
+            WHERE wi.state NOT IN ('closed', 'canceled', 'superseded', 'failed_terminal')
+            GROUP BY wi.work_item_id
+            ORDER BY wi.updated_at ASC, wi.work_item_id ASC
             """
         ):
             reason = _reason_for(row=dict(row), stale_after_seconds=stale_after_seconds, now=current_time)
@@ -63,6 +69,8 @@ class ProjectSweepService:
                     reason=reason,
                     next_action=row["next_action"],
                     updated_at=row["updated_at"],
+                    artifact_count=int(row["artifact_count"] or 0),
+                    work_item_url=work_item_url(row["work_item_id"]),
                 )
             )
         return tuple(findings)
@@ -90,6 +98,8 @@ class ProjectSweepService:
                     "reason": finding.reason,
                     "next_action": finding.next_action,
                     "updated_at": finding.updated_at,
+                    "artifact_count": finding.artifact_count,
+                    "work_item_url": finding.work_item_url,
                     "required_action": "Review the finding and use normal tools to chase, unblock, rescope, or close the work.",
                 },
             )

@@ -459,3 +459,8 @@ V3 agent config materialization now validates topology before writing role
 instance folders or Compose output. Operators must provide a distinct
 `--deployed-runtime` path, and source/runtime/project/state/document path
 collapse is rejected unless an explicit local-dev override is supplied.
+
+V3 Project Manager sweep findings now include the work-item status URL and
+artifact count in the broker payload. The runtime still performs a read-only
+scan; the Project Manager agent receives enough context to chase, unblock, or
+close work through normal tools.
