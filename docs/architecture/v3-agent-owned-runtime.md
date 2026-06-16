@@ -298,6 +298,10 @@ Work-item detail pages include the governance checklist derived from the
 runtime read model so sponsors and agents can see unresolved consultations,
 informed updates, sponsor decisions, and recorded exceptions without reading
 raw JSON.
+When a document library is configured, work-item detail pages also show the
+selected document framework and each typed artifact's expected framework path,
+so sponsors can quickly tell whether product, implementation, QA, and release
+evidence is in the correct work-item dossier location.
 The artifact viewer renders Markdown through the existing Python-Markdown
 library, sanitizes artifact content with `bleach`, and preserves Mermaid code
 fences as controlled Mermaid render blocks so lifecycle and architecture

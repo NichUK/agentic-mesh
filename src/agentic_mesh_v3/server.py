@@ -82,7 +82,11 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             detail = db.work_item_detail(work_item_id)
         finally:
             db.close()
-        return render_work_item_detail_page(detail, work_item_id)
+        return render_work_item_detail_page(
+            detail,
+            work_item_id,
+            document_framework_id=getattr(self.document_library, "framework_id", "togaf-sdlc-v1"),
+        )
 
     def _render_artifact_route(self, route_path: str) -> None:
         parts = [part for part in unquote(route_path).split("/") if part]

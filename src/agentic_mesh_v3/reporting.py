@@ -4,6 +4,8 @@ import html
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from agentic_mesh_v3.documents import DocumentLibraryError
+from agentic_mesh_v3.documents import framework_for
 from agentic_mesh_v3.governance import GovernanceChecklist
 
 
@@ -219,7 +221,12 @@ def render_work_item_page(snapshot: ReportingSnapshot, work_item_id: str) -> str
     )
 
 
-def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: str) -> str:
+def render_work_item_detail_page(
+    detail: WorkItemDetail | None,
+    work_item_id: str,
+    *,
+    document_framework_id: str = "togaf-sdlc-v1",
+) -> str:
     if detail is None:
         return _page("Work Item Not Found", [f"<h1>Work item not found</h1><p>{html.escape(work_item_id)}</p>"])
     return _page(
@@ -233,6 +240,7 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             f"<p><strong>Owner:</strong> {html.escape(detail.owner_role)}</p>",
             f"<p><strong>Phase:</strong> {html.escape(detail.current_phase or '')}</p>",
             f"<p><strong>Next action:</strong> {html.escape(detail.next_action)}</p>",
+            f"<p><strong>Document framework:</strong> {html.escape(document_framework_id)}</p>",
             "</section>",
             "<h2>RACI</h2>",
             _raci_table(detail.governance),
@@ -253,7 +261,7 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             "<h2>Governance Records</h2>",
             _governance_record_table(detail.governance_records),
             "<h2>Artifacts</h2>",
-            _artifact_table(detail.work_item_id, detail.artifacts),
+            _artifact_table(detail.work_item_id, detail.artifacts, document_framework_id=document_framework_id),
             "<h2>Approvals</h2>",
             _approval_table(detail.approvals),
             "<h2>Releases</h2>",
@@ -431,12 +439,17 @@ def _governance_waits_table(items: tuple[AgentStatus, ...]) -> str:
     return f"<table>{''.join(rows)}</table>"
 
 
-def _artifact_table(work_item_id: str, items: tuple[ArtifactStatus, ...]) -> str:
+def _artifact_table(work_item_id: str, items: tuple[ArtifactStatus, ...], *, document_framework_id: str) -> str:
     rows = [
-        "<tr><th>Artifact</th><th>Type</th><th>Status</th><th>Created By</th><th>Path</th></tr>"
+        "<tr><th>Artifact</th><th>Type</th><th>Status</th><th>Created By</th><th>Path</th><th>Framework Path</th></tr>"
     ]
     for item in items:
         url = artifact_viewer_url(work_item_id, item.filename)
+        framework_path = _artifact_framework_path(
+            document_framework_id=document_framework_id,
+            work_item_id=work_item_id,
+            document_type=item.document_type,
+        )
         rows.append(
             "<tr>"
             f"<td><a href=\"{html.escape(url)}\" target=\"_blank\" rel=\"noopener noreferrer\">{html.escape(item.title)}</a></td>"
@@ -444,11 +457,24 @@ def _artifact_table(work_item_id: str, items: tuple[ArtifactStatus, ...]) -> str
             f"<td>{html.escape(item.status)}</td>"
             f"<td>{html.escape(item.created_by_role)}</td>"
             f"<td>{html.escape(item.relative_path)}</td>"
+            f"<td>{html.escape(framework_path)}</td>"
             "</tr>"
         )
     if len(rows) == 1:
-        rows.append("<tr><td colspan=\"5\">No artifacts recorded.</td></tr>")
+        rows.append("<tr><td colspan=\"6\">No artifacts recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
+
+
+def _artifact_framework_path(*, document_framework_id: str, work_item_id: str, document_type: str) -> str:
+    try:
+        rule = framework_for(document_framework_id).rule_for(document_type)
+    except DocumentLibraryError:
+        return "Unknown framework"
+    if rule is None:
+        return "Unknown document type"
+    if rule.path_template is None:
+        return "Flexible supporting artifact"
+    return rule.path_for(work_item_id=work_item_id)
 
 
 def _approval_table(items: tuple[ApprovalStatus, ...]) -> str:

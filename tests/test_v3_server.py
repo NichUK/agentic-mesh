@@ -165,6 +165,17 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
             },
         )
         tools.call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="artifact.link",
+            payload={
+                "work_item_id": "work-1",
+                "relative_path": "work-items/work-1/020-product-definition.md",
+                "title": "Product definition",
+                "document_type": "product_definition",
+                "status": "published",
+            },
+        )
+        tools.call(
             role_instance_id="agentic-mesh-dev.release-manager.1",
             tool_name="approval.request",
             payload={
@@ -256,6 +267,10 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "Work item index" in html
     assert "/artifact-viewer/work-1/index.md" in html
     assert 'target="_blank" rel="noopener noreferrer">Work item index</a>' in html
+    assert "Document framework" in html
+    assert "togaf-sdlc-v1" in html
+    assert "Framework Path" in html
+    assert "work-items/work-1/020-product-definition.md" in html
     assert "consult.request" in html
     assert "Confirm smoke evidence remains valid." in html
     assert "Governance Checklist" in html
