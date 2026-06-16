@@ -411,3 +411,8 @@ preserving richer RACI fields supplied by the agent.
 V3 in-memory broker subject matching now follows NATS-style wildcard semantics
 for local contract tests: `*` matches one subject token and `>` matches the
 remaining tail when used at the end of a pattern.
+
+V3 role services now require each processed inbox message to report at least
+one terminal safe-output signal (`status.reply`, `status.complete`, `noop`, or
+`report.incomplete`) before the message is acknowledged. Non-terminal-only
+worker runs are retried or dead-lettered.

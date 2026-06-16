@@ -315,9 +315,13 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   The Codex adapter wraps the generated role prompt with the V3 safe-output
   contract before running `codex exec`, then expects only a small operational
   JSON envelope listing tool calls already made through CLI/MCP. Durable state
-  still comes from safe-output tools. `run-agent-once` uses the role worker
-  configured in `project.yaml` when no worker override is supplied, falling
-  back to the echo worker only for unconfigured local smoke runs.
+  still comes from safe-output tools. Role services require at least one
+  terminal safe-output signal (`status.reply`, `status.complete`, `noop`, or
+  `report.incomplete`) before acknowledging an inbox message; non-terminal-only
+  runs are retried or dead-lettered instead of being treated as complete.
+  `run-agent-once` uses the role worker configured in `project.yaml` when no
+  worker override is supplied, falling back to the echo worker only for
+  unconfigured local smoke runs.
   The CLI `tool-call` command and MCP stdio runner both construct the tool
   service from project config so document-library and release deployment target
   adapters are available through either approved front door.

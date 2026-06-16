@@ -17,7 +17,7 @@ def test_safe_output_subprocess_worker_returns_tool_call_status(tmp_path: Path) 
         "payload=json.load(sys.stdin)\n"
         "assert '<agentic-mesh-v3-agent>' in payload['prompt']\n"
         "assert payload['message']['message_id'] == 'msg-1'\n"
-        "print(json.dumps({'tool_calls':['call-1', {'tool_name':'status.reply'}]}))\n",
+        "print(json.dumps({'tool_calls':['call-1', {'tool_name':'status.reply', 'call_id':'call-2', 'terminal': True}]}))\n",
         encoding="utf-8",
     )
     worker = SafeOutputSubprocessWorker(command=(sys.executable, str(worker_script)), timeout_seconds=5)
@@ -27,7 +27,7 @@ def test_safe_output_subprocess_worker_returns_tool_call_status(tmp_path: Path) 
         AgentMessage(message_id="msg-1", subject="agent.product-manager", payload={"text": "Hello"}),
     )
 
-    assert calls == ["call-1", "status.reply"]
+    assert calls == ["call-1", "terminal:status.reply"]
 
 
 def test_safe_output_subprocess_worker_reports_failure(tmp_path: Path) -> None:
@@ -75,6 +75,8 @@ def test_codex_cli_worker_wraps_prompt_with_safe_output_contract(tmp_path: Path)
         "prompt=sys.stdin.read()\n"
         "assert '<agentic-mesh-v3-agent>' in prompt\n"
         "assert 'SAFE-OUTPUT TOOL CONTRACT' in prompt\n"
+        "assert 'At least one successful call must be a terminal safe-output tool' in prompt\n"
+        "assert '\"terminal\":true' in prompt\n"
         "assert 'status.reply' in prompt\n"
         "assert 'msg-1' in prompt\n"
         "print(json.dumps({'tool_calls':['status.reply']}))\n",

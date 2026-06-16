@@ -21,6 +21,11 @@ class NoToolWorker:
         return []
 
 
+class NonTerminalWorker:
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        return ["status.update"]
+
+
 class CapturingWorker:
     def __init__(self) -> None:
         self.prompt = ""
@@ -462,6 +467,25 @@ def test_role_agent_requeues_if_worker_calls_no_tools(tmp_path: Path) -> None:
     assert result is not None
     assert result.status == "failed"
     assert "did not call any tool" in (result.error or "")
+    assert broker.depth("agent-inbox").pending == 1
+
+
+def test_role_agent_requeues_if_worker_calls_no_terminal_tool(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=NonTerminalWorker(),
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert "terminal safe-output tool" in (result.error or "")
     assert broker.depth("agent-inbox").pending == 1
 
 

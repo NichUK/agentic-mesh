@@ -17,6 +17,9 @@ from agentic_mesh_v3.memory import SQLiteRoleMemory
 from agentic_mesh_v3.reporting import AgentStatus
 
 
+TERMINAL_TOOL_NAMES = {"status.reply", "status.complete", "noop", "report.incomplete"}
+
+
 @dataclass(frozen=True)
 class RoleInstanceConfig:
     project_id: str
@@ -151,7 +154,7 @@ class EchoWorker:
     def run(self, prompt: str, message: AgentMessage) -> list[str]:
         if not prompt:
             raise ValueError("prompt is required")
-        return [f"status.report_progress:{message.message_id}"]
+        return [f"status.complete:{message.message_id}"]
 
 
 @dataclass
@@ -224,6 +227,8 @@ class RoleAgentService:
             tool_calls = self.worker.run(prompt, agent_message)
             if not tool_calls:
                 raise ValueError("agent did not call any tool")
+            if not _has_terminal_tool_call(tool_calls):
+                raise ValueError("agent did not call a terminal safe-output tool")
             self.memory.record_observation(
                 self.config.role_instance_id,
                 f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(tool_calls)} tool calls",
@@ -370,6 +375,16 @@ class RoleAgentService:
 def _message_work_ref(payload: dict[str, object]) -> str | None:
     value = payload.get("work_item_id") or payload.get("source_message_id")
     return None if value is None else str(value)
+
+
+def _has_terminal_tool_call(tool_calls: list[str]) -> bool:
+    for call in tool_calls:
+        text = str(call)
+        if text.startswith("terminal:"):
+            return True
+        if any(text == tool or text.startswith(f"{tool}:") for tool in TERMINAL_TOOL_NAMES):
+            return True
+    return False
 
 
 def _read_optional(path: Path | None) -> str | None:

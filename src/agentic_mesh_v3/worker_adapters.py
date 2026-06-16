@@ -141,8 +141,11 @@ def _codex_prompt_text(prompt: str, message: AgentMessage) -> str:
             "For conversational work, call status.reply with Markdown. For durable project work, call the "
             "appropriate work, handoff, document, governance, approval, release, or memory tools. If no "
             "action is appropriate, call noop with the reason. Do not rely on final prose as the result.\n"
-            "After the safe-output tool calls have succeeded, write only this operational JSON envelope to stdout:\n"
-            '{"tool_calls":["tool.name.or.call-id"]}\n'
+            "At least one successful call must be a terminal safe-output tool: status.reply, status.complete, "
+            "noop, or report.incomplete.\n"
+            "After the safe-output tool calls have succeeded, write only this operational JSON envelope to stdout, "
+            "including each tool_name and whether it was terminal:\n"
+            '{"tool_calls":[{"tool_name":"status.reply","call_id":"call-...","terminal":true}]}\n'
             "If there was an error, exit non-zero and put the error detail on stderr.",
             "MESSAGE CONTEXT\n"
             + json.dumps(
@@ -195,9 +198,10 @@ def _tool_calls_from_stdout(stdout: str) -> list[str]:
         if isinstance(item, str):
             calls.append(item)
         elif isinstance(item, dict):
-            value = item.get("call_id") or item.get("tool_name")
+            value = item.get("tool_name") or item.get("call_id")
             if value:
-                calls.append(str(value))
+                text = str(value)
+                calls.append(f"terminal:{text}" if item.get("terminal") is True else text)
         else:
             raise ValueError("worker subprocess tool call entries must be strings or objects")
     return calls
