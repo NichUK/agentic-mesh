@@ -133,6 +133,29 @@ def test_governance_context_exports_handoff_requirements() -> None:
     assert "020-requirements.md" in requirements["required_evidence"]
 
 
+def test_governance_context_renders_actionable_prompt_section() -> None:
+    assignment = DEFAULT_SDLC_RACI.for_phase("deployment")
+    context = GovernanceContext.from_assignment(
+        work_item_id="work-123",
+        assignment=assignment,
+        sponsor_decision_points=("release-approval",),
+        required_evidence=("140-release-record.md",),
+    )
+
+    section = context.as_prompt_section(role_id="release-manager")
+
+    assert "<governance-context>" in section
+    assert "Work item: `work-123`" in section
+    assert "Phase: `deployment`" in section
+    assert "Accountable role: `release-manager`" in section
+    assert "Responsible roles: `platform-engineer`, `engineering`" in section
+    assert "Consulted roles: `qa-engineer`, `security-architect`, `solution-architect`" in section
+    assert "Informed roles: `project-manager`, `delivery-manager`, `product-manager`, `stakeholders`" in section
+    assert "This role's RACI position: `accountable`" in section
+    assert "`release-approval`" in section
+    assert "140-release-record.md" in section
+
+
 def test_governance_prompt_rules_are_explicit_about_consultation() -> None:
     prompt_section = GovernanceInstructionSet().as_prompt_section()
 
