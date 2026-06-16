@@ -98,6 +98,7 @@ class V3Database:
                   heartbeat_at TEXT,
                   current_work TEXT,
                   inbox_depth INTEGER NOT NULL DEFAULT 0,
+                  dead_letter_depth INTEGER NOT NULL DEFAULT 0,
                   governance_waits_json TEXT NOT NULL DEFAULT '[]',
                   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -169,6 +170,7 @@ class V3Database:
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);
                 """
             )
+            _ensure_column(self.connection, "agents", "dead_letter_depth", "INTEGER NOT NULL DEFAULT 0")
 
     def record_event(
         self,
@@ -340,15 +342,16 @@ class V3Database:
                 """
                 INSERT INTO agents(
                   role_instance_id, role_id, container_state, heartbeat_at, current_work,
-                  inbox_depth, governance_waits_json
+                  inbox_depth, dead_letter_depth, governance_waits_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(role_instance_id) DO UPDATE SET
                   role_id=excluded.role_id,
                   container_state=excluded.container_state,
                   heartbeat_at=excluded.heartbeat_at,
                   current_work=excluded.current_work,
                   inbox_depth=excluded.inbox_depth,
+                  dead_letter_depth=excluded.dead_letter_depth,
                   governance_waits_json=excluded.governance_waits_json,
                   updated_at=CURRENT_TIMESTAMP
                 """,
@@ -359,6 +362,7 @@ class V3Database:
                     status.heartbeat_at,
                     status.current_work,
                     status.inbox_depth,
+                    status.dead_letter_depth,
                     json.dumps(list(status.governance_waits)),
                 ),
             )
@@ -679,11 +683,12 @@ class V3Database:
                 heartbeat_at=row["heartbeat_at"],
                 current_work=row["current_work"],
                 inbox_depth=row["inbox_depth"],
+                dead_letter_depth=row["dead_letter_depth"],
                 governance_waits=tuple(json.loads(row["governance_waits_json"] or "[]")),
             )
             for row in self.connection.execute(
                 """
-                SELECT role_instance_id, container_state, heartbeat_at, current_work, inbox_depth, governance_waits_json
+                SELECT role_instance_id, container_state, heartbeat_at, current_work, inbox_depth, dead_letter_depth, governance_waits_json
                 FROM agents
                 ORDER BY role_instance_id ASC
                 """
@@ -866,6 +871,12 @@ def _tuple_strings(value: object) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value if str(item))
     return (str(value),)
+
+
+def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def _governance_context_from_values(

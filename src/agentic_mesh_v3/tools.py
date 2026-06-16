@@ -152,6 +152,7 @@ class V3ToolService:
                     heartbeat_at=_optional(payload.get("heartbeat_at")),
                     current_work=_optional(payload.get("current_work")),
                     inbox_depth=int(payload.get("inbox_depth") or 0),
+                    dead_letter_depth=int(payload.get("dead_letter_depth") or 0),
                     governance_waits=tuple(str(item) for item in payload.get("governance_waits") or ()),
                 )
             )

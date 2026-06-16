@@ -14,6 +14,7 @@ class AgentStatus:
     heartbeat_at: str | None
     current_work: str | None = None
     inbox_depth: int = 0
+    dead_letter_depth: int = 0
     governance_waits: tuple[str, ...] = ()
 
 
@@ -118,7 +119,7 @@ def render_status_page(snapshot: ReportingSnapshot) -> str:
 
 def render_agents_page(snapshot: ReportingSnapshot) -> str:
     rows = [
-        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Current Work</th><th>Governance Waits</th></tr>"
+        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Dead Letters</th><th>Current Work</th><th>Governance Waits</th></tr>"
     ]
     for agent in snapshot.agents:
         rows.append(
@@ -127,6 +128,7 @@ def render_agents_page(snapshot: ReportingSnapshot) -> str:
             f"<td>{html.escape(agent.container_state)}</td>"
             f"<td>{html.escape(agent.heartbeat_at or 'unknown')}</td>"
             f"<td>{agent.inbox_depth}</td>"
+            f"<td>{agent.dead_letter_depth}</td>"
             f"<td>{html.escape(agent.current_work or '')}</td>"
             f"<td>{html.escape(', '.join(agent.governance_waits))}</td>"
             "</tr>"

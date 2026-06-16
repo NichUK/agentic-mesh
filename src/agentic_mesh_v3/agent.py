@@ -212,6 +212,7 @@ class RoleAgentService:
                 heartbeat_at=datetime.now(timezone.utc).isoformat(),
                 current_work=current_work,
                 inbox_depth=self.broker.depth(self.config.inbox_stream).pending,
+                dead_letter_depth=len(self.broker.dead_letters(self.config.inbox_stream)),
                 governance_waits=governance_waits,
             )
         )

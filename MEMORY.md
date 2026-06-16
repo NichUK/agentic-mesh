@@ -240,3 +240,7 @@ V3 role services now enforce a configurable `max_delivery_attempts` limit.
 Failed messages are retried until the limit is reached, then moved to broker
 dead-letter storage with the failure reason so recovery can inspect them
 instead of leaving the agent in an endless retry loop.
+
+Agent status now carries `dead_letter_depth` as well as `inbox_depth`, and the
+agents page renders the dead-letter count. The database migration adds the
+column for existing V3 state files.
