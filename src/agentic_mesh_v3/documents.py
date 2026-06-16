@@ -245,6 +245,8 @@ def build_document_library_adapter(
     if adapter in {"onedrive", "sharepoint"}:
         if not config.drive_id:
             raise ValueError("document_library.drive_id is required for OneDrive/SharePoint document libraries")
+        if transport is None and not access_token:
+            raise ValueError("AGENTIC_MESH_ONEDRIVE_TOKEN is required for OneDrive/SharePoint document libraries")
         return OneDriveDocumentLibraryAdapter(
             config.drive_id,
             access_token=access_token,
