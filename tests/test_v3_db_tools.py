@@ -209,3 +209,37 @@ def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None
     assert record.target_ref == "qa-engineer"
     assert record.status == "requested"
     assert record.summary == "Please review the acceptance criteria."
+
+
+def test_v3_db_records_approval_response(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Approval work",
+            description="Needs approval.",
+            state="waiting_human",
+            owner_role="product-manager",
+        )
+        db.request_approval(
+            approval_id="approval-1",
+            work_item_id="work-1",
+            requested_by_role="product-manager",
+            question="Approve product definition?",
+        )
+
+        db.record_approval_response(
+            approval_id="approval-1",
+            status="approved",
+            response="Approved by sponsor.",
+            responder_ref="nicholas",
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.approvals[0].status == "approved"
+    assert detail.approvals[0].response == "Approved by sponsor."

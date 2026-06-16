@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 from agentic_mesh_v3.cli import main
+from agentic_mesh_v3.db import V3Database
 
 
 def test_cli_validate_topology_reports_valid_paths(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -116,3 +117,51 @@ roles:
     assert result == 0
     assert '"tool_name": "document.write_work_item_index"' in capsys.readouterr().out
     assert (docs_root / "work-items" / "work-1" / "index.md").exists()
+
+
+def test_cli_record_approval_response_updates_approval(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Approval work",
+            description="Needs approval.",
+            state="waiting_human",
+            owner_role="product-manager",
+        )
+        db.request_approval(
+            approval_id="approval-1",
+            work_item_id="work-1",
+            requested_by_role="product-manager",
+            question="Approve product definition?",
+        )
+    finally:
+        db.close()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "record-approval-response",
+            "--approval-id",
+            "approval-1",
+            "--status",
+            "approved",
+            "--response",
+            "Approved.",
+            "--responder-ref",
+            "nicholas",
+        ]
+    )
+
+    assert result == 0
+    assert '"status": "approved"' in capsys.readouterr().out
+    db = V3Database(db_path)
+    try:
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+    assert detail is not None
+    assert detail.approvals[0].response == "Approved."
