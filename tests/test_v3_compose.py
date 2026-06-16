@@ -64,5 +64,60 @@ def test_render_role_services_compose_can_include_nats_jetstream(tmp_path: Path)
     assert service["depends_on"] == ["nats"]
 
 
+def test_render_role_services_compose_can_include_supervisor_service(tmp_path: Path) -> None:
+    spec = RoleContainerSpec(
+        role_instance_id="agentic-mesh-dev.project-manager.1",
+        image="agentic-mesh-v3:local",
+        source_repo=tmp_path / "source",
+        organisation_config_repo=tmp_path / "org",
+        project_config_repo=tmp_path / "project",
+        agent_config_dir=tmp_path / "agents" / "project-manager" / "1",
+        runtime_state_dir=tmp_path / "state",
+        document_library_root=tmp_path / "documents",
+        environment={"PROJECT_ID": "agentic-mesh-dev"},
+        target_repositories={},
+    )
+
+    compose = yaml.safe_load(
+        render_role_services_compose(
+            [spec],
+            include_nats=True,
+            include_supervisor=True,
+            supervisor_compose_file="/mesh/state/roles.yml",
+            supervisor_execute=True,
+            supervisor_mount_docker_socket=True,
+        )
+    )
+
+    supervisor = compose["services"]["v3-supervisor"]
+    assert supervisor["image"] == "agentic-mesh-v3:local"
+    assert supervisor["command"] == [
+        "agentic-mesh-v3",
+        "--db",
+        "/mesh/state/agentic-mesh-v3.sqlite3",
+        "--project-config",
+        "/mesh/project/agentic-mesh/project.yaml",
+        "run-project-supervisor-service",
+        "--continuous",
+        "--poll-seconds",
+        "30",
+        "--publish-sweep-to-project-manager",
+        "--compose-file",
+        "/mesh/state/roles.yml",
+        "--execute",
+    ]
+    assert "/var/run/docker.sock:/var/run/docker.sock" in supervisor["volumes"]
+    assert supervisor["depends_on"] == ["nats"]
+
+
+def test_render_role_services_compose_requires_supervisor_image_without_role_specs() -> None:
+    try:
+        render_role_services_compose([], include_supervisor=True)
+    except ValueError as exc:
+        assert "supervisor_image is required" in str(exc)
+    else:
+        raise AssertionError("supervisor without role specs should require an image")
+
+
 def test_service_name_for_role_uses_compose_safe_name() -> None:
     assert service_name_for_role("agentic-mesh-dev.engineering.2") == "agentic-mesh-dev-engineering-2"

@@ -948,6 +948,11 @@ roles:
             "--compose-include-nats",
             "--compose-nats-port",
             "14222:4222",
+            "--compose-include-supervisor",
+            "--compose-supervisor-compose-file",
+            "/mesh/state/roles.yml",
+            "--compose-supervisor-execute",
+            "--compose-supervisor-mount-docker-socket",
         ]
     )
 
@@ -966,6 +971,10 @@ roles:
     assert "nats:2.10-alpine" in compose_text
     assert "14222:4222" in compose_text
     assert "depends_on" in compose_text
+    assert "v3-supervisor" in compose_text
+    assert "run-project-supervisor-service" in compose_text
+    assert "/mesh/state/roles.yml" in compose_text
+    assert "/var/run/docker.sock:/var/run/docker.sock" in compose_text
 
 
 def test_cli_materialize_agent_configs_rejects_collapsed_topology(tmp_path: Path) -> None:
