@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from agentic_mesh_v3.governance import GovernanceChecklist
 
@@ -194,21 +195,28 @@ def artifact_viewer_path(work_item_id: str, artifact_filename: str) -> str:
 
 
 def artifact_viewer_url(work_item_id: str, artifact_filename: str) -> str:
-    from urllib.parse import quote
-
     return f"/artifact-viewer/{quote(work_item_id)}/{quote(artifact_filename)}"
+
+
+def work_item_url(work_item_id: str) -> str:
+    return f"/work-item/{quote(work_item_id, safe='')}"
 
 
 def _backlog_table(items: tuple[BacklogItemStatus, ...]) -> str:
     rows = ["<tr><th>Queue Item</th><th>Title</th><th>Status</th><th>Owner</th><th>Linked Work</th></tr>"]
     for item in items:
+        linked_work = (
+            f"<a href=\"{html.escape(work_item_url(item.linked_work_item_id))}\">{html.escape(item.linked_work_item_id)}</a>"
+            if item.linked_work_item_id
+            else ""
+        )
         rows.append(
             "<tr>"
             f"<td>{html.escape(item.queue_item_id)}</td>"
             f"<td>{html.escape(item.title)}</td>"
             f"<td>{html.escape(item.status)}</td>"
             f"<td>{html.escape(item.owner_role)}</td>"
-            f"<td>{html.escape(item.linked_work_item_id or '')}</td>"
+            f"<td>{linked_work}</td>"
             "</tr>"
         )
     return f"<table>{''.join(rows)}</table>"
@@ -217,9 +225,10 @@ def _backlog_table(items: tuple[BacklogItemStatus, ...]) -> str:
 def _work_table(items: tuple[WorkItemStatus, ...]) -> str:
     rows = ["<tr><th>Work Item</th><th>Title</th><th>State</th><th>Owner</th><th>Next Action</th></tr>"]
     for item in items:
+        url = work_item_url(item.work_item_id)
         rows.append(
             "<tr>"
-            f"<td>{html.escape(item.work_item_id)}</td>"
+            f"<td><a href=\"{html.escape(url)}\">{html.escape(item.work_item_id)}</a></td>"
             f"<td>{html.escape(item.title)}</td>"
             f"<td>{html.escape(item.state)}</td>"
             f"<td>{html.escape(item.owner_role)}</td>"

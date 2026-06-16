@@ -170,6 +170,9 @@ Initial reporting routes are:
 
 The report plane reads projections and document-library metadata. It does not
 own lifecycle decisions.
+Status tables link active, recent, and queue-linked work items to their
+`/work-item/{work-item-id}` detail pages so sponsors can move from summary
+state to evidence without copying IDs.
 Work-item detail pages include the governance checklist derived from the
 runtime read model so sponsors and agents can see unresolved consultations,
 informed updates, sponsor decisions, and recorded exceptions without reading

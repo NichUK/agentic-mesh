@@ -262,3 +262,7 @@ the same role in one pass.
 Role-agent prompts now include explicit broker message metadata and render the
 assignment payload as deterministic JSON. This gives agents stable message ids,
 subjects, and source context without letting the runtime interpret the work.
+
+V3 status tables now link work-item IDs and queue-linked work items to the
+corresponding `/work-item/{work_item_id}` detail route, making the reporting
+plane easier for sponsors and operators to traverse.
