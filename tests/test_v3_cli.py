@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 
 from agentic_mesh_v3.cli import main
 
@@ -52,3 +54,22 @@ def test_cli_validate_topology_fails_collapsed_paths(tmp_path: Path, capsys) -> 
     assert result == 1
     assert '"valid": false' in output
     assert "source_repo and deployed_runtime" in output
+
+
+def test_cli_module_entrypoint_runs(tmp_path: Path) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agentic_mesh_v3.cli",
+            "--db",
+            str(tmp_path / "v3.sqlite3"),
+            "init-db",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert '"status": "initialized"' in completed.stdout
