@@ -19,11 +19,12 @@ Every worker run must emit both:
    document.write_work_item_index, artifact.link, backlog.upsert,
    work_item.upsert, handoff.require, consult.request, informed.update,
    stakeholder.ask_question, approval.request, release.deploy, release.close,
-   decision.record, risk.register, blocker.raise, or noop when no action is
-   appropriate.
+   decision.record, risk.register, blocker.raise, or noop with `reason` when
+   no action is appropriate.
 2. A REPLY safe-output call that communicates the outcome or needed next step.
-   Examples: status.reply, status.complete, stakeholder.ask_question,
-   approval.request, blocker.raise, or report.incomplete.
+   Examples: status.reply with `text_markdown`, status.complete with `summary`,
+   stakeholder.ask_question, approval.request, blocker.raise, or
+   report.incomplete with `reason`.
 
 Do the work first, then confirm what was done. Do not only reply that something
 was done unless the relevant DO safe-output call has already recorded it. At

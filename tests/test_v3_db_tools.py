@@ -1430,6 +1430,35 @@ def test_v3_tool_service_status_reply_requires_markdown_before_recording(tmp_pat
     assert calls == []
 
 
+def test_v3_tool_service_terminal_tools_require_context_before_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+
+        for tool_name, expected in (
+            ("noop", "reason is required for noop"),
+            ("status.complete", "summary is required for status.complete"),
+            ("report.incomplete", "reason is required for report.incomplete"),
+        ):
+            try:
+                tools.call(
+                    role_instance_id="agentic-mesh-dev.product-manager.1",
+                    tool_name=tool_name,
+                    payload={},
+                )
+            except ValueError as exc:
+                assert expected in str(exc)
+            else:
+                raise AssertionError(f"{tool_name} should require context")
+
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert calls == []
+
+
 def test_v3_db_records_approval_response(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
