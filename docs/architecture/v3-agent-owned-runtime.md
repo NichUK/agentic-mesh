@@ -144,10 +144,12 @@ pending and dead-lettered messages for the configured project broker without
 claiming, acknowledging, or requeueing work.
 
 Project Manager sweeps are read-only health inspections over work-item state.
-They flag blocked, waiting, recovering, and stale non-terminal work so the
-Project Manager agent can chase blockers or coordinate handoffs through normal
-tools. The sweep service does not auto-close, auto-reopen, or silently advance
-work. Sweep findings can be published to the Project Manager inbox as
+They flag blocked, waiting, recovering, unresolved governance checklists, and
+stale non-terminal work so the Project Manager agent can chase blockers or
+coordinate handoffs through normal tools. Governance findings include missing
+consultations, informed updates, or sponsor decisions before work merely ages
+into stale status. The sweep service does not auto-close, auto-reopen, or
+silently advance work. Sweep findings can be published to the Project Manager inbox as
 `project_sweep.finding` messages, giving the agent the work item, owner,
 reason, next action, artifact count, work-item URL, and required follow-up while
 preserving agent ownership of the response. Operators or schedulers can use `sweep-project

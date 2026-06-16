@@ -57,7 +57,12 @@ class ProjectSweepService:
             ORDER BY wi.updated_at ASC, wi.work_item_id ASC
             """
         ):
-            reason = _reason_for(row=dict(row), stale_after_seconds=stale_after_seconds, now=current_time)
+            reason = _reason_for(
+                row=dict(row),
+                governance_reason=_governance_reason(self.db, work_item_id=row["work_item_id"]),
+                stale_after_seconds=stale_after_seconds,
+                now=current_time,
+            )
             if reason is None:
                 continue
             findings.append(
@@ -107,10 +112,18 @@ class ProjectSweepService:
         return tuple(message_ids)
 
 
-def _reason_for(*, row: dict[str, Any], stale_after_seconds: int, now: datetime) -> str | None:
+def _reason_for(
+    *,
+    row: dict[str, Any],
+    governance_reason: str | None = None,
+    stale_after_seconds: int,
+    now: datetime,
+) -> str | None:
     state = str(row["state"])
     if state in WATCH_STATES:
         return f"work item is in {state}"
+    if governance_reason:
+        return governance_reason
     updated_at = _parse_sqlite_timestamp(str(row["updated_at"]))
     if updated_at is None:
         return "work item updated_at timestamp is unreadable"
@@ -131,3 +144,19 @@ def _parse_sqlite_timestamp(value: str) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _governance_reason(db: V3Database, *, work_item_id: str) -> str | None:
+    checklist = db.work_item_governance_checklist(work_item_id)
+    if checklist is None or checklist.is_satisfied:
+        return None
+    parts: list[str] = []
+    if checklist.missing_consultations:
+        parts.append(f"consultations={', '.join(checklist.missing_consultations)}")
+    if checklist.missing_informed_updates:
+        parts.append(f"informed_updates={', '.join(checklist.missing_informed_updates)}")
+    if checklist.pending_sponsor_decisions:
+        parts.append(f"sponsor_decisions={', '.join(checklist.pending_sponsor_decisions)}")
+    if not parts:
+        return None
+    return "governance checklist has unresolved items: " + "; ".join(parts)

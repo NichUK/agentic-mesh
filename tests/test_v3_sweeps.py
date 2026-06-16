@@ -66,6 +66,68 @@ def test_project_sweep_flags_stale_non_terminal_work(tmp_path: Path) -> None:
         db.close()
 
 
+def test_project_sweep_flags_unresolved_governance_on_active_work(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-governance",
+            title="Governed work",
+            description="Needs governance evidence.",
+            state="active",
+            owner_role="engineering",
+            current_phase="development",
+            governance={
+                "phase": "development",
+                "accountable_role": "engineering",
+                "responsible_roles": ["engineering"],
+                "consulted_roles": ["qa-engineer"],
+                "informed_roles": ["project-manager"],
+                "sponsor_decision_points": ["product-signoff"],
+            },
+        )
+
+        findings = ProjectSweepService(db).sweep(
+            stale_after_seconds=3600,
+            now=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        )
+    finally:
+        db.close()
+
+    assert len(findings) == 1
+    assert findings[0].work_item_id == "work-governance"
+    assert findings[0].reason == (
+        "governance checklist has unresolved items: "
+        "consultations=qa-engineer; informed_updates=project-manager; sponsor_decisions=product-signoff"
+    )
+
+
+def test_project_sweep_prioritizes_waiting_state_over_governance_reason(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-waiting",
+            title="Waiting work",
+            description="Waiting.",
+            state="waiting_agent",
+            owner_role="engineering",
+            governance={
+                "phase": "development",
+                "accountable_role": "engineering",
+                "responsible_roles": ["engineering"],
+                "consulted_roles": ["qa-engineer"],
+            },
+        )
+
+        findings = ProjectSweepService(db).sweep(now=datetime(2026, 6, 15, tzinfo=timezone.utc))
+    finally:
+        db.close()
+
+    assert len(findings) == 1
+    assert findings[0].reason == "work item is in waiting_agent"
+
+
 def test_cli_sweep_project_outputs_findings(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     db_path = tmp_path / "v3.sqlite3"
     db = V3Database(db_path)
