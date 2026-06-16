@@ -136,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dogfood_parser = subparsers.add_parser("local-e2e-dogfood")
     dogfood_parser.add_argument("--document-library-root", type=Path)
+    dogfood_parser.add_argument("--deployment-target-id")
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
@@ -523,10 +524,13 @@ def main(argv: list[str] | None = None) -> int:
         db = V3Database(args.db)
         try:
             db.migrate()
+            deployment_targets = _deployment_targets(args)
             work_item_id = run_local_e2e_dogfood_slice(
                 db=db,
                 project_id=args.project_id,
                 document_library=_document_library_adapter(args, required=True),
+                deployment_targets=deployment_targets or None,
+                deployment_target_id=_dogfood_deployment_target_id(args, deployment_targets),
             )
         finally:
             db.close()
@@ -808,6 +812,15 @@ def _deployment_targets(args: argparse.Namespace) -> dict[str, DeploymentTarget]
     if project_config is None:
         return {}
     return deployment_targets_from_project_config(load_project_config(project_config))
+
+
+def _dogfood_deployment_target_id(args: argparse.Namespace, deployment_targets: dict[str, DeploymentTarget]) -> str:
+    explicit = getattr(args, "deployment_target_id", None)
+    if explicit:
+        return str(explicit)
+    if deployment_targets:
+        return next(iter(deployment_targets))
+    return "local-smoke"
 
 
 def _tool_broker(args: argparse.Namespace) -> tuple[BrokerAdapter | None, str | None]:
