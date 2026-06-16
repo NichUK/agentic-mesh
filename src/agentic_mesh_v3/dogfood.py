@@ -465,6 +465,22 @@ def run_local_e2e_dogfood_slice(
         tool_name="document.write_root_work_item_index",
         payload={},
     )
+    if sponsor_contact is not None:
+        tools.call(
+            role_instance_id=f"{project_id}.project-manager.1",
+            tool_name="messaging.send",
+            payload={
+                "connector": sponsor_contact.connector,
+                "target_ref": sponsor_contact.target_ref,
+                "thread_ref": sponsor_contact.thread_ref,
+                "work_item_id": work_item_id,
+                "text_markdown": (
+                    "**V3 local dogfood release closed**\n\n"
+                    f"Work item `{work_item_id}` reached closed state after product sign-off, "
+                    f"QA acceptance, `{deployment_target_id}` deployment, release record, and work-item index update."
+                ),
+            },
+        )
     return work_item_id
 
 

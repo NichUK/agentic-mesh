@@ -71,6 +71,7 @@ def test_local_e2e_dogfood_delivers_and_records_sponsor_approval_path(tmp_path: 
     assert approval["status"] == "approved"
     assert approval["response"] == "approval-v3-local-product approved"
     assert any(delivery["purpose"] == "approval.request" for delivery in deliveries)
+    assert any(delivery["purpose"] == "messaging.send" for delivery in deliveries)
     assert any(delivery["target_ref"] == "dm:sponsor" for delivery in deliveries)
     assert detail is not None
     assert detail.state == "closed"
