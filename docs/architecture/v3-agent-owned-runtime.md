@@ -394,6 +394,10 @@ recent work without relying on agents to remember a second indexing step.
 Links from the root work-item index are relative to `/documents/work-items/`
 itself, for example `work-123/index.md`, so they work when opened directly in
 OneDrive/Teams Shared Files as well as through the runtime artifact viewer.
+Links inside each work-item `index.md` are rendered relative to that work-item
+folder, for example `020-product-definition.md` for an artifact in the same
+folder or `../work-456/index.md` for a sibling work item. This keeps the
+document library browsable in Teams/OneDrive without depending on runtime URLs.
 
 Work-item indexes are evidence records, not status placeholders. The document
 library writer rejects status-only `index.md` records and duplicate evidence

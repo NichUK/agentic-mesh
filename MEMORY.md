@@ -443,3 +443,9 @@ V3 role-service automatic run observations now record source-linked memory
 provenance. The service cites the work item, conversation, source message, or
 broker message that produced the observation instead of using a generic
 `agent-run` source.
+
+V3 work-item index artifact links now render relative to the work-item folder
+unless an explicit backend URL is present. Same-folder artifacts link as
+`020-product-definition.md`, sibling work items as `../work-id/index.md`, and
+root-level durable docs via `../../...`, so Teams/OneDrive Shared Files remain
+browsable without runtime URL rewriting.
