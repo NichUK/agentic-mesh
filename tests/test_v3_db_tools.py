@@ -78,6 +78,66 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
     assert snapshot.agents[0].last_memory_at is not None
 
 
+def test_v3_work_item_upsert_materializes_minimum_governance_context(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="work_item.upsert",
+            payload={
+                "work_item_id": "work-1",
+                "title": "Add status page",
+                "description": "Build the V3 status page.",
+                "state": "active",
+                "owner_role": "engineering",
+                "current_phase": "development",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.governance["phase"] == "development"
+    assert detail.governance["accountable_role"] == "engineering"
+    assert detail.governance["responsible_roles"] == ["engineering"]
+
+
+def test_v3_work_item_upsert_preserves_supplied_governance_context(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="work_item.upsert",
+            payload={
+                "work_item_id": "work-1",
+                "title": "Shape feature",
+                "description": "Shape the feature before implementation.",
+                "state": "shaping",
+                "owner_role": "product-manager",
+                "governance": {
+                    "phase": "requirements",
+                    "accountable_role": "project-manager",
+                    "responsible_roles": ["business-analyst", "product-manager"],
+                    "consulted_roles": ["solution-architect"],
+                },
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.governance["phase"] == "requirements"
+    assert detail.governance["accountable_role"] == "project-manager"
+    assert detail.governance["responsible_roles"] == ["business-analyst", "product-manager"]
+    assert detail.governance["consulted_roles"] == ["solution-architect"]
+
+
 def test_v3_tool_service_writes_work_item_index_and_refreshes_root_index(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
