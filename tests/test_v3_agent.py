@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
+from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
@@ -807,6 +808,89 @@ def test_role_agent_accepts_terminal_call_recorded_through_tool_service(tmp_path
     assert broker.depth("agent-inbox").pending == 0
 
 
+def test_role_agent_records_successful_run_to_database(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "status", "work_item_id": "work-123"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-123",
+            title="Shape product",
+            description="Shape the product scope.",
+            state="shaping",
+            owner_role="product-manager",
+        )
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingTerminalWorker(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            status_reporter=DatabaseAgentStatusReporter(db),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        result = service.run_once()
+        runs = db.list_agent_runs(role_instance_id)
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+        detail = db.work_item_detail("work-123")
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert len(runs) == 1
+    assert runs[0]["message_id"] == published.message_id
+    assert runs[0]["work_item_id"] == "work-123"
+    assert runs[0]["subject"] == "agent.product-manager"
+    assert runs[0]["status"] == "completed"
+    assert len(runs[0]["tool_calls"]) == 2
+    assert runs[0]["error"] is None
+    assert snapshot.agents[0].last_run_status == "completed"
+    assert snapshot.agents[0].last_run_error is None
+    assert detail is not None
+    assert len(detail.agent_runs) == 1
+    assert detail.agent_runs[0].message_id == published.message_id
+    assert detail.agent_runs[0].work_item_id == "work-123"
+
+
+def test_role_agent_records_failed_run_to_database(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=NoToolWorker(),
+            memory=InMemoryRoleMemory(),
+            status_reporter=DatabaseAgentStatusReporter(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        result = service.run_once()
+        runs = db.list_agent_runs(role_instance_id)
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert len(runs) == 1
+    assert runs[0]["message_id"] == published.message_id
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["tool_calls"] == ()
+    assert "did not call any tool" in runs[0]["error"]
+    assert snapshot.agents[0].last_run_status == "failed"
+    assert "did not call any tool" in (snapshot.agents[0].last_run_error or "")
+
+
 def test_role_agent_dead_letters_after_delivery_limit(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
@@ -832,6 +916,38 @@ def test_role_agent_dead_letters_after_delivery_limit(tmp_path: Path) -> None:
     dead = broker.dead_letters("agent-inbox")[0]
     assert dead.payload["dead_letter_reason"] == "agent did not call any tool"
     assert reporter.statuses[-1].dead_letter_depth == 1
+
+
+def test_role_agent_records_dead_lettered_run_to_database(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=NoToolWorker(),
+            memory=InMemoryRoleMemory(),
+            status_reporter=DatabaseAgentStatusReporter(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        runs = db.list_agent_runs(role_instance_id)
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "dead_lettered"
+    assert len(runs) == 1
+    assert runs[0]["status"] == "dead_lettered"
+    assert "did not call any tool" in runs[0]["error"]
+    assert snapshot.agents[0].last_run_status == "dead_lettered"
 
 
 def test_role_agent_rejects_invalid_delivery_limit(tmp_path: Path) -> None:

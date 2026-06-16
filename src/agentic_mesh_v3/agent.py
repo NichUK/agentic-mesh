@@ -7,6 +7,7 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.governance import GovernanceChecklist
@@ -99,8 +100,45 @@ class TerminalToolCallAudit(Protocol):
         """Verify the run recorded a terminal tool call through approved tools."""
 
 
+class AgentRunRecorder(Protocol):
+    def record(
+        self,
+        *,
+        run_id: str,
+        role_instance_id: str,
+        message_id: str,
+        subject: str,
+        status: str,
+        work_item_id: str | None = None,
+        tool_calls: tuple[str, ...] = (),
+        error: str | None = None,
+        started_at: str,
+        completed_at: str,
+    ) -> None:
+        """Record the durable outcome of one role-agent message run."""
+
+
 class NullAgentStatusReporter:
     def report(self, status: AgentStatus) -> None:
+        return
+
+
+class NullAgentRunRecorder:
+    def record(
+        self,
+        *,
+        run_id: str,
+        role_instance_id: str,
+        message_id: str,
+        subject: str,
+        status: str,
+        work_item_id: str | None = None,
+        tool_calls: tuple[str, ...] = (),
+        error: str | None = None,
+        started_at: str,
+        completed_at: str,
+    ) -> None:
+        del run_id, role_instance_id, message_id, subject, status, work_item_id, tool_calls, error, started_at, completed_at
         return
 
 
@@ -158,6 +196,38 @@ class DatabaseAgentStatusReporter:
 
     def report(self, status: AgentStatus) -> None:
         self.db.upsert_agent_status(status)  # type: ignore[attr-defined]
+
+
+class DatabaseAgentRunRecorder:
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+    def record(
+        self,
+        *,
+        run_id: str,
+        role_instance_id: str,
+        message_id: str,
+        subject: str,
+        status: str,
+        work_item_id: str | None = None,
+        tool_calls: tuple[str, ...] = (),
+        error: str | None = None,
+        started_at: str,
+        completed_at: str,
+    ) -> None:
+        self.db.record_agent_run(  # type: ignore[attr-defined]
+            run_id=run_id,
+            role_instance_id=role_instance_id,
+            message_id=message_id,
+            subject=subject,
+            status=status,
+            work_item_id=work_item_id,
+            tool_calls=tool_calls,
+            error=error,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
 
 
 class InMemoryRoleMemory:
@@ -243,6 +313,7 @@ class RoleAgentService:
     governance_instructions: GovernanceInstructionSet = field(default_factory=GovernanceInstructionSet)
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
     terminal_tool_call_audit: TerminalToolCallAudit = field(default_factory=NullTerminalToolCallAudit)
+    run_recorder: AgentRunRecorder = field(default_factory=NullAgentRunRecorder)
     max_delivery_attempts: int = 3
 
     def __post_init__(self) -> None:
@@ -297,6 +368,8 @@ class RoleAgentService:
             governance_context=prompt_governance_context,
             governance_checklist=prompt_governance_checklist,
         )
+        run_id = f"run-{uuid4().hex}"
+        run_started_at = datetime.now(timezone.utc).isoformat()
         try:
             terminal_audit_snapshot = self.terminal_tool_call_audit.snapshot(self.config.role_instance_id)
             tool_calls = self.worker.run(prompt, agent_message)
@@ -311,6 +384,17 @@ class RoleAgentService:
                 self.config.role_instance_id,
                 f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(tool_calls)} tool calls",
                 source_ref=_message_memory_source_ref(message),
+            )
+            self.run_recorder.record(
+                run_id=run_id,
+                role_instance_id=self.config.role_instance_id,
+                message_id=message.message_id,
+                subject=message.subject,
+                status="completed",
+                work_item_id=_message_work_item_id(message.payload),
+                tool_calls=tuple(tool_calls),
+                started_at=run_started_at,
+                completed_at=datetime.now(timezone.utc).isoformat(),
             )
             self.broker.ack(self.config.inbox_stream, claimed.consumer, message.message_id)
             self._report_status(container_state="running", current_work=None)
@@ -332,6 +416,17 @@ class RoleAgentService:
                     reason=str(exc),
                 )
                 status = "failed"
+            self.run_recorder.record(
+                run_id=run_id,
+                role_instance_id=self.config.role_instance_id,
+                message_id=message.message_id,
+                subject=message.subject,
+                status=status,
+                work_item_id=_message_work_item_id(message.payload),
+                error=str(exc),
+                started_at=run_started_at,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
             self._report_status(container_state="running", current_work=None, governance_waits=(str(exc),))
             return AgentRunResult(message_id=message.message_id, status=status, error=str(exc))
 
@@ -459,6 +554,13 @@ class RoleAgentService:
 def _message_work_ref(payload: dict[str, object]) -> str | None:
     value = payload.get("work_item_id") or payload.get("source_message_id")
     return None if value is None else str(value)
+
+
+def _message_work_item_id(payload: dict[str, object]) -> str | None:
+    value = payload.get("work_item_id")
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value)
 
 
 def _message_memory_source_ref(message: BrokerMessage) -> str:

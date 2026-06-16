@@ -18,6 +18,9 @@ class AgentStatus:
     governance_waits: tuple[str, ...] = ()
     memory_count: int = 0
     last_memory_at: str | None = None
+    last_run_status: str | None = None
+    last_run_at: str | None = None
+    last_run_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,20 @@ class GovernanceRecordStatus:
 
 
 @dataclass(frozen=True)
+class AgentRunStatus:
+    run_id: str
+    role_instance_id: str
+    message_id: str
+    work_item_id: str | None
+    subject: str
+    status: str
+    tool_calls: tuple[str, ...] = ()
+    error: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkItemDetail:
     work_item_id: str
     title: str
@@ -85,6 +102,7 @@ class WorkItemDetail:
     approvals: tuple[ApprovalStatus, ...] = ()
     releases: tuple[ReleaseStatus, ...] = ()
     governance_records: tuple[GovernanceRecordStatus, ...] = ()
+    agent_runs: tuple[AgentRunStatus, ...] = ()
     governance_checklist: GovernanceChecklist | None = None
 
 
@@ -129,12 +147,13 @@ def render_status_page(snapshot: ReportingSnapshot) -> str:
 
 def render_agents_page(snapshot: ReportingSnapshot) -> str:
     rows = [
-        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Dead Letters</th><th>Memory</th><th>Current Work</th><th>Governance Waits</th></tr>"
+        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Inbox</th><th>Dead Letters</th><th>Memory</th><th>Last Run</th><th>Current Work</th><th>Governance Waits</th></tr>"
     ]
     for agent in snapshot.agents:
         memory = f"{agent.memory_count} entries"
         if agent.last_memory_at:
             memory = f"{memory}<br><small>Last: {html.escape(agent.last_memory_at)}</small>"
+        last_run = _agent_last_run_cell(agent)
         rows.append(
             "<tr>"
             f"<td>{html.escape(agent.role_instance_id)}</td>"
@@ -143,6 +162,7 @@ def render_agents_page(snapshot: ReportingSnapshot) -> str:
             f"<td>{agent.inbox_depth}</td>"
             f"<td>{agent.dead_letter_depth}</td>"
             f"<td>{memory}</td>"
+            f"<td>{last_run}</td>"
             f"<td>{_agent_current_work_cell(agent.current_work)}</td>"
             f"<td>{_list_cell(agent.governance_waits)}</td>"
             "</tr>"
@@ -202,6 +222,8 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             _approval_table(detail.approvals),
             "<h2>Releases</h2>",
             _release_table(detail.releases),
+            "<h2>Agent Runs</h2>",
+            _agent_run_table(detail.agent_runs),
         ],
     )
 
@@ -245,6 +267,17 @@ def _agent_current_work_cell(current_work: str | None) -> str:
     if not current_work:
         return ""
     return f"<a href=\"{html.escape(work_item_url(current_work))}\">{html.escape(current_work)}</a>"
+
+
+def _agent_last_run_cell(agent: AgentStatus) -> str:
+    if not agent.last_run_status:
+        return ""
+    parts = [f"<strong>{html.escape(agent.last_run_status)}</strong>"]
+    if agent.last_run_at:
+        parts.append(f"<br><small>{html.escape(agent.last_run_at)}</small>")
+    if agent.last_run_error:
+        parts.append(f"<br><small>{html.escape(agent.last_run_error)}</small>")
+    return "".join(parts)
 
 
 def _list_cell(items: tuple[str, ...]) -> str:
@@ -376,6 +409,26 @@ def _release_table(items: tuple[ReleaseStatus, ...]) -> str:
         )
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"6\">No releases recorded.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _agent_run_table(items: tuple[AgentRunStatus, ...]) -> str:
+    rows = [
+        "<tr><th>Role Instance</th><th>Status</th><th>Message</th><th>Tool Calls</th><th>Error</th><th>Completed</th></tr>"
+    ]
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.role_instance_id)}</td>"
+            f"<td>{html.escape(item.status)}</td>"
+            f"<td>{html.escape(item.message_id)}<br><small>{html.escape(item.subject)}</small></td>"
+            f"<td>{html.escape(str(len(item.tool_calls)))}</td>"
+            f"<td>{html.escape(item.error or '')}</td>"
+            f"<td>{html.escape(item.completed_at or '')}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"6\">No agent runs recorded for this work item.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 
