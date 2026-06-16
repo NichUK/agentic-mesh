@@ -7,6 +7,7 @@ from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.connectors import StakeholderMessage
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import CommandDeploymentTarget
+from agentic_mesh_v3.deployment import DeploymentTarget
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
@@ -18,6 +19,8 @@ def run_local_e2e_dogfood_slice(
     db: V3Database,
     document_library: DocumentLibraryAdapter,
     project_id: str = "agentic-mesh-dev",
+    deployment_targets: dict[str, DeploymentTarget] | None = None,
+    deployment_target_id: str = "local-smoke",
 ) -> str:
     """Run one local V3 dogfood path with role-owned tool calls.
 
@@ -54,15 +57,19 @@ def run_local_e2e_dogfood_slice(
         )
     )
 
-    deploy_target = CommandDeploymentTarget(
-        target_id="local-smoke",
-        command=(sys.executable, "-c", "print('v3 local smoke deployed')"),
-        rollback_plan="Re-run the previous known-good local command target.",
-    )
+    configured_targets = deployment_targets or {
+        deployment_target_id: CommandDeploymentTarget(
+            target_id=deployment_target_id,
+            command=(sys.executable, "-c", "print('v3 local smoke deployed')"),
+            rollback_plan="Re-run the previous known-good local command target.",
+        )
+    }
+    if deployment_target_id not in configured_targets:
+        raise ValueError(f"deployment target is not configured: {deployment_target_id}")
     tools = V3ToolService(
         db,
         document_library=document_library,
-        deployment_targets={"local-smoke": deploy_target},
+        deployment_targets=configured_targets,
         broker=broker,
         broker_stream="agent-inbox",
     )
@@ -288,7 +295,7 @@ def run_local_e2e_dogfood_slice(
             "target_role": "release-manager",
             "phase": "deployment",
             "accountable_role": "release-manager",
-            "required_next_action": "Deploy local-smoke target, record release evidence, and close the work.",
+            "required_next_action": f"Deploy {deployment_target_id} target, record release evidence, and close the work.",
             "acceptance_criteria": ["Release record includes deployment output and rollback plan."],
             "evidence_requirements": ["index.md"],
             "artifact_links": ["work-items/work-v3-local-e2e/index.md"],
@@ -308,7 +315,7 @@ def run_local_e2e_dogfood_slice(
             "state": "release_review",
             "owner_role": "release-manager",
             "current_phase": "deployment",
-            "next_action": "Release Manager is preparing local-smoke deployment.",
+            "next_action": f"Release Manager is preparing {deployment_target_id} deployment.",
         },
     )
     tools.call(
@@ -326,11 +333,11 @@ def run_local_e2e_dogfood_slice(
         payload={
             "release_id": "release-v3-local-e2e",
             "work_item_id": work_item_id,
-            "target_id": "local-smoke",
+            "target_id": deployment_target_id,
             "scope": "Local V3 dogfood release smoke.",
             "version_ref": "local-dogfood-command",
             "approval_ref": "approval-v3-local-product",
-            "smoke_evidence": "Local command target printed v3 local smoke deployed.",
+            "smoke_evidence": f"Deployment target `{deployment_target_id}` completed.",
             "residual_risks": "Live Teams, OneDrive, and NATS credentials still require environment-specific validation.",
         },
     )
@@ -340,7 +347,7 @@ def run_local_e2e_dogfood_slice(
         payload={
             "work_item_id": work_item_id,
             "target_role": "project-manager",
-            "message": "Local smoke deployment succeeded and release closure is ready.",
+            "message": f"{deployment_target_id} deployment succeeded and release closure is ready.",
         },
     )
     tools.call(
@@ -349,7 +356,7 @@ def run_local_e2e_dogfood_slice(
         payload={
             "work_item_id": work_item_id,
             "target_role": "delivery-manager",
-            "message": "Local smoke deployment succeeded and release closure is ready.",
+            "message": f"{deployment_target_id} deployment succeeded and release closure is ready.",
         },
     )
     tools.call(
@@ -358,7 +365,7 @@ def run_local_e2e_dogfood_slice(
         payload={
             "work_item_id": work_item_id,
             "target_role": "product-manager",
-            "message": "Local smoke deployment succeeded and release closure is ready.",
+            "message": f"{deployment_target_id} deployment succeeded and release closure is ready.",
         },
     )
     tools.call(
@@ -392,8 +399,11 @@ def run_local_e2e_dogfood_slice(
         governance_state="Project Manager closed after release evidence and residual risks were recorded.",
         next_action="Review live-adapter follow-up slices.",
         approvals=("Sponsor approved product sign-off for the local dogfood release proof.",),
-        evidence=("Release Manager deployed the local-smoke target.",),
-        decisions=("Release Manager deployed local-smoke target.", "Project Manager closed the local dogfood slice."),
+        evidence=(f"Release Manager deployed the {deployment_target_id} target.",),
+        decisions=(
+            f"Release Manager deployed {deployment_target_id} target.",
+            "Project Manager closed the local dogfood slice.",
+        ),
         risks=("Live credentials and external connector validation remain environment-specific.",),
     )
     tools.call(

@@ -144,6 +144,7 @@ def test_cli_local_e2e_dogfood_uses_project_config_document_library(tmp_path: Pa
     db_path = tmp_path / "v3.sqlite3"
     docs_root = tmp_path / "project-documents"
     project_config = tmp_path / "project.yaml"
+    python_exe = sys.executable.replace("\\", "/")
     project_config.write_text(
         f"""
 project_id: agentic-mesh-dev
@@ -152,6 +153,15 @@ broker:
 document_library:
   adapter: filesystem
   root: {docs_root.as_posix()}
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - '{python_exe}'
+      - -c
+      - print('configured dogfood deployed')
+    timeout_seconds: 30
+    rollback_summary: Re-run the previous configured dogfood target.
 roles:
   product-manager:
     instances: 1
@@ -174,6 +184,14 @@ roles:
     try:
         db.migrate()
         detail = db.work_item_detail("work-v3-local-e2e")
+        release = db.connection.execute(
+            """
+            SELECT status, deployment_result
+            FROM releases
+            WHERE work_item_id=?
+            """,
+            ("work-v3-local-e2e",),
+        ).fetchone()
     finally:
         db.close()
 
@@ -181,6 +199,8 @@ roles:
     assert output["status"] == "local_e2e_dogfood_complete"
     assert detail is not None
     assert detail.state == "closed"
+    assert release["status"] == "deployed"
+    assert "configured dogfood deployed" in release["deployment_result"]
     assert (docs_root / "work-items" / "work-v3-local-e2e" / "index.md").exists()
     assert (docs_root / "work-items" / "index.md").exists()
 
