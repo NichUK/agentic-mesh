@@ -226,6 +226,8 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             f"<p><strong>Phase:</strong> {html.escape(detail.current_phase or '')}</p>",
             f"<p><strong>Next action:</strong> {html.escape(detail.next_action)}</p>",
             "</section>",
+            "<h2>RACI</h2>",
+            _raci_table(detail.governance),
             "<h2>Governance</h2>",
             _governance_summary_table(detail.governance),
             "<h2>Governance Checklist</h2>",
@@ -521,6 +523,20 @@ def _governance_summary_table(governance: dict[str, object]) -> str:
     extra = {key: value for key, value in governance.items() if key not in known}
     if extra:
         rows.append(_governance_row("Additional governance data", extra))
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _raci_table(governance: dict[str, object]) -> str:
+    rows = [
+        "<tr><th>Area</th><th>Roles / Evidence</th></tr>",
+        _governance_row("Phase", governance.get("phase")),
+        _governance_row("Accountable", governance.get("accountable_role")),
+        _governance_row("Responsible", governance.get("responsible_roles")),
+        _governance_row("Consulted", governance.get("consulted_roles")),
+        _governance_row("Informed", governance.get("informed_roles")),
+        _governance_row("Sponsor decision points", governance.get("sponsor_decision_points")),
+        _governance_row("Required evidence before handoff", governance.get("required_evidence")),
+    ]
     return f"<table>{''.join(rows)}</table>"
 
 
