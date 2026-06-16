@@ -88,6 +88,7 @@
     },
     "roles": {
       "type": "object",
+      "minProperties": 1,
       "additionalProperties": {
         "type": "object",
         "additionalProperties": true,

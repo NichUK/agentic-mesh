@@ -107,3 +107,16 @@ def test_project_v3_schema_rejects_unknown_teams_adapter() -> None:
 
     assert errors
     assert "unsupported-adapter" in errors[0].message
+
+
+def test_project_v3_schema_rejects_empty_roles() -> None:
+    project = {
+        "project_id": "agentic-mesh-dev",
+        "roles": {},
+    }
+
+    validator = jsonschema.Draft202012Validator(_schema())
+    errors = sorted(validator.iter_errors(project), key=lambda item: item.json_path)
+
+    assert errors
+    assert "non-empty" in errors[0].message or "enough properties" in errors[0].message
