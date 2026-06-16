@@ -111,12 +111,15 @@ def test_write_root_work_item_index(tmp_path: Path) -> None:
                 owner_role="engineering",
                 raci_summary="engineering A/R",
                 governance_state="ready",
+                next_action="Implement the status page.",
             )
         ],
     )
 
     content = (tmp_path / "work-items" / "index.md").read_text(encoding="utf-8")
     assert "[Add status page](work-123/index.md)" in content
+    assert "Governance: ready" in content
+    assert "Next action: Implement the status page." in content
 
 
 def test_write_work_item_index_rejects_status_only_document(tmp_path: Path) -> None:
