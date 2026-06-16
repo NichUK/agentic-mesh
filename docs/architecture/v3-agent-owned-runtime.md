@@ -293,8 +293,8 @@ recent work without relying on agents to remember a second indexing step.
 Work-item indexes are evidence records, not status placeholders. The document
 library writer rejects status-only `index.md` records and duplicate evidence
 links or repeated decision/risk entries, so agents must record useful next
-actions, artifacts, decisions, risks, or other concrete evidence before
-publishing the work-item index.
+actions, artifacts, consultations, approvals, explicit evidence, decisions,
+risks, or other concrete evidence before publishing the work-item index.
 
 Durable architecture, product, engineering, QA, release, risk, decision, and
 operations documents also live in the document library.
