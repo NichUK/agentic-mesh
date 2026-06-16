@@ -5,6 +5,8 @@ import subprocess
 import sys
 from io import StringIO
 
+import pytest
+
 from agentic_mesh_v3.cli import _teams_activity_router
 from agentic_mesh_v3.cli import _broker_inspection_payload
 from agentic_mesh_v3.cli import _ensure_agent_stream
@@ -741,6 +743,8 @@ roles:
             "agentic-mesh-v3:local",
             "--source-repo",
             str(tmp_path / "source"),
+            "--deployed-runtime",
+            str(tmp_path / "runtime"),
             "--organisation-config-repo",
             str(tmp_path / "org"),
             "--project-config-repo",
@@ -777,6 +781,56 @@ roles:
     assert "System rule." in (tmp_path / "agents" / "engineering" / "1" / "system.md").read_text(encoding="utf-8")
     assert "run-agent-service" in compose_output.read_text(encoding="utf-8")
     assert "mesh-test" in compose_output.read_text(encoding="utf-8")
+
+
+def test_cli_materialize_agent_configs_rejects_collapsed_topology(tmp_path: Path) -> None:
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    roles_dir = tmp_path / "roles"
+    roles_dir.mkdir()
+    (roles_dir / "product-manager.yaml").write_text(_role_template("product-manager"), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid V3 topology"):
+        main(
+            [
+                "--project-config",
+                str(project_config),
+                "materialize-agent-configs",
+                "--image",
+                "agentic-mesh-v3:local",
+                "--source-repo",
+                str(tmp_path / "source"),
+                "--deployed-runtime",
+                str(tmp_path / "source"),
+                "--organisation-config-repo",
+                str(tmp_path / "org"),
+                "--project-config-repo",
+                str(tmp_path / "project"),
+                "--agent-config-root",
+                str(tmp_path / "agents"),
+                "--runtime-state-dir",
+                str(tmp_path / "state"),
+                "--document-library-root",
+                str(tmp_path / "documents"),
+                "--role-templates-dir",
+                str(roles_dir),
+            ]
+        )
 
 
 def test_cli_materialize_agent_configs_uses_flow_config_raci(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -823,6 +877,8 @@ raci:
             "agentic-mesh-v3:local",
             "--source-repo",
             str(tmp_path / "source"),
+            "--deployed-runtime",
+            str(tmp_path / "runtime"),
             "--organisation-config-repo",
             str(tmp_path / "org"),
             "--project-config-repo",
@@ -887,6 +943,8 @@ roles:
             "agentic-mesh-v3:local",
             "--source-repo",
             str(tmp_path / "source"),
+            "--deployed-runtime",
+            str(tmp_path / "runtime"),
             "--organisation-config-repo",
             str(tmp_path / "org"),
             "--project-config-repo",
