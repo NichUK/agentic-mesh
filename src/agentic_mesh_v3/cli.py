@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     demo_parser.add_argument("--document-library-root", type=Path)
 
     dogfood_parser = subparsers.add_parser("local-e2e-dogfood")
-    dogfood_parser.add_argument("--document-library-root", type=Path, required=True)
+    dogfood_parser.add_argument("--document-library-root", type=Path)
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
