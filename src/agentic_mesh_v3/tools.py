@@ -160,12 +160,7 @@ class V3ToolService:
         elif tool_name == "document.write_root_work_item_index":
             self._write_root_work_item_index()
         elif tool_name == "approval.request":
-            self.db.request_approval(
-                approval_id=str(payload.get("approval_id") or f"approval-{uuid4().hex}"),
-                work_item_id=_required(payload, "work_item_id"),
-                requested_by_role=role_from_instance(role_instance_id),
-                question=_required(payload, "question"),
-            )
+            self._request_approval(role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "release.record":
             self.db.record_release(
                 release_id=str(payload.get("release_id") or f"release-{uuid4().hex}"),
@@ -267,6 +262,36 @@ class V3ToolService:
                 text_markdown=text_markdown,
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "normal"),
+            )
+        )
+
+    def _request_approval(self, *, role_instance_id: str, payload: dict[str, Any]) -> None:
+        target_ref = _optional(payload.get("target_ref"))
+        if target_ref is not None and self.stakeholder_bridge is None:
+            raise ValueError("stakeholder bridge is not configured")
+        approval_id = str(payload.get("approval_id") or f"approval-{uuid4().hex}")
+        work_item_id = _required(payload, "work_item_id")
+        question = _required(payload, "question")
+        self.db.request_approval(
+            approval_id=approval_id,
+            work_item_id=work_item_id,
+            requested_by_role=role_from_instance(role_instance_id),
+            question=question,
+        )
+        if target_ref is None:
+            return
+        text_markdown = _optional(payload.get("text_markdown")) or (
+            f"**Approval requested**\n\n{question}\n\n"
+            f"Work item: `{work_item_id}`\n\n"
+            f"Approval ID: `{approval_id}`"
+        )
+        self.stakeholder_bridge.send(
+            OutboundMessage(
+                connector=_required(payload, "connector"),
+                target_ref=target_ref,
+                text_markdown=text_markdown,
+                thread_ref=_optional(payload.get("thread_ref")),
+                importance=str(payload.get("importance") or "high"),
             )
         )
 
