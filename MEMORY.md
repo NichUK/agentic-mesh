@@ -140,3 +140,12 @@ The v2 spine is intentionally small. The next real work is to add v2-native
 long-running role workers, connector ingress, human approval handling, and
 deployment actions without restoring v1 file-backed queues or v1 result
 parsing.
+
+## V3 Worker Adapter Progress
+
+V3 now has a command-backed `codex-cli` worker adapter for explicit
+`run-agent-once --worker codex-cli` runs. The adapter wraps the generated role
+prompt with the safe-output tool contract, runs `codex exec` or an injected
+test command, and treats stdout as an operational JSON envelope listing tools
+already called through CLI/MCP. Durable state remains safe-output records, not
+free-text or legacy result parsing.
