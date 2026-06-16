@@ -10,6 +10,9 @@ from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import WorkItemStatus
+from agentic_mesh_v3.state_machine import StateTransition
+from agentic_mesh_v3.state_machine import validate_state
+from agentic_mesh_v3.state_machine import validate_transition
 
 
 SCHEMA_VERSION = 1
@@ -205,6 +208,21 @@ class V3Database:
         next_action: str = "",
         governance: dict[str, Any] | None = None,
     ) -> None:
+        existing = self.connection.execute(
+            "SELECT state FROM work_items WHERE work_item_id=?",
+            (work_item_id,),
+        ).fetchone()
+        if existing is None:
+            validate_state(state)
+        else:
+            validate_transition(
+                StateTransition(
+                    work_item_id=work_item_id,
+                    from_state=existing["state"],
+                    to_state=state,
+                    reason="upsert",
+                )
+            )
         with self.connection:
             self.connection.execute(
                 """
@@ -252,6 +270,20 @@ class V3Database:
         current_phase: str | None = None,
         next_action: str = "",
     ) -> None:
+        existing = self.connection.execute(
+            "SELECT state FROM work_items WHERE work_item_id=?",
+            (work_item_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(f"work item `{work_item_id}` was not found")
+        validate_transition(
+            StateTransition(
+                work_item_id=work_item_id,
+                from_state=existing["state"],
+                to_state=state,
+                reason=next_action,
+            )
+        )
         with self.connection:
             self.connection.execute(
                 """

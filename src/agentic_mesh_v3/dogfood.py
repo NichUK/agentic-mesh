@@ -107,6 +107,17 @@ def run_local_e2e_dogfood_slice(
     )
 
     tools.call(
+        role_instance_id=f"{project_id}.product-manager.1",
+        tool_name="work_item.update_state",
+        payload={
+            "work_item_id": work_item_id,
+            "state": "ready",
+            "owner_role": "engineering",
+            "current_phase": "development",
+            "next_action": "Product sign-off recorded; Engineering should implement the local smoke path.",
+        },
+    )
+    tools.call(
         role_instance_id=f"{project_id}.engineering.1",
         tool_name="work_item.update_state",
         payload={
@@ -159,6 +170,17 @@ def run_local_e2e_dogfood_slice(
             "target_id": "local-smoke",
             "scope": "Local V3 dogfood release smoke.",
             "residual_risks": "Live Teams, OneDrive, and NATS credentials still require environment-specific validation.",
+        },
+    )
+    tools.call(
+        role_instance_id=f"{project_id}.release-manager.1",
+        tool_name="work_item.update_state",
+        payload={
+            "work_item_id": work_item_id,
+            "state": "released",
+            "owner_role": "project-manager",
+            "current_phase": "project-closure",
+            "next_action": "Release deployed; Project Manager should verify closure evidence.",
         },
     )
     tools.call(
