@@ -6,19 +6,30 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
 
     assert product_tools["status.reply"].allowed is True
     assert product_tools["status.reply"].terminal is True
+    assert product_tools["status.reply"].do_tool is False
+    assert product_tools["status.reply"].reply_tool is True
     assert product_tools["status.reply"].required_fields == ("text_markdown",)
     assert product_tools["noop"].terminal is True
+    assert product_tools["noop"].do_tool is True
+    assert product_tools["noop"].reply_tool is False
     assert product_tools["noop"].required_fields == ("reason",)
     assert product_tools["status.complete"].terminal is True
+    assert product_tools["status.complete"].do_tool is False
+    assert product_tools["status.complete"].reply_tool is True
     assert product_tools["status.complete"].required_fields == ("summary",)
     assert product_tools["report.incomplete"].terminal is True
+    assert product_tools["report.incomplete"].reply_tool is True
     assert product_tools["report.incomplete"].required_fields == ("reason",)
     assert product_tools["artifact.link"].allowed is True
+    assert product_tools["artifact.link"].do_tool is True
     assert product_tools["artifact.link"].description
     assert product_tools["blocker.raise"].allowed is True
+    assert product_tools["blocker.raise"].do_tool is True
+    assert product_tools["blocker.raise"].reply_tool is True
     assert product_tools["blocker.raise"].required_fields == ("work_item_id", "summary", "next_action")
     assert product_tools["consult.request"].required_fields == ("work_item_id", "target_role", "question")
     assert product_tools["conversation.compact_context"].allowed is True
+    assert product_tools["conversation.compact_context"].do_tool is True
     assert product_tools["conversation.compact_context"].required_fields == (
         "conversation_ref",
         "summary",
@@ -49,7 +60,11 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
     assert product_tools["work_item.reopen"].allowed is True
     assert product_tools["work_item.reopen"].required_fields == ("work_item_id", "state", "reason")
     assert product_tools["release.deploy"].allowed is False
+    assert product_tools["release.deploy"].do_tool is True
     assert product_tools["release.deploy"].description
+    catalog_entry = product_tools["status.reply"].to_dict()
+    assert catalog_entry["do_tool"] is False
+    assert catalog_entry["reply_tool"] is True
 
 
 def test_tool_catalog_allows_release_manager_release_tools() -> None:

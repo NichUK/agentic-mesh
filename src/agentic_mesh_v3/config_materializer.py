@@ -200,13 +200,23 @@ def _role_tool_instructions(role_id: str, base_instructions: str) -> str:
         "## Role-Scoped Safe-Output Tool Catalog",
         "",
         "Allowed tools for this role are marked `allowed`; blocked tools are shown so agents do not guess authority.",
+        "A valid run must record at least one allowed DO tool and at least one allowed REPLY tool; a single tool can satisfy both when it is marked both.",
     ]
     for entry in tool_catalog_for_role(role_id):
         status = "allowed" if entry.allowed else "blocked"
         terminal = " terminal" if entry.terminal else ""
+        categories = ", ".join(
+            category
+            for category, enabled in (
+                ("DO", entry.do_tool),
+                ("REPLY", entry.reply_tool),
+            )
+            if enabled
+        )
+        categories = categories or "none"
         required_fields = ", ".join(entry.required_fields) if entry.required_fields else "none"
         lines.append(
-            f"- `{entry.tool_name}`: {status}{terminal}. {entry.description} "
+            f"- `{entry.tool_name}`: {status}{terminal}; categories: {categories}. {entry.description} "
             f"Required fields: {required_fields}."
         )
     return "\n".join(lines).rstrip()

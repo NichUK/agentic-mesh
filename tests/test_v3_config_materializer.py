@@ -143,10 +143,15 @@ roles:
     product_tools = (tmp_path / "agents" / "product-manager" / "1" / "tools.md").read_text(encoding="utf-8")
     assert "Use approved tools." in product_tools
     assert "Role-Scoped Safe-Output Tool Catalog" in product_tools
+    assert "A valid run must record at least one allowed DO tool and at least one allowed REPLY tool" in product_tools
     assert "`backlog.upsert`: allowed" in product_tools
+    assert "`backlog.upsert`: allowed; categories: DO." in product_tools
     assert "Required fields: queue_item_id, title, summary, owner_role." in product_tools
     assert "Required fields: work_item_id, target_role, question." in product_tools
+    assert "`status.reply`: allowed terminal; categories: REPLY." in product_tools
+    assert "`blocker.raise`: allowed; categories: DO, REPLY." in product_tools
     assert "`release.deploy`: blocked" in product_tools
+    assert "`release.deploy`: blocked; categories: DO." in product_tools
 
 
 def _role_template(role_id: str) -> str:
