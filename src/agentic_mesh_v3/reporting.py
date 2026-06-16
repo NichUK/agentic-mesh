@@ -506,6 +506,7 @@ def _governance_checklist_section(checklist: GovernanceChecklist | None) -> str:
         _checklist_row("Consultations", checklist.missing_consultations),
         _checklist_row("Informed updates", checklist.missing_informed_updates),
         _checklist_row("Sponsor decisions", checklist.pending_sponsor_decisions),
+        _checklist_row("Required evidence", checklist.missing_required_evidence),
     ]
     if checklist.recorded_exceptions:
         rows.append(_checklist_row("Recorded exceptions", checklist.recorded_exceptions))
