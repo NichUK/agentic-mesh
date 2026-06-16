@@ -70,11 +70,13 @@ def test_reporting_pages_include_required_status_data() -> None:
 
     assert "Backlog / Queue" in status_html
     assert "Attention Needed" in status_html
+    assert "Blocked Work" in status_html
     assert "Stale Work" in status_html
     assert "Governance Waits" in status_html
     assert "Active Work" in status_html
     assert '<a href="/work-item/work-1">work-1</a>' in status_html
     assert '<a href="/work-item/work-blocked">work-blocked</a>' in status_html
+    assert "Fix deployment" in status_html
     assert "Resolve deployment credentials." in status_html
     assert '<a href="/work-item/work-stale">work-stale</a>' in status_html
     assert "work item has not changed for 7200 seconds" in status_html
@@ -95,6 +97,13 @@ def test_reporting_pages_include_required_status_data() -> None:
 
 def test_artifact_viewer_path_is_work_item_scoped() -> None:
     assert artifact_viewer_path("work-1", "020-product-definition.md") == "work-items/work-1/020-product-definition.md"
+
+
+def test_status_page_shows_empty_blocked_work_state() -> None:
+    html = render_status_page(ReportingSnapshot(project_id="agentic-mesh-dev"))
+
+    assert "Blocked Work" in html
+    assert "No blocked work recorded." in html
 
 
 def test_work_item_url_escapes_work_item_id() -> None:

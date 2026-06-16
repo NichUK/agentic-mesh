@@ -153,6 +153,8 @@ def render_status_page(snapshot: ReportingSnapshot) -> str:
             _backlog_table(snapshot.backlog),
             "<h2>Attention Needed</h2>",
             _attention_table(snapshot.work_items, include_stale=False),
+            "<h2>Blocked Work</h2>",
+            _blocked_work_table(snapshot.work_items),
             "<h2>Stale Work</h2>",
             _attention_table(snapshot.work_items, stale_only=True),
             "<h2>Governance Waits</h2>",
@@ -382,6 +384,27 @@ def _attention_table(
         )
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"7\">None recorded.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _blocked_work_table(items: tuple[WorkItemStatus, ...]) -> str:
+    rows = ["<tr><th>Work Item</th><th>Title</th><th>Owner</th><th>Reason</th><th>Next Action</th><th>Updated</th></tr>"]
+    for item in items:
+        if item.state != "blocked":
+            continue
+        url = work_item_url(item.work_item_id)
+        rows.append(
+            "<tr>"
+            f"<td><a href=\"{html.escape(url)}\">{html.escape(item.work_item_id)}</a></td>"
+            f"<td>{html.escape(item.title)}</td>"
+            f"<td>{html.escape(item.owner_role)}</td>"
+            f"<td>{html.escape(item.attention_reason or 'Blocked')}</td>"
+            f"<td>{html.escape(item.next_action)}</td>"
+            f"<td>{html.escape(item.updated_at or '')}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"6\">No blocked work recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 
