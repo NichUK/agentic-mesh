@@ -22,6 +22,7 @@ from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import WorkItemDetail
 from agentic_mesh_v3.reporting import WorkItemStatus
 from agentic_mesh_v3.state_machine import StateTransition
+from agentic_mesh_v3.state_machine import REOPEN_TARGET_STATES
 from agentic_mesh_v3.state_machine import TERMINAL_STATES
 from agentic_mesh_v3.state_machine import validate_state
 from agentic_mesh_v3.state_machine import validate_transition
@@ -361,6 +362,58 @@ class V3Database:
                 {"state": state, "owner_role": owner_role, "current_phase": current_phase, "next_action": next_action},
             )
 
+    def reopen_work_item(
+        self,
+        *,
+        work_item_id: str,
+        state: str,
+        reason: str,
+        owner_role: str,
+        current_phase: str | None = None,
+        next_action: str = "",
+    ) -> None:
+        if not reason.strip():
+            raise ValueError("reopen reason is required")
+        validate_state(state)
+        if state not in REOPEN_TARGET_STATES:
+            raise ValueError(f"invalid V3 work-item reopen target for {work_item_id}: {state}")
+        existing = self.connection.execute(
+            "SELECT state FROM work_items WHERE work_item_id=?",
+            (work_item_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(f"work item `{work_item_id}` was not found")
+        previous_state = existing["state"]
+        if previous_state not in TERMINAL_STATES:
+            raise ValueError(f"work item `{work_item_id}` is not terminal and cannot be reopened")
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE work_items SET
+                  state=?,
+                  owner_role=?,
+                  current_phase=COALESCE(?, current_phase),
+                  next_action=?,
+                  updated_at=CURRENT_TIMESTAMP
+                WHERE work_item_id=?
+                """,
+                (state, owner_role, current_phase, next_action or reason, work_item_id),
+            )
+            self._sync_linked_backlog_item_state(work_item_id=work_item_id, state=state, include_non_terminal=True)
+            self.record_event(
+                "work_item.reopened",
+                "work_item",
+                work_item_id,
+                {
+                    "from_state": previous_state,
+                    "state": state,
+                    "owner_role": owner_role,
+                    "current_phase": current_phase,
+                    "reason": reason,
+                    "next_action": next_action,
+                },
+            )
+
     def update_work_item_progress(
         self,
         *,
@@ -394,8 +447,14 @@ class V3Database:
                 {"owner_role": owner_role, "current_phase": current_phase, "next_action": next_action},
             )
 
-    def _sync_linked_backlog_item_state(self, *, work_item_id: str, state: str) -> None:
-        if state not in TERMINAL_STATES:
+    def _sync_linked_backlog_item_state(
+        self,
+        *,
+        work_item_id: str,
+        state: str,
+        include_non_terminal: bool = False,
+    ) -> None:
+        if state not in TERMINAL_STATES and not include_non_terminal:
             return
         row = self.connection.execute(
             """

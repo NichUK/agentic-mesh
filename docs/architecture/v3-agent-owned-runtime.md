@@ -237,6 +237,12 @@ Work-item state is explicit and validated. V3 states are `queued`, `shaping`,
 When a linked work item reaches a terminal state, the runtime read model syncs
 the associated queue/backlog item to the same terminal status so current-queue
 views do not show completed or superseded work as still active.
+Normal state updates cannot reopen terminal work. Product Manager, Project
+Manager, and Release Manager use the explicit `work_item.reopen` tool when a
+sponsor, product, project, or release correction requires terminal work to
+continue. The tool requires a reason, records a distinct reopen event, and
+returns the work to a non-terminal owner/state without weakening ordinary
+state-machine validation.
 
 ## Reporting
 

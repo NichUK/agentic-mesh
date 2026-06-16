@@ -541,3 +541,11 @@ V3 topology validation now includes project target repositories. Target repos
 may match the source repo for dogfood work, but they cannot overlap deployed
 runtime, runtime state, organisation config, project config, document-library
 roots, or each other unless `local_dev_override` is set.
+
+V3 terminal work can now be restored only through the explicit
+`work_item.reopen` safe-output tool. Normal `work_item.update_state` still
+rejects terminal-to-active transitions. Product Manager, Project Manager, and
+Release Manager have reopen authority; the tool requires a reason, records a
+`work_item.reopened` event, syncs linked queue/backlog state, and moves the item
+to a controlled non-terminal state such as `shaping`, `active`, `recovering`,
+or `release_review`.

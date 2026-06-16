@@ -39,6 +39,8 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
         "stakeholder_follow_up",
     )
     assert product_tools["backlog.upsert"].allowed is True
+    assert product_tools["work_item.reopen"].allowed is True
+    assert product_tools["work_item.reopen"].required_fields == ("work_item_id", "state", "reason")
     assert product_tools["release.deploy"].allowed is False
     assert product_tools["release.deploy"].description
 
@@ -48,3 +50,4 @@ def test_tool_catalog_allows_release_manager_release_tools() -> None:
 
     assert release_tools["release.deploy"].allowed is True
     assert release_tools["release.close"].allowed is True
+    assert release_tools["work_item.reopen"].allowed is True

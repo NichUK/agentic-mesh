@@ -29,12 +29,14 @@ ROLE_TOOLS = {
     "project-manager": {
         "approval.request",
         "backlog.upsert",
+        "work_item.reopen",
         "work_item.update_state",
         "work_item.upsert",
     },
     "product-manager": {
         "approval.request",
         "backlog.upsert",
+        "work_item.reopen",
         "work_item.update_state",
         "work_item.upsert",
     },
@@ -53,6 +55,7 @@ ROLE_TOOLS = {
         "release.close",
         "release.deploy",
         "release.record",
+        "work_item.reopen",
         "work_item.update_state",
     },
 }

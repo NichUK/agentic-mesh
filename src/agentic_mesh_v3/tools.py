@@ -158,6 +158,15 @@ class V3ToolService:
                 current_phase=_optional(payload.get("current_phase")),
                 next_action=str(payload.get("next_action") or ""),
             )
+        elif tool_name == "work_item.reopen":
+            self.db.reopen_work_item(
+                work_item_id=_required(payload, "work_item_id"),
+                state=_required(payload, "state"),
+                reason=_required(payload, "reason"),
+                owner_role=str(payload.get("owner_role") or role_from_instance(role_instance_id)),
+                current_phase=_optional(payload.get("current_phase")),
+                next_action=str(payload.get("next_action") or ""),
+            )
         elif tool_name == "agent.heartbeat":
             self.db.upsert_agent_status(
                 AgentStatus(
