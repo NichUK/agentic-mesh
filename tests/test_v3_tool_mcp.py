@@ -54,6 +54,7 @@ def test_v3_mcp_tool_catalog_returns_role_permissions(tmp_path: Path) -> None:
     assert structured["role_id"] == "product-manager"
     tools = {tool["tool_name"]: tool for tool in structured["tools"]}
     assert tools["backlog.upsert"]["allowed"] is True
+    assert tools["backlog.upsert"]["required_fields"] == ["queue_item_id", "title", "summary", "owner_role"]
     assert tools["release.deploy"]["allowed"] is False
 
 
