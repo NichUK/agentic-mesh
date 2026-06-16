@@ -202,6 +202,24 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
                 "blocked_role": "platform-engineer",
             },
         )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.solution-architect.1",
+            tool_name="decision.record",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Keep the status page as the first sponsor visibility surface.",
+                "target_ref": "decision-status-page",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.security-architect.1",
+            tool_name="risk.register",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Deployment credentials may delay release validation.",
+                "target_ref": "risk-deployment-credentials",
+            },
+        )
     finally:
         db.close()
 
@@ -240,5 +258,9 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "Blockers" in html
     assert "Deployment target credentials are missing." in html
     assert "platform-engineer" in html
+    assert "Decisions" in html
+    assert "Keep the status page as the first sponsor visibility surface." in html
+    assert "Risks" in html
+    assert "Deployment credentials may delay release validation." in html
     assert "release-1" in html
     assert "staging smoke passed" in html
