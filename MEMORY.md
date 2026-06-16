@@ -149,3 +149,7 @@ prompt with the safe-output tool contract, runs `codex exec` or an injected
 test command, and treats stdout as an operational JSON envelope listing tools
 already called through CLI/MCP. Durable state remains safe-output records, not
 free-text or legacy result parsing.
+
+`run-agent-once` now uses the role's configured `worker` block from
+`project.yaml` when no `--worker` override is passed. If a role has no worker
+configured, it falls back to the echo worker for local smoke testing.

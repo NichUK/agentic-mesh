@@ -22,6 +22,10 @@ roles:
     instances: 1
     worker:
       adapter: codex-cli
+      command:
+        - codex
+        - exec
+      timeout_seconds: 900
       model: codex
       reasoning_effort: high
       sandbox_mode: danger-full-access
@@ -58,6 +62,8 @@ connectors:
     project_manager = next(role for role in config.roles if role.role_id == "project-manager")
     assert project_manager.template == "project-manager"
     assert project_manager.worker.adapter == "codex-cli"
+    assert project_manager.worker.command == ("codex", "exec")
+    assert project_manager.worker.timeout_seconds == 900
     assert project_manager.worker.reasoning_effort == "high"
     assert project_manager.worker.auth.credential == "codex-agentic-mesh-dev-team-q"
     assert project_manager.instructions == ("Keep work moving.",)

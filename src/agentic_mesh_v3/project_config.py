@@ -30,6 +30,8 @@ class V3WorkerAuthConfig:
 @dataclass(frozen=True)
 class V3WorkerConfig:
     adapter: str | None = None
+    command: tuple[str, ...] = ()
+    timeout_seconds: int | None = None
     model: str | None = None
     reasoning_effort: str | None = None
     sandbox_mode: str | None = None
@@ -104,6 +106,12 @@ def _optional(value: Any) -> str | None:
     return text if text else None
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
 def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, Any]) -> V3RoleInstanceConfig:
     worker_raw = _mapping(role_raw.get("worker"))
     auth_raw = _mapping(worker_raw.get("auth"))
@@ -113,6 +121,8 @@ def _load_role(role_id: str, role_raw: dict[str, Any], project_raw: dict[str, An
         instances=int(role_raw.get("instances") or 1),
         worker=V3WorkerConfig(
             adapter=_optional(worker_raw.get("adapter")),
+            command=tuple(str(value) for value in _list(worker_raw.get("command"))),
+            timeout_seconds=_optional_int(worker_raw.get("timeout_seconds")),
             model=_optional(worker_raw.get("model")),
             reasoning_effort=_optional(worker_raw.get("reasoning_effort")),
             sandbox_mode=_optional(worker_raw.get("sandbox_mode")),

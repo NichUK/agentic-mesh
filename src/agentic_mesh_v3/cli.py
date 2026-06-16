@@ -21,6 +21,8 @@ from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.observability import TelemetrySettings
 from agentic_mesh_v3.observability import configure_observability
 from agentic_mesh_v3.project_config import load_project_config
+from agentic_mesh_v3.project_config import V3ProjectConfig
+from agentic_mesh_v3.project_config import V3WorkerConfig
 from agentic_mesh_v3.server import serve
 from agentic_mesh_v3.sweeps import ProjectSweepService
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
@@ -65,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     run_agent_parser.add_argument("--agent-config-dir", type=Path, required=True)
     run_agent_parser.add_argument("--runtime-state-dir", type=Path, required=True)
     run_agent_parser.add_argument("--max-messages", type=int, default=1)
-    run_agent_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess", "codex-cli"], default="echo")
+    run_agent_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess", "codex-cli"])
     run_agent_parser.add_argument("--worker-command-json")
     run_agent_parser.add_argument("--worker-timeout-seconds", type=int)
     run_agent_parser.add_argument("--worker-model")
@@ -284,7 +286,7 @@ def _run_agent_once(args: argparse.Namespace):
     service = RoleAgentService(
         config=service_config,
         broker=broker,
-        worker=_worker_from_args(args),
+        worker=_worker_from_args(args, project_config=config),
         memory=build_role_memory(service_config),
     )
     return service.run_until_idle(max_messages=args.max_messages)
@@ -298,9 +300,21 @@ def _ensure_agent_stream(broker: BrokerAdapter, *, stream: str, role_ids: tuple[
     broker.ensure_stream(stream, subjects)
 
 
-def _worker_from_args(args: argparse.Namespace):
+def _worker_from_args(args: argparse.Namespace, *, project_config: V3ProjectConfig | None = None):
     if args.worker == "echo":
         return EchoWorker()
+    if args.worker is None:
+        configured_worker = _configured_worker_for_role(project_config, role_id=args.role_id)
+        if configured_worker is None or configured_worker.adapter is None:
+            return EchoWorker()
+        return build_worker_adapter(
+            adapter=configured_worker.adapter,
+            command=configured_worker.command or None,
+            timeout_seconds=configured_worker.timeout_seconds,
+            model=configured_worker.model,
+            reasoning_effort=configured_worker.reasoning_effort,
+            sandbox_mode=configured_worker.sandbox_mode,
+        )
     command_raw = args.worker_command_json
     command = tuple(json.loads(command_raw)) if command_raw else None
     return build_worker_adapter(
@@ -311,6 +325,15 @@ def _worker_from_args(args: argparse.Namespace):
         reasoning_effort=args.worker_reasoning_effort,
         sandbox_mode=args.worker_sandbox_mode,
     )
+
+
+def _configured_worker_for_role(project_config: V3ProjectConfig | None, *, role_id: str) -> V3WorkerConfig | None:
+    if project_config is None:
+        return None
+    for role in project_config.roles:
+        if role.role_id == role_id:
+            return role.worker
+    return None
 
 
 if __name__ == "__main__":
