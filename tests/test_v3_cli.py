@@ -92,6 +92,54 @@ def test_cli_module_entrypoint_runs(tmp_path: Path) -> None:
     assert '"status": "initialized"' in completed.stdout
 
 
+def test_cli_local_e2e_dogfood_releases_and_closes_slice(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    docs_root = tmp_path / "documents"
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-id",
+            "agentic-mesh-dev",
+            "local-e2e-dogfood",
+            "--document-library-root",
+            str(docs_root),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+        detail = db.work_item_detail("work-v3-local-e2e")
+        release = db.connection.execute(
+            """
+            SELECT status, deployment_result, closure_state
+            FROM releases
+            WHERE work_item_id=?
+            """,
+            ("work-v3-local-e2e",),
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert result == 0
+    assert output["status"] == "local_e2e_dogfood_complete"
+    assert output["work_item_id"] == "work-v3-local-e2e"
+    assert snapshot.backlog == ()
+    assert snapshot.work_items == ()
+    assert detail is not None
+    assert detail.state == "closed"
+    assert detail.owner_role == "project-manager"
+    assert release["status"] == "deployed"
+    assert "v3 local smoke deployed" in release["deployment_result"]
+    assert release["closure_state"] == "closed"
+    assert (docs_root / "work-items" / "work-v3-local-e2e" / "index.md").exists()
+    assert (docs_root / "work-items" / "index.md").exists()
+
+
 def test_cli_tool_call_uses_project_config_document_library(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     docs_root = tmp_path / "documents"
