@@ -51,9 +51,18 @@ class LocalTeamsBridge:
     connector-neutral shape and preserve DMs/thread refs.
     """
 
-    def __init__(self, broker: BrokerAdapter, *, stream: str = "agent-inbox") -> None:
+    def __init__(
+        self,
+        broker: BrokerAdapter,
+        *,
+        stream: str = "agent-inbox",
+        role_ids: tuple[str, ...] = (),
+        team_wide_trigger: str = "@all-agents",
+    ) -> None:
         self.broker = broker
         self.stream = stream
+        self.role_ids = role_ids
+        self.team_wide_trigger = team_wide_trigger
         self.deliveries: list[OutboundMessage] = []
 
     def route_inbound(self, message: StakeholderMessage) -> list[str]:
@@ -61,10 +70,15 @@ class LocalTeamsBridge:
         if message.source_type == "dm":
             role = _role_from_conversation_ref(message.conversation_ref)
             if role is not None:
-                subjects.append(f"agent.{role}")
-        subjects.extend(f"agent.{role}" for role in message.mentioned_roles)
-        if message.source_type == "channel" and not subjects:
-            subjects.append("project.context")
+                _append_unique(subjects, f"agent.{role}")
+        elif message.source_type == "channel":
+            _append_unique(subjects, "project.context")
+            if message.mentioned_roles:
+                for role in message.mentioned_roles:
+                    _append_unique(subjects, f"agent.{role}")
+            else:
+                for role in self.role_ids:
+                    _append_unique(subjects, f"agent.{role}.relevance")
         for subject in subjects:
             self.broker.publish(
                 self.stream,
@@ -73,6 +87,7 @@ class LocalTeamsBridge:
                     "connector": message.connector,
                     "source_message_id": message.message_id,
                     "source_type": message.source_type,
+                    "route_type": _route_type(message, subject, self.team_wide_trigger),
                     "sender_ref": message.sender_ref,
                     "conversation_ref": message.conversation_ref,
                     "thread_ref": message.thread_ref,
@@ -95,6 +110,25 @@ def _role_from_conversation_ref(conversation_ref: str) -> str | None:
     if conversation_ref.startswith("dm:"):
         return conversation_ref.removeprefix("dm:")
     return None
+
+
+def _append_unique(subjects: list[str], subject: str) -> None:
+    if subject not in subjects:
+        subjects.append(subject)
+
+
+def _route_type(message: StakeholderMessage, subject: str, team_wide_trigger: str) -> str:
+    if message.source_type == "dm":
+        return "role_dm"
+    if subject == "project.context":
+        return "project_channel_context"
+    if subject.endswith(".relevance"):
+        return (
+            "team_wide_relevance_check"
+            if team_wide_trigger and team_wide_trigger.casefold() in message.text.casefold()
+            else "project_channel_relevance_check"
+        )
+    return "mentioned_role_message"
 
 
 class GraphTeamsBridge:
