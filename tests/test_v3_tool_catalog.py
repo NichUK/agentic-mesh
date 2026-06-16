@@ -9,6 +9,10 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
     assert product_tools["artifact.link"].allowed is True
     assert product_tools["artifact.link"].description
     assert product_tools["consult.request"].required_fields == ("work_item_id", "target_role", "question")
+    assert product_tools["decision.record"].allowed is True
+    assert product_tools["decision.record"].required_fields == ("work_item_id", "summary")
+    assert product_tools["risk.register"].allowed is True
+    assert product_tools["risk.register"].required_fields == ("work_item_id", "summary")
     assert "required_fields" in product_tools["consult.request"].to_dict()
     assert product_tools["handoff.require"].required_fields == (
         "work_item_id",
