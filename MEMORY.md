@@ -349,3 +349,8 @@ inbox messages that carry `work_item_id`. `run-agent-once` and
 `run-agent-service` pass this provider automatically, so agent prompts include
 current missing consultations, informed updates, and sponsor decisions without
 manual caller injection.
+
+V3 role services now consume both direct `agent.{role}` and role relevance
+`agent.{role}.relevance` inbox messages. Direct work is processed first, then
+project-channel relevance checks, so unmentioned project-channel posts can be
+reviewed by roles without broadening consumers to every stream subject.

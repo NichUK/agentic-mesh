@@ -44,6 +44,12 @@ class AgentMessage:
 
 
 @dataclass(frozen=True)
+class ClaimedAgentMessage:
+    message: BrokerMessage
+    consumer: str
+
+
+@dataclass(frozen=True)
 class AgentRunResult:
     message_id: str
     status: str
@@ -191,17 +197,12 @@ class RoleAgentService:
         governance_context: GovernanceContext | None = None,
         governance_checklist: GovernanceChecklist | None = None,
     ) -> AgentRunResult | None:
-        self.broker.ensure_consumer(
-            self.config.inbox_stream,
-            self.config.inbox_consumer,
-            filter_subject=f"agent.{self.config.role_id}",
-        )
         self._report_status(container_state="running", current_work=None)
-        messages = self.broker.fetch(self.config.inbox_stream, self.config.inbox_consumer, batch=1)
-        if not messages:
+        claimed = self._fetch_next_message()
+        if claimed is None:
             self._report_status(container_state="running", current_work=None)
             return None
-        message = messages[0]
+        message = claimed.message
         self._report_status(container_state="running", current_work=_message_work_ref(message.payload))
         agent_message = AgentMessage(
             message_id=message.message_id,
@@ -226,14 +227,14 @@ class RoleAgentService:
                 self.config.role_instance_id,
                 f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(tool_calls)} tool calls",
             )
-            self.broker.ack(self.config.inbox_stream, self.config.inbox_consumer, message.message_id)
+            self.broker.ack(self.config.inbox_stream, claimed.consumer, message.message_id)
             self._report_status(container_state="running", current_work=None)
             return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=tuple(tool_calls))
         except Exception as exc:
             if message.delivery_count + 1 >= self.max_delivery_attempts:
                 self.broker.dead_letter(
                     self.config.inbox_stream,
-                    self.config.inbox_consumer,
+                    claimed.consumer,
                     message.message_id,
                     reason=str(exc),
                 )
@@ -241,13 +242,31 @@ class RoleAgentService:
             else:
                 self.broker.nack(
                     self.config.inbox_stream,
-                    self.config.inbox_consumer,
+                    claimed.consumer,
                     message.message_id,
                     reason=str(exc),
                 )
                 status = "failed"
             self._report_status(container_state="running", current_work=None, governance_waits=(str(exc),))
             return AgentRunResult(message_id=message.message_id, status=status, error=str(exc))
+
+    def _fetch_next_message(self) -> ClaimedAgentMessage | None:
+        for consumer, subject in self._consumer_subjects():
+            self.broker.ensure_consumer(
+                self.config.inbox_stream,
+                consumer,
+                filter_subject=subject,
+            )
+            messages = self.broker.fetch(self.config.inbox_stream, consumer, batch=1)
+            if messages:
+                return ClaimedAgentMessage(message=messages[0], consumer=consumer)
+        return None
+
+    def _consumer_subjects(self) -> tuple[tuple[str, str], ...]:
+        return (
+            (self.config.inbox_consumer, f"agent.{self.config.role_id}"),
+            (f"{self.config.inbox_consumer}.relevance", f"agent.{self.config.role_id}.relevance"),
+        )
 
     def _report_status(
         self,
