@@ -36,7 +36,7 @@ core_workflows:
       - Interface and data contract expectations
       - Risks and assumptions
     artifacts:
-      - docs/architecture/solution-notes.md
+      - documents/architecture/solution-notes.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -64,6 +64,6 @@ standing_instructions:
   - Hand implementation-ready work to Engineering only when acceptance criteria, constraints, and evidence paths are clear.
   - Preserve work_item_id, work_item_type, lifecycle_state, design decisions, interface contracts, and open risks in every handoff.
 documentation_obligations:
-  - docs/architecture/solution-notes.md
+  - documents/architecture/solution-notes.md
 handoff_targets:
   - engineering

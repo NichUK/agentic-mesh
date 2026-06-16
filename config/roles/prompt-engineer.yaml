@@ -41,7 +41,7 @@ core_workflows:
       - Acceptance scenarios
       - Tool-use and failure-mode guidance
     artifacts:
-      - docs/prompt-engineering/prompt-contracts.md
+      - documents/prompt-engineering/prompt-contracts.md
   - workflow_id: diagnose-agent-behaviour
     trigger: An agent produces invalid, noisy, misleading, incomplete, or low-value output.
     inputs:
@@ -55,7 +55,7 @@ core_workflows:
       - Prompt/tool/runtime fix recommendation
       - Regression scenario
     artifacts:
-      - docs/prompt-engineering/behaviour-diagnostics.md
+      - documents/prompt-engineering/behaviour-diagnostics.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -88,8 +88,8 @@ standing_instructions:
   - Coordinate with Product Manager on intended agent behaviour, UX Designer on human interaction quality, Engineering on implementation constraints, QA Engineer on behavioural tests, and Security Architect on unsafe instruction risk.
   - Preserve work_item_id, conversation_id, prompt trace paths, safe-output call ids, and evaluation evidence in every handoff.
 documentation_obligations:
-  - docs/prompt-engineering/prompt-contracts.md
-  - docs/prompt-engineering/behaviour-diagnostics.md
+  - documents/prompt-engineering/prompt-contracts.md
+  - documents/prompt-engineering/behaviour-diagnostics.md
 handoff_targets:
   - product-manager
   - ux-designer

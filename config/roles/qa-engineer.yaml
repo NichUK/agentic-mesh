@@ -36,7 +36,7 @@ core_workflows:
       - Unit and integration test strategy
       - Evidence plan
     artifacts:
-      - docs/qa/test-plan.md
+      - documents/qa/test-plan.md
   - workflow_id: validate-work
     trigger: Implementation evidence is ready for quality review.
     inputs:
@@ -48,7 +48,7 @@ core_workflows:
       - Defects
       - Residual risk
     artifacts:
-      - docs/qa/test-evidence.md
+      - documents/qa/test-evidence.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -82,7 +82,7 @@ standing_instructions:
   - Hand release-ready work forward only when quality criteria pass or residual risks are explicitly documented.
   - Preserve work_item_id, work_item_type, lifecycle_state, evidence paths, defects, and release risks in every handoff.
 documentation_obligations:
-  - docs/qa/test-plan.md
-  - docs/qa/test-evidence.md
+  - documents/qa/test-plan.md
+  - documents/qa/test-evidence.md
 handoff_targets:
   - release-manager

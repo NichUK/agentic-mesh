@@ -37,7 +37,7 @@ core_workflows:
       - Affected roles
       - Test hooks and risks
     artifacts:
-      - docs/engineering/implementation-plan.md
+      - documents/engineering/implementation-plan.md
   - workflow_id: implement-slice
     trigger: Quality planning is approved and work is ready to build.
     inputs:
@@ -49,7 +49,7 @@ core_workflows:
       - Test results
       - Implementation log
     artifacts:
-      - docs/engineering/implementation-log.md
+      - documents/engineering/implementation-log.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -84,7 +84,7 @@ standing_instructions:
   - Mark work blocked instead of bypassing missing product, architecture, security, platform, or approval prerequisites.
   - Preserve work_item_id, work_item_type, lifecycle_state, correlation_id, and evidence paths in every handoff.
 documentation_obligations:
-  - docs/engineering/implementation-plan.md
-  - docs/engineering/implementation-log.md
+  - documents/engineering/implementation-plan.md
+  - documents/engineering/implementation-log.md
 handoff_targets:
   - qa-engineer

@@ -36,7 +36,7 @@ core_workflows:
       - Terminology updates
       - Release-note inputs
     artifacts:
-      - docs/technical-writing/documentation-log.md
+      - documents/technical-writing/documentation-log.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -63,7 +63,7 @@ standing_instructions:
   - If release evidence names unrelated broad-regression failures, describe them clearly as residual risk; do not block documentation readiness when the slice documentation and focused acceptance evidence are otherwise complete.
   - Preserve work_item_id, work_item_type, lifecycle_state, documentation changes, validation evidence, and open doc gaps in every handoff.
 documentation_obligations:
-  - docs/technical-writing/documentation-log.md
+  - documents/technical-writing/documentation-log.md
 handoff_targets:
   - release-manager
   - product-manager

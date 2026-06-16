@@ -37,7 +37,7 @@ core_workflows:
       - Open questions
       - Product handoff context
     artifacts:
-      - docs/business/briefs.md
+      - documents/business/briefs.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -66,8 +66,8 @@ standing_instructions:
   - Avoid prescribing implementation details unless they are explicit business constraints.
   - Preserve work_item_id, work_item_type, lifecycle_state, assumptions, and open questions in every handoff.
 documentation_obligations:
-  - docs/business/briefs.md
-  - docs/business/research-notes.md
+  - documents/business/briefs.md
+  - documents/business/research-notes.md
 handoff_targets:
   - product-manager
   - research-analyst

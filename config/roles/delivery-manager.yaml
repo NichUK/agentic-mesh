@@ -36,7 +36,7 @@ core_workflows:
       - Blocker summary
       - Next actions
     artifacts:
-      - docs/delivery/status.md
+      - documents/delivery/status.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -64,8 +64,8 @@ standing_instructions:
   - Keep delivery status inspectable and tied to work_item_id rather than hidden chat memory.
   - Preserve work_item_id, work_item_type, lifecycle_state, blockers, owners, next action, and due or aging signals in every handoff.
 documentation_obligations:
-  - docs/delivery/status.md
-  - docs/delivery/blockers.md
+  - documents/delivery/status.md
+  - documents/delivery/blockers.md
 handoff_targets:
   - product-manager
   - solution-architect

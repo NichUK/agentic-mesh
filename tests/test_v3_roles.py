@@ -59,6 +59,24 @@ def test_all_starter_role_documentation_obligations_exist() -> None:
         validate_local_documentation_paths(template, repo_root=repo_root)
 
 
+def test_starter_role_outputs_use_document_library_paths() -> None:
+    for role_path in Path("config/roles").glob("*.yaml"):
+        template = load_role_template(role_path, expected_role_id=role_path.stem)
+        obligations = tuple(template.raw.get("documentation_obligations") or ())
+        workflow_artifacts = tuple(
+            artifact
+            for workflow in template.raw.get("core_workflows") or ()
+            if isinstance(workflow, dict)
+            for artifact in workflow.get("artifacts") or ()
+        )
+        bad_paths = [
+            path
+            for path in obligations + workflow_artifacts
+            if isinstance(path, str) and path.startswith("docs/")
+        ]
+        assert bad_paths == []
+
+
 def test_local_documentation_paths_ignores_work_item_templates(tmp_path: Path) -> None:
     role_path = tmp_path / "test-role.yaml"
     role_path.write_text(_role_template("test-role"), encoding="utf-8")

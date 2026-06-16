@@ -37,7 +37,7 @@ core_workflows:
       - Release decision status
       - Follow-up or rollback notes
     artifacts:
-      - docs/releases/release-records.md
+      - documents/releases/release-records.md
 standards_references:
   - name: Agentic Mesh Standards Snapshots
     url: docs/roles/standards-snapshots.md
@@ -70,5 +70,5 @@ standing_instructions:
   - Close the delivery loop only when release criteria are satisfied or a human-approved exception is recorded.
   - Preserve work_item_id, work_item_type, lifecycle_state, release outcome, evidence paths, approvals, and rollback notes in every handoff.
 documentation_obligations:
-  - docs/releases/release-records.md
+  - documents/releases/release-records.md
 handoff_targets: []
