@@ -1424,6 +1424,7 @@ def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tm
             },
         )
         detail = db.work_item_detail("work-1")
+        deliveries = db.list_outbound_deliveries("work-1")
     finally:
         db.close()
 
@@ -1432,6 +1433,12 @@ def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tm
     assert detail.governance_records[0].target_ref == "dm:sponsor"
     assert bridge.deliveries[0].target_ref == "dm:sponsor"
     assert "Which sponsor-visible channel" in bridge.deliveries[0].text_markdown
+    assert len(deliveries) == 1
+    assert deliveries[0]["purpose"] == "stakeholder.ask_question"
+    assert deliveries[0]["work_item_id"] == "work-1"
+    assert deliveries[0]["target_ref"] == "dm:sponsor"
+    assert deliveries[0]["thread_ref"] == "thread-1"
+    assert detail.deliveries[0].purpose == "stakeholder.ask_question"
 
 
 def test_v3_tool_service_stakeholder_question_with_target_requires_bridge(tmp_path: Path) -> None:
@@ -1485,6 +1492,7 @@ def test_v3_tool_service_messaging_send_uses_stakeholder_bridge(tmp_path: Path) 
                 "importance": "high",
             },
         )
+        deliveries = db.list_outbound_deliveries()
     finally:
         db.close()
 
@@ -1492,6 +1500,10 @@ def test_v3_tool_service_messaging_send_uses_stakeholder_bridge(tmp_path: Path) 
     assert bridge.deliveries[0].target_ref == "dm:sponsor"
     assert bridge.deliveries[0].text_markdown == "**Please review**"
     assert bridge.deliveries[0].importance == "high"
+    assert len(deliveries) == 1
+    assert deliveries[0]["call_id"] == result.call_id
+    assert deliveries[0]["purpose"] == "messaging.send"
+    assert deliveries[0]["status"] == "sent"
 
 
 def test_v3_tool_service_messaging_send_requires_bridge(tmp_path: Path) -> None:
@@ -1532,6 +1544,7 @@ def test_v3_tool_service_status_reply_delivers_when_target_is_present(tmp_path: 
                 "thread_ref": "thread-1",
             },
         )
+        deliveries = db.list_outbound_deliveries()
     finally:
         db.close()
 
@@ -1539,6 +1552,9 @@ def test_v3_tool_service_status_reply_delivers_when_target_is_present(tmp_path: 
     assert bridge.deliveries[0].target_ref == "dm:sponsor"
     assert bridge.deliveries[0].text_markdown == "Product Manager reply."
     assert bridge.deliveries[0].thread_ref == "thread-1"
+    assert len(deliveries) == 1
+    assert deliveries[0]["purpose"] == "status.reply"
+    assert deliveries[0]["target_ref"] == "dm:sponsor"
 
 
 def test_v3_tool_service_status_reply_without_target_remains_audit_only(tmp_path: Path) -> None:
@@ -1552,11 +1568,13 @@ def test_v3_tool_service_status_reply_without_target_remains_audit_only(tmp_path
             tool_name="status.reply",
             payload={"text_markdown": "MCP-local reply."},
         )
+        deliveries = db.list_outbound_deliveries()
     finally:
         db.close()
 
     assert result.terminal is True
     assert bridge.deliveries == []
+    assert deliveries == []
 
 
 def test_v3_tool_service_status_reply_with_target_requires_bridge(tmp_path: Path) -> None:
@@ -1695,6 +1713,7 @@ def test_v3_tool_service_approval_request_delivers_when_target_is_present(tmp_pa
             },
         )
         detail = db.work_item_detail("work-1")
+        deliveries = db.list_outbound_deliveries("work-1")
     finally:
         db.close()
 
@@ -1707,6 +1726,10 @@ def test_v3_tool_service_approval_request_delivers_when_target_is_present(tmp_pa
     assert "Approve product definition?" in bridge.deliveries[0].text_markdown
     assert "approval-1" in bridge.deliveries[0].text_markdown
     assert bridge.deliveries[0].importance == "high"
+    assert len(deliveries) == 1
+    assert deliveries[0]["purpose"] == "approval.request"
+    assert deliveries[0]["target_ref"] == "dm:sponsor"
+    assert detail.deliveries[0].purpose == "approval.request"
 
 
 def test_v3_tool_service_approval_request_moves_active_work_to_waiting_human(tmp_path: Path) -> None:

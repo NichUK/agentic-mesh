@@ -186,7 +186,7 @@ class V3ToolService:
         elif tool_name == "document.write_root_work_item_index":
             self._write_root_work_item_index()
         elif tool_name == "approval.request":
-            self._request_approval(role_instance_id=role_instance_id, payload=payload)
+            self._request_approval(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "conversation.compact_context":
             self._compact_conversation_context(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "release.record":
@@ -271,9 +271,9 @@ class V3ToolService:
                 source_ref=_required(payload, "source_ref"),
             )
         elif tool_name == "messaging.send":
-            self._send_message(payload)
+            self._send_message(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "status.reply":
-            self._send_optional_reply(payload)
+            self._send_optional_reply(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "stakeholder.ask_question":
             self._ask_stakeholder(
                 call_id=call_id,
@@ -303,10 +303,10 @@ class V3ToolService:
         else:
             raise ValueError(f"unknown V3 tool: {tool_name}")
 
-    def _send_message(self, payload: dict[str, Any]) -> None:
+    def _send_message(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         if self.stakeholder_bridge is None:
             raise ValueError("stakeholder bridge is not configured")
-        self.stakeholder_bridge.send(
+        receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
                 target_ref=_required(payload, "target_ref"),
@@ -315,15 +315,22 @@ class V3ToolService:
                 importance=str(payload.get("importance") or "normal"),
             )
         )
+        self._record_delivery_receipt(
+            receipt=receipt,
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            purpose="messaging.send",
+            payload=payload,
+        )
 
-    def _send_optional_reply(self, payload: dict[str, Any]) -> None:
+    def _send_optional_reply(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         target_ref = _optional(payload.get("target_ref"))
         if target_ref is None:
             return
         if self.stakeholder_bridge is None:
             raise ValueError("stakeholder bridge is not configured")
         text_markdown = _required(payload, "text_markdown")
-        self.stakeholder_bridge.send(
+        receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
                 target_ref=target_ref,
@@ -331,6 +338,13 @@ class V3ToolService:
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "normal"),
             )
+        )
+        self._record_delivery_receipt(
+            receipt=receipt,
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            purpose="status.reply",
+            payload=payload,
         )
 
     def _update_status(self, payload: dict[str, Any]) -> None:
@@ -367,7 +381,7 @@ class V3ToolService:
             return
         question = _required(payload, "question")
         text_markdown = _optional(payload.get("text_markdown")) or f"**Question**\n\n{question}"
-        self.stakeholder_bridge.send(
+        receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
                 target_ref=str(target_ref),
@@ -376,8 +390,15 @@ class V3ToolService:
                 importance=str(payload.get("importance") or "high"),
             )
         )
+        self._record_delivery_receipt(
+            receipt=receipt,
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            purpose="stakeholder.ask_question",
+            payload=payload,
+        )
 
-    def _request_approval(self, *, role_instance_id: str, payload: dict[str, Any]) -> None:
+    def _request_approval(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         target_ref = _optional(payload.get("target_ref"))
         if target_ref is not None and self.stakeholder_bridge is None:
             raise ValueError("stakeholder bridge is not configured")
@@ -403,7 +424,7 @@ class V3ToolService:
             f"Work item: `{work_item_id}`\n\n"
             f"Approval ID: `{approval_id}`"
         )
-        self.stakeholder_bridge.send(
+        receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
                 target_ref=target_ref,
@@ -411,6 +432,34 @@ class V3ToolService:
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "high"),
             )
+        )
+        self._record_delivery_receipt(
+            receipt=receipt,
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            purpose="approval.request",
+            payload=payload,
+        )
+
+    def _record_delivery_receipt(
+        self,
+        *,
+        receipt: object,
+        call_id: str,
+        role_instance_id: str,
+        purpose: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self.db.record_outbound_delivery(
+            delivery_id=str(getattr(receipt, "delivery_id")),
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            purpose=purpose,
+            connector=str(getattr(receipt, "connector")),
+            target_ref=str(getattr(receipt, "target_ref")),
+            thread_ref=_optional(getattr(receipt, "thread_ref")),
+            work_item_id=_optional(payload.get("work_item_id")),
+            status="sent",
         )
 
     def _compact_conversation_context(
