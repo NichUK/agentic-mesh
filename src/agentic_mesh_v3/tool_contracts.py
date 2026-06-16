@@ -5,6 +5,42 @@ from typing import Any
 
 TERMINAL_TOOLS = {"status.reply", "status.complete", "noop", "report.incomplete"}
 
+DO_TOOLS = {
+    "agent.heartbeat",
+    "approval.request",
+    "artifact.link",
+    "backlog.upsert",
+    "blocker.raise",
+    "consult.request",
+    "decision.record",
+    "document.write_root_work_item_index",
+    "document.write_work_item_index",
+    "governance.record_exception",
+    "handoff.require",
+    "informed.update",
+    "memory.propose_update",
+    "messaging.send",
+    "noop",
+    "release.close",
+    "release.deploy",
+    "release.record",
+    "risk.register",
+    "stakeholder.ask_question",
+    "status.update",
+    "work_item.update_state",
+    "work_item.upsert",
+}
+
+REPLY_TOOLS = {
+    "approval.request",
+    "blocker.raise",
+    "messaging.send",
+    "report.incomplete",
+    "stakeholder.ask_question",
+    "status.complete",
+    "status.reply",
+}
+
 
 TOOL_DESCRIPTIONS = {
     "agent.heartbeat": "Report role-instance heartbeat, inbox depth, and current work.",

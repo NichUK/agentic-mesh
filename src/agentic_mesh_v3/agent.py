@@ -15,6 +15,8 @@ from agentic_mesh_v3.governance import GovernanceInstructionSet
 from agentic_mesh_v3.governance import evaluate_governance_checklist
 from agentic_mesh_v3.memory import SQLiteRoleMemory
 from agentic_mesh_v3.reporting import AgentStatus
+from agentic_mesh_v3.tool_contracts import DO_TOOLS
+from agentic_mesh_v3.tool_contracts import REPLY_TOOLS
 
 
 TERMINAL_TOOL_NAMES = {"status.reply", "status.complete", "noop", "report.incomplete"}
@@ -117,20 +119,31 @@ class DatabaseTerminalToolCallAudit:
         self.db = db
 
     def snapshot(self, role_instance_id: str) -> frozenset[str]:
-        return frozenset(self._terminal_call_ids(role_instance_id))
+        return frozenset(self._tool_call_ids(role_instance_id))
 
     def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> None:
         del tool_calls
         before_ids = set(before) if isinstance(before, (frozenset, set)) else set()
-        new_terminal_ids = set(self._terminal_call_ids(role_instance_id)) - before_ids
-        if not new_terminal_ids:
+        new_calls = self._new_tool_calls(role_instance_id, before_ids)
+        if not any(bool(row.get("terminal")) for row in new_calls):
             raise ValueError("agent did not record a terminal safe-output tool call")
+        if not any(str(row.get("tool_name")) in DO_TOOLS for row in new_calls):
+            raise ValueError("agent did not record a DO safe-output tool call")
+        if not any(str(row.get("tool_name")) in REPLY_TOOLS for row in new_calls):
+            raise ValueError("agent did not record a REPLY safe-output tool call")
 
-    def _terminal_call_ids(self, role_instance_id: str) -> tuple[str, ...]:
+    def _tool_call_ids(self, role_instance_id: str) -> tuple[str, ...]:
         return tuple(
             str(row["call_id"])
             for row in self.db.list_tool_calls()  # type: ignore[attr-defined]
-            if row.get("role_instance_id") == role_instance_id and bool(row.get("terminal"))
+            if row.get("role_instance_id") == role_instance_id
+        )
+
+    def _new_tool_calls(self, role_instance_id: str, before_ids: set[str]) -> tuple[dict[str, object], ...]:
+        return tuple(
+            dict(row)
+            for row in self.db.list_tool_calls()  # type: ignore[attr-defined]
+            if row.get("role_instance_id") == role_instance_id and str(row.get("call_id")) not in before_ids
         )
 
 

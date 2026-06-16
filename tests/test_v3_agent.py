@@ -44,10 +44,45 @@ class RecordingTerminalWorker:
 
     def run(self, prompt, message):  # type: ignore[no-untyped-def]
         del prompt
+        do_result = self.tools.call(
+            role_instance_id=self.role_instance_id,
+            tool_name="noop",
+            payload={"reason": "No durable state change needed for the test message."},
+        )
+        reply_result = self.tools.call(
+            role_instance_id=self.role_instance_id,
+            tool_name="status.reply",
+            payload={"text_markdown": f"Processed {message.message_id}"},
+        )
+        return [do_result.call_id, reply_result.call_id]
+
+
+class RecordingReplyOnlyWorker:
+    def __init__(self, tools: V3ToolService, role_instance_id: str) -> None:
+        self.tools = tools
+        self.role_instance_id = role_instance_id
+
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        del prompt
         result = self.tools.call(
             role_instance_id=self.role_instance_id,
             tool_name="status.reply",
             payload={"text_markdown": f"Processed {message.message_id}"},
+        )
+        return [result.call_id]
+
+
+class RecordingDoOnlyWorker:
+    def __init__(self, tools: V3ToolService, role_instance_id: str) -> None:
+        self.tools = tools
+        self.role_instance_id = role_instance_id
+
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        del prompt, message
+        result = self.tools.call(
+            role_instance_id=self.role_instance_id,
+            tool_name="noop",
+            payload={"reason": "Nothing durable to do."},
         )
         return [result.call_id]
 
@@ -628,6 +663,58 @@ def test_role_agent_requeues_if_terminal_call_was_not_recorded_in_audit(tmp_path
     assert broker.depth("agent-inbox").pending == 1
 
 
+def test_role_agent_requeues_if_database_audit_records_reply_without_do_tool(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingReplyOnlyWorker(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+        )
+
+        result = service.run_once()
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert "did not record a DO safe-output tool call" in (result.error or "")
+    assert broker.depth("agent-inbox").pending == 1
+
+
+def test_role_agent_requeues_if_database_audit_records_do_without_reply_tool(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingDoOnlyWorker(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+        )
+
+        result = service.run_once()
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert "did not record a REPLY safe-output tool call" in (result.error or "")
+    assert broker.depth("agent-inbox").pending == 1
+
+
 def test_role_agent_accepts_terminal_call_recorded_through_tool_service(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
@@ -651,9 +738,11 @@ def test_role_agent_accepts_terminal_call_recorded_through_tool_service(tmp_path
 
     assert result is not None
     assert result.status == "completed"
-    assert result.tool_calls == (tool_calls[0]["call_id"],)
-    assert tool_calls[0]["tool_name"] == "status.reply"
-    assert tool_calls[0]["terminal"] is True
+    assert set(result.tool_calls) == {call["call_id"] for call in tool_calls}
+    calls_by_name = {call["tool_name"]: call for call in tool_calls}
+    assert set(calls_by_name) == {"noop", "status.reply"}
+    assert calls_by_name["noop"]["terminal"] is True
+    assert calls_by_name["status.reply"]["terminal"] is True
     assert broker.depth("agent-inbox").pending == 0
 
 
