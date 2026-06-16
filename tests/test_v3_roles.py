@@ -33,6 +33,20 @@ def test_load_role_template_rejects_legacy_default_tools(tmp_path: Path) -> None
         load_role_template(role_path)
 
 
+def test_load_role_template_rejects_non_string_instruction_items(tmp_path: Path) -> None:
+    role_path = tmp_path / "product-manager.yaml"
+    role_path.write_text(
+        _role_template("product-manager").replace(
+            "  - Use tools honestly.",
+            "  - Preserve honesty: agents must use tools.",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"standing_instructions\[0\] must be a non-empty string"):
+        load_role_template(role_path)
+
+
 def test_all_starter_role_templates_are_valid() -> None:
     for role_path in Path("config/roles").glob("*.yaml"):
         load_role_template(role_path, expected_role_id=role_path.stem)

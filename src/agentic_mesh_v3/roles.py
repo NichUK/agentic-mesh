@@ -70,6 +70,16 @@ def load_role_template(path: Path, *, expected_role_id: str | None = None) -> Ro
     role_id = str(raw["role_id"])
     if expected_role_id is not None and role_id != expected_role_id:
         raise ValueError(f"role template `{path}` has role_id `{role_id}`, expected `{expected_role_id}`")
+    for field_name in (
+        "accountabilities",
+        "boundaries",
+        "collaboration_style",
+        "quality_bar",
+        "memory_focus",
+        "anti_patterns",
+        "standing_instructions",
+    ):
+        _validate_string_list(path, raw[field_name], field_name=field_name)
     _validate_decision_rights(path, raw["decision_rights"])
     _validate_core_workflows(path, raw["core_workflows"])
     _validate_standards(path, raw["standards_references"])
@@ -86,6 +96,7 @@ def _validate_decision_rights(path: Path, value: Any) -> None:
     for key in ("owns", "advises", "escalates"):
         if _is_empty(value.get(key)):
             raise ValueError(f"role template `{path}` decision_rights.{key} is required")
+        _validate_string_list(path, value[key], field_name=f"decision_rights.{key}")
 
 
 def _validate_core_workflows(path: Path, value: Any) -> None:
@@ -97,6 +108,8 @@ def _validate_core_workflows(path: Path, value: Any) -> None:
         for key in ("workflow_id", "trigger", "inputs", "outputs", "artifacts"):
             if _is_empty(workflow.get(key)):
                 raise ValueError(f"role template `{path}` core_workflows[{index}].{key} is required")
+        for key in ("inputs", "outputs", "artifacts"):
+            _validate_string_list(path, workflow[key], field_name=f"core_workflows[{index}].{key}")
 
 
 def _validate_standards(path: Path, value: Any) -> None:
@@ -108,6 +121,14 @@ def _validate_standards(path: Path, value: Any) -> None:
         for key in ("name", "url", "applies_to"):
             if _is_empty(reference.get(key)):
                 raise ValueError(f"role template `{path}` standards_references[{index}].{key} is required")
+
+
+def _validate_string_list(path: Path, value: Any, *, field_name: str) -> None:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"role template `{path}` {field_name} must be a non-empty list")
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"role template `{path}` {field_name}[{index}] must be a non-empty string")
 
 
 def _append_local_doc_path(paths: list[str], value: Any) -> None:
