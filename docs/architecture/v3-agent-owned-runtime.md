@@ -331,7 +331,10 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   container without losing role identity or memory. Each role service consumes
   direct `agent.{role}` messages first and then `agent.{role}.relevance`
   messages, so unmentioned project-channel posts can be relevance-checked by
-  agents without letting a role consume another role's inbox.
+  agents without letting a role consume another role's inbox. Agent status
+  reports role-specific inbox depth across its direct and relevance consumers,
+  not whole-stream backlog depth, so hibernation and `/agents` do not mark one
+  role busy because another role has pending work.
 - Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
   routing, and Graph-backed outbound message delivery with injectable transport.
   Project-channel messages are retained as shared `project.context`.

@@ -102,6 +102,45 @@ def test_role_agent_reports_current_work_and_idle_status(tmp_path: Path) -> None
     assert reporter.statuses[-1].inbox_depth == 0
 
 
+def test_role_agent_reports_only_role_specific_inbox_depth(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager", "agent.engineering"])
+    broker.publish("agent-inbox", "agent.engineering", {"work_item_id": "work-eng"})
+    reporter = FakeStatusReporter()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=EchoWorker(),
+        memory=InMemoryRoleMemory(),
+        status_reporter=reporter,
+    )
+
+    result = service.run_once()
+
+    assert result is None
+    assert reporter.statuses[-1].inbox_depth == 0
+
+
+def test_role_agent_counts_direct_and_relevance_inbox_depth(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager", "agent.product-manager.relevance"])
+    broker.publish("agent-inbox", "agent.product-manager", {"work_item_id": "work-1"})
+    broker.publish("agent-inbox", "agent.product-manager.relevance", {"source_message_id": "msg-1"})
+    reporter = FakeStatusReporter()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=EchoWorker(),
+        memory=InMemoryRoleMemory(),
+        status_reporter=reporter,
+    )
+
+    service.run_once()
+
+    assert reporter.statuses[0].inbox_depth == 2
+    assert reporter.statuses[-1].inbox_depth == 1
+
+
 def test_role_agent_run_until_idle_processes_available_messages(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])

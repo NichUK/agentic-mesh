@@ -416,3 +416,8 @@ V3 role services now require each processed inbox message to report at least
 one terminal safe-output signal (`status.reply`, `status.complete`, `noop`, or
 `report.incomplete`) before the message is acknowledged. Non-terminal-only
 worker runs are retried or dead-lettered.
+
+V3 role-service status now reports role-specific inbox depth by summing the
+role's direct and relevance consumers. It no longer reports whole-stream depth,
+so `/agents` and hibernation planning do not treat unrelated role messages as
+this agent's backlog.
