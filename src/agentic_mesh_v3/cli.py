@@ -197,6 +197,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="NATS port mapping to include in generated Compose; repeatable.",
     )
+    materialize_parser.add_argument("--compose-include-supervisor", action="store_true")
+    materialize_parser.add_argument("--compose-supervisor-service-name", default="v3-supervisor")
+    materialize_parser.add_argument("--compose-supervisor-image")
+    materialize_parser.add_argument("--compose-supervisor-poll-seconds", type=float, default=30.0)
+    materialize_parser.add_argument("--compose-supervisor-compose-file")
+    materialize_parser.add_argument("--compose-supervisor-execute", action="store_true")
+    materialize_parser.add_argument("--compose-supervisor-mount-docker-socket", action="store_true")
     materialize_parser.add_argument("--local-dev-override", action="store_true")
 
     tool_parser = subparsers.add_parser("tool-call")
@@ -910,6 +917,13 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
                 nats_service_name=args.compose_nats_service_name,
                 nats_image=args.compose_nats_image,
                 nats_ports=tuple(args.compose_nats_ports or ("4222:4222", "8222:8222")),
+                include_supervisor=bool(args.compose_include_supervisor),
+                supervisor_service_name=args.compose_supervisor_service_name,
+                supervisor_image=args.compose_supervisor_image,
+                supervisor_poll_seconds=args.compose_supervisor_poll_seconds,
+                supervisor_compose_file=args.compose_supervisor_compose_file,
+                supervisor_execute=bool(args.compose_supervisor_execute),
+                supervisor_mount_docker_socket=bool(args.compose_supervisor_mount_docker_socket),
             ),
             encoding="utf-8",
         )

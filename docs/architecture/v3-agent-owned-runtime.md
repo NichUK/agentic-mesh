@@ -147,6 +147,10 @@ runtime supervisors.
 The V3 Compose renderer converts materialized role container specs into one
 Compose service per role instance, using the generated `run-agent-service`
 command and the same mounted path contract.
+It can also render an opt-in `v3-supervisor` service that runs
+`run-project-supervisor-service`; Compose-file execution and Docker socket
+mounting are explicit flags because they grant deployment control to that
+service.
 Role services retry failed broker messages up to a configured delivery limit
 and then dead-letter the message with the failure reason. This keeps poison
 messages visible for recovery without letting one broken assignment loop
