@@ -8,6 +8,8 @@ from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
 from agentic_mesh_v3.dogfood import run_local_e2e_dogfood_slice
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.observability import TelemetrySettings
+from agentic_mesh_v3.observability import configure_observability
 from agentic_mesh_v3.server import serve
 from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
 from agentic_mesh_v3.tools import V3ToolService
@@ -53,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     topology_parser.add_argument("--local-dev-override", action="store_true")
 
     args = parser.parse_args(argv)
+    configure_observability(TelemetrySettings.from_env(service_name=f"agentic-mesh-v3.{args.command}"))
     if args.command == "init-db":
         db = V3Database(args.db)
         try:
