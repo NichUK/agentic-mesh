@@ -324,18 +324,19 @@ class V3ToolService:
         )
 
     def _send_optional_reply(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
-        target_ref = _optional(payload.get("target_ref"))
+        target_ref = _optional(payload.get("target_ref")) or _optional(payload.get("reply_target_ref"))
         if target_ref is None:
             return
         if self.stakeholder_bridge is None:
             raise ValueError("stakeholder bridge is not configured")
         text_markdown = _required(payload, "text_markdown")
+        thread_ref = _optional(payload.get("thread_ref")) or _optional(payload.get("reply_thread_ref"))
         receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
                 target_ref=target_ref,
                 text_markdown=text_markdown,
-                thread_ref=_optional(payload.get("thread_ref")),
+                thread_ref=thread_ref,
                 importance=str(payload.get("importance") or "normal"),
             )
         )

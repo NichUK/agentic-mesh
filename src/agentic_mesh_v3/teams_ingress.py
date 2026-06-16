@@ -101,6 +101,7 @@ def normalize_teams_activity(
     }
     mentioned_roles = _mentioned_roles(activity, role_by_name=role_by_name, role_by_bot_id=role_by_bot_id)
     recipient_role = _recipient_role(activity, role_by_name=role_by_name, role_by_bot_id=role_by_bot_id)
+    team_id, channel_id = _team_channel_ids(activity)
 
     return StakeholderMessage(
         connector="teams",
@@ -111,6 +112,13 @@ def normalize_teams_activity(
         text=_clean_text(str(activity.get("text") or "")),
         mentioned_roles=mentioned_roles,
         thread_ref=_optional_text(activity.get("replyToId")),
+        reply_target_ref=_teams_reply_target_ref(
+            activity,
+            source_type=source_type,
+            team_id=team_id,
+            channel_id=channel_id,
+        ),
+        reply_thread_ref=_teams_reply_thread_ref(activity, source_type=source_type),
     )
 
 
@@ -149,12 +157,35 @@ def _recipient_role(
 def _conversation_ref(activity: dict[str, Any], *, source_type: str, recipient_role: str | None) -> str:
     if source_type == "dm":
         return f"dm:{recipient_role}" if recipient_role else f"dm:{_conversation_id(activity)}"
+    team_id, channel_id = _team_channel_ids(activity)
+    return f"team:{team_id}/channel:{channel_id}"
+
+
+def _team_channel_ids(activity: dict[str, Any]) -> tuple[str, str]:
     channel_data = _mapping(activity.get("channelData"))
     team = _mapping(channel_data.get("team"))
     channel = _mapping(channel_data.get("channel"))
     team_id = str(team.get("id") or "unknown-team")
     channel_id = str(channel.get("id") or _conversation_id(activity))
+    return team_id, channel_id
+
+
+def _teams_reply_target_ref(
+    activity: dict[str, Any],
+    *,
+    source_type: str,
+    team_id: str,
+    channel_id: str,
+) -> str:
+    if source_type == "dm":
+        return f"chat:{_conversation_id(activity)}"
     return f"team:{team_id}/channel:{channel_id}"
+
+
+def _teams_reply_thread_ref(activity: dict[str, Any], *, source_type: str) -> str | None:
+    if source_type == "dm":
+        return None
+    return _optional_text(activity.get("replyToId")) or _optional_text(activity.get("id"))
 
 
 def _sender_ref(activity: dict[str, Any]) -> str:

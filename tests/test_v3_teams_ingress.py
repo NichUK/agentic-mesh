@@ -27,6 +27,8 @@ def test_normalize_personal_teams_activity_targets_recipient_role() -> None:
 
     assert message.source_type == "dm"
     assert message.conversation_ref == "dm:product-manager"
+    assert message.reply_target_ref == "chat:dm-1"
+    assert message.reply_thread_ref is None
     assert message.sender_ref == "user-1"
     assert message.text == "Give me a status update."
 
@@ -59,6 +61,8 @@ def test_normalize_channel_activity_preserves_thread_and_mentions() -> None:
     assert message.source_type == "channel"
     assert message.conversation_ref == "team:team-1/channel:channel-1"
     assert message.thread_ref == "root-msg-1"
+    assert message.reply_target_ref == "team:team-1/channel:channel-1"
+    assert message.reply_thread_ref == "root-msg-1"
     assert message.mentioned_roles == ("product-manager",)
     assert message.text == "AM-Product Manager please review this."
 
@@ -92,6 +96,8 @@ def test_normalized_channel_message_routes_through_local_bridge() -> None:
 
     subjects = bridge.route_inbound(message)
 
+    assert message.reply_target_ref == "team:team-1/channel:channel-1"
+    assert message.reply_thread_ref == "msg-2"
     assert subjects == ["project.context", "agent.product-manager"]
 
 
@@ -121,6 +127,8 @@ def test_teams_activity_router_normalizes_and_routes_to_agent_inbox() -> None:
     payload = broker.fetch("agent-inbox", "pm")[0].payload
     assert payload["route_type"] == "role_dm"
     assert payload["conversation_ref"] == "dm:product-manager"
+    assert payload["reply_target_ref"] == "chat:dm-1"
+    assert payload["reply_thread_ref"] is None
 
 
 def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
