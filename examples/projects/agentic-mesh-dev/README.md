@@ -75,6 +75,9 @@ Files under `/documents` as the document-library source, records work-item
 dossiers under `/documents/work-items/{work_item_id}`, routes sponsor approval
 and closure notifications through configured stakeholder contacts, and uses a
 configured release deployment target for the dogfood Compose activation.
+The `v3-dogfood-proof` Compose profile runs the agent-service dogfood path, so
+the proof progresses through role inboxes, safe-output tool calls, handoffs,
+QA, release deployment, Project Manager closure, and document-index updates.
 Runtime tokens such as `AGENTIC_MESH_ONEDRIVE_TOKEN` and Graph/Teams
 credentials are supplied by the deployment environment, not committed to the
 project file.

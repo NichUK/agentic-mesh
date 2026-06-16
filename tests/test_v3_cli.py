@@ -16,6 +16,7 @@ from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.dogfood_agent_service import WORK_ITEM_ID as AGENT_DOGFOOD_WORK_ITEM_ID
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.worker_adapters import CodexCliWorker
@@ -374,6 +375,84 @@ def test_cli_audit_dogfood_returns_failure_for_missing_evidence(tmp_path: Path, 
     assert output["checks"][0]["check_id"] == "work_item.exists"
 
 
+def test_cli_agent_e2e_dogfood_passes_completion_audit(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    docs_root = tmp_path / "documents"
+    project_config = tmp_path / "project.yaml"
+    python_exe = sys.executable.replace("\\", "/")
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+            "solution-architect",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+connectors:
+  teams:
+    adapter: local
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: dm:sponsor
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - '{python_exe}'
+      - -c
+      - print('agent-service dogfood deployed')
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "--db",
+                str(db_path),
+                "--project-config",
+                str(project_config),
+                "agent-e2e-dogfood",
+                "--runtime-state-dir",
+                str(tmp_path / "runtime"),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "audit-dogfood",
+            "--work-item-id",
+            AGENT_DOGFOOD_WORK_ITEM_ID,
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert output["passed"] is True
+
+
 def test_cli_local_e2e_dogfood_requires_onedrive_token_for_project_document_library(
     tmp_path: Path,
     monkeypatch,
@@ -410,6 +489,164 @@ roles:
         assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in str(exc)
     else:
         raise AssertionError("OneDrive-backed dogfood runs should require an access token")
+
+
+def test_cli_preflight_live_reports_missing_graph_env(tmp_path: Path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_TOKEN", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_TEAMS_TOKEN", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_TEAMS_SENDER_USER_ID", raising=False)
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    role_bots = "\n".join(
+        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: drive-123
+  root_path: /documents
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    role_bots:
+{role_bots}
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: user:sponsor-user
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    failed = {check["check_id"] for check in output["checks"] if not check["passed"]}
+    assert "documents.env" in failed
+    assert "teams.env.token" in failed
+    assert "teams.env.sender" in failed
+
+
+def test_cli_preflight_live_reports_missing_config_env_reference(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_DRIVE_ID", raising=False)
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}
+roles:
+  product-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    assert output["passed"] is False
+    assert output["checks"][0]["check_id"] == "project_config.load"
+    assert "AGENTIC_MESH_ONEDRIVE_DRIVE_ID" in output["checks"][0]["detail"]
+
+
+def test_cli_preflight_live_passes_local_project_config(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    docs_root = tmp_path / "documents"
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"  {role_id}:\n    instances: 1"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+connectors:
+  teams:
+    adapter: local
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: dm:sponsor
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 0
+    assert output["passed"] is True
+    assert {check["check_id"] for check in output["checks"]} >= {
+        "roles.required",
+        "documents.config",
+        "teams.config",
+        "broker.config",
+        "deployment.target.local-smoke",
+        "stakeholders.sponsor",
+    }
 
 
 def test_cli_tool_call_uses_project_config_document_library(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
