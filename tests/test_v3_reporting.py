@@ -13,8 +13,40 @@ def test_reporting_pages_include_required_status_data() -> None:
     snapshot = ReportingSnapshot(
         project_id="agentic-mesh-dev",
         backlog=(BacklogItemStatus("queue-1", "Add status page", "queued", "project-manager", "work-1"),),
-        work_items=(WorkItemStatus("work-1", "Add status page", "active", "engineering", "Implement", 2),),
-        agents=(AgentStatus("agentic-mesh-dev.engineering.1", "running", "2026-06-15T10:00:00Z", "work-1", 3, 1),),
+        work_items=(
+            WorkItemStatus("work-1", "Add status page", "active", "engineering", "Implement", 2),
+            WorkItemStatus(
+                "work-blocked",
+                "Fix deployment",
+                "blocked",
+                "release-manager",
+                "Resolve deployment credentials.",
+                0,
+                "2026-06-15 10:00:00",
+                "work item is in blocked",
+            ),
+            WorkItemStatus(
+                "work-stale",
+                "Review stale item",
+                "active",
+                "project-manager",
+                "Chase owner.",
+                0,
+                "2026-06-15 09:00:00",
+                "work item has not changed for 7200 seconds",
+            ),
+        ),
+        agents=(
+            AgentStatus(
+                "agentic-mesh-dev.engineering.1",
+                "running",
+                "2026-06-15T10:00:00Z",
+                "work-1",
+                3,
+                1,
+                ("Missing consultation evidence for `qa-engineer`.",),
+            ),
+        ),
     )
 
     status_html = render_status_page(snapshot)
@@ -22,8 +54,16 @@ def test_reporting_pages_include_required_status_data() -> None:
     work_html = render_work_item_page(snapshot, "work-1")
 
     assert "Backlog / Queue" in status_html
+    assert "Attention Needed" in status_html
+    assert "Stale Work" in status_html
+    assert "Governance Waits" in status_html
     assert "Active Work" in status_html
     assert '<a href="/work-item/work-1">work-1</a>' in status_html
+    assert '<a href="/work-item/work-blocked">work-blocked</a>' in status_html
+    assert "Resolve deployment credentials." in status_html
+    assert '<a href="/work-item/work-stale">work-stale</a>' in status_html
+    assert "work item has not changed for 7200 seconds" in status_html
+    assert "Missing consultation evidence for `qa-engineer`." in status_html
     assert "agentic-mesh-dev.engineering.1" in agents_html
     assert "Dead Letters" in agents_html
     assert "<td>1</td>" in agents_html
