@@ -152,6 +152,12 @@ Manager owns release/deploy tools. Roles can request out-of-flow help through
 consult/handoff tools, but cannot silently execute another role's specialist
 authority.
 
+Prompt Engineer is a specialist consultation role for prompt, role-instruction,
+safe-output guidance, context-loading, memory-instruction, and prompt-driven
+behaviour changes. It is not a default dependency for every development phase;
+Engineering consults it when agent behaviour is in scope or when prompt/tool
+contract risk is material to the slice.
+
 Handoffs are requirements packets, not informal expectations. A
 `handoff.require` call must include the work item, target role, phase,
 accountable role, required next action, acceptance criteria, evidence

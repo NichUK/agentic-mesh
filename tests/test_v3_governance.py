@@ -11,7 +11,9 @@ def test_default_raci_has_one_accountable_per_phase() -> None:
     phases = {assignment.phase for assignment in DEFAULT_SDLC_RACI.assignments}
     assert "requirements" in phases
     assert "deployment" in phases
-    assert DEFAULT_SDLC_RACI.for_phase("development").accountable == "engineering"
+    development = DEFAULT_SDLC_RACI.for_phase("development")
+    assert development.accountable == "engineering"
+    assert "prompt-engineer" not in development.consulted
 
 
 def test_raci_rejects_duplicate_phase() -> None:
@@ -52,6 +54,7 @@ def test_governance_prompt_rules_are_explicit_about_consultation() -> None:
 
     assert "<governance-instructions>" in prompt_section
     assert "Consult every role marked C" in prompt_section
+    assert "Consult Prompt Engineer when a slice changes prompt components" in prompt_section
     assert "Ask the sponsor" in prompt_section
     assert "Write governance evidence" in prompt_section
 

@@ -278,3 +278,9 @@ start, wake, hibernate, and no-op decisions without mutating container state.
 V3 safe-output tools now include `artifact.link` for role-owned evidence
 linking. Any role can register an existing document-library path as a work-item
 artifact, and the tool rejects paths that escape the document library.
+
+Prompt Engineer remains a specialist consultation role, not a default
+dependency for every development phase. V3 development RACI excludes it by
+default, while governance instructions require consultation when prompt
+components, role instructions, safe-output guidance, context loading, memory
+instructions, or prompt-driven behaviour are in scope.
