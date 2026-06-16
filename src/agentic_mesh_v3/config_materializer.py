@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+from agentic_mesh_v3.agent import RoleInstanceConfig
 from agentic_mesh_v3.governance import RaciMatrix
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
 
@@ -55,3 +56,30 @@ def materialize_agent_config(
         target.write_text(content, encoding="utf-8")
         written.append(target)
     return written
+
+
+def build_role_instance_config(
+    *,
+    project_id: str,
+    role_id: str,
+    instance_id: str,
+    agent_config_dir: Path,
+    runtime_state_dir: Path,
+    inbox_stream: str,
+) -> RoleInstanceConfig:
+    """Create the runtime role-service config from a mounted config folder."""
+
+    role_instance_id = f"{project_id}.{role_id}.{instance_id}"
+    return RoleInstanceConfig(
+        project_id=project_id,
+        role_id=role_id,
+        instance_id=instance_id,
+        role_prompt_path=agent_config_dir / "role.md",
+        organisation_prompt_path=agent_config_dir / "organisation.md",
+        project_prompt_path=agent_config_dir / "project.md",
+        raci_path=agent_config_dir / "raci.json",
+        tools_prompt_path=agent_config_dir / "tools.md",
+        memory_db_path=runtime_state_dir / "memory" / f"{role_instance_id}.sqlite3",
+        inbox_stream=inbox_stream,
+        inbox_consumer=role_instance_id,
+    )

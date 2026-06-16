@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from agentic_mesh_v3.config_materializer import build_role_instance_config
 from agentic_mesh_v3.config_materializer import materialize_agent_config
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
@@ -39,3 +40,24 @@ def test_materialize_agent_config_writes_mounted_files(tmp_path: Path) -> None:
     assert "safe-output tools" in (tmp_path / "agent" / "tools.md").read_text(encoding="utf-8")
     assert "requirements" in (tmp_path / "agent" / "raci.json").read_text(encoding="utf-8")
     assert "tools.md" in (tmp_path / "agent" / "container.json").read_text(encoding="utf-8")
+
+
+def test_build_role_instance_config_uses_materialized_prompt_paths(tmp_path: Path) -> None:
+    config = build_role_instance_config(
+        project_id="agentic-mesh-dev",
+        role_id="product-manager",
+        instance_id="1",
+        agent_config_dir=tmp_path / "agent",
+        runtime_state_dir=tmp_path / "state",
+        inbox_stream="agent-inbox",
+    )
+
+    assert config.role_instance_id == "agentic-mesh-dev.product-manager.1"
+    assert config.role_prompt_path == tmp_path / "agent" / "role.md"
+    assert config.organisation_prompt_path == tmp_path / "agent" / "organisation.md"
+    assert config.project_prompt_path == tmp_path / "agent" / "project.md"
+    assert config.raci_path == tmp_path / "agent" / "raci.json"
+    assert config.tools_prompt_path == tmp_path / "agent" / "tools.md"
+    assert config.memory_db_path == tmp_path / "state" / "memory" / "agentic-mesh-dev.product-manager.1.sqlite3"
+    assert config.inbox_stream == "agent-inbox"
+    assert config.inbox_consumer == "agentic-mesh-dev.product-manager.1"
