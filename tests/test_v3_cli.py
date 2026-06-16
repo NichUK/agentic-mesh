@@ -300,8 +300,8 @@ roles:
     )
     roles_dir = tmp_path / "roles"
     roles_dir.mkdir()
-    (roles_dir / "product-manager.yaml").write_text("role_id: product-manager\npurpose: Product\n", encoding="utf-8")
-    (roles_dir / "engineering.yaml").write_text("role_id: engineering\npurpose: Engineering\n", encoding="utf-8")
+    (roles_dir / "product-manager.yaml").write_text(_role_template("product-manager"), encoding="utf-8")
+    (roles_dir / "engineering.yaml").write_text(_role_template("engineering"), encoding="utf-8")
     org_file = tmp_path / "org.md"
     org_file.write_text("Organisation rule.", encoding="utf-8")
     tools_file = tmp_path / "tools.md"
@@ -350,6 +350,48 @@ roles:
     )
     assert "run-agent-service" in compose_output.read_text(encoding="utf-8")
     assert "mesh-test" in compose_output.read_text(encoding="utf-8")
+
+
+def _role_template(role_id: str) -> str:
+    return f"""
+role_id: {role_id}
+purpose: Test role.
+role_profile: Act as a specialist role for tests.
+accountabilities:
+  - Do the role work.
+decision_rights:
+  owns:
+    - Own role decisions.
+  advises:
+    - Advise related roles.
+  escalates:
+    - Escalate blockers.
+boundaries:
+  - Stay inside role authority.
+collaboration_style:
+  - Be concise.
+quality_bar:
+  - Evidence is recorded.
+memory_focus:
+  - Useful recurring context.
+core_workflows:
+  - workflow_id: test-workflow
+    trigger: Test trigger.
+    inputs:
+      - Input
+    outputs:
+      - Output
+    artifacts:
+      - documents/work-items/{{work_item_id}}/index.md
+standards_references:
+  - name: Test Standard
+    url: docs/test.md
+    applies_to: Tests
+anti_patterns:
+  - Pretending work happened.
+standing_instructions:
+  - Use tools honestly.
+"""
 
 
 def test_cli_ensure_agent_stream_sets_direct_and_relevance_subjects() -> None:

@@ -184,3 +184,10 @@ Materialized V3 agent `tools.md` files now append the role-scoped safe-output
 tool catalog, marking each tool allowed or blocked for that role and noting
 terminal tools. This gives Codex and other workers prompt-visible authority
 guidance before they call CLI/MCP tools.
+
+V3 role templates now load through a validator before agent config
+materialization. Required charter fields include role profile,
+accountabilities, decision rights, boundaries, collaboration style, quality
+bar, memory focus, workflows, standards references, anti-patterns, and
+standing instructions; all starter templates under `config/roles` are covered
+by tests.
