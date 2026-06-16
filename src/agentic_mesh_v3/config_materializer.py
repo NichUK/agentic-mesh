@@ -202,6 +202,10 @@ def _role_project_instructions(role: V3RoleInstanceConfig, project_config: V3Pro
         "- Each work-item dossier must maintain `index.md`; the root work-item index is `/documents/work-items/index.md`.",
         "- Durable system, architecture, product, engineering, QA, operations, release, risk, decision, and programming documentation also belongs in the document library.",
         "",
+        "## Stakeholder Contacts",
+        "",
+        *_stakeholder_contact_lines(project_config),
+        "",
         "## Release Deployment Targets",
         "",
         *_release_deployment_target_lines(project_config),
@@ -214,6 +218,26 @@ def _role_project_instructions(role: V3RoleInstanceConfig, project_config: V3Pro
     else:
         lines.extend(f"- {instruction}" for instruction in role.instructions)
     return "\n".join(lines)
+
+
+def _stakeholder_contact_lines(project_config: V3ProjectConfig) -> list[str]:
+    if not project_config.stakeholder_contacts:
+        return [
+            "- No stakeholder contacts are configured.",
+            "- For stakeholder questions or approvals, use the reply target from the current conversation when available; otherwise ask Project Manager for routing.",
+        ]
+    lines = [
+        "- Use these configured contacts for stakeholder questions, approvals, and sponsor-facing messages when no more specific conversation reply target is available.",
+    ]
+    for contact in project_config.stakeholder_contacts:
+        lines.append(
+            f"- `{contact.contact_id}` ({contact.display_name}): connector `{contact.connector}`, "
+            f"target_ref `{contact.target_ref}`."
+        )
+        if contact.thread_ref:
+            lines.append(f"  - Thread ref: `{contact.thread_ref}`")
+        lines.append(f"  - Default importance: `{contact.importance}`")
+    return lines
 
 
 def _release_deployment_target_lines(project_config: V3ProjectConfig) -> list[str]:

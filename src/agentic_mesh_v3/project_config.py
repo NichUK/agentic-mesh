@@ -70,6 +70,16 @@ class V3TeamsConnectorConfig:
 
 
 @dataclass(frozen=True)
+class V3StakeholderContactConfig:
+    contact_id: str
+    display_name: str
+    connector: str
+    target_ref: str
+    thread_ref: str | None = None
+    importance: str = "high"
+
+
+@dataclass(frozen=True)
 class V3FlowConfig:
     template: str | None = None
     path: Path | None = None
@@ -101,6 +111,7 @@ class V3ProjectConfig:
     document_library: V3DocumentLibraryConfig
     roles: tuple[V3RoleInstanceConfig, ...]
     release_deployment_targets: tuple[V3ReleaseDeploymentTargetConfig, ...] = ()
+    stakeholder_contacts: tuple[V3StakeholderContactConfig, ...] = ()
     teams_connector: V3TeamsConnectorConfig = V3TeamsConnectorConfig()
     flow: V3FlowConfig = V3FlowConfig()
     target_repositories: tuple[V3TargetRepositoryConfig, ...] = ()
@@ -144,6 +155,7 @@ def load_project_config(path: Path) -> V3ProjectConfig:
         raise ValueError("roles must define at least one role")
     _validate_role_bot_keys(raw, roles_raw)
     release_targets_raw = _mapping(raw.get("release_deployment_targets"))
+    stakeholder_contacts_raw = _mapping(raw.get("stakeholder_contacts"))
     teams_raw = _mapping(_mapping(raw.get("connectors")).get("teams"))
     flow_raw = _mapping(raw.get("flow"))
     flow_template = _optional(flow_raw.get("template"))
@@ -170,6 +182,10 @@ def load_project_config(path: Path) -> V3ProjectConfig:
         release_deployment_targets=tuple(
             _load_release_deployment_target(target_id, _mapping(target_raw))
             for target_id, target_raw in sorted(release_targets_raw.items())
+        ),
+        stakeholder_contacts=tuple(
+            _load_stakeholder_contact(contact_id, _mapping(contact_raw))
+            for contact_id, contact_raw in sorted(stakeholder_contacts_raw.items())
         ),
         teams_connector=V3TeamsConnectorConfig(
             adapter=_optional(teams_raw.get("adapter")),
@@ -266,6 +282,27 @@ def _load_release_deployment_target(
             or "Re-run the previous known-good deployment target."
         ),
         reason=_optional(target_raw.get("reason") or target_raw.get("description")),
+    )
+
+
+def _load_stakeholder_contact(
+    contact_id: str,
+    contact_raw: dict[str, Any],
+) -> V3StakeholderContactConfig:
+    _validate_config_key(f"stakeholder_contacts.{contact_id}", contact_id)
+    connector = contact_raw.get("connector")
+    if not connector:
+        raise ValueError(f"stakeholder_contacts.{contact_id}.connector is required")
+    target_ref = contact_raw.get("target_ref")
+    if not target_ref:
+        raise ValueError(f"stakeholder_contacts.{contact_id}.target_ref is required")
+    return V3StakeholderContactConfig(
+        contact_id=contact_id,
+        display_name=str(contact_raw.get("display_name") or contact_id),
+        connector=str(connector),
+        target_ref=str(target_ref),
+        thread_ref=_optional(contact_raw.get("thread_ref")),
+        importance=str(contact_raw.get("importance") or "high"),
     )
 
 
