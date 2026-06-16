@@ -304,3 +304,45 @@ roles:
 
     with pytest.raises(ValueError, match=r"release_deployment_targets.Runtime Deploy must match"):
         load_project_config(project_file)
+
+
+def test_load_project_config_rejects_unsafe_teams_role_bot_id(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+roles:
+  product-manager:
+    instances: 1
+connectors:
+  teams:
+    role_bots:
+      Product Manager:
+        display_name: AM-Product Manager
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"connectors.teams.role_bots.Product Manager must match"):
+        load_project_config(project_file)
+
+
+def test_load_project_config_rejects_unknown_teams_role_bot_id(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+roles:
+  product-manager:
+    instances: 1
+connectors:
+  teams:
+    role_bots:
+      delivery-manager:
+        display_name: AM-Delivery Manager
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"connectors.teams.role_bots.delivery-manager must reference a configured role"):
+        load_project_config(project_file)

@@ -198,3 +198,27 @@ def test_project_v3_schema_rejects_unsafe_release_deployment_target_ids() -> Non
 
     assert errors
     assert "does not match" in errors[0].message
+
+
+def test_project_v3_schema_rejects_unsafe_teams_role_bot_ids() -> None:
+    project = {
+        "project_id": "agentic-mesh-dev",
+        "connectors": {
+            "teams": {
+                "role_bots": {
+                    "Product Manager": {
+                        "display_name": "AM-Product Manager",
+                    },
+                },
+            },
+        },
+        "roles": {
+            "product-manager": {"instances": 1},
+        },
+    }
+
+    validator = jsonschema.Draft202012Validator(_schema())
+    errors = sorted(validator.iter_errors(project), key=lambda item: item.json_path)
+
+    assert errors
+    assert "does not match" in errors[0].message

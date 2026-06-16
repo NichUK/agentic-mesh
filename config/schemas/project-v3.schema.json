@@ -205,6 +205,9 @@
         "tenant_id": { "type": "string" },
         "role_bots": {
           "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
           "additionalProperties": { "$ref": "#/$defs/roleBot" }
         },
         "team": {
