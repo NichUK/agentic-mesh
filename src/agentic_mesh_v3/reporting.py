@@ -379,7 +379,7 @@ def _artifact_table(work_item_id: str, items: tuple[ArtifactStatus, ...]) -> str
         url = artifact_viewer_url(work_item_id, item.filename)
         rows.append(
             "<tr>"
-            f"<td><a href=\"{html.escape(url)}\">{html.escape(item.title)}</a></td>"
+            f"<td><a href=\"{html.escape(url)}\" target=\"_blank\" rel=\"noopener noreferrer\">{html.escape(item.title)}</a></td>"
             f"<td>{html.escape(item.document_type)}</td>"
             f"<td>{html.escape(item.status)}</td>"
             f"<td>{html.escape(item.created_by_role)}</td>"
