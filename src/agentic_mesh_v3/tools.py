@@ -282,7 +282,9 @@ class V3ToolService:
                 tool_name=tool_name,
                 payload=payload,
             )
-        elif tool_name in TERMINAL_TOOLS or tool_name == "status.update":
+        elif tool_name == "status.update":
+            self._update_status(payload)
+        elif tool_name in TERMINAL_TOOLS:
             return
         else:
             raise ValueError(f"unknown V3 tool: {tool_name}")
@@ -317,6 +319,17 @@ class V3ToolService:
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "normal"),
             )
+        )
+
+    def _update_status(self, payload: dict[str, Any]) -> None:
+        work_item_id = _optional(payload.get("work_item_id"))
+        if work_item_id is None:
+            return
+        self.db.update_work_item_progress(
+            work_item_id=work_item_id,
+            owner_role=_optional(payload.get("owner_role")),
+            current_phase=_optional(payload.get("current_phase")),
+            next_action=_summary(payload),
         )
 
     def _ask_stakeholder(

@@ -495,3 +495,8 @@ use for each governance duty: `consult.request`, `informed.update`,
 `stakeholder.ask_question`, `governance.record_exception`, and
 `document.write_work_item_index`. This makes consultation and evidence capture
 less likely to become prose-only claims.
+
+V3 `status.update` now has a visible work-item effect. It can still be used as
+an audit-only non-terminal progress call without `work_item_id`, but when a
+work item is supplied it updates that item's next action/current phase without
+performing a lifecycle state transition.

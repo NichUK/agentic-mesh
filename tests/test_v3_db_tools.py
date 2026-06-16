@@ -158,6 +158,69 @@ def test_v3_work_item_upsert_materializes_minimum_governance_context(tmp_path: P
     assert detail.governance["responsible_roles"] == ["engineering"]
 
 
+def test_v3_status_update_records_visible_work_item_progress_without_state_transition(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="work_item.upsert",
+            payload={
+                "work_item_id": "work-1",
+                "title": "Add status page",
+                "description": "Build the V3 status page.",
+                "state": "active",
+                "owner_role": "engineering",
+                "current_phase": "development",
+                "next_action": "Implement.",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="status.update",
+            payload={
+                "work_item_id": "work-1",
+                "message": "Implementation is complete; preparing handoff to QA.",
+                "current_phase": "development",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+        event_types = [
+            row["event_type"]
+            for row in db.connection.execute(
+                "SELECT event_type FROM events WHERE aggregate_id='work-1' ORDER BY created_at ASC"
+            )
+        ]
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "active"
+    assert detail.next_action == "Implementation is complete; preparing handoff to QA."
+    assert "work_item.progress_updated" in event_types
+
+
+def test_v3_status_update_without_work_item_remains_audit_only(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        result = V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="status.update",
+            payload={"message": "Sweep complete."},
+        )
+        calls = db.list_tool_calls()
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    assert result.tool_name == "status.update"
+    assert calls[0]["payload"]["message"] == "Sweep complete."
+    assert snapshot.work_items == ()
+
+
 def test_v3_work_item_upsert_preserves_supplied_governance_context(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

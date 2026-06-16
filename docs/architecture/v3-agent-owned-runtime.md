@@ -308,6 +308,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   delivered without connector credentials.
   `status.reply` remains valid as an audit-only terminal record, but when it
   carries target metadata it sends the Markdown reply through the bridge.
+  `status.update` remains valid as an audit-only progress record when no work
+  item is supplied; when `work_item_id` is present, it updates the work item's
+  visible next action/current phase without performing a lifecycle transition.
   `approval.request` records the approval request and, when target metadata is
   present, sends the sponsor-facing approval request through the bridge.
   `record-approval-response` records sponsor/operator decisions and, when
