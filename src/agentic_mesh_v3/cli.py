@@ -88,6 +88,28 @@ def main(argv: list[str] | None = None) -> int:
     lifecycle_apply_parser.add_argument("--working-directory", type=Path)
     lifecycle_apply_parser.add_argument("--timeout-seconds", type=int, default=300)
     lifecycle_apply_parser.add_argument("--execute", action="store_true")
+    supervisor_tick_parser = subparsers.add_parser("run-project-supervisor-tick")
+    supervisor_tick_parser.add_argument("--stale-after-seconds", type=int, default=3600)
+    supervisor_tick_parser.add_argument("--publish-sweep-to-project-manager", action="store_true")
+    supervisor_tick_parser.add_argument("--project-manager-role-id", default="project-manager")
+    supervisor_tick_parser.add_argument("--idle-after-seconds", type=int, default=1800)
+    supervisor_tick_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    supervisor_tick_parser.add_argument("--compose-file", type=Path, action="append")
+    supervisor_tick_parser.add_argument("--working-directory", type=Path)
+    supervisor_tick_parser.add_argument("--timeout-seconds", type=int, default=300)
+    supervisor_tick_parser.add_argument("--execute", action="store_true")
+    supervisor_loop_parser = subparsers.add_parser("run-project-supervisor-loop")
+    supervisor_loop_parser.add_argument("--cycles", type=int, required=True)
+    supervisor_loop_parser.add_argument("--poll-seconds", type=float, default=5.0)
+    supervisor_loop_parser.add_argument("--stale-after-seconds", type=int, default=3600)
+    supervisor_loop_parser.add_argument("--publish-sweep-to-project-manager", action="store_true")
+    supervisor_loop_parser.add_argument("--project-manager-role-id", default="project-manager")
+    supervisor_loop_parser.add_argument("--idle-after-seconds", type=int, default=1800)
+    supervisor_loop_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    supervisor_loop_parser.add_argument("--compose-file", type=Path, action="append")
+    supervisor_loop_parser.add_argument("--working-directory", type=Path)
+    supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
+    supervisor_loop_parser.add_argument("--execute", action="store_true")
     approval_parser = subparsers.add_parser("record-approval-response")
     approval_parser.add_argument("--approval-id", required=True)
     approval_parser.add_argument("--status", required=True, choices=["approved", "rejected", "changes_requested"])
@@ -355,6 +377,12 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             db.close()
         return 0
+    if args.command == "run-project-supervisor-tick":
+        print(json.dumps(_run_project_supervisor_tick(args), indent=2, sort_keys=True))
+        return 0
+    if args.command == "run-project-supervisor-loop":
+        print(json.dumps(_run_project_supervisor_loop(args), indent=2, sort_keys=True))
+        return 0
     if args.command == "record-approval-response":
         db = V3Database(args.db)
         try:
@@ -526,6 +554,134 @@ def _lifecycle_result_dict(result) -> dict[str, object]:  # type: ignore[no-unty
         "exit_code": result.exit_code,
         "stdout": result.stdout,
         "stderr": result.stderr,
+    }
+
+
+def _run_project_supervisor_tick(args: argparse.Namespace) -> dict[str, object]:
+    if args.project_config is None:
+        raise ValueError("--project-config is required for run-project-supervisor-tick")
+    _validate_supervisor_args(args)
+    project_config = load_project_config(args.project_config)
+    db = V3Database(args.db)
+    try:
+        db.migrate()
+        lifecycle_payload = _run_supervisor_lifecycle(db, args)
+        sweep_payload = _run_supervisor_sweep(db, args, project_config=project_config)
+        payload = {
+            "project_id": args.project_id,
+            "lifecycle": lifecycle_payload,
+            "sweep": sweep_payload,
+        }
+        with db.connection:
+            db.record_event("project_supervisor.tick", "project", args.project_id, payload)
+        return payload
+    finally:
+        db.close()
+
+
+def _run_project_supervisor_loop(args: argparse.Namespace) -> dict[str, object]:
+    if args.cycles < 1:
+        raise ValueError("--cycles must be positive")
+    if args.poll_seconds < 0:
+        raise ValueError("--poll-seconds must be non-negative")
+    cycles: list[dict[str, object]] = []
+    for index in range(args.cycles):
+        cycles.append(_run_project_supervisor_tick(args))
+        if index < args.cycles - 1:
+            time.sleep(args.poll_seconds)
+    return {
+        "project_id": args.project_id,
+        "cycles": cycles,
+        "cycle_count": len(cycles),
+        "lifecycle_result_count": sum(
+            int(cycle["lifecycle"]["result_count"]) for cycle in cycles  # type: ignore[index]
+        ),
+        "sweep_finding_count": sum(
+            int(cycle["sweep"]["finding_count"]) for cycle in cycles  # type: ignore[index]
+        ),
+        "published_sweep_message_count": sum(
+            int(cycle["sweep"]["published_message_count"]) for cycle in cycles  # type: ignore[index]
+        ),
+    }
+
+
+def _validate_supervisor_args(args: argparse.Namespace) -> None:
+    if args.stale_after_seconds < 1:
+        raise ValueError("--stale-after-seconds must be positive")
+    if args.idle_after_seconds < 1:
+        raise ValueError("--idle-after-seconds must be positive")
+    if args.min_warm_instances_per_role < 0:
+        raise ValueError("--min-warm-instances-per-role must be non-negative")
+    if args.timeout_seconds < 1:
+        raise ValueError("--timeout-seconds must be positive")
+
+
+def _run_supervisor_lifecycle(db: V3Database, args: argparse.Namespace) -> dict[str, object]:
+    snapshot = db.status_snapshot(project_id=args.project_id)
+    decisions = plan_lifecycle_actions(
+        snapshot.agents,
+        policy=HibernationPolicy(
+            idle_after_seconds=args.idle_after_seconds,
+            min_warm_instances_per_role=args.min_warm_instances_per_role,
+        ),
+    )
+    results = ()
+    if args.compose_file:
+        results = ComposeLifecycleExecutor(
+            ComposeLifecycleConfig(
+                compose_files=tuple(args.compose_file),
+                working_directory=args.working_directory,
+                timeout_seconds=args.timeout_seconds,
+            )
+        ).apply(decisions, execute=args.execute)
+        for result in results:
+            db.record_agent_lifecycle_result(
+                role_instance_id=result.decision.role_instance_id,
+                action=result.decision.action,
+                reason=result.decision.reason,
+                service_name=result.service_name,
+                command=result.command,
+                working_directory=str(result.working_directory) if result.working_directory else None,
+                exit_code=result.exit_code,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                executed=result.executed,
+            )
+    return {
+        "execute": args.execute,
+        "compose_configured": bool(args.compose_file),
+        "decisions": [decision.__dict__ for decision in decisions],
+        "results": [_lifecycle_result_dict(result) for result in results],
+        "decision_count": len(decisions),
+        "result_count": len(results),
+    }
+
+
+def _run_supervisor_sweep(
+    db: V3Database,
+    args: argparse.Namespace,
+    *,
+    project_config: V3ProjectConfig,
+) -> dict[str, object]:
+    service = ProjectSweepService(db)
+    findings = service.sweep(stale_after_seconds=args.stale_after_seconds)
+    published_message_ids: tuple[str, ...] = ()
+    if args.publish_sweep_to_project_manager:
+        broker = build_broker_adapter(
+            adapter=project_config.broker.adapter,
+            servers=project_config.broker.servers,
+        )
+        published_message_ids = service.publish_findings(
+            broker,
+            stream=project_config.broker.stream,
+            findings=findings,
+            project_manager_role_id=args.project_manager_role_id,
+        )
+    return {
+        "findings": [finding.to_dict() for finding in findings],
+        "published_message_ids": list(published_message_ids),
+        "finding_count": len(findings),
+        "published_message_count": len(published_message_ids),
     }
 
 
