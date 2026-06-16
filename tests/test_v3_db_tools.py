@@ -922,6 +922,48 @@ def test_v3_tool_service_records_decisions_and_risks_as_governance_evidence(tmp_
     assert records["risk.register"].target_ref == "risk-identity-consent"
 
 
+def test_v3_tool_service_raises_blocker_with_visible_next_action(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Deploy Teams connector",
+            description="Needs tenant permission before deployment.",
+            state="active",
+            owner_role="platform-engineer",
+            current_phase="deployment",
+        )
+        tools = V3ToolService(db)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.platform-engineer.1",
+            tool_name="blocker.raise",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Tenant admin consent is missing for Graph application permissions.",
+                "next_action": "Sponsor must grant admin consent or provide a tenant admin contact.",
+                "current_phase": "deployment",
+                "target_ref": "entra-admin-consent",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "blocked"
+    assert detail.owner_role == "platform-engineer"
+    assert detail.next_action == "Sponsor must grant admin consent or provide a tenant admin contact."
+    record = detail.governance_records[0]
+    assert record.record_type == "blocker.raise"
+    assert record.status == "blocked"
+    assert record.target_ref == "entra-admin-consent"
+    assert record.summary == "Tenant admin consent is missing for Graph application permissions."
+    assert snapshot.work_items[0].attention_reason == "work item is in blocked"
+
+
 def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
