@@ -177,6 +177,7 @@ class GovernanceChecklist:
     missing_consultations: tuple[str, ...] = ()
     missing_informed_updates: tuple[str, ...] = ()
     pending_sponsor_decisions: tuple[str, ...] = ()
+    missing_required_evidence: tuple[str, ...] = ()
     recorded_exceptions: tuple[str, ...] = ()
 
     @property
@@ -185,6 +186,7 @@ class GovernanceChecklist:
             self.missing_consultations
             or self.missing_informed_updates
             or self.pending_sponsor_decisions
+            or self.missing_required_evidence
         )
 
     def as_prompt_section(self) -> str:
@@ -198,6 +200,8 @@ class GovernanceChecklist:
                 lines.append(f"- Missing informed-update evidence for `{role}`.")
             for decision in self.pending_sponsor_decisions:
                 lines.append(f"- Pending sponsor/stakeholder decision `{decision}`.")
+            for evidence in self.missing_required_evidence:
+                lines.append(f"- Missing required evidence `{evidence}`.")
         if self.recorded_exceptions:
             lines.append("- Recorded governance exceptions:")
             lines.extend(f"  - {exception}" for exception in self.recorded_exceptions)
@@ -210,6 +214,7 @@ def evaluate_governance_checklist(
     *,
     governance_records: Iterable[object] = (),
     approvals: Iterable[object] = (),
+    artifact_refs: Iterable[object] = (),
 ) -> GovernanceChecklist:
     """Return governance evidence still missing before a phase can close.
 
@@ -249,10 +254,16 @@ def evaluate_governance_checklist(
         for decision in context.sponsor_decision_points
         if not _has_resolved_approval(approvals, decision)
     )
+    missing_required_evidence = tuple(
+        evidence
+        for evidence in context.required_evidence
+        if not _has_artifact_ref(artifact_refs, evidence)
+    )
     return GovernanceChecklist(
         missing_consultations=missing_consultations,
         missing_informed_updates=missing_informed_updates,
         pending_sponsor_decisions=pending_sponsor_decisions,
+        missing_required_evidence=missing_required_evidence,
         recorded_exceptions=recorded_exceptions,
     )
 
@@ -297,6 +308,18 @@ def _has_resolved_approval(approvals: Iterable[object], decision_point: str) -> 
         question = str(_field(approval, "question") or "").casefold()
         if approval_id == decision or decision in question:
             return True
+    return False
+
+
+def _has_artifact_ref(artifact_refs: Iterable[object], required_evidence: str) -> bool:
+    required = required_evidence.strip()
+    if not required:
+        return True
+    for artifact in artifact_refs:
+        for field_name in ("relative_path", "filename", "title", "document_type"):
+            value = str(_field(artifact, field_name) or "").strip()
+            if value == required or value.endswith(f"/{required}"):
+                return True
     return False
 
 

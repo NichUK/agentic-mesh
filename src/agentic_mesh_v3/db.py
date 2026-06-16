@@ -1181,6 +1181,7 @@ class V3Database:
             context,
             governance_records=governance_records,
             approvals=approvals,
+            artifact_refs=artifacts,
         )
         return WorkItemDetail(
             work_item_id=work["work_item_id"],
@@ -1252,6 +1253,8 @@ def _governance_attention_reason(checklist: GovernanceChecklist | None) -> str:
         parts.append(f"informed_updates={', '.join(checklist.missing_informed_updates)}")
     if checklist.pending_sponsor_decisions:
         parts.append(f"sponsor_decisions={', '.join(checklist.pending_sponsor_decisions)}")
+    if checklist.missing_required_evidence:
+        parts.append(f"required_evidence={', '.join(checklist.missing_required_evidence)}")
     return "governance checklist has unresolved items: " + "; ".join(parts)
 
 

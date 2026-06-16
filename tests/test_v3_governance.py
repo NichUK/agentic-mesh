@@ -180,6 +180,7 @@ def test_governance_checklist_flags_missing_required_evidence() -> None:
         consulted_roles=("product-manager", "qa-engineer"),
         informed_roles=("project-manager",),
         sponsor_decision_points=("product-signoff",),
+        required_evidence=("100-implementation-log.md",),
     )
 
     checklist = evaluate_governance_checklist(context)
@@ -187,8 +188,10 @@ def test_governance_checklist_flags_missing_required_evidence() -> None:
     assert checklist.missing_consultations == ("product-manager", "qa-engineer")
     assert checklist.missing_informed_updates == ("project-manager",)
     assert checklist.pending_sponsor_decisions == ("product-signoff",)
+    assert checklist.missing_required_evidence == ("100-implementation-log.md",)
     assert checklist.is_satisfied is False
     assert "Missing consultation evidence for `product-manager`" in checklist.as_prompt_section()
+    assert "Missing required evidence `100-implementation-log.md`" in checklist.as_prompt_section()
 
 
 def test_governance_checklist_uses_recorded_tool_evidence() -> None:
@@ -200,6 +203,7 @@ def test_governance_checklist_uses_recorded_tool_evidence() -> None:
         consulted_roles=("qa-engineer",),
         informed_roles=("project-manager",),
         sponsor_decision_points=("release-approval",),
+        required_evidence=("140-release-record.md",),
     )
 
     checklist = evaluate_governance_checklist(
@@ -221,6 +225,12 @@ def test_governance_checklist_uses_recorded_tool_evidence() -> None:
                 "approval_id": "approval-1",
                 "question": "release-approval for work-123",
                 "status": "approved",
+            },
+        ),
+        artifact_refs=(
+            {
+                "filename": "140-release-record.md",
+                "relative_path": "work-items/work-123/140-release-record.md",
             },
         ),
     )
