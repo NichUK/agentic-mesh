@@ -354,6 +354,39 @@ class V3Database:
                 {"state": state, "owner_role": owner_role, "current_phase": current_phase, "next_action": next_action},
             )
 
+    def update_work_item_progress(
+        self,
+        *,
+        work_item_id: str,
+        next_action: str,
+        owner_role: str | None = None,
+        current_phase: str | None = None,
+    ) -> None:
+        existing = self.connection.execute(
+            "SELECT state FROM work_items WHERE work_item_id=?",
+            (work_item_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(f"work item `{work_item_id}` was not found")
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE work_items SET
+                  owner_role=COALESCE(?, owner_role),
+                  current_phase=COALESCE(?, current_phase),
+                  next_action=?,
+                  updated_at=CURRENT_TIMESTAMP
+                WHERE work_item_id=?
+                """,
+                (owner_role, current_phase, next_action, work_item_id),
+            )
+            self.record_event(
+                "work_item.progress_updated",
+                "work_item",
+                work_item_id,
+                {"owner_role": owner_role, "current_phase": current_phase, "next_action": next_action},
+            )
+
     def _sync_linked_backlog_item_state(self, *, work_item_id: str, state: str) -> None:
         if state not in TERMINAL_STATES:
             return
