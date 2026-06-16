@@ -6,10 +6,12 @@ from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.teams_ingress import DatabaseConversationRecorder
 from agentic_mesh_v3.teams_ingress import DatabaseApprovalResponseRecorder
+from agentic_mesh_v3.teams_ingress import DatabaseStakeholderQuestionResponseRecorder
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 from agentic_mesh_v3.teams_ingress import TeamsRoleIdentity
 from agentic_mesh_v3.teams_ingress import approval_response_from_text
 from agentic_mesh_v3.teams_ingress import normalize_teams_activity
+from agentic_mesh_v3.teams_ingress import stakeholder_question_response_id_from_text
 from agentic_mesh_v3.teams_ingress import teams_role_identities_from_project_config
 
 
@@ -61,6 +63,11 @@ def test_approval_response_parser_requires_id_and_decision() -> None:
     )
     assert approval_response_from_text("approved") is None
     assert approval_response_from_text("approval-1 noted") is None
+
+
+def test_stakeholder_question_response_parser_requires_question_id() -> None:
+    assert stakeholder_question_response_id_from_text("question-1: use DMs please") == "question-1"
+    assert stakeholder_question_response_id_from_text("answered") is None
 
 
 def test_normalize_channel_activity_preserves_thread_and_mentions() -> None:
@@ -301,6 +308,75 @@ def test_teams_activity_router_records_approval_response_and_notifies_requesting
     assert messages[0].payload["approval_id"] == "approval-1"
     assert messages[0].payload["status"] == "approved"
     assert messages[0].payload["source_message_id"] == "msg-approval"
+
+
+def test_teams_activity_router_records_stakeholder_question_response_and_notifies_asking_role(tmp_path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    db_path = tmp_path / "v3.sqlite3"
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Answer question",
+            description="Needs sponsor answer.",
+            state="waiting_human",
+            owner_role="sponsor",
+            current_phase="product-shaping",
+        )
+        db.record_governance_record(
+            record_id="question-1",
+            work_item_id="work-1",
+            record_type="stakeholder.ask_question",
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            target_ref="dm:sponsor",
+            summary="Use DMs for approvals?",
+            status="requested",
+            payload={"question": "Use DMs for approvals?"},
+        )
+    finally:
+        db.close()
+
+    router = TeamsActivityRouter(
+        LocalTeamsBridge(broker),
+        role_identities=(
+            TeamsRoleIdentity("product-manager", "AM-Product Manager", bot_id="bot-product"),
+        ),
+        question_response_recorder=DatabaseStakeholderQuestionResponseRecorder(db_path, broker=broker),
+    )
+
+    subjects = router.route_activity(
+        {
+            "id": "msg-question-answer",
+            "text": "question-1: yes, use direct messages for approvals.",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1", "name": "Nicholas"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        }
+    )
+
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert subjects == ["agent.product-manager"]
+    assert detail is not None
+    assert detail.state == "waiting_agent"
+    assert detail.owner_role == "product-manager"
+    assert detail.governance_records[0].status == "answered"
+    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
+    messages = broker.fetch("agent-inbox", "pm", batch=10)
+    assert [message.payload["message_type"] for message in messages] == [
+        "stakeholder.question_answered",
+        "stakeholder.message",
+    ]
+    assert messages[0].payload["question_id"] == "question-1"
+    assert messages[0].payload["work_item_id"] == "work-1"
+    assert messages[0].payload["source_message_id"] == "msg-question-answer"
 
 
 def test_teams_role_identities_load_from_project_config(tmp_path) -> None:

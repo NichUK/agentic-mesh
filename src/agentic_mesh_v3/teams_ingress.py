@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from typing import Protocol
 
+from agentic_mesh_v3.authority import role_from_instance
 from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.connectors import StakeholderMessage
@@ -28,6 +29,11 @@ class ConversationRecorder(Protocol):
 class ApprovalResponseRecorder(Protocol):
     def record(self, message: StakeholderMessage) -> bool:
         """Record an approval response if the stakeholder message contains one."""
+
+
+class StakeholderQuestionResponseRecorder(Protocol):
+    def record(self, message: StakeholderMessage) -> bool:
+        """Record a stakeholder answer if the message references a question."""
 
 
 class DatabaseConversationRecorder:
@@ -107,6 +113,59 @@ class DatabaseApprovalResponseRecorder:
         return True
 
 
+class DatabaseStakeholderQuestionResponseRecorder:
+    """Persist answers to stakeholder questions and wake the asking role.
+
+    The runtime captures that a human answered a specific recorded question. It
+    does not interpret the answer or decide the next lifecycle action; the
+    asking role agent receives the answer in its inbox and continues the work.
+    """
+
+    def __init__(self, db_path: Path, *, broker: BrokerAdapter | None = None, stream: str = "agent-inbox") -> None:
+        self.db_path = Path(db_path)
+        self.broker = broker
+        self.stream = stream
+
+    def record(self, message: StakeholderMessage) -> bool:
+        question_id = stakeholder_question_response_id_from_text(message.text)
+        if question_id is None:
+            return False
+        db = V3Database(self.db_path)
+        try:
+            db.migrate()
+            try:
+                response = db.record_governance_response(
+                    record_id=question_id,
+                    status="answered",
+                    response=message.text,
+                    responder_ref=message.sender_ref,
+                )
+            except ValueError:
+                return False
+        finally:
+            db.close()
+        if self.broker is not None:
+            target_role = role_from_instance(str(response["role_instance_id"]))
+            self.broker.ensure_stream(self.stream, [f"agent.{target_role}"])
+            self.broker.publish(
+                self.stream,
+                f"agent.{target_role}",
+                {
+                    "message_type": "stakeholder.question_answered",
+                    "question_id": str(response["record_id"]),
+                    "work_item_id": str(response["work_item_id"]),
+                    "status": str(response["status"]),
+                    "response": str(response["response"]),
+                    "responder_ref": message.sender_ref,
+                    "source_message_id": message.message_id,
+                    "conversation_ref": message.conversation_ref,
+                    "reply_target_ref": message.reply_target_ref,
+                    "reply_thread_ref": message.reply_thread_ref,
+                },
+            )
+        return True
+
+
 class TeamsActivityRouter:
     """Route Bot Framework Teams activities into the connector-neutral bridge."""
 
@@ -117,11 +176,13 @@ class TeamsActivityRouter:
         role_identities: tuple[TeamsRoleIdentity, ...] = (),
         conversation_recorder: ConversationRecorder | None = None,
         approval_response_recorder: ApprovalResponseRecorder | None = None,
+        question_response_recorder: StakeholderQuestionResponseRecorder | None = None,
     ) -> None:
         self.bridge = bridge
         self.role_identities = role_identities
         self.conversation_recorder = conversation_recorder
         self.approval_response_recorder = approval_response_recorder
+        self.question_response_recorder = question_response_recorder
 
     def route_activity(self, activity: dict[str, Any]) -> list[str]:
         message = normalize_teams_activity(activity, role_identities=self.role_identities)
@@ -129,6 +190,8 @@ class TeamsActivityRouter:
             self.conversation_recorder.record(message)
         if self.approval_response_recorder is not None:
             self.approval_response_recorder.record(message)
+        if self.question_response_recorder is not None:
+            self.question_response_recorder.record(message)
         return self.bridge.route_inbound(message)
 
 
@@ -201,6 +264,13 @@ def approval_response_from_text(text: str) -> tuple[str, str] | None:
     else:
         return None
     return approval_id_match.group(0), status
+
+
+def stakeholder_question_response_id_from_text(text: str) -> str | None:
+    match = re.search(r"\bquestion-[A-Za-z0-9_-]+\b", text)
+    if match is None:
+        return None
+    return match.group(0)
 
 
 def _mentioned_roles(

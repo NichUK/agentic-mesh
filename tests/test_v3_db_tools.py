@@ -1699,15 +1699,94 @@ def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tm
     assert detail.current_phase == "product-shaping"
     assert detail.next_action == "Awaiting stakeholder answer: Which sponsor-visible channel should be used?"
     assert detail.governance_records[0].record_type == "stakeholder.ask_question"
+    assert detail.governance_records[0].record_id.startswith("question-")
     assert detail.governance_records[0].target_ref == "dm:sponsor"
     assert bridge.deliveries[0].target_ref == "dm:sponsor"
     assert "Which sponsor-visible channel" in bridge.deliveries[0].text_markdown
+    assert "Question ID: `question-" in bridge.deliveries[0].text_markdown
     assert len(deliveries) == 1
     assert deliveries[0]["purpose"] == "stakeholder.ask_question"
     assert deliveries[0]["work_item_id"] == "work-1"
     assert deliveries[0]["target_ref"] == "dm:sponsor"
     assert deliveries[0]["thread_ref"] == "thread-1"
     assert detail.deliveries[0].purpose == "stakeholder.ask_question"
+
+
+def test_v3_tool_service_stakeholder_question_appends_question_id_to_custom_markdown(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Question work",
+            description="Needs sponsor input.",
+            state="active",
+            owner_role="product-manager",
+        )
+        V3ToolService(db, stakeholder_bridge=bridge).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="stakeholder.ask_question",
+            payload={
+                "work_item_id": "work-1",
+                "question": "Which sponsor-visible channel should be used?",
+                "connector": "teams",
+                "stakeholder_ref": "dm:sponsor",
+                "text_markdown": "**Please review**",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    question_id = detail.governance_records[0].record_id
+    assert bridge.deliveries[0].text_markdown == f"**Please review**\n\nQuestion ID: `{question_id}`"
+
+
+def test_v3_db_records_stakeholder_question_response_and_wakes_asking_role(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Question work",
+            description="Needs sponsor input.",
+            state="waiting_human",
+            owner_role="sponsor",
+            current_phase="product-shaping",
+        )
+        db.record_governance_record(
+            record_id="question-1",
+            work_item_id="work-1",
+            record_type="stakeholder.ask_question",
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            target_ref="dm:sponsor",
+            summary="Which sponsor-visible channel should be used?",
+            status="requested",
+            payload={"question": "Which sponsor-visible channel should be used?"},
+        )
+
+        response = db.record_governance_response(
+            record_id="question-1",
+            response="question-1: use direct messages for approvals.",
+            status="answered",
+            responder_ref="sponsor",
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert response["work_item_id"] == "work-1"
+    assert response["role_instance_id"] == "agentic-mesh-dev.product-manager.1"
+    assert detail is not None
+    assert detail.state == "waiting_agent"
+    assert detail.owner_role == "product-manager"
+    assert detail.current_phase == "product-shaping"
+    assert detail.governance_records[0].status == "answered"
+    assert detail.next_action == "Stakeholder response recorded for `question-1`; awaiting product-manager to continue."
 
 
 def test_v3_tool_service_stakeholder_question_with_target_requires_bridge(tmp_path: Path) -> None:

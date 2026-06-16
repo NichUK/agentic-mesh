@@ -10,6 +10,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 
+from agentic_mesh_v3.authority import role_from_instance
 from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import evaluate_governance_checklist
@@ -1119,6 +1120,76 @@ class V3Database:
                 },
             )
 
+    def record_governance_response(
+        self,
+        *,
+        record_id: str,
+        response: str,
+        status: str,
+        responder_ref: str,
+    ) -> dict[str, Any]:
+        existing = self.connection.execute(
+            """
+            SELECT record_id, work_item_id, record_type, role_instance_id, target_ref,
+                   summary, status, payload_json
+            FROM governance_records
+            WHERE record_id=?
+            """,
+            (record_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(f"governance record `{record_id}` was not found")
+        payload = json.loads(existing["payload_json"] or "{}")
+        payload["response"] = response
+        payload["response_status"] = status
+        payload["responder_ref"] = responder_ref
+        payload["responded_at"] = datetime.now(timezone.utc).isoformat()
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE governance_records SET
+                  status=?,
+                  payload_json=?
+                WHERE record_id=?
+                """,
+                (status, json.dumps(payload, sort_keys=True), record_id),
+            )
+            self.record_event(
+                "governance.response_recorded",
+                _governance_record_aggregate_type(existing["work_item_id"]),
+                existing["work_item_id"],
+                {
+                    "record_id": record_id,
+                    "record_type": existing["record_type"],
+                    "status": status,
+                    "response": response,
+                    "responder_ref": responder_ref,
+                },
+            )
+            work_item = self.connection.execute(
+                "SELECT state, current_phase FROM work_items WHERE work_item_id=?",
+                (existing["work_item_id"],),
+            ).fetchone()
+            if work_item is not None and work_item["state"] == "waiting_human":
+                self.update_work_item_state(
+                    work_item_id=existing["work_item_id"],
+                    state="waiting_agent",
+                    owner_role=role_from_instance_id(existing["role_instance_id"]),
+                    current_phase=work_item["current_phase"],
+                    next_action=(
+                        f"Stakeholder response recorded for `{record_id}`; "
+                        f"awaiting {role_from_instance_id(existing['role_instance_id'])} to continue."
+                    ),
+                )
+        return {
+            "record_id": existing["record_id"],
+            "work_item_id": existing["work_item_id"],
+            "record_type": existing["record_type"],
+            "role_instance_id": existing["role_instance_id"],
+            "status": status,
+            "response": response,
+        }
+
     def list_role_memory(self, role_instance_id: str | None = None) -> list[dict[str, Any]]:
         if role_instance_id is None:
             rows = self.connection.execute(
@@ -1784,6 +1855,10 @@ def _governance_record_aggregate_type(work_item_id: str) -> str:
     if work_item_id.startswith("message:"):
         return "conversation_message"
     return "work_item"
+
+
+def role_from_instance_id(role_instance_id: str) -> str:
+    return role_from_instance(role_instance_id)
 
 
 def _agent_run_status(row: sqlite3.Row) -> AgentRunStatus:
