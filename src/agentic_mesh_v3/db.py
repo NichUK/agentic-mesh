@@ -414,6 +414,71 @@ class V3Database:
             )
             self.record_event("agent.status_updated", "agent", status.role_instance_id, asdict(status))
 
+    def record_agent_lifecycle_result(
+        self,
+        *,
+        role_instance_id: str,
+        action: str,
+        reason: str,
+        service_name: str,
+        command: tuple[str, ...],
+        working_directory: str | None,
+        exit_code: int | None,
+        stdout: str = "",
+        stderr: str = "",
+        executed: bool = False,
+    ) -> None:
+        payload = {
+            "action": action,
+            "reason": reason,
+            "service_name": service_name,
+            "command": list(command),
+            "working_directory": working_directory,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "executed": executed,
+        }
+        with self.connection:
+            self.record_event(
+                "agent.lifecycle_action_recorded",
+                "agent",
+                role_instance_id,
+                payload,
+            )
+        if not executed:
+            return
+
+        status_state = _container_state_for_lifecycle_result(action=action, exit_code=exit_code)
+        existing = self.connection.execute(
+            """
+            SELECT inbox_depth, dead_letter_depth, governance_waits_json
+            FROM agents
+            WHERE role_instance_id=?
+            """,
+            (role_instance_id,),
+        ).fetchone()
+        inbox_depth = int(existing["inbox_depth"]) if existing else 0
+        dead_letter_depth = int(existing["dead_letter_depth"]) if existing else 0
+        governance_waits: tuple[str, ...] = ()
+        if status_state == "lifecycle_failed":
+            failure_detail = stderr.strip() or stdout.strip() or f"{action} exited with {exit_code}"
+            governance_waits = (f"Lifecycle {action} failed for {service_name}: {failure_detail}",)
+        elif existing:
+            governance_waits = tuple(json.loads(existing["governance_waits_json"] or "[]"))
+
+        self.upsert_agent_status(
+            AgentStatus(
+                role_instance_id=role_instance_id,
+                container_state=status_state,
+                heartbeat_at=datetime.now(timezone.utc).isoformat(),
+                current_work=None,
+                inbox_depth=inbox_depth,
+                dead_letter_depth=dead_letter_depth,
+                governance_waits=governance_waits,
+            )
+        )
+
     def record_tool_call(
         self,
         *,
@@ -1007,6 +1072,16 @@ def _work_item_attention_reason(*, row: dict[str, Any], now: datetime) -> str:
     if age >= timedelta(seconds=STATUS_STALE_AFTER_SECONDS):
         return f"work item has not changed for {int(age.total_seconds())} seconds"
     return ""
+
+
+def _container_state_for_lifecycle_result(*, action: str, exit_code: int | None) -> str:
+    if exit_code != 0:
+        return "lifecycle_failed"
+    if action in {"start", "wake"}:
+        return "running"
+    if action == "hibernate":
+        return "hibernated"
+    return "unknown"
 
 
 def _parse_sqlite_timestamp(value: str) -> datetime | None:

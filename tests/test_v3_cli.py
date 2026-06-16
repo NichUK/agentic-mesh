@@ -561,6 +561,19 @@ def test_cli_lifecycle_apply_dry_runs_compose_actions(tmp_path: Path, capsys) ->
     assert output["results"][0]["executed"] is False
     assert output["results"][0]["working_directory"] == str(tmp_path)
 
+    db = V3Database(db_path)
+    try:
+        events = db.connection.execute(
+            "SELECT event_type, aggregate_id, payload_json FROM events WHERE event_type='agent.lifecycle_action_recorded'"
+        ).fetchall()
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+    assert len(events) == 1
+    assert events[0]["aggregate_id"] == "agentic-mesh-dev.product-manager.1"
+    assert json.loads(events[0]["payload_json"])["executed"] is False
+    assert snapshot.agents[0].container_state == "hibernated"
+
 
 def test_cli_teams_activity_router_is_none_without_project_config() -> None:
     assert _teams_activity_router(argparse.Namespace(project_config=None)) is None
