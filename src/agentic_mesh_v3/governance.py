@@ -128,6 +128,47 @@ class GovernanceContext:
             "consultation_exceptions": list(self.consultation_exceptions),
         }
 
+    def as_prompt_section(self, *, role_id: str | None = None) -> str:
+        """Render actionable governance context for an agent prompt."""
+
+        roles_for_current_agent = self._roles_for(role_id) if role_id else ()
+        lines = [
+            "<governance-context>",
+            f"- Work item: `{self.work_item_id}`",
+            f"- Phase: `{self.phase}`",
+            f"- Accountable role: `{self.accountable_role}`",
+            f"- Responsible roles: {_format_roles(self.responsible_roles)}",
+            f"- Consulted roles: {_format_roles(self.consulted_roles)}",
+            f"- Informed roles: {_format_roles(self.informed_roles)}",
+        ]
+        if role_id:
+            lines.append(f"- This role's RACI position: {_format_roles(roles_for_current_agent)}")
+        if self.sponsor_decision_points:
+            lines.append("- Sponsor/stakeholder decision points:")
+            lines.extend(f"  - `{decision}`" for decision in self.sponsor_decision_points)
+        if self.required_evidence:
+            lines.append("- Required evidence before phase handoff or closure:")
+            lines.extend(f"  - {evidence}" for evidence in self.required_evidence)
+        if self.consultation_exceptions:
+            lines.append("- Consultation exceptions already recorded:")
+            lines.extend(f"  - `{exception}`" for exception in self.consultation_exceptions)
+        lines.append("</governance-context>")
+        return "\n".join(lines)
+
+    def _roles_for(self, role_id: str | None) -> tuple[str, ...]:
+        if role_id is None:
+            return ()
+        positions: list[str] = []
+        if role_id == self.accountable_role:
+            positions.append("accountable")
+        if role_id in self.responsible_roles:
+            positions.append("responsible")
+        if role_id in self.consulted_roles:
+            positions.append("consulted")
+        if role_id in self.informed_roles:
+            positions.append("informed")
+        return tuple(positions) or ("not-listed",)
+
 
 @dataclass(frozen=True)
 class GovernanceChecklist:
@@ -257,6 +298,12 @@ def _has_resolved_approval(approvals: Iterable[object], decision_point: str) -> 
         if approval_id == decision or decision in question:
             return True
     return False
+
+
+def _format_roles(roles: tuple[str, ...]) -> str:
+    if not roles:
+        return "`none`"
+    return ", ".join(f"`{role}`" for role in roles)
 
 
 def _field(record: object, name: str) -> object | None:

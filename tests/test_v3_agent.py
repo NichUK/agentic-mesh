@@ -566,7 +566,8 @@ def test_role_agent_prompt_loads_database_work_item_governance_context(tmp_path:
         assert result is not None
         assert result.status == "completed"
         assert "<governance-context>" in worker.prompt
-        assert "'work_item_id': 'work-123'" in worker.prompt
+        assert "Work item: `work-123`" in worker.prompt
+        assert "This role's RACI position: `consulted`" in worker.prompt
         assert "Missing consultation evidence for `product-manager`" in worker.prompt
         assert "Missing informed-update evidence for `delivery-manager`" in worker.prompt
         assert "Pending sponsor/stakeholder decision `requirements-signoff`" in worker.prompt

@@ -398,13 +398,7 @@ class RoleAgentService:
         _append_optional_section(lines, "available-tools", tools_prompt)
         lines.append(self.governance_instructions.as_prompt_section())
         if governance_context is not None:
-            lines.extend(
-                [
-                    "<governance-context>",
-                    str(governance_context.handoff_requirements()),
-                    "</governance-context>",
-                ]
-            )
+            lines.append(governance_context.as_prompt_section(role_id=self.config.role_id))
             checklist = governance_checklist or evaluate_governance_checklist(governance_context)
             lines.append(checklist.as_prompt_section())
         lines.extend(
