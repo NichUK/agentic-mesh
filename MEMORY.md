@@ -432,3 +432,9 @@ V3 release deployment state is now visible in the work-item lifecycle:
 and moves successful deployment or no-deployment dispositions to `released`.
 `release.close` then performs the separate final `closed` transition, including
 when the item is already in `released`.
+
+The role-charter documentation now states explicitly that Prompt Engineer and
+Project Manager are peer roles: Project Manager owns project control and may
+consult Prompt Engineer for prompt/tool/agent-behaviour blockers, while Prompt
+Engineer owns prompt-contract specialist advice without taking over project
+sequencing.
