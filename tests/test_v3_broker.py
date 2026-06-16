@@ -49,6 +49,41 @@ def test_in_memory_broker_inspects_pending_without_claiming() -> None:
     assert broker.depth("agent-inbox").pending == 2
 
 
+def test_in_memory_broker_supports_wildcard_stream_subjects() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.*", "project.>"])
+
+    product = broker.publish("agent-inbox", "agent.product-manager", {"text": "shape"})
+    project = broker.publish("agent-inbox", "project.agentic-mesh.context", {"text": "shared"})
+
+    assert [message.message_id for message in broker.pending("agent-inbox")] == [
+        product.message_id,
+        project.message_id,
+    ]
+    try:
+        broker.publish("agent-inbox", "system.product-manager.internal", {"text": "not configured"})
+    except ValueError as exc:
+        assert "not configured" in str(exc)
+    else:
+        raise AssertionError("wildcard stream subjects should still reject unmatched subjects")
+
+
+def test_in_memory_broker_supports_wildcard_consumer_filters() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.>", "system.>"])
+    broker.ensure_consumer("agent-inbox", "all-agents", filter_subject="agent.*")
+    broker.ensure_consumer("agent-inbox", "all-project", filter_subject="agent.project.>")
+    product = broker.publish("agent-inbox", "agent.product-manager", {"text": "shape"})
+    project_context = broker.publish("agent-inbox", "agent.project.context", {"text": "shared"})
+    broker.publish("agent-inbox", "system.operator", {"text": "ignore"})
+
+    agent_messages = broker.fetch("agent-inbox", "all-agents", batch=10)
+    project_messages = broker.fetch("agent-inbox", "all-project", batch=10)
+
+    assert [message.message_id for message in agent_messages] == [product.message_id]
+    assert [message.message_id for message in project_messages] == [project_context.message_id]
+
+
 def test_in_memory_broker_dead_letters_inflight_message() -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])

@@ -106,7 +106,7 @@ class InMemoryBrokerAdapter:
         if stream not in self._messages:
             raise ValueError(f"stream does not exist: {stream}")
         allowed_subjects = self._subjects.get(stream, set())
-        if allowed_subjects and subject not in allowed_subjects and "*" not in allowed_subjects:
+        if allowed_subjects and not any(_subject_matches(pattern, subject) for pattern in allowed_subjects):
             raise ValueError(f"subject {subject!r} is not configured for stream {stream!r}")
         message = BrokerMessage(
             message_id=message_id or f"msg-{uuid4().hex}",
@@ -200,7 +200,22 @@ class InMemoryBrokerAdapter:
 
     @staticmethod
     def _matches(consumer: BrokerConsumer, message: BrokerMessage) -> bool:
-        return consumer.filter_subject is None or consumer.filter_subject == message.subject
+        return consumer.filter_subject is None or _subject_matches(consumer.filter_subject, message.subject)
+
+
+def _subject_matches(pattern: str, subject: str) -> bool:
+    """Return whether a NATS-style subject pattern matches a concrete subject."""
+
+    pattern_tokens = pattern.split(".") if pattern else []
+    subject_tokens = subject.split(".") if subject else []
+    for index, token in enumerate(pattern_tokens):
+        if token == ">":
+            return index == len(pattern_tokens) - 1
+        if index >= len(subject_tokens):
+            return False
+        if token != "*" and token != subject_tokens[index]:
+            return False
+    return len(pattern_tokens) == len(subject_tokens)
 
 
 class NatsJetStreamAdapter:
