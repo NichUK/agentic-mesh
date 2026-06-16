@@ -315,7 +315,10 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   present, sends the sponsor-facing approval request through the bridge.
   `record-approval-response` records sponsor/operator decisions and, when
   project broker config is available, publishes the response to the role that
-  requested the approval so the agent can continue the work.
+  requested the approval so the agent can continue the work. If the work item
+  was waiting on a human, the approval response moves the visible owner back to
+  the requesting role as `waiting_agent`; the agent still decides the next
+  lifecycle action.
   `stakeholder.ask_question` records governance evidence and, when target
   metadata is present, sends the question through the bridge. Governance
   communication tools validate their minimum routable payloads:

@@ -1283,6 +1283,9 @@ def test_v3_db_records_approval_response(tmp_path: Path) -> None:
         db.close()
 
     assert detail is not None
+    assert detail.state == "waiting_agent"
+    assert detail.owner_role == "product-manager"
+    assert detail.next_action == "Approval `approval-1` recorded as `approved`; awaiting product-manager to continue."
     assert detail.approvals[0].status == "approved"
     assert detail.approvals[0].response == "Approved by sponsor."
     assert approval is not None
