@@ -153,6 +153,7 @@ class GraphTeamsBridge:
         *,
         transport: "GraphTeamsTransport",
         graph_base_url: str = "https://graph.microsoft.com/v1.0",
+        sender_user_ref: str | None = None,
         inbound_bridge: StakeholderBridge | None = None,
         inbound_broker: BrokerAdapter | None = None,
         inbound_stream: str = "agent-inbox",
@@ -161,6 +162,7 @@ class GraphTeamsBridge:
     ) -> None:
         self.transport = transport
         self.graph_base_url = graph_base_url.rstrip("/")
+        self.sender_user_ref = sender_user_ref
         if inbound_bridge is not None and inbound_broker is not None:
             raise ValueError("configure either inbound_bridge or inbound_broker, not both")
         self.inbound_bridge = inbound_bridge
@@ -178,6 +180,16 @@ class GraphTeamsBridge:
         return self.inbound_bridge.route_inbound(message)
 
     def send(self, message: OutboundMessage) -> DeliveryReceipt:
+        target_ref = message.target_ref
+        if target_ref.startswith("user:"):
+            target_ref = self._chat_target_for_user(target_ref.removeprefix("user:"))
+            message = OutboundMessage(
+                connector=message.connector,
+                target_ref=target_ref,
+                text_markdown=message.text_markdown,
+                thread_ref=message.thread_ref,
+                importance=message.importance,
+            )
         endpoint = self._endpoint_for(message)
         response = self.transport.post_json(
             endpoint,
@@ -214,10 +226,41 @@ class GraphTeamsBridge:
             return f"{self.graph_base_url}/teams/{team_id}/channels/{channel_id}/messages"
         raise ValueError(f"unsupported Teams target_ref: {message.target_ref}")
 
+    def _chat_target_for_user(self, user_ref: str) -> str:
+        if not user_ref:
+            raise ValueError("user target_ref requires a user id")
+        if not self.sender_user_ref:
+            raise ValueError(
+                "sender_user_ref is required for Teams user DM targets; "
+                "set AGENTIC_MESH_TEAMS_SENDER_USER_ID"
+            )
+        response = self.transport.post_json(
+            f"{self.graph_base_url}/chats",
+            {
+                "chatType": "oneOnOne",
+                "members": [
+                    _aad_user_conversation_member(self.graph_base_url, self.sender_user_ref),
+                    _aad_user_conversation_member(self.graph_base_url, user_ref),
+                ],
+            },
+        )
+        chat_id = response.get("id")
+        if not chat_id:
+            raise ValueError("Teams Graph chat creation did not return an id")
+        return f"chat:{chat_id}"
+
 
 class GraphTeamsTransport(Protocol):
     def post_json(self, url: str, payload: dict[str, object]) -> dict[str, object]:
         """POST a JSON payload and return parsed response data."""
+
+
+def _aad_user_conversation_member(graph_base_url: str, user_ref: str) -> dict[str, object]:
+    return {
+        "@odata.type": "#microsoft.graph.aadUserConversationMember",
+        "roles": ["owner"],
+        "user@odata.bind": f"{graph_base_url}/users('{user_ref}')",
+    }
 
 
 class UrlLibGraphTeamsTransport:

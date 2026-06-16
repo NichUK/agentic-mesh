@@ -865,6 +865,7 @@ def _stakeholder_bridge(
         return GraphTeamsBridge(
             transport=UrlLibGraphTeamsTransport(access_token=access_token),
             graph_base_url=config.teams_connector.graph_base_url,
+            sender_user_ref=os.environ.get("AGENTIC_MESH_TEAMS_SENDER_USER_ID"),
         )
     raise ValueError(f"unsupported Teams connector adapter: {config.teams_connector.adapter}")
 

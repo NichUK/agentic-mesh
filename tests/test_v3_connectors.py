@@ -153,6 +153,52 @@ def test_graph_teams_bridge_posts_threaded_markdown_reply() -> None:
     assert "<strong>Approved</strong>" in str(body["content"])
 
 
+def test_graph_teams_bridge_can_send_dm_to_user_target() -> None:
+    transport = FakeGraphTeamsTransport()
+    bridge = GraphTeamsBridge(
+        transport=transport,
+        graph_base_url="https://graph.test/v1.0",
+        sender_user_ref="sender-user",
+    )
+
+    receipt = bridge.send(
+        OutboundMessage(
+            connector="teams",
+            target_ref="user:sponsor-user",
+            text_markdown="**Question**\n\nPlease approve.",
+        )
+    )
+
+    assert receipt.delivery_id == "graph-message-1"
+    assert transport.posts[0][0] == "https://graph.test/v1.0/chats"
+    assert transport.posts[0][1]["chatType"] == "oneOnOne"
+    members = transport.posts[0][1]["members"]
+    assert isinstance(members, list)
+    assert members[0]["user@odata.bind"] == "https://graph.test/v1.0/users('sender-user')"
+    assert members[1]["user@odata.bind"] == "https://graph.test/v1.0/users('sponsor-user')"
+    assert transport.posts[1][0] == "https://graph.test/v1.0/chats/graph-message-1/messages"
+    body = transport.posts[1][1]["body"]
+    assert isinstance(body, dict)
+    assert "<strong>Question</strong>" in str(body["content"])
+
+
+def test_graph_teams_bridge_user_target_requires_sender_user_ref() -> None:
+    bridge = GraphTeamsBridge(transport=FakeGraphTeamsTransport(), graph_base_url="https://graph.test/v1.0")
+
+    try:
+        bridge.send(
+            OutboundMessage(
+                connector="teams",
+                target_ref="user:sponsor-user",
+                text_markdown="Please approve.",
+            )
+        )
+    except ValueError as exc:
+        assert "sender_user_ref is required" in str(exc)
+    else:
+        raise AssertionError("user Teams targets should require sender_user_ref")
+
+
 def test_graph_teams_bridge_routes_inbound_through_configured_bridge() -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
