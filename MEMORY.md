@@ -304,3 +304,9 @@ V3 role services now use runtime database-backed role memory. Safe-output
 the same role instance, and agent-run observations are recorded through the
 same runtime DB memory path. The standalone SQLite memory adapter remains
 available for local adapter use and focused tests.
+
+V3 governance safe-output tools now publish target-role inbox messages when a
+broker is configured. `handoff.require`, `consult.request`, and
+`informed.update` still record governance evidence, but they can also enqueue a
+connector-neutral message on `agent.{target_role}` so agents, not the runtime,
+drive follow-on work.

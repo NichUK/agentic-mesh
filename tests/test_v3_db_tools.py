@@ -472,6 +472,84 @@ def test_v3_tool_service_records_handoff_requirements_payload(tmp_path: Path) ->
     assert record.summary == "Implement the signed-off product slice."
 
 
+def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.engineering"])
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Governed handoff",
+            description="Needs engineering implementation.",
+            state="ready",
+            owner_role="product-manager",
+        )
+        V3ToolService(db, broker=broker, broker_stream="agent-inbox").call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="handoff.require",
+            payload={
+                "work_item_id": "work-1",
+                "target_role": "engineering",
+                "phase": "development",
+                "accountable_role": "engineering",
+                "required_next_action": "Implement the signed-off product slice.",
+                "acceptance_criteria": ["Feature behavior matches the signed-off product definition."],
+                "evidence_requirements": ["Implementation log and focused tests are linked."],
+                "artifact_links": ["work-items/work-1/020-product-definition.md"],
+                "open_decisions": [],
+                "open_risks": [],
+                "consulted_roles": ["qa-engineer"],
+                "informed_roles": ["project-manager"],
+                "stakeholder_follow_up": [],
+            },
+        )
+
+        pending = broker.pending("agent-inbox")
+    finally:
+        db.close()
+
+    assert len(pending) == 1
+    assert pending[0].subject == "agent.engineering"
+    assert pending[0].payload["message_type"] == "handoff.require"
+    assert pending[0].payload["work_item_id"] == "work-1"
+    assert pending[0].payload["summary"] == "Implement the signed-off product slice."
+    assert pending[0].payload["payload"]["target_role"] == "engineering"
+
+
+def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.qa-engineer"])
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Governed work",
+            description="Needs QA consultation.",
+            state="active",
+            owner_role="engineering",
+        )
+        V3ToolService(db, broker=broker, broker_stream="agent-inbox").call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="consult.request",
+            payload={
+                "work_item_id": "work-1",
+                "target_role": "qa-engineer",
+                "question": "Please review the acceptance criteria.",
+            },
+        )
+
+        pending = broker.pending("agent-inbox")
+    finally:
+        db.close()
+
+    assert len(pending) == 1
+    assert pending[0].subject == "agent.qa-engineer"
+    assert pending[0].payload["message_type"] == "consult.request"
+    assert pending[0].payload["summary"] == "Please review the acceptance criteria."
+
+
 def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

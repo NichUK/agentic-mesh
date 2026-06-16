@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from agentic_mesh_v3.authority import ToolAuthorityPolicy
 from agentic_mesh_v3.authority import role_from_instance
+from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.connectors import OutboundMessage
 from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.db import V3Database
@@ -45,6 +46,8 @@ class V3ToolService:
         document_library: DocumentLibraryAdapter | None = None,
         deployment_targets: dict[str, DeploymentTarget] | None = None,
         stakeholder_bridge: StakeholderBridge | None = None,
+        broker: BrokerAdapter | None = None,
+        broker_stream: str | None = None,
         authority_policy: ToolAuthorityPolicy | None = None,
         telemetry: V3Telemetry | None = None,
     ) -> None:
@@ -52,6 +55,8 @@ class V3ToolService:
         self.document_library = document_library
         self.deployment_targets = deployment_targets or {}
         self.stakeholder_bridge = stakeholder_bridge
+        self.broker = broker
+        self.broker_stream = broker_stream
         self.authority_policy = authority_policy or ToolAuthorityPolicy.default()
         self.telemetry = telemetry or get_telemetry()
 
@@ -429,6 +434,38 @@ class V3ToolService:
             summary=_summary(payload),
             status=str(payload.get("status") or _default_governance_status(tool_name)),
             payload=payload,
+        )
+        self._publish_role_governance_message(
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            tool_name=tool_name,
+            payload=payload,
+        )
+
+    def _publish_role_governance_message(
+        self,
+        *,
+        call_id: str,
+        role_instance_id: str,
+        tool_name: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if self.broker is None or self.broker_stream is None:
+            return
+        target_role = _optional(payload.get("target_role"))
+        if target_role is None:
+            return
+        self.broker.publish(
+            self.broker_stream,
+            f"agent.{target_role}",
+            {
+                "message_type": tool_name,
+                "source_call_id": call_id,
+                "source_role_instance_id": role_instance_id,
+                "work_item_id": _required(payload, "work_item_id"),
+                "summary": _summary(payload),
+                "payload": payload,
+            },
         )
 
 
