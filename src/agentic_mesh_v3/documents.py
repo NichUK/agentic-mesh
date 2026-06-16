@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -48,7 +49,10 @@ class WorkItemIndex:
             "## Artifacts",
         ]
         if self.artifacts:
-            lines.extend(f"- [{artifact.title}]({artifact.relative_path})" for artifact in self.artifacts)
+            lines.extend(
+                f"- [{artifact.title}]({_work_item_artifact_link(self.work_item_id, artifact)})"
+                for artifact in self.artifacts
+            )
         else:
             lines.append("- None recorded")
         lines.extend(["", "## Consultations"])
@@ -259,6 +263,19 @@ def build_document_library_adapter(
 
 def work_item_index_path(work_item_id: str) -> str:
     return f"work-items/{work_item_id}/index.md"
+
+
+def _work_item_artifact_link(work_item_id: str, artifact: DocumentRef) -> str:
+    if artifact.url:
+        return artifact.url
+    target = artifact.relative_path.replace("\\", "/").lstrip("/")
+    if "\x00" in target or target.startswith("../") or "/../" in target:
+        raise DocumentLibraryError("artifact path escapes document library root")
+    if not target:
+        raise DocumentLibraryError("artifact path is required")
+    if "/" not in target:
+        return target
+    return posixpath.relpath(target, start=f"work-items/{work_item_id}")
 
 
 def write_work_item_index(adapter: DocumentLibraryAdapter, index: WorkItemIndex) -> DocumentRef:

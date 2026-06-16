@@ -49,6 +49,56 @@ def test_write_work_item_index(tmp_path: Path) -> None:
     assert "Focused status-page tests passed" in content
 
 
+def test_work_item_index_links_artifacts_relative_to_work_item_folder(tmp_path: Path) -> None:
+    adapter = LocalDocumentLibraryAdapter(tmp_path)
+    index = WorkItemIndex(
+        work_item_id="work-123",
+        title="Link artifacts",
+        status="active",
+        owner_role="engineering",
+        raci_summary="engineering A/R",
+        governance_state="ready",
+        artifacts=(
+            DocumentRef(relative_path="work-items/work-123/020-product-definition.md", title="Product definition"),
+            DocumentRef(relative_path="work-items/work-456/index.md", title="Related work"),
+            DocumentRef(relative_path="architecture/decisions.md", title="Decision register"),
+            DocumentRef(
+                relative_path="work-items/work-123/030-design.md",
+                title="Design web link",
+                url="https://example.test/design",
+            ),
+        ),
+    )
+
+    write_work_item_index(adapter, index)
+
+    content = (tmp_path / "work-items" / "work-123" / "index.md").read_text(encoding="utf-8")
+    assert "[Product definition](020-product-definition.md)" in content
+    assert "[Related work](../work-456/index.md)" in content
+    assert "[Decision register](../../architecture/decisions.md)" in content
+    assert "[Design web link](https://example.test/design)" in content
+
+
+def test_work_item_index_rejects_escaping_artifact_links(tmp_path: Path) -> None:
+    adapter = LocalDocumentLibraryAdapter(tmp_path)
+    index = WorkItemIndex(
+        work_item_id="work-123",
+        title="Bad artifact",
+        status="active",
+        owner_role="engineering",
+        raci_summary="engineering A/R",
+        governance_state="ready",
+        artifacts=(DocumentRef(relative_path="../secrets.md", title="Bad link"),),
+    )
+
+    try:
+        write_work_item_index(adapter, index)
+    except DocumentLibraryError as exc:
+        assert "escapes document library root" in str(exc)
+    else:
+        raise AssertionError("escaping artifact links should be rejected")
+
+
 def test_write_root_work_item_index(tmp_path: Path) -> None:
     adapter = LocalDocumentLibraryAdapter(tmp_path)
     write_root_work_item_index(
