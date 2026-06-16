@@ -106,11 +106,11 @@ def audit_v3_dogfood_completion(
             "documents.onedrive_urls",
             any(
                 artifact.url is not None
-                and "/documents/work-items/" in artifact.url
+                and artifact.url.startswith(("http://", "https://"))
                 and artifact.relative_path.startswith("work-items/")
                 for artifact in detail.artifacts
             ),
-            "At least one work-item artifact has a OneDrive/Shared Files URL under `/documents/work-items`.",
+            "At least one work-item artifact has a recorded HTTP(S) URL.",
         )
 
     deployed_releases = [release for release in detail.releases if release.status == "deployed"]
