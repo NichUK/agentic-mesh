@@ -86,6 +86,10 @@ not make work decisions.
 The V3 Compose renderer converts materialized role container specs into one
 Compose service per role instance, using the generated `run-agent-service`
 command and the same mounted path contract.
+Role services retry failed broker messages up to a configured delivery limit
+and then dead-letter the message with the failure reason. This keeps poison
+messages visible for recovery without letting one broken assignment loop
+forever inside a role container.
 
 Project Manager sweeps are read-only health inspections over work-item state.
 They flag blocked, waiting, recovering, and stale non-terminal work so the

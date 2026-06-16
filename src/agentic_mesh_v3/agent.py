@@ -113,6 +113,11 @@ class RoleAgentService:
     memory: AgentMemory
     governance_instructions: GovernanceInstructionSet = field(default_factory=GovernanceInstructionSet)
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
+    max_delivery_attempts: int = 3
+
+    def __post_init__(self) -> None:
+        if self.max_delivery_attempts < 1:
+            raise ValueError("max_delivery_attempts must be positive")
 
     def run_until_idle(
         self,
@@ -174,14 +179,24 @@ class RoleAgentService:
             self._report_status(container_state="running", current_work=None)
             return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=tuple(tool_calls))
         except Exception as exc:
-            self.broker.nack(
-                self.config.inbox_stream,
-                self.config.inbox_consumer,
-                message.message_id,
-                reason=str(exc),
-            )
+            if message.delivery_count + 1 >= self.max_delivery_attempts:
+                self.broker.dead_letter(
+                    self.config.inbox_stream,
+                    self.config.inbox_consumer,
+                    message.message_id,
+                    reason=str(exc),
+                )
+                status = "dead_lettered"
+            else:
+                self.broker.nack(
+                    self.config.inbox_stream,
+                    self.config.inbox_consumer,
+                    message.message_id,
+                    reason=str(exc),
+                )
+                status = "failed"
             self._report_status(container_state="running", current_work=None, governance_waits=(str(exc),))
-            return AgentRunResult(message_id=message.message_id, status="failed", error=str(exc))
+            return AgentRunResult(message_id=message.message_id, status=status, error=str(exc))
 
     def _report_status(
         self,

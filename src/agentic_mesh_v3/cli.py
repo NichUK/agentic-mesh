@@ -82,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     run_agent_parser.add_argument("--worker-model")
     run_agent_parser.add_argument("--worker-reasoning-effort")
     run_agent_parser.add_argument("--worker-sandbox-mode")
+    run_agent_parser.add_argument("--max-delivery-attempts", type=int, default=3)
 
     run_service_parser = subparsers.add_parser("run-agent-service")
     run_service_parser.add_argument("--role-id", required=True)
@@ -98,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     run_service_parser.add_argument("--worker-model")
     run_service_parser.add_argument("--worker-reasoning-effort")
     run_service_parser.add_argument("--worker-sandbox-mode")
+    run_service_parser.add_argument("--max-delivery-attempts", type=int, default=3)
 
     materialize_parser = subparsers.add_parser("materialize-agent-configs")
     materialize_parser.add_argument("--image", required=True)
@@ -408,6 +410,8 @@ def _run_agent_once(args: argparse.Namespace):
     project_config_path = getattr(args, "project_config", None)
     if project_config_path is None:
         raise ValueError("--project-config is required for run-agent-once")
+    if args.max_delivery_attempts < 1:
+        raise ValueError("--max-delivery-attempts must be positive")
     config = load_project_config(project_config_path)
     broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
     _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=tuple(role.role_id for role in config.roles))
@@ -425,6 +429,8 @@ def _run_agent_service(args: argparse.Namespace):
         raise ValueError("--poll-interval-seconds must be non-negative")
     if args.idle_exit_seconds is not None and args.idle_exit_seconds < 0:
         raise ValueError("--idle-exit-seconds must be non-negative")
+    if args.max_delivery_attempts < 1:
+        raise ValueError("--max-delivery-attempts must be positive")
     config = load_project_config(project_config_path)
     broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
     _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=tuple(role.role_id for role in config.roles))
@@ -482,6 +488,7 @@ def _build_role_agent_service(
         broker=broker,
         worker=_worker_from_args(args, project_config=project_config),
         memory=build_role_memory(service_config),
+        max_delivery_attempts=args.max_delivery_attempts,
         **kwargs,
     )
 

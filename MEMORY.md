@@ -235,3 +235,8 @@ The V3 broker port now includes pending message inspection and dead-letter
 operations in addition to publish/fetch/ack/nack/depth. The in-memory adapter
 implements these fully for contract tests, and product code should continue to
 target the broker interface rather than a specific backend.
+
+V3 role services now enforce a configurable `max_delivery_attempts` limit.
+Failed messages are retried until the limit is reached, then moved to broker
+dead-letter storage with the failure reason so recovery can inspect them
+instead of leaving the agent in an endless retry loop.
