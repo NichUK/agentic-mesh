@@ -269,7 +269,7 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev lifecycle-app
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml broker-inspect --consumer agentic-mesh-dev.product-manager.1
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-once --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-service --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state --idle-exit-seconds 300
-agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml materialize-agent-configs --image agentic-mesh-v3:local --source-repo . --organisation-config-repo ../org --project-config-repo examples/projects/agentic-mesh-dev --agent-config-root .tmp/v3-agents --runtime-state-dir .tmp/v3-state --document-library-root .tmp/v3-documents --role-templates-dir config/roles --compose-output .tmp/v3-compose/roles.yml
+agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml materialize-agent-configs --image agentic-mesh-v3:local --source-repo . --deployed-runtime .tmp/v3-runtime --organisation-config-repo ../org --project-config-repo examples/projects/agentic-mesh-dev --agent-config-root .tmp/v3-agents --runtime-state-dir .tmp/v3-state --document-library-root .tmp/v3-documents --role-templates-dir config/roles --compose-output .tmp/v3-compose/roles.yml
 ```
 
 ## Adapter Status

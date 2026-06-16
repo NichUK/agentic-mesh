@@ -454,3 +454,8 @@ V3 Graph-backed Teams outbound delivery now sanitizes Markdown-rendered HTML
 before posting. Script/style blocks, unsafe attributes, and unsupported HTML are
 stripped while normal Markdown formatting is preserved for stakeholder-facing
 agent replies, approvals, and questions.
+
+V3 agent config materialization now validates topology before writing role
+instance folders or Compose output. Operators must provide a distinct
+`--deployed-runtime` path, and source/runtime/project/state/document path
+collapse is rejected unless an explicit local-dev override is supplied.

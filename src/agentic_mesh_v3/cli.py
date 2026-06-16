@@ -136,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     materialize_parser = subparsers.add_parser("materialize-agent-configs")
     materialize_parser.add_argument("--image", required=True)
     materialize_parser.add_argument("--source-repo", type=Path, required=True)
+    materialize_parser.add_argument("--deployed-runtime", type=Path, required=True)
     materialize_parser.add_argument("--organisation-config-repo", type=Path, required=True)
     materialize_parser.add_argument("--project-config-repo", type=Path, required=True)
     materialize_parser.add_argument("--agent-config-root", type=Path, required=True)
@@ -148,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     materialize_parser.add_argument("--flow-config", type=Path)
     materialize_parser.add_argument("--compose-output", type=Path)
     materialize_parser.add_argument("--compose-network", default="agentic-mesh")
+    materialize_parser.add_argument("--local-dev-override", action="store_true")
 
     tool_parser = subparsers.add_parser("tool-call")
     tool_parser.add_argument("--role-instance-id", required=True)
@@ -630,6 +632,18 @@ def _materialize_agent_configs(args: argparse.Namespace) -> dict[str, object]:
     project_config_path = getattr(args, "project_config", None)
     if project_config_path is None:
         raise ValueError("--project-config is required for materialize-agent-configs")
+    topology = V3Topology(
+        source_repo=args.source_repo,
+        deployed_runtime=args.deployed_runtime,
+        runtime_state=args.runtime_state_dir,
+        organisation_config_repo=args.organisation_config_repo,
+        project_config_repo=args.project_config_repo,
+        document_library_root=args.document_library_root,
+        local_dev_override=args.local_dev_override,
+    )
+    errors = validate_topology(topology)
+    if errors:
+        raise ValueError("invalid V3 topology: " + "; ".join(errors))
     config = load_project_config(project_config_path)
     materialized = materialize_project_agent_configs(
         project_config=config,
