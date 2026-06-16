@@ -232,6 +232,12 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   names. Stakeholder-facing delivery tools call the configured bridge and fail
   when no bridge is configured; agents must not receive successful tool results
   for messages that were not handed to a connector.
+  CLI `tool-call` and MCP stdio now build that stakeholder bridge from
+  `project.yaml` connector settings. `connectors.teams.adapter: local` uses
+  the local Teams-shaped bridge for tests and local development, while
+  `teams-bot-connector`/Graph-backed adapters require
+  `AGENTIC_MESH_TEAMS_TOKEN` so live outbound Teams messages cannot be marked
+  delivered without connector credentials.
   `status.reply` remains valid as an audit-only terminal record, but when it
   carries target metadata it sends the Markdown reply through the bridge.
   `approval.request` records the approval request and, when target metadata is

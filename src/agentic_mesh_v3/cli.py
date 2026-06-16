@@ -18,7 +18,10 @@ from agentic_mesh_v3.broker import BrokerMessage
 from agentic_mesh_v3.config_materializer import build_role_instance_config
 from agentic_mesh_v3.config_materializer import materialize_project_agent_configs
 from agentic_mesh_v3.compose import render_role_services_compose
+from agentic_mesh_v3.connectors import GraphTeamsBridge
 from agentic_mesh_v3.connectors import LocalTeamsBridge
+from agentic_mesh_v3.connectors import StakeholderBridge
+from agentic_mesh_v3.connectors import UrlLibGraphTeamsTransport
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.demo import run_demo_slice
 from agentic_mesh_v3.deployment import DeploymentTarget
@@ -329,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
                 db,
                 adapter,
                 deployment_targets=_deployment_targets(args),
+                stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
                 broker=broker,
                 broker_stream=broker_stream,
             ).call(
@@ -362,6 +366,7 @@ def main(argv: list[str] | None = None) -> int:
                 db,
                 _document_library_adapter(args),
                 deployment_targets=_deployment_targets(args),
+                stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
                 broker=broker,
                 broker_stream=broker_stream,
             )
@@ -498,6 +503,42 @@ def _tool_broker(args: argparse.Namespace) -> tuple[BrokerAdapter | None, str | 
     broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
     _ensure_agent_stream(broker, stream=config.broker.stream, role_ids=tuple(role.role_id for role in config.roles))
     return broker, config.broker.stream
+
+
+def _stakeholder_bridge(
+    args: argparse.Namespace,
+    *,
+    broker: BrokerAdapter | None = None,
+) -> StakeholderBridge | None:
+    project_config_path = getattr(args, "project_config", None)
+    if project_config_path is None:
+        return None
+    config = load_project_config(project_config_path)
+    adapter = (config.teams_connector.adapter or "").casefold().replace("_", "-")
+    if adapter in {"", "none"}:
+        return None
+    if adapter in {"local", "local-teams", "in-memory"}:
+        if broker is None:
+            broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
+            _ensure_agent_stream(
+                broker,
+                stream=config.broker.stream,
+                role_ids=tuple(role.role_id for role in config.roles),
+            )
+        return LocalTeamsBridge(
+            broker,
+            stream=config.broker.stream,
+            role_ids=tuple(role.role_id for role in config.roles),
+        )
+    if adapter in {"graph", "microsoft-graph", "teams-graph", "teams-bot-connector"}:
+        access_token = os.environ.get("AGENTIC_MESH_TEAMS_TOKEN")
+        if not access_token:
+            raise ValueError("AGENTIC_MESH_TEAMS_TOKEN is required for Graph-backed Teams outbound messaging")
+        return GraphTeamsBridge(
+            transport=UrlLibGraphTeamsTransport(access_token=access_token),
+            graph_base_url=config.teams_connector.graph_base_url,
+        )
+    raise ValueError(f"unsupported Teams connector adapter: {config.teams_connector.adapter}")
 
 
 def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | None:

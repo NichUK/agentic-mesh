@@ -8,9 +8,11 @@ from io import StringIO
 from agentic_mesh_v3.cli import _teams_activity_router
 from agentic_mesh_v3.cli import _broker_inspection_payload
 from agentic_mesh_v3.cli import _ensure_agent_stream
+from agentic_mesh_v3.cli import _stakeholder_bridge
 from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
+from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.reporting import AgentStatus
@@ -200,6 +202,105 @@ roles:
     assert detail is not None
     assert detail.releases[0].status == "deployed"
     assert "configured deploy" in detail.releases[0].deployment_result
+
+
+def test_cli_tool_call_uses_project_config_stakeholder_bridge(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+connectors:
+  teams:
+    adapter: local
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(tmp_path / "v3.sqlite3"),
+            "--project-config",
+            str(project_config),
+            "tool-call",
+            "--role-instance-id",
+            "agentic-mesh-dev.product-manager.1",
+            "--tool-name",
+            "status.reply",
+            "--payload-json",
+            '{"connector":"teams","target_ref":"dm:sponsor","text_markdown":"**Received.**"}',
+        ]
+    )
+
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert '"tool_name": "status.reply"' in output
+
+
+def test_cli_stakeholder_bridge_uses_local_teams_adapter(tmp_path: Path) -> None:
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+connectors:
+  teams:
+    adapter: local
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    bridge = _stakeholder_bridge(argparse.Namespace(project_config=project_config))
+
+    assert isinstance(bridge, LocalTeamsBridge)
+
+
+def test_cli_stakeholder_bridge_requires_graph_token(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+connectors:
+  teams:
+    adapter: teams-bot-connector
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AGENTIC_MESH_TEAMS_TOKEN", raising=False)
+
+    try:
+        _stakeholder_bridge(argparse.Namespace(project_config=project_config))
+    except ValueError as exc:
+        assert str(exc) == "AGENTIC_MESH_TEAMS_TOKEN is required for Graph-backed Teams outbound messaging"
+    else:
+        raise AssertionError("Graph-backed stakeholder bridge should require AGENTIC_MESH_TEAMS_TOKEN")
 
 
 def test_cli_mcp_stdio_uses_project_config_document_library(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
