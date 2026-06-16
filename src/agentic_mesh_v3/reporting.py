@@ -52,6 +52,7 @@ class ArtifactStatus:
     document_type: str
     status: str
     created_by_role: str
+    url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -444,7 +445,7 @@ def _artifact_table(work_item_id: str, items: tuple[ArtifactStatus, ...], *, doc
         "<tr><th>Artifact</th><th>Type</th><th>Status</th><th>Created By</th><th>Path</th><th>Framework Path</th></tr>"
     ]
     for item in items:
-        url = artifact_viewer_url(work_item_id, item.filename)
+        url = item.url or artifact_viewer_url(work_item_id, item.filename)
         framework_path = _artifact_framework_path(
             document_framework_id=document_framework_id,
             work_item_id=work_item_id,

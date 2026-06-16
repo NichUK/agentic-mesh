@@ -430,3 +430,4 @@ def test_work_item_json_endpoint_returns_detail_evidence(tmp_path: Path) -> None
     assert work_item["governance"]["accountable_role"] == "engineering"
     assert work_item["governance_checklist"]["missing_consultations"] == ["qa-engineer"]
     assert work_item["artifacts"][0]["relative_path"] == "work-items/work-1/100-implementation-log.md"
+    assert "url" in work_item["artifacts"][0]

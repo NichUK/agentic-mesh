@@ -273,6 +273,7 @@ def test_work_item_detail_page_shows_document_framework_artifact_paths() -> None
                 document_type="artifact",
                 status="published",
                 created_by_role="ux-designer",
+                url="https://example.test/documents/work-items/work-1/sketch.png",
             ),
         ),
     )
@@ -283,4 +284,6 @@ def test_work_item_detail_page_shows_document_framework_artifact_paths() -> None
     assert "togaf-sdlc-v1" in html
     assert "Framework Path" in html
     assert "work-items/work-1/020-product-definition.md" in html
+    assert "/artifact-viewer/work-1/020-product-definition.md" in html
+    assert "https://example.test/documents/work-items/work-1/sketch.png" in html
     assert "Flexible supporting artifact" in html
