@@ -310,7 +310,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   dead-letter operations. The local adapter fully exercises the contract for
   tests, including NATS-style `*` and `>` subject filters for stream
   configuration and durable consumers. Enterprise adapters can map the same
-  operations onto their native broker semantics.
+  operations onto their native broker semantics. The V3 Compose renderer can
+  also include a local NATS JetStream service for local/dogfood role-agent
+  deployments.
 - Agent tools: V3 exposes tool calls through CLI and MCP-compatible JSON-RPC
   stdio so Codex, other workers, and external automation can use the same
   approved pathway. Tool discovery is available through `tool-catalog
