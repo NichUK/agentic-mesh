@@ -83,17 +83,6 @@ standing_instructions:
   - Hand completed work to QA with acceptance criteria, evidence paths, test output, and known limitations.
   - Mark work blocked instead of bypassing missing product, architecture, security, platform, or approval prerequisites.
   - Preserve work_item_id, work_item_type, lifecycle_state, correlation_id, and evidence paths in every handoff.
-default_tools:
-  - git.read
-  - git.write
-  - document-library.read
-  - document-library.write
-  - review-log.write
-  - role-memory.read
-  - role-memory.write
-  - bdd.scenarios.read
-  - shell.workspace
-  - tests.run
 documentation_obligations:
   - docs/engineering/implementation-plan.md
   - docs/engineering/implementation-log.md

@@ -75,25 +75,8 @@ standing_instructions:
   - Consult required roles and stakeholders before closing a phase when RACI marks them C.
   - Inform required roles when a phase changes state, a major decision is made, a blocker appears, or release/closure occurs.
   - Use sponsor DMs for decisions that are likely to be missed in channels.
-  - Record governance exceptions with reason, accountable approver, affected roles, and residual risk.
+  - Use `governance.record_exception` to record governance exceptions with reason, accountable approver, affected roles, and residual risk.
   - Preserve work_item_id, queue_item_id, phase, accountable role, next action, decisions, risks, and evidence links in every handoff.
-default_tools:
-  - broker.publish
-  - broker.consume
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - work-item.read
-  - work-item.update-index
-  - backlog.read
-  - backlog.update
-  - governance.record_exception
-  - stakeholder.ask-question
-  - role-message.send
-  - status.update
-  - role-memory.read
-  - role-memory.write
 documentation_obligations:
   - documents/work-items/index.md
   - documents/risks/index.md

@@ -69,15 +69,6 @@ standing_instructions:
   - Hand unresolved release concerns back to the owning lifecycle state rather than silently accepting incomplete evidence.
   - Close the delivery loop only when release criteria are satisfied or a human-approved exception is recorded.
   - Preserve work_item_id, work_item_type, lifecycle_state, release outcome, evidence paths, approvals, and rollback notes in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - flow.visualize
-  - review-log.write
-  - role-memory.read
-  - git.read
 documentation_obligations:
   - docs/releases/release-records.md
 handoff_targets: []

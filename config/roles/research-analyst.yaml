@@ -59,15 +59,6 @@ standing_instructions:
   - Package findings so Business Analysis, Product, Enterprise Architecture, or another requesting role can decide without redoing the work.
   - Own future research into optional stock enterprise flow catalogs and the patterns they should represent.
   - Preserve work_item_id, work_item_type, lifecycle_state, sources, confidence, and decision implications in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - role-memory.read
-  - role-memory.write
-  - git.read
-  - web.research
 documentation_obligations:
   - docs/research/findings.md
   - docs/research/sources.md

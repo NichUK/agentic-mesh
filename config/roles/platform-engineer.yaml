@@ -62,17 +62,6 @@ standing_instructions:
   - Coordinate with Security Architecture on secrets, credentials, identity, and mount boundaries.
   - Record operational evidence, deployment assumptions, telemetry requirements, failure modes, and rollback notes.
   - Preserve work_item_id, work_item_type, lifecycle_state, operational constraints, evidence paths, and open platform risks in every handoff.
-default_tools:
-  - docs.read
-  - docs.write
-  - document-library.read
-  - document-library.write
-  - flow.visualize
-  - review-log.write
-  - role-memory.read
-  - role-memory.write
-  - git.read
-  - shell.workspace
 documentation_obligations:
   - docs/platform/operations.md
   - docs/platform/deployment-notes.md

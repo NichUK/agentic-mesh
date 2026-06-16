@@ -60,6 +60,10 @@ def load_role_template(path: Path, *, expected_role_id: str | None = None) -> Ro
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"role template `{path}` must be a mapping")
+    if "default_tools" in raw:
+        raise ValueError(
+            f"role template `{path}` must not define default_tools; use generated V3 tool catalog prompts"
+        )
     missing = [field for field in REQUIRED_ROLE_FIELDS if _is_empty(raw.get(field))]
     if missing:
         raise ValueError(f"role template `{path}` is missing required fields: {', '.join(missing)}")
