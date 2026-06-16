@@ -287,11 +287,22 @@ class RoleAgentService:
                 container_state=container_state,
                 heartbeat_at=datetime.now(timezone.utc).isoformat(),
                 current_work=current_work,
-                inbox_depth=self.broker.depth(self.config.inbox_stream).pending,
+                inbox_depth=self._role_inbox_depth(),
                 dead_letter_depth=len(self.broker.dead_letters(self.config.inbox_stream)),
                 governance_waits=governance_waits,
             )
         )
+
+    def _role_inbox_depth(self) -> int:
+        depth = 0
+        for consumer, subject in self._consumer_subjects():
+            self.broker.ensure_consumer(
+                self.config.inbox_stream,
+                consumer,
+                filter_subject=subject,
+            )
+            depth += len(self.broker.pending(self.config.inbox_stream, consumer))
+        return depth
 
     def _build_prompt(
         self,
