@@ -107,6 +107,30 @@ def test_v3_tool_service_rejects_missing_contract_fields_before_recording(tmp_pa
     assert calls == []
 
 
+def test_v3_tool_service_rejects_unknown_tools_before_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+
+        try:
+            tools.call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="unknown.tool",
+                payload={},
+            )
+        except PermissionError as exc:
+            assert "unknown.tool" in str(exc)
+        else:
+            raise AssertionError("unknown tools should fail authority before recording")
+
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert calls == []
+
+
 def test_v3_work_item_upsert_materializes_minimum_governance_context(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
