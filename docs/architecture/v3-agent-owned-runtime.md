@@ -75,6 +75,11 @@ purpose-only roles cannot be mounted as executable agent identities. Starter
 role templates also keep local documentation obligations pointed at real
 durable documents, so agents are not instructed to write or consult missing
 library locations.
+The V3 project JSON schema is kept in parity with this parsed configuration
+surface, including broker defaults, document-library defaults, role workers,
+Teams connector adapter settings, and release deployment targets. It remains
+extension-friendly for organisation and project-specific fields that are not
+yet interpreted by the V3 runtime.
 
 The same mounted folder is used to build the role-service configuration:
 prompt component paths, memory database path, broker stream, and durable

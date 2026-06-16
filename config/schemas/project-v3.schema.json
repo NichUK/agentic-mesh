@@ -4,7 +4,7 @@
   "title": "Agentic Mesh V3 Project Config",
   "type": "object",
   "additionalProperties": true,
-  "required": ["project_id", "broker", "document_library", "roles"],
+  "required": ["project_id", "roles"],
   "properties": {
     "project_id": {
       "type": "string",
@@ -13,11 +13,11 @@
     "broker": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["adapter"],
       "properties": {
         "adapter": {
           "type": "string",
           "enum": [
+            "in-memory",
             "nats-jetstream",
             "rabbitmq",
             "redis-streams",
@@ -25,7 +25,8 @@
             "kafka",
             "aws-sqs-sns",
             "google-pubsub",
-            "filesystem"
+            "filesystem",
+            "local"
           ]
         },
         "stream": { "type": "string" },
@@ -35,15 +36,30 @@
     "document_library": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["adapter"],
       "properties": {
         "adapter": {
           "type": "string",
-          "enum": ["onedrive", "sharepoint", "filesystem", "remote-filesystem", "dropbox"]
+          "enum": ["onedrive", "sharepoint", "filesystem", "remote-filesystem", "dropbox", "local", "file", "git"]
+        },
+        "backend": {
+          "type": "string",
+          "enum": ["onedrive", "sharepoint", "filesystem", "remote-filesystem", "dropbox", "git"]
         },
         "root": { "type": "string" },
         "drive_id": { "type": "string" },
-        "root_path": { "type": "string", "default": "/documents" }
+        "root_path": { "type": "string", "default": "/documents" },
+        "graph_base_url": { "type": "string", "default": "https://graph.microsoft.com/v1.0" }
+      }
+    },
+    "release_deployment_targets": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/releaseDeploymentTarget" }
+    },
+    "connectors": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "teams": { "$ref": "#/$defs/teamsConnector" }
       }
     },
     "roles": {
@@ -52,8 +68,120 @@
         "type": "object",
         "additionalProperties": true,
         "properties": {
-          "instances": { "type": "integer", "minimum": 1 }
+          "template": { "type": "string" },
+          "instances": { "type": "integer", "minimum": 1 },
+          "worker": { "$ref": "#/$defs/worker" },
+          "instructions": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "write_paths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "channels": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "primary": { "type": "string" },
+              "handoff_inbox": { "type": "string" }
+            }
+          }
         }
+      }
+    }
+  },
+  "$defs": {
+    "worker": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "enum": ["echo", "safe-output-subprocess", "codex-cli"]
+        },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "model": { "type": "string" },
+        "reasoning_effort": { "type": "string" },
+        "sandbox_mode": { "type": "string" },
+        "auth": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "credential": { "type": "string" }
+          }
+        }
+      }
+    },
+    "releaseDeploymentTarget": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["command", "no_deployment", "no-deployment", "no-deployment-disposition"]
+        },
+        "description": { "type": "string" },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "working_directory": { "type": "string" },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "reason": { "type": "string" },
+        "rollback_summary": { "type": "string" },
+        "rollback_plan": { "type": "string" }
+      }
+    },
+    "teamsConnector": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "enum": ["local", "local-teams", "in-memory", "graph", "microsoft-graph", "teams-graph", "teams-bot-connector"]
+        },
+        "graph_base_url": { "type": "string", "default": "https://graph.microsoft.com/v1.0" },
+        "identity_model": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "role_bots": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/roleBot" }
+        },
+        "team": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" }
+          }
+        },
+        "channels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "roleBot": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "display_name": { "type": "string" },
+        "mention_handle": { "type": "string" },
+        "bot_id_ref": { "type": "string" },
+        "secret_ref": { "type": "string" }
       }
     }
   }

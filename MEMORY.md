@@ -331,3 +331,9 @@ bridges from `project.yaml` Teams connector settings. Local/test projects can
 use `connectors.teams.adapter: local`; Graph/Teams bot connector adapters
 require `AGENTIC_MESH_TEAMS_TOKEN` so targeted sponsor or stakeholder messages
 cannot be reported as delivered without a configured connector credential.
+
+The V3 project schema now matches the parsed runtime config surface for local
+broker defaults, document-library defaults, role worker/auth settings, Teams
+connector adapter settings, and release deployment targets. It validates the
+current dogfood project config while staying permissive for broader
+organisation/project fields that V3 has not interpreted yet.
