@@ -66,7 +66,7 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
     assert snapshot.agents[0].dead_letter_depth == 1
 
 
-def test_v3_tool_service_writes_work_item_index_and_root_index(tmp_path: Path) -> None:
+def test_v3_tool_service_writes_work_item_index_and_refreshes_root_index(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
     try:
@@ -96,16 +96,15 @@ def test_v3_tool_service_writes_work_item_index_and_root_index(tmp_path: Path) -
                 "next_action": "Implement",
             },
         )
-        tools.call(
-            role_instance_id="agentic-mesh-dev.project-manager.1",
-            tool_name="document.write_root_work_item_index",
-            payload={},
-        )
     finally:
         db.close()
 
     assert (tmp_path / "documents" / "work-items" / "work-1" / "index.md").exists()
-    assert (tmp_path / "documents" / "work-items" / "index.md").exists()
+    root_index = tmp_path / "documents" / "work-items" / "index.md"
+    assert root_index.exists()
+    assert "[Add status page](work-items/work-1/index.md) - `active` - engineering" in root_index.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_v3_tool_service_rejects_disallowed_or_unknown_tool(tmp_path: Path) -> None:

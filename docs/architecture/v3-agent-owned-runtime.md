@@ -263,6 +263,10 @@ Every work item has an `index.md`. The root work-item index is:
 /documents/work-items/index.md
 ```
 
+Writing a work-item `index.md` through the approved document tool refreshes
+the root work-item index immediately, so sponsors can browse current and
+recent work without relying on agents to remember a second indexing step.
+
 Work-item indexes are evidence records, not status placeholders. The document
 library writer rejects status-only `index.md` records and duplicate evidence
 links or repeated decision/risk entries, so agents must record useful next
