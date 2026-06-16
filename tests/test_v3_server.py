@@ -17,6 +17,19 @@ def test_artifact_page_renders_markdown_safely() -> None:
 
     assert "<h1>Hello</h1>" in html
     assert "<script>" not in html
+    assert "cdn.jsdelivr.net/npm/mermaid" not in html
+
+
+def test_artifact_page_preserves_mermaid_diagrams_with_controlled_loader() -> None:
+    html = _artifact_page(
+        "work-items/work-1/lifecycle.md",
+        "# Flow\n\n```mermaid\ngraph TD\n  A-->B\n```\n\n<script>alert(1)</script>",
+    )
+
+    assert '<pre class="mermaid">graph TD\n  A--&gt;B</pre>' in html
+    assert "cdn.jsdelivr.net/npm/mermaid" in html
+    assert "mermaid.initialize" in html
+    assert "alert" not in html
 
 
 def test_status_handler_snapshot_uses_v3_db(tmp_path: Path) -> None:

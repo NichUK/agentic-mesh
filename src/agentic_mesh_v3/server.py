@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -186,7 +187,9 @@ def _teams_activity_response(activity: dict[str, Any], router: TeamsActivityRout
 
 
 def _artifact_page(relative_path: str, content: str) -> str:
+    content = _strip_raw_script_blocks(content)
     rendered = markdown.markdown(content, extensions=["tables", "fenced_code"])
+    rendered, has_mermaid = _promote_mermaid_blocks(rendered)
     safe = bleach.clean(
         rendered,
         tags={
@@ -213,15 +216,42 @@ def _artifact_page(relative_path: str, content: str) -> str:
             "tr",
             "ul",
         },
-        attributes={"a": ["href", "title"]},
+        attributes={"a": ["href", "title"], "pre": ["class"], "code": ["class"]},
+    )
+    mermaid_loader = (
+        "<script type=\"module\">"
+        "import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';"
+        "mermaid.initialize({startOnLoad:true,securityLevel:'strict'});"
+        "</script>"
+        if has_mermaid
+        else ""
     )
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         f"<title>{html.escape(relative_path)}</title>"
         "<style>body{font-family:system-ui,sans-serif;margin:2rem;line-height:1.45;max-width:72rem}"
         "pre{background:#f3f4f6;padding:1rem;overflow:auto}"
+        "pre.mermaid{background:#fff;border:1px solid #d1d5db}"
         "code{background:#f3f4f6;padding:.05rem .2rem}"
         "table{border-collapse:collapse}th,td{border:1px solid #d1d5db;padding:.35rem}</style>"
         "</head><body>"
-        f"<p><a href=\"/status\">Status</a></p><h1>{html.escape(relative_path)}</h1>{safe}</body></html>"
+        f"<p><a href=\"/status\">Status</a></p><h1>{html.escape(relative_path)}</h1>{safe}{mermaid_loader}</body></html>"
     )
+
+
+def _promote_mermaid_blocks(rendered_markdown: str) -> tuple[str, bool]:
+    pattern = re.compile(
+        r"<pre><code class=\"language-mermaid\">(?P<body>.*?)</code></pre>",
+        re.DOTALL,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        body = html.unescape(match.group("body")).strip()
+        return f"<pre class=\"mermaid\">{html.escape(body)}</pre>"
+
+    promoted, count = pattern.subn(replace, rendered_markdown)
+    return promoted, count > 0
+
+
+def _strip_raw_script_blocks(content: str) -> str:
+    return re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1>", "", content)
