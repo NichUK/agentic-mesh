@@ -89,6 +89,7 @@ class LocalTeamsBridge:
                 self.stream,
                 subject,
                 {
+                    "message_type": "stakeholder.message",
                     "connector": message.connector,
                     "source_message_id": message.message_id,
                     "source_type": message.source_type,

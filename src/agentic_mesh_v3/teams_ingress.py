@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from typing import Protocol
 
+from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.connectors import StakeholderMessage
 from agentic_mesh_v3.db import V3Database
@@ -22,6 +23,11 @@ class TeamsRoleIdentity:
 class ConversationRecorder(Protocol):
     def record(self, message: StakeholderMessage) -> None:
         """Persist an inbound stakeholder message for later agent context."""
+
+
+class ApprovalResponseRecorder(Protocol):
+    def record(self, message: StakeholderMessage) -> bool:
+        """Record an approval response if the stakeholder message contains one."""
 
 
 class DatabaseConversationRecorder:
@@ -46,6 +52,61 @@ class DatabaseConversationRecorder:
             db.close()
 
 
+class DatabaseApprovalResponseRecorder:
+    """Persist approval responses found in inbound stakeholder messages.
+
+    This keeps Teams/Bot Framework approval replies in the same durable path as
+    the CLI approval command while still letting the original message route to
+    the addressed role agent for context.
+    """
+
+    def __init__(self, db_path: Path, *, broker: BrokerAdapter | None = None, stream: str = "agent-inbox") -> None:
+        self.db_path = Path(db_path)
+        self.broker = broker
+        self.stream = stream
+
+    def record(self, message: StakeholderMessage) -> bool:
+        response = approval_response_from_text(message.text)
+        if response is None:
+            return False
+        approval_id, status = response
+        db = V3Database(self.db_path)
+        try:
+            db.migrate()
+            try:
+                db.record_approval_response(
+                    approval_id=approval_id,
+                    status=status,
+                    response=message.text,
+                    responder_ref=message.sender_ref,
+                )
+            except ValueError:
+                return False
+            approval = db.approval_detail(approval_id)
+        finally:
+            db.close()
+        if approval is not None and self.broker is not None:
+            requested_by_role = str(approval["requested_by_role"])
+            self.broker.ensure_stream(self.stream, [f"agent.{requested_by_role}"])
+            self.broker.publish(
+                self.stream,
+                f"agent.{requested_by_role}",
+                {
+                    "message_type": "approval.response_recorded",
+                    "approval_id": str(approval["approval_id"]),
+                    "work_item_id": str(approval["work_item_id"]),
+                    "status": str(approval["status"]),
+                    "response": str(approval.get("response") or ""),
+                    "responder_ref": message.sender_ref,
+                    "source_message_id": message.message_id,
+                    "conversation_ref": message.conversation_ref,
+                    "reply_target_ref": message.reply_target_ref,
+                    "reply_thread_ref": message.reply_thread_ref,
+                },
+            )
+        return True
+
+
 class TeamsActivityRouter:
     """Route Bot Framework Teams activities into the connector-neutral bridge."""
 
@@ -55,15 +116,19 @@ class TeamsActivityRouter:
         *,
         role_identities: tuple[TeamsRoleIdentity, ...] = (),
         conversation_recorder: ConversationRecorder | None = None,
+        approval_response_recorder: ApprovalResponseRecorder | None = None,
     ) -> None:
         self.bridge = bridge
         self.role_identities = role_identities
         self.conversation_recorder = conversation_recorder
+        self.approval_response_recorder = approval_response_recorder
 
     def route_activity(self, activity: dict[str, Any]) -> list[str]:
         message = normalize_teams_activity(activity, role_identities=self.role_identities)
         if self.conversation_recorder is not None:
             self.conversation_recorder.record(message)
+        if self.approval_response_recorder is not None:
+            self.approval_response_recorder.record(message)
         return self.bridge.route_inbound(message)
 
 
@@ -120,6 +185,22 @@ def normalize_teams_activity(
         ),
         reply_thread_ref=_teams_reply_thread_ref(activity, source_type=source_type),
     )
+
+
+def approval_response_from_text(text: str) -> tuple[str, str] | None:
+    approval_id_match = re.search(r"\b(?:approval|human-response)-[A-Za-z0-9_-]+\b", text)
+    if approval_id_match is None:
+        return None
+    normalised = re.sub(r"[^a-z0-9]+", " ", text.casefold())
+    if re.search(r"\bchanges?\s+requested\b", normalised) or "changes requested" in normalised:
+        status = "changes_requested"
+    elif re.search(r"\breject(?:ed)?\b", normalised):
+        status = "rejected"
+    elif re.search(r"\bapprov(?:e|ed)\b", normalised):
+        status = "approved"
+    else:
+        return None
+    return approval_id_match.group(0), status
 
 
 def _mentioned_roles(

@@ -1477,3 +1477,82 @@ roles:
     assert pending[0].payload["approval_id"] == "approval-1"
     assert pending[0].payload["work_item_id"] == "work-1"
     assert pending[0].payload["status"] == "approved"
+
+
+def test_cli_teams_activity_router_records_approval_responses(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import agentic_mesh_v3.cli as cli_module
+
+    db_path = tmp_path / "v3.sqlite3"
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+roles:
+  product-manager:
+    instances: 1
+connectors:
+  teams:
+    role_bots:
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: bot-product
+""",
+        encoding="utf-8",
+    )
+    broker = InMemoryBrokerAdapter()
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Approval work",
+            description="Needs approval.",
+            state="waiting_human",
+            owner_role="sponsor",
+        )
+        db.request_approval(
+            approval_id="approval-1",
+            work_item_id="work-1",
+            requested_by_role="product-manager",
+            question="Approve product definition?",
+        )
+    finally:
+        db.close()
+    monkeypatch.setattr(cli_module, "build_broker_adapter", lambda **_: broker)
+
+    router = _teams_activity_router(
+        argparse.Namespace(
+            db=db_path,
+            project_config=project_config,
+        )
+    )
+    assert router is not None
+
+    subjects = router.route_activity(
+        {
+            "id": "msg-approval",
+            "text": "approval-1 approved",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        }
+    )
+
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        approval = db.approval_detail("approval-1")
+    finally:
+        db.close()
+    pending = broker.pending("agent-inbox")
+
+    assert subjects == ["agent.product-manager"]
+    assert approval is not None
+    assert approval["status"] == "approved"
+    assert pending[0].payload["message_type"] == "approval.response_recorded"
