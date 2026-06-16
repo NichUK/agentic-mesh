@@ -139,6 +139,7 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev local-e2e-dog
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev status-json
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev serve --document-library-root .tmp/v3-documents
 agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
+agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-once --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state
 ```
 
 ## Adapter Status
