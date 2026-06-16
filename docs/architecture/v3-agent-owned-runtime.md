@@ -311,8 +311,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   `status.update` remains valid as an audit-only progress record when no work
   item is supplied; when `work_item_id` is present, it updates the work item's
   visible next action/current phase without performing a lifecycle transition.
-  `approval.request` records the approval request and, when target metadata is
-  present, sends the sponsor-facing approval request through the bridge.
+  `approval.request` records the approval request, moves existing work into
+  `waiting_human` with sponsor-visible next action, and, when target metadata
+  is present, sends the sponsor-facing approval request through the bridge.
   `record-approval-response` records sponsor/operator decisions and, when
   project broker config is available, publishes the response to the role that
   requested the approval so the agent can continue the work. If the work item

@@ -580,7 +580,25 @@ class V3Database:
         work_item_id: str,
         requested_by_role: str,
         question: str,
+        waiting_owner_role: str | None = None,
+        current_phase: str | None = None,
+        next_action: str | None = None,
     ) -> None:
+        if waiting_owner_role is not None:
+            existing = self.connection.execute(
+                "SELECT state FROM work_items WHERE work_item_id=?",
+                (work_item_id,),
+            ).fetchone()
+            if existing is None:
+                raise ValueError(f"work item `{work_item_id}` was not found")
+            validate_transition(
+                StateTransition(
+                    work_item_id=work_item_id,
+                    from_state=existing["state"],
+                    to_state="waiting_human",
+                    reason=next_action or "approval requested",
+                )
+            )
         with self.connection:
             self.connection.execute(
                 """
@@ -595,6 +613,31 @@ class V3Database:
                 work_item_id,
                 {"approval_id": approval_id, "requested_by_role": requested_by_role, "question": question},
             )
+            if waiting_owner_role is not None:
+                self.connection.execute(
+                    """
+                    UPDATE work_items SET
+                      state='waiting_human',
+                      owner_role=?,
+                      current_phase=COALESCE(?, current_phase),
+                      next_action=?,
+                      updated_at=CURRENT_TIMESTAMP
+                    WHERE work_item_id=?
+                    """,
+                    (waiting_owner_role, current_phase, next_action or "", work_item_id),
+                )
+                self._sync_linked_backlog_item_state(work_item_id=work_item_id, state="waiting_human")
+                self.record_event(
+                    "work_item.state_updated",
+                    "work_item",
+                    work_item_id,
+                    {
+                        "state": "waiting_human",
+                        "owner_role": waiting_owner_role,
+                        "current_phase": current_phase,
+                        "next_action": next_action or "",
+                    },
+                )
 
     def record_approval_response(
         self,

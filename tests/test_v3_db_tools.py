@@ -1324,10 +1324,48 @@ def test_v3_tool_service_approval_request_delivers_when_target_is_present(tmp_pa
 
     assert detail is not None
     assert detail.approvals[0].approval_id == "approval-1"
+    assert detail.state == "waiting_human"
+    assert detail.owner_role == "sponsor"
+    assert detail.next_action == "Approval `approval-1` requested by product-manager; awaiting sponsor response."
     assert bridge.deliveries[0].target_ref == "dm:sponsor"
     assert "Approve product definition?" in bridge.deliveries[0].text_markdown
     assert "approval-1" in bridge.deliveries[0].text_markdown
     assert bridge.deliveries[0].importance == "high"
+
+
+def test_v3_tool_service_approval_request_moves_active_work_to_waiting_human(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Approval work",
+            description="Needs approval.",
+            state="active",
+            owner_role="product-manager",
+            current_phase="requirements",
+        )
+        V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="approval.request",
+            payload={
+                "approval_id": "approval-1",
+                "work_item_id": "work-1",
+                "question": "Approve product definition?",
+                "waiting_owner_role": "sponsor",
+                "current_phase": "requirements",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "waiting_human"
+    assert detail.owner_role == "sponsor"
+    assert detail.current_phase == "requirements"
+    assert detail.approvals[0].status == "awaiting_response"
 
 
 def test_v3_tool_service_approval_request_with_target_requires_bridge(tmp_path: Path) -> None:
@@ -1363,3 +1401,29 @@ def test_v3_tool_service_approval_request_with_target_requires_bridge(tmp_path: 
 
     assert detail is not None
     assert detail.approvals == ()
+
+
+def test_v3_tool_service_approval_request_rejects_missing_work_item_without_recording(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="approval.request",
+                payload={
+                    "approval_id": "approval-1",
+                    "work_item_id": "work-missing",
+                    "question": "Approve product definition?",
+                },
+            )
+        except ValueError as exc:
+            assert "work item `work-missing` was not found" in str(exc)
+        else:
+            raise AssertionError("approval.request should require an existing work item")
+
+        approval = db.approval_detail("approval-1")
+    finally:
+        db.close()
+
+    assert approval is None
