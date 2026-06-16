@@ -367,7 +367,12 @@ def _list(value: Any) -> list[Any]:
 def _expand_env_refs(value: str) -> str:
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
-        return os.environ.get(name, match.group(0))
+        env_value = os.environ.get(name)
+        if env_value is None:
+            raise ValueError(
+                f"Config references environment variable ${{{name}}} which is not set"
+            )
+        return env_value
 
     return _ENV_REF_RE.sub(replace, value)
 

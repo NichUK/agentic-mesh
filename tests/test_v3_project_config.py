@@ -155,6 +155,25 @@ def test_load_v3_dogfood_project_config_uses_onedrive_and_deployment_target(monk
     assert {"product-manager", "project-manager", "engineering", "qa-engineer", "release-manager"} <= role_ids
 
 
+def test_load_v3_dogfood_project_config_raises_on_missing_env_var(monkeypatch, tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: test-project
+broker:
+  adapter: nats-jetstream
+document_library:
+  adapter: onedrive
+  drive_id: ${MISSING_ENV_VAR_DRIVE_ID}
+roles:
+  engineering:
+    model: gpt-4o
+"""
+    )
+    with pytest.raises(ValueError, match="MISSING_ENV_VAR_DRIVE_ID"):
+        load_project_config(project_file)
+
+
 def test_resolve_project_flow_config_path_prefers_v3_sdlc_template(tmp_path: Path) -> None:
     project_file = tmp_path / "project.yaml"
     project_file.write_text(
