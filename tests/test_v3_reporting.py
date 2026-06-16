@@ -1,6 +1,7 @@
 from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
+from agentic_mesh_v3.reporting import GovernanceRecordStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import WorkItemStatus
 from agentic_mesh_v3.reporting import artifact_viewer_path
@@ -154,3 +155,43 @@ def test_work_item_detail_page_shows_explicit_raci_context() -> None:
     assert "release-approval" in html
     assert "Required evidence before handoff" in html
     assert "smoke-test.md" in html
+
+
+def test_work_item_detail_page_shows_consultations_and_informed_updates() -> None:
+    detail = WorkItemDetail(
+        work_item_id="work-1",
+        title="Governed work",
+        description="Needs consultation evidence.",
+        state="active",
+        owner_role="solution-architect",
+        current_phase="system-design",
+        next_action="Resolve consultation.",
+        governance={},
+        governance_records=(
+            GovernanceRecordStatus(
+                record_id="governance-1",
+                record_type="consult.request",
+                role_instance_id="agentic-mesh-dev.solution-architect.1",
+                target_ref="security-architect",
+                summary="Please review the security architecture assumptions.",
+                status="requested",
+            ),
+            GovernanceRecordStatus(
+                record_id="governance-2",
+                record_type="informed.update",
+                role_instance_id="agentic-mesh-dev.solution-architect.1",
+                target_ref="project-manager",
+                summary="System design moved to security review.",
+                status="sent",
+            ),
+        ),
+    )
+
+    html = render_work_item_detail_page(detail, "work-1")
+
+    assert "<h2>Consultations</h2>" in html
+    assert "security-architect" in html
+    assert "Please review the security architecture assumptions." in html
+    assert "<h2>Informed Updates</h2>" in html
+    assert "project-manager" in html
+    assert "System design moved to security review." in html

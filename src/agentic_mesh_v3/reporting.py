@@ -232,6 +232,10 @@ def render_work_item_detail_page(detail: WorkItemDetail | None, work_item_id: st
             _governance_summary_table(detail.governance),
             "<h2>Governance Checklist</h2>",
             _governance_checklist_section(detail.governance_checklist),
+            "<h2>Consultations</h2>",
+            _consultation_table(detail.governance_records),
+            "<h2>Informed Updates</h2>",
+            _informed_update_table(detail.governance_records),
             "<h2>Blockers</h2>",
             _blocker_table(detail.governance_records),
             "<h2>Decisions</h2>",
@@ -605,6 +609,22 @@ def _risk_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
         items,
         record_type="risk.register",
         empty_message="No risks recorded.",
+    )
+
+
+def _consultation_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
+    return _filtered_governance_record_table(
+        items,
+        record_type="consult.request",
+        empty_message="No consultations recorded.",
+    )
+
+
+def _informed_update_table(items: tuple[GovernanceRecordStatus, ...]) -> str:
+    return _filtered_governance_record_table(
+        items,
+        record_type="informed.update",
+        empty_message="No informed updates recorded.",
     )
 
 
