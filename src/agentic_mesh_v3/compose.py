@@ -12,13 +12,25 @@ def render_role_services_compose(
     specs: Iterable[RoleContainerSpec],
     *,
     network_name: str = "agentic-mesh",
+    include_nats: bool = False,
+    nats_service_name: str = "nats",
+    nats_image: str = "nats:2.10-alpine",
+    nats_ports: tuple[str, ...] = ("4222:4222", "8222:8222"),
 ) -> str:
     """Render Docker Compose YAML for configured V3 role-agent services."""
 
     services: dict[str, object] = {}
+    if include_nats:
+        services[nats_service_name] = {
+            "image": nats_image,
+            "command": ["-js", "-m", "8222"],
+            "ports": list(nats_ports),
+            "networks": [network_name],
+            "restart": "unless-stopped",
+        }
     for spec in specs:
         service_name = service_name_for_role(spec.role_instance_id)
-        services[service_name] = {
+        service = {
             "image": spec.image,
             "command": spec.service_command(),
             "environment": dict(sorted(spec.environment.items())),
@@ -26,6 +38,9 @@ def render_role_services_compose(
             "networks": [network_name],
             "restart": "unless-stopped",
         }
+        if include_nats:
+            service["depends_on"] = [nats_service_name]
+        services[service_name] = service
     compose = {
         "services": services,
         "networks": {
