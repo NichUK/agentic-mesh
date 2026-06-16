@@ -123,4 +123,8 @@ roles:
     assert engineering_2.role_service_config.inbox_consumer == "agentic-mesh-dev.engineering.2"
     assert engineering_2.role_service_config.memory_db_path == tmp_path / "state" / "memory" / "agentic-mesh-dev.engineering.2.sqlite3"
     assert "Build safely." in (tmp_path / "agents" / "engineering" / "2" / "project.md").read_text(encoding="utf-8")
-    assert "Use approved tools." in (tmp_path / "agents" / "product-manager" / "1" / "tools.md").read_text(encoding="utf-8")
+    product_tools = (tmp_path / "agents" / "product-manager" / "1" / "tools.md").read_text(encoding="utf-8")
+    assert "Use approved tools." in product_tools
+    assert "Role-Scoped Safe-Output Tool Catalog" in product_tools
+    assert "`backlog.upsert`: allowed" in product_tools
+    assert "`release.deploy`: blocked" in product_tools
