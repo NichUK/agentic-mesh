@@ -40,6 +40,7 @@ class DatabaseConversationRecorder:
                 sender_ref=message.sender_ref,
                 text=message.text,
                 thread_ref=message.thread_ref,
+                mentioned_roles=message.mentioned_roles,
             )
         finally:
             db.close()

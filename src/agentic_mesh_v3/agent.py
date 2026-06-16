@@ -476,7 +476,9 @@ def _append_optional_section(lines: list[str], name: str, content: str | None) -
 def _conversation_row_summary(row: dict[str, object]) -> str:
     thread = row.get("thread_ref")
     thread_text = f", thread: {thread}" if thread else ""
+    mentioned_roles = row.get("mentioned_roles") or ()
+    mentions_text = f", mentions: {', '.join(str(role) for role in mentioned_roles)}" if mentioned_roles else ""
     return (
         f"- [{row.get('connector')}/{row.get('source_type')}] {row.get('sender_ref')}: "
-        f"{row.get('text')} (message: {row.get('message_id')}{thread_text})"
+        f"{row.get('text')} (message: {row.get('message_id')}{thread_text}{mentions_text})"
     )
