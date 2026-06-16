@@ -117,3 +117,40 @@ def test_work_item_detail_page_shows_missing_required_evidence() -> None:
 
     assert "Required evidence" in html
     assert "100-implementation-log.md" in html
+
+
+def test_work_item_detail_page_shows_explicit_raci_context() -> None:
+    detail = WorkItemDetail(
+        work_item_id="work-1",
+        title="Governed release",
+        description="Needs visible governance.",
+        state="active",
+        owner_role="release-manager",
+        current_phase="deployment",
+        next_action="Deploy configured target.",
+        governance={
+            "phase": "deployment",
+            "accountable_role": "release-manager",
+            "responsible_roles": ["platform-engineer", "engineering"],
+            "consulted_roles": ["qa-engineer", "security-architect"],
+            "informed_roles": ["project-manager", "product-manager"],
+            "sponsor_decision_points": ["release-approval"],
+            "required_evidence": ["release-record.md", "smoke-test.md"],
+        },
+    )
+
+    html = render_work_item_detail_page(detail, "work-1")
+
+    assert "<h2>RACI</h2>" in html
+    assert "Accountable" in html
+    assert "release-manager" in html
+    assert "Responsible" in html
+    assert "platform-engineer" in html
+    assert "Consulted" in html
+    assert "qa-engineer" in html
+    assert "Informed" in html
+    assert "project-manager" in html
+    assert "Sponsor decision points" in html
+    assert "release-approval" in html
+    assert "Required evidence before handoff" in html
+    assert "smoke-test.md" in html
