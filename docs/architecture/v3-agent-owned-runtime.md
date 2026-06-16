@@ -329,6 +329,9 @@ agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh
   terminal safe-output signal (`status.reply`, `status.complete`, `noop`, or
   `report.incomplete`) before acknowledging an inbox message; non-terminal-only
   runs are retried or dead-lettered instead of being treated as complete.
+  DB-backed CLI role runs also verify that a new terminal tool-call record was
+  actually written through the approved safe-output service during the worker
+  run, so an agent cannot complete work by merely claiming it used a tool.
   `run-agent-once` uses the role worker configured in `project.yaml` when no
   worker override is supplied, falling back to the echo worker only for
   unconfigured local smoke runs.

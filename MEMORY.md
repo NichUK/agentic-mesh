@@ -474,3 +474,8 @@ V3 governance communication tools now validate minimum useful payloads before
 recording evidence: consults require a target role and question, informed
 updates require a target role and message, stakeholder questions require a
 question, and governance exceptions require a reason.
+
+V3 DB-backed role-service runs now audit terminal safe-output calls against the
+runtime tool-call table. The worker's returned operational envelope is no
+longer enough on its own; the run must also record a new terminal tool call
+through the approved safe-output service before the inbox message is acked.

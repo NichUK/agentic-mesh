@@ -2,6 +2,7 @@ from pathlib import Path
 
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseConversationContext
+from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import InMemoryRoleMemory
@@ -14,6 +15,7 @@ from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import evaluate_governance_checklist
 from agentic_mesh_v3.memory import DatabaseRoleMemory
+from agentic_mesh_v3.tools import V3ToolService
 
 
 class NoToolWorker:
@@ -33,6 +35,21 @@ class CapturingWorker:
     def run(self, prompt, message):  # type: ignore[no-untyped-def]
         self.prompt = prompt
         return [f"status.reply:{message.message_id}"]
+
+
+class RecordingTerminalWorker:
+    def __init__(self, tools: V3ToolService, role_instance_id: str) -> None:
+        self.tools = tools
+        self.role_instance_id = role_instance_id
+
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        del prompt
+        result = self.tools.call(
+            role_instance_id=self.role_instance_id,
+            tool_name="status.reply",
+            payload={"message": f"Processed {message.message_id}"},
+        )
+        return [result.call_id]
 
 
 class FakeStatusReporter:
@@ -582,6 +599,60 @@ def test_role_agent_requeues_if_worker_calls_no_terminal_tool(tmp_path: Path) ->
     assert result.status == "failed"
     assert "terminal safe-output tool" in (result.error or "")
     assert broker.depth("agent-inbox").pending == 1
+
+
+def test_role_agent_requeues_if_terminal_call_was_not_recorded_in_audit(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=CapturingWorker(),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+        )
+
+        result = service.run_once()
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert "did not record a terminal safe-output tool call" in (result.error or "")
+    assert broker.depth("agent-inbox").pending == 1
+
+
+def test_role_agent_accepts_terminal_call_recorded_through_tool_service(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingTerminalWorker(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+        )
+
+        result = service.run_once()
+        tool_calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert result.tool_calls == (tool_calls[0]["call_id"],)
+    assert tool_calls[0]["tool_name"] == "status.reply"
+    assert tool_calls[0]["terminal"] is True
+    assert broker.depth("agent-inbox").pending == 0
 
 
 def test_role_agent_dead_letters_after_delivery_limit(tmp_path: Path) -> None:
