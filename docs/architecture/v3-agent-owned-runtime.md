@@ -172,6 +172,10 @@ changes, major decisions happen, blockers appear, or releases occur.
 Sponsor consultation is required for material changes to scope, priority,
 acceptance criteria, user-visible behavior, release risk, cost, compliance,
 security posture, or delivery commitment.
+The reusable governance prompt instructions name the exact safe-output tools
+for these duties: `consult.request`, `informed.update`,
+`stakeholder.ask_question`, `governance.record_exception`, and
+`document.write_work_item_index`.
 
 Governance checklists compare a work item's RACI context with recorded
 consultation, informed-update, exception, and approval evidence. They are

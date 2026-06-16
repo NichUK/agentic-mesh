@@ -489,3 +489,9 @@ V3 tool contract metadata is now shared by catalog discovery and runtime
 safe-output enforcement. `V3ToolService` validates required payload fields
 before recording a durable tool call, so incomplete tool attempts fail without
 leaving misleading call records.
+
+V3 governance prompt instructions now name the safe-output tools agents should
+use for each governance duty: `consult.request`, `informed.update`,
+`stakeholder.ask_question`, `governance.record_exception`, and
+`document.write_work_item_index`. This makes consultation and evidence capture
+less likely to become prose-only claims.
