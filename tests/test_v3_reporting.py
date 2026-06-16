@@ -45,6 +45,8 @@ def test_reporting_pages_include_required_status_data() -> None:
                 3,
                 1,
                 ("Missing consultation evidence for `qa-engineer`.",),
+                2,
+                "2026-06-15 10:01:00",
             ),
         ),
     )
@@ -66,6 +68,9 @@ def test_reporting_pages_include_required_status_data() -> None:
     assert "Missing consultation evidence for `qa-engineer`." in status_html
     assert "agentic-mesh-dev.engineering.1" in agents_html
     assert "Dead Letters" in agents_html
+    assert "Memory" in agents_html
+    assert "2 entries" in agents_html
+    assert "2026-06-15 10:01:00" in agents_html
     assert "<td>1</td>" in agents_html
     assert "<strong>Work item:</strong> work-1" in work_html
 

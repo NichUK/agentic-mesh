@@ -795,12 +795,25 @@ class V3Database:
                 inbox_depth=row["inbox_depth"],
                 dead_letter_depth=row["dead_letter_depth"],
                 governance_waits=tuple(json.loads(row["governance_waits_json"] or "[]")),
+                memory_count=row["memory_count"],
+                last_memory_at=row["last_memory_at"],
             )
             for row in self.connection.execute(
                 """
-                SELECT role_instance_id, container_state, heartbeat_at, current_work, inbox_depth, dead_letter_depth, governance_waits_json
-                FROM agents
-                ORDER BY role_instance_id ASC
+                SELECT
+                  a.role_instance_id,
+                  a.container_state,
+                  a.heartbeat_at,
+                  a.current_work,
+                  a.inbox_depth,
+                  a.dead_letter_depth,
+                  a.governance_waits_json,
+                  COUNT(rm.memory_id) AS memory_count,
+                  MAX(rm.created_at) AS last_memory_at
+                FROM agents a
+                LEFT JOIN role_memory rm ON rm.role_instance_id = a.role_instance_id
+                GROUP BY a.role_instance_id
+                ORDER BY a.role_instance_id ASC
                 """
             )
         )

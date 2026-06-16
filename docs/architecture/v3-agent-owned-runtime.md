@@ -231,6 +231,11 @@ Work-item detail pages include the governance checklist derived from the
 runtime read model so sponsors and agents can see unresolved consultations,
 informed updates, sponsor decisions, and recorded exceptions without reading
 raw JSON.
+The `/agents` page includes each role instance's inbox/dead-letter depths,
+current work, governance waits, and database-derived memory status. Memory
+counts and last-memory timestamps come from the `role_memory` table rather
+than agent-supplied heartbeat fields, so the reporting plane reflects the
+actual source-linked cache loaded into future prompts.
 
 V3 observability starts with a shared telemetry facade configured from
 environment variables. Safe-output tool calls emit OpenTelemetry spans,

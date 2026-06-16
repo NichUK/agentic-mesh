@@ -392,3 +392,8 @@ read-only; `lifecycle-apply` converts actionable start/wake/hibernate decisions
 into Docker Compose commands, dry-runs by default, and only executes container
 starts/stops when `--execute` is supplied. Compose rendering and lifecycle
 execution share the same role-instance-to-service-name mapping.
+
+V3 agent reporting now surfaces database-derived role-memory health. The
+`/agents` page and `status-json` projection include memory entry count and the
+last memory timestamp for each role instance, derived from `role_memory` rather
+than heartbeat payloads.

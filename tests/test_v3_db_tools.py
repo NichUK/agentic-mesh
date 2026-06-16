@@ -49,6 +49,14 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
             },
         )
         tools.call(
+            role_instance_id="agentic-mesh-dev.engineering.1",
+            tool_name="memory.propose_update",
+            payload={
+                "summary": "Status page work should keep memory visible in agent reporting.",
+                "source_ref": "work-1/index.md",
+            },
+        )
+        tools.call(
             role_instance_id="agentic-mesh-dev.release-manager.1",
             tool_name="release.record",
             payload={
@@ -66,6 +74,8 @@ def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) 
     assert snapshot.work_items[0].work_item_id == "work-1"
     assert snapshot.agents[0].role_instance_id == "agentic-mesh-dev.engineering.1"
     assert snapshot.agents[0].dead_letter_depth == 1
+    assert snapshot.agents[0].memory_count == 1
+    assert snapshot.agents[0].last_memory_at is not None
 
 
 def test_v3_tool_service_writes_work_item_index_and_refreshes_root_index(tmp_path: Path) -> None:
