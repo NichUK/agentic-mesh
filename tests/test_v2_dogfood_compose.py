@@ -97,7 +97,9 @@ def test_dogfood_compose_defines_v3_dogfood_proof_runner() -> None:
     assert service["depends_on"] == ["v3-nats"]
     assert "python -m agentic_mesh_v3.cli" in command
     assert "--project-config /mesh/project/agentic-mesh/project-v3.yaml" in command
-    assert "local-e2e-dogfood --deployment-target-id dogfood-compose" in command
+    assert "agent-e2e-dogfood" in command
+    assert "--runtime-state-dir /mesh/project/state/v3/agent-service-dogfood" in command
+    assert "--deployment-target-id dogfood-compose" in command
     assert service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project-v3.yaml"
 
 
