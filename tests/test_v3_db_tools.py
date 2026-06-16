@@ -284,6 +284,75 @@ def test_v3_tool_service_records_governance_safe_outputs(tmp_path: Path) -> None
     assert record.summary == "Please review the acceptance criteria."
 
 
+def test_v3_tool_service_stakeholder_question_delivers_when_target_is_present(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Question work",
+            description="Needs sponsor input.",
+            state="waiting_human",
+            owner_role="product-manager",
+        )
+        V3ToolService(db, stakeholder_bridge=bridge).call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="stakeholder.ask_question",
+            payload={
+                "work_item_id": "work-1",
+                "question": "Which sponsor-visible channel should be used?",
+                "connector": "teams",
+                "stakeholder_ref": "dm:sponsor",
+                "thread_ref": "thread-1",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.governance_records[0].record_type == "stakeholder.ask_question"
+    assert detail.governance_records[0].target_ref == "dm:sponsor"
+    assert bridge.deliveries[0].target_ref == "dm:sponsor"
+    assert "Which sponsor-visible channel" in bridge.deliveries[0].text_markdown
+
+
+def test_v3_tool_service_stakeholder_question_with_target_requires_bridge(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Question work",
+            description="Needs sponsor input.",
+            state="waiting_human",
+            owner_role="product-manager",
+        )
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                tool_name="stakeholder.ask_question",
+                payload={
+                    "work_item_id": "work-1",
+                    "question": "Which sponsor-visible channel should be used?",
+                    "connector": "teams",
+                    "stakeholder_ref": "dm:sponsor",
+                },
+            )
+        except ValueError as exc:
+            assert "stakeholder bridge is not configured" in str(exc)
+        else:
+            raise AssertionError("targeted stakeholder question should require a bridge")
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.governance_records == ()
+
+
 def test_v3_tool_service_messaging_send_uses_stakeholder_bridge(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     broker = InMemoryBrokerAdapter()

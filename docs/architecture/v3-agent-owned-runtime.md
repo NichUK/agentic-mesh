@@ -154,6 +154,8 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
   carries target metadata it sends the Markdown reply through the bridge.
   `approval.request` records the approval request and, when target metadata is
   present, sends the sponsor-facing approval request through the bridge.
+  `stakeholder.ask_question` records governance evidence and, when target
+  metadata is present, sends the question through the bridge.
 - Teams: V3 defines connector-neutral inbound messages, local Teams-shaped
   routing, and Graph-backed outbound message delivery with injectable transport.
   Project-channel messages are retained as shared `project.context`.
