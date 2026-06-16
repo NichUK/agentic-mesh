@@ -4,6 +4,7 @@ from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 from agentic_mesh_v3.teams_ingress import TeamsRoleIdentity
 from agentic_mesh_v3.server import V3StatusHandler
@@ -62,6 +63,77 @@ def test_status_handler_snapshot_uses_v3_db(tmp_path: Path) -> None:
     snapshot = handler._snapshot()
 
     assert snapshot.work_items[0].work_item_id == "work-1"
+
+
+def test_focused_reporting_json_endpoints_return_agents_and_work(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        tools = V3ToolService(db)
+        tools.call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="backlog.upsert",
+            payload={
+                "queue_item_id": "queue-1",
+                "title": "Add dashboard",
+                "summary": "Add a project status dashboard.",
+                "status": "queued",
+                "owner_role": "product-manager",
+            },
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="work_item.upsert",
+            payload={
+                "work_item_id": "work-1",
+                "queue_item_id": "queue-1",
+                "title": "Add status page",
+                "description": "Build status page",
+                "state": "active",
+                "owner_role": "engineering",
+            },
+        )
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.engineering.1",
+                container_state="running",
+                heartbeat_at="2026-06-16T10:00:00+00:00",
+                current_work="work-1",
+                inbox_depth=2,
+            )
+        )
+    finally:
+        db.close()
+
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.db_path = tmp_path / "v3.sqlite3"
+    Handler.project_id = "agentic-mesh-dev"
+    Handler.document_library = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    handler = object.__new__(Handler)
+    captured: dict[str, object] = {}
+    handler._send_json = lambda payload, **kwargs: captured.update(payload)  # type: ignore[method-assign]
+
+    handler._send_json_agents()
+
+    assert captured["status"] == "ok"
+    assert captured["project_id"] == "agentic-mesh-dev"
+    agents = captured["agents"]
+    assert isinstance(agents, list)
+    assert agents[0]["role_instance_id"] == "agentic-mesh-dev.engineering.1"
+    assert agents[0]["current_work"] == "work-1"
+
+    captured.clear()
+    handler._send_json_work_items()
+
+    assert captured["status"] == "ok"
+    backlog = captured["backlog"]
+    work_items = captured["work_items"]
+    assert isinstance(backlog, list)
+    assert isinstance(work_items, list)
+    assert backlog[0]["queue_item_id"] == "queue-1"
+    assert work_items[0]["work_item_id"] == "work-1"
 
 
 def test_teams_activity_response_routes_to_agent_inbox() -> None:
