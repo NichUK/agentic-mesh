@@ -20,6 +20,8 @@ class StakeholderMessage:
     text: str
     mentioned_roles: tuple[str, ...] = ()
     thread_ref: str | None = None
+    reply_target_ref: str | None = None
+    reply_thread_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,8 @@ class LocalTeamsBridge:
                     "sender_ref": message.sender_ref,
                     "conversation_ref": message.conversation_ref,
                     "thread_ref": message.thread_ref,
+                    "reply_target_ref": message.reply_target_ref,
+                    "reply_thread_ref": message.reply_thread_ref,
                     "text": message.text,
                 },
             )

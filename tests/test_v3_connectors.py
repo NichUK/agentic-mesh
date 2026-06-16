@@ -62,6 +62,8 @@ def test_local_teams_bridge_routes_unmentioned_channel_to_relevance_checks() -> 
             conversation_ref="team:project/channel:project",
             text="@all-agents this may affect the dashboard.",
             thread_ref="thread-1",
+            reply_target_ref="team:project/channel:project",
+            reply_thread_ref="thread-1",
         )
     )
 
@@ -73,6 +75,8 @@ def test_local_teams_bridge_routes_unmentioned_channel_to_relevance_checks() -> 
     assert context_payload["route_type"] == "project_channel_context"
     assert relevance_payload["route_type"] == "team_wide_relevance_check"
     assert relevance_payload["thread_ref"] == "thread-1"
+    assert relevance_payload["reply_target_ref"] == "team:project/channel:project"
+    assert relevance_payload["reply_thread_ref"] == "thread-1"
 
 
 def test_local_teams_bridge_routes_mentioned_channel_to_role_and_shared_context() -> None:
