@@ -78,6 +78,16 @@ class WorkItemIndex:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class GovernanceRegisterItem:
+    record_id: str
+    work_item_id: str
+    summary: str
+    status: str
+    role_instance_id: str
+    target_ref: str | None = None
+
+
 class DocumentLibraryError(ValueError):
     """Raised when a document-library artifact violates V3 evidence rules."""
 
@@ -293,6 +303,30 @@ def write_root_work_item_index(adapter: DocumentLibraryAdapter, work_items: list
         lines.append(f"  - Next action: {item.next_action or 'None recorded'}")
     lines.append("")
     return adapter.write_text("work-items/index.md", "\n".join(lines))
+
+
+def write_governance_register(
+    adapter: DocumentLibraryAdapter,
+    *,
+    relative_path: str,
+    title: str,
+    items: Iterable[GovernanceRegisterItem],
+) -> DocumentRef:
+    lines = [f"# {title}", ""]
+    sorted_items = sorted(items, key=lambda item: (item.work_item_id, item.record_id))
+    if not sorted_items:
+        lines.append("No records captured.")
+    for item in sorted_items:
+        line = (
+            f"- `{item.status}` [{item.work_item_id}](../work-items/{item.work_item_id}/index.md) - "
+            f"{item.summary} "
+            f"(role: `{item.role_instance_id}`, record: `{item.record_id}`"
+        )
+        if item.target_ref:
+            line = f"{line}, target: `{item.target_ref}`"
+        lines.append(f"{line})")
+    lines.append("")
+    return adapter.write_text(relative_path, "\n".join(lines))
 
 
 def validate_work_item_index(index: WorkItemIndex) -> None:

@@ -1082,6 +1082,29 @@ class V3Database:
             )
         return [dict(row) for row in rows]
 
+    def list_governance_records(self, *, record_type: str | None = None) -> list[dict[str, Any]]:
+        if record_type is None:
+            rows = self.connection.execute(
+                """
+                SELECT record_id, work_item_id, record_type, role_instance_id, target_ref,
+                       summary, status, payload_json, created_at
+                FROM governance_records
+                ORDER BY created_at ASC, record_id ASC
+                """
+            )
+        else:
+            rows = self.connection.execute(
+                """
+                SELECT record_id, work_item_id, record_type, role_instance_id, target_ref,
+                       summary, status, payload_json, created_at
+                FROM governance_records
+                WHERE record_type=?
+                ORDER BY created_at ASC, record_id ASC
+                """,
+                (record_type,),
+            )
+        return [dict(row) for row in rows]
+
     def record_conversation_message(
         self,
         *,
