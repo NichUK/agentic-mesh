@@ -259,11 +259,34 @@ class _ProductManagerWorker:
                 payload=approval_payload,
             ).call_id
         )
-        calls.append(_write_index(self.tools, self.role_instance_id, "shaping", "product-manager", "Product sign-off requested."))
+        calls.append(
+            _write_index(
+                self.tools,
+                self.role_instance_id,
+                "shaping",
+                "product-manager",
+                "Product sign-off requested.",
+                next_action="Await sponsor product sign-off.",
+                approvals=[f"{PRODUCT_APPROVAL_ID} requested."],
+                evidence=["Product Manager created the backlog item, work item, and sign-off request."],
+                decisions=["Use the agent-service dogfood proof to validate V3 role-owned progression."],
+                risks=["Downstream work must not start until sponsor approval is recorded."],
+            )
+        )
         calls.append(_status_reply(self.tools, self.role_instance_id, message, "Product shaping started and sponsor sign-off requested."))
         return calls
 
     def _promote_after_approval(self, message: AgentMessage) -> list[str]:
+        if (
+            message.payload.get("approval_id") != PRODUCT_APPROVAL_ID
+            or message.payload.get("status") != "approved"
+        ):
+            return _complete_noop(
+                self.tools,
+                self.role_instance_id,
+                "Ignored approval response because it was not the approved product sign-off for this dogfood proof.",
+                message=message,
+            )
         calls = []
         calls.append(
             self.tools.call(
@@ -290,7 +313,19 @@ class _ProductManagerWorker:
                 ),
             ).call_id
         )
-        calls.append(_write_index(self.tools, self.role_instance_id, "waiting_agent", "engineering", "Product approved and handed to Engineering."))
+        calls.append(
+            _write_index(
+                self.tools,
+                self.role_instance_id,
+                "waiting_agent",
+                "engineering",
+                "Product approved and handed to Engineering.",
+                next_action="Engineering owns implementation evidence.",
+                approvals=[f"{PRODUCT_APPROVAL_ID} approved."],
+                evidence=["Product Manager recorded sponsor approval and a handoff to Engineering."],
+                decisions=["Sponsor approved the dogfood proof scope."],
+            )
+        )
         calls.append(_status_reply(self.tools, self.role_instance_id, message, "Product approval recorded and the work was handed to Engineering."))
         return calls
 
@@ -341,6 +376,12 @@ class _EngineeringWorker:
                 "active",
                 "engineering",
                 "Engineering evidence recorded; QA handoff required.",
+                next_action="QA Engineer reviews the implementation evidence.",
+                consultations=["Solution Architect consultation requested."],
+                approvals=[f"{PRODUCT_APPROVAL_ID} approved."],
+                evidence=["Engineering recorded local dogfood implementation evidence."],
+                decisions=["Engineering handed implementation evidence to QA."],
+                risks=["Live external adapter validation remains outside the deterministic local dogfood run."],
             ),
             self.tools.call(
                 role_instance_id=self.role_instance_id,
@@ -424,7 +465,17 @@ class _QaWorker:
                     "target_ref": f"work-items/{WORK_ITEM_ID}/index.md",
                 },
             ).call_id,
-            _write_index(self.tools, self.role_instance_id, "active", "qa-engineer", "QA accepted evidence; release handoff required."),
+            _write_index(
+                self.tools,
+                self.role_instance_id,
+                "active",
+                "qa-engineer",
+                "QA accepted evidence; release handoff required.",
+                next_action="Release Manager deploys the configured target.",
+                approvals=[f"{PRODUCT_APPROVAL_ID} approved."],
+                evidence=["QA accepted the role-service dogfood evidence for local release."],
+                decisions=["QA accepted the dogfood proof for release handoff."],
+            ),
             self.tools.call(
                 role_instance_id=self.role_instance_id,
                 tool_name="handoff.require",
@@ -492,7 +543,19 @@ class _ReleaseManagerWorker:
                     "closure_note": "Release closed after local agent-service deployment smoke.",
                 },
             ).call_id,
-            _write_index(self.tools, self.role_instance_id, "closed", "project-manager", "Release deployed and closed; Project Manager closure update required."),
+            _write_index(
+                self.tools,
+                self.role_instance_id,
+                "closed",
+                "project-manager",
+                "Release deployed and closed; Project Manager closure update required.",
+                next_action="Project Manager updates backlog closure and notifies the sponsor when configured.",
+                consultations=["QA consultation requested before release deployment."],
+                approvals=[f"{PRODUCT_APPROVAL_ID} approved."],
+                evidence=[f"Release Manager deployed `{self.deployment_target_id}` and closed the release."],
+                decisions=["Release Manager completed deployment and release closure."],
+                risks=["Live Teams, OneDrive, and NATS credentials still require environment-specific validation."],
+            ),
             self.tools.call(
                 role_instance_id=self.role_instance_id,
                 tool_name="informed.update",
@@ -560,7 +623,12 @@ class _ProjectManagerWorker:
                     },
                 ).call_id
             )
-        calls.append(_status_reply(self.tools, self.role_instance_id, message, "Project closure recorded and sponsor notification sent."))
+        closure_summary = (
+            "Project closure recorded and sponsor notification sent."
+            if self.sponsor_contact is not None
+            else "Project closure recorded; no sponsor notification was configured."
+        )
+        calls.append(_status_reply(self.tools, self.role_instance_id, message, closure_summary))
         return calls
 
 
@@ -662,6 +730,13 @@ def _write_index(
     status: str,
     owner_role: str,
     governance_state: str,
+    *,
+    next_action: str,
+    decisions: list[str] | None = None,
+    risks: list[str] | None = None,
+    consultations: list[str] | None = None,
+    approvals: list[str] | None = None,
+    evidence: list[str] | None = None,
 ) -> str:
     return tools.call(
         role_instance_id=role_instance_id,
@@ -673,12 +748,12 @@ def _write_index(
             "owner_role": owner_role,
             "raci_summary": "Agent-service proof follows V3 SDLC RACI through role-owned handoffs.",
             "governance_state": governance_state,
-            "next_action": governance_state,
-            "consultations": ["Solution Architecture consultation recorded."],
-            "approvals": [f"{PRODUCT_APPROVAL_ID} approved."],
-            "evidence": ["Role-service safe-output calls recorded evidence for each phase."],
-            "decisions": ["Continue V3 through role-owned broker inbox processing."],
-            "risks": ["Live external adapter validation remains environment-specific."],
+            "next_action": next_action,
+            "consultations": consultations or [],
+            "approvals": approvals or [],
+            "evidence": evidence or [],
+            "decisions": decisions or [],
+            "risks": risks or [],
         },
     ).call_id
 
@@ -695,8 +770,18 @@ def _status_reply(tools: V3ToolService, role_instance_id: str, message: AgentMes
     return tools.call(role_instance_id=role_instance_id, tool_name="status.reply", payload=payload).call_id
 
 
-def _complete_noop(tools: V3ToolService, role_instance_id: str, reason: str) -> list[str]:
-    return [
-        tools.call(role_instance_id=role_instance_id, tool_name="noop", payload={"reason": reason}).call_id,
-        tools.call(role_instance_id=role_instance_id, tool_name="status.complete", payload={"summary": reason}).call_id,
-    ]
+def _complete_noop(
+    tools: V3ToolService,
+    role_instance_id: str,
+    reason: str,
+    *,
+    message: AgentMessage | None = None,
+) -> list[str]:
+    calls = [tools.call(role_instance_id=role_instance_id, tool_name="noop", payload={"reason": reason}).call_id]
+    if message is None:
+        calls.append(
+            tools.call(role_instance_id=role_instance_id, tool_name="status.complete", payload={"summary": reason}).call_id
+        )
+    else:
+        calls.append(_status_reply(tools, role_instance_id, message, reason))
+    return calls
