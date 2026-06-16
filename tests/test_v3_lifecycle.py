@@ -3,7 +3,12 @@ from datetime import timezone
 from pathlib import Path
 
 from agentic_mesh_v3.lifecycle import HibernationPolicy
+from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
+from agentic_mesh_v3.lifecycle import ComposeLifecycleExecutor
+from agentic_mesh_v3.lifecycle import CommandExecutionResult
+from agentic_mesh_v3.lifecycle import LifecycleDecision
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
+from agentic_mesh_v3.lifecycle import compose_lifecycle_command
 from agentic_mesh_v3.lifecycle import plan_lifecycle_action
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
 from agentic_mesh_v3.reporting import AgentStatus
@@ -169,3 +174,91 @@ def test_lifecycle_batch_accounts_for_wakes_before_hibernating_idle_instances() 
         "agentic-mesh-dev.product-manager.2": "wake",
         "agentic-mesh-dev.product-manager.1": "hibernate",
     }
+
+
+def test_compose_lifecycle_command_maps_wake_and_hibernate_to_compose(tmp_path: Path) -> None:
+    config = ComposeLifecycleConfig(
+        compose_files=(tmp_path / "compose.yml", tmp_path / "override.yml"),
+        working_directory=tmp_path,
+    )
+
+    wake = compose_lifecycle_command(
+        LifecycleDecision("wake", "agentic-mesh-dev.product-manager.1", "pending inbox messages"),
+        config=config,
+    )
+    hibernate = compose_lifecycle_command(
+        LifecycleDecision("hibernate", "agentic-mesh-dev.product-manager.1", "idle"),
+        config=config,
+    )
+
+    assert wake is not None
+    assert wake.service_name == "agentic-mesh-dev-product-manager-1"
+    assert wake.command == (
+        "docker",
+        "compose",
+        "-f",
+        str(tmp_path / "compose.yml"),
+        "-f",
+        str(tmp_path / "override.yml"),
+        "up",
+        "-d",
+        "agentic-mesh-dev-product-manager-1",
+    )
+    assert wake.working_directory == tmp_path
+    assert hibernate is not None
+    assert hibernate.command[-2:] == ("stop", "agentic-mesh-dev-product-manager-1")
+
+
+def test_compose_lifecycle_executor_dry_runs_only_actionable_decisions(tmp_path: Path) -> None:
+    executor = ComposeLifecycleExecutor(
+        ComposeLifecycleConfig(compose_files=(tmp_path / "compose.yml",), working_directory=tmp_path)
+    )
+
+    results = executor.apply(
+        [
+            LifecycleDecision("none", "agentic-mesh-dev.product-manager.1", "already running"),
+            LifecycleDecision("start", "agentic-mesh-dev.engineering.1", "missing"),
+        ]
+    )
+
+    assert len(results) == 1
+    assert results[0].executed is False
+    assert results[0].exit_code is None
+    assert results[0].command[-2:] == ("-d", "agentic-mesh-dev-engineering-1")
+
+
+def test_compose_lifecycle_executor_executes_with_injected_runner(tmp_path: Path) -> None:
+    calls = []
+
+    def runner(command, *, cwd, timeout_seconds):  # type: ignore[no-untyped-def]
+        calls.append((tuple(command), cwd, timeout_seconds))
+        return CommandExecutionResult(
+            exit_code=0,
+            stdout="started",
+        )
+
+    executor = ComposeLifecycleExecutor(
+        ComposeLifecycleConfig(
+            compose_files=(tmp_path / "compose.yml",),
+            working_directory=tmp_path,
+            timeout_seconds=7,
+        ),
+        runner=runner,
+    )
+
+    results = executor.apply(
+        [LifecycleDecision("wake", "agentic-mesh-dev.engineering.1", "pending inbox")],
+        execute=True,
+    )
+
+    assert len(results) == 1
+    assert results[0].executed is True
+    assert results[0].exit_code == 0
+    assert results[0].stdout == "started"
+    assert calls == [
+        (
+            ("docker", "compose", "-f", str(tmp_path / "compose.yml"), "up", "-d", "agentic-mesh-dev-engineering-1"),
+            tmp_path,
+            7,
+        )
+    ]

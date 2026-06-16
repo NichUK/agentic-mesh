@@ -475,6 +475,46 @@ def test_cli_lifecycle_plan_rejects_invalid_policy() -> None:
         raise AssertionError("lifecycle-plan should reject invalid idle threshold")
 
 
+def test_cli_lifecycle_apply_dry_runs_compose_actions(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    db_path = tmp_path / "v3.sqlite3"
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                container_state="hibernated",
+                heartbeat_at="2026-06-15T10:00:00+00:00",
+                inbox_depth=1,
+            )
+        )
+    finally:
+        db.close()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-id",
+            "agentic-mesh-dev",
+            "lifecycle-apply",
+            "--compose-file",
+            str(tmp_path / "compose.yml"),
+            "--working-directory",
+            str(tmp_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert output["execute"] is False
+    assert output["results"][0]["action"] == "wake"
+    assert output["results"][0]["service_name"] == "agentic-mesh-dev-product-manager-1"
+    assert output["results"][0]["command"][-3:] == ["up", "-d", "agentic-mesh-dev-product-manager-1"]
+    assert output["results"][0]["executed"] is False
+    assert output["results"][0]["working_directory"] == str(tmp_path)
+
+
 def test_cli_teams_activity_router_is_none_without_project_config() -> None:
     assert _teams_activity_router(argparse.Namespace(project_config=None)) is None
 

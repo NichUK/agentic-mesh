@@ -5,7 +5,9 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from pathlib import Path
+import subprocess
 from typing import Iterable
+from typing import Protocol
 
 from agentic_mesh_v3.reporting import AgentStatus
 
@@ -76,6 +78,141 @@ class LifecycleDecision:
     action: str
     role_instance_id: str
     reason: str
+
+
+@dataclass(frozen=True)
+class ComposeLifecycleConfig:
+    compose_files: tuple[Path, ...]
+    working_directory: Path | None = None
+    timeout_seconds: int = 300
+
+    def __post_init__(self) -> None:
+        if not self.compose_files:
+            raise ValueError("at least one compose file is required")
+        if self.timeout_seconds < 1:
+            raise ValueError("timeout_seconds must be positive")
+
+
+@dataclass(frozen=True)
+class LifecycleCommand:
+    decision: LifecycleDecision
+    service_name: str
+    command: tuple[str, ...]
+    working_directory: Path | None
+
+
+@dataclass(frozen=True)
+class LifecycleCommandResult:
+    decision: LifecycleDecision
+    service_name: str
+    command: tuple[str, ...]
+    working_directory: Path | None
+    exit_code: int | None
+    stdout: str = ""
+    stderr: str = ""
+    executed: bool = False
+
+
+@dataclass(frozen=True)
+class CommandExecutionResult:
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+
+
+class LifecycleCommandRunner(Protocol):
+    def __call__(
+        self,
+        command: list[str],
+        *,
+        cwd: Path | None,
+        timeout_seconds: int,
+    ) -> CommandExecutionResult:
+        ...
+
+
+def compose_lifecycle_command(
+    decision: LifecycleDecision,
+    *,
+    config: ComposeLifecycleConfig,
+) -> LifecycleCommand | None:
+    if decision.action == "none":
+        return None
+    service_name = service_name_for_role(decision.role_instance_id)
+    prefix = [
+        "docker",
+        "compose",
+        *[
+            part
+            for compose_file in config.compose_files
+            for part in ("-f", str(compose_file))
+        ],
+    ]
+    if decision.action in {"start", "wake"}:
+        command = (*prefix, "up", "-d", service_name)
+    elif decision.action == "hibernate":
+        command = (*prefix, "stop", service_name)
+    else:
+        raise ValueError(f"unsupported lifecycle action: {decision.action}")
+    return LifecycleCommand(
+        decision=decision,
+        service_name=service_name,
+        command=tuple(command),
+        working_directory=config.working_directory,
+    )
+
+
+class ComposeLifecycleExecutor:
+    def __init__(
+        self,
+        config: ComposeLifecycleConfig,
+        *,
+        runner: LifecycleCommandRunner | None = None,
+    ) -> None:
+        self.config = config
+        self.runner = runner or _run_lifecycle_command
+
+    def apply(
+        self,
+        decisions: Iterable[LifecycleDecision],
+        *,
+        execute: bool = False,
+    ) -> tuple[LifecycleCommandResult, ...]:
+        results: list[LifecycleCommandResult] = []
+        for decision in decisions:
+            command = compose_lifecycle_command(decision, config=self.config)
+            if command is None:
+                continue
+            if execute:
+                result = self.runner(
+                    list(command.command),
+                    cwd=command.working_directory,
+                    timeout_seconds=self.config.timeout_seconds,
+                )
+                results.append(
+                    LifecycleCommandResult(
+                        decision=decision,
+                        service_name=command.service_name,
+                        command=command.command,
+                        working_directory=command.working_directory,
+                        exit_code=result.exit_code,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                        executed=True,
+                    )
+                )
+            else:
+                results.append(
+                    LifecycleCommandResult(
+                        decision=decision,
+                        service_name=command.service_name,
+                        command=command.command,
+                        working_directory=command.working_directory,
+                        exit_code=None,
+                        executed=False,
+                    )
+                )
+        return tuple(results)
 
 
 def plan_lifecycle_action(
@@ -174,3 +311,30 @@ def _role_and_instance(role_instance_id: str) -> tuple[str, str]:
 def _format_seconds(value: float) -> str:
     numeric = float(value)
     return str(int(numeric)) if numeric.is_integer() else str(numeric)
+
+
+def service_name_for_role(role_instance_id: str) -> str:
+    if not role_instance_id.strip():
+        raise ValueError("role_instance_id is required")
+    return role_instance_id.replace(".", "-")
+
+
+def _run_lifecycle_command(
+    command: list[str],
+    *,
+    cwd: Path | None,
+    timeout_seconds: int,
+) -> CommandExecutionResult:
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        timeout=timeout_seconds,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return CommandExecutionResult(
+        exit_code=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )

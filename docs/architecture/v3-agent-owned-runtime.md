@@ -114,7 +114,9 @@ so waking, starting, and hibernating instances preserves the configured warm
 pool instead of letting every idle instance decide independently.
 Operators can inspect the read-only plan with `lifecycle-plan`, which reads the
 agent status projection and returns proposed start, wake, hibernate, or no-op
-decisions without changing container state.
+decisions without changing container state. `lifecycle-apply` maps actionable
+decisions to Docker Compose commands, dry-runs by default, and only starts or
+stops role containers when `--execute` is passed.
 The V3 Compose renderer converts materialized role container specs into one
 Compose service per role instance, using the generated `run-agent-service`
 command and the same mounted path contract.
@@ -236,6 +238,7 @@ agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev status-json
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev serve --document-library-root .tmp/v3-documents
 agentic-mesh-v3 --db .tmp/v3.sqlite3 run-tool-mcp-stdio
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev lifecycle-plan --idle-after-seconds 1800 --min-warm-instances-per-role 1
+agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev lifecycle-apply --compose-file .tmp/v3-compose/roles.yml --working-directory . --idle-after-seconds 1800 --min-warm-instances-per-role 1
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml broker-inspect --consumer agentic-mesh-dev.product-manager.1
 agentic-mesh-v3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-once --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state
 agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml run-agent-service --role-id product-manager --agent-config-dir .tmp/v3-agents/product-manager/1 --runtime-state-dir .tmp/v3-state --idle-exit-seconds 300

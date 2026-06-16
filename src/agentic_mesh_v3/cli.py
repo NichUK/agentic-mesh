@@ -35,6 +35,8 @@ from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import RaciMatrix
 from agentic_mesh_v3.governance import load_raci_matrix_from_flow
+from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
+from agentic_mesh_v3.lifecycle import ComposeLifecycleExecutor
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
 from agentic_mesh_v3.memory import DatabaseRoleMemory
@@ -77,6 +79,13 @@ def main(argv: list[str] | None = None) -> int:
     lifecycle_plan_parser = subparsers.add_parser("lifecycle-plan")
     lifecycle_plan_parser.add_argument("--idle-after-seconds", type=int, default=1800)
     lifecycle_plan_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    lifecycle_apply_parser = subparsers.add_parser("lifecycle-apply")
+    lifecycle_apply_parser.add_argument("--idle-after-seconds", type=int, default=1800)
+    lifecycle_apply_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    lifecycle_apply_parser.add_argument("--compose-file", type=Path, action="append", required=True)
+    lifecycle_apply_parser.add_argument("--working-directory", type=Path)
+    lifecycle_apply_parser.add_argument("--timeout-seconds", type=int, default=300)
+    lifecycle_apply_parser.add_argument("--execute", action="store_true")
     approval_parser = subparsers.add_parser("record-approval-response")
     approval_parser.add_argument("--approval-id", required=True)
     approval_parser.add_argument("--status", required=True, choices=["approved", "rejected", "changes_requested"])
@@ -281,6 +290,44 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             db.close()
         return 0
+    if args.command == "lifecycle-apply":
+        if args.idle_after_seconds < 1:
+            raise ValueError("--idle-after-seconds must be positive")
+        if args.min_warm_instances_per_role < 0:
+            raise ValueError("--min-warm-instances-per-role must be non-negative")
+        db = V3Database(args.db)
+        try:
+            db.migrate()
+            snapshot = db.status_snapshot(project_id=args.project_id)
+            decisions = plan_lifecycle_actions(
+                snapshot.agents,
+                policy=HibernationPolicy(
+                    idle_after_seconds=args.idle_after_seconds,
+                    min_warm_instances_per_role=args.min_warm_instances_per_role,
+                ),
+            )
+            results = ComposeLifecycleExecutor(
+                ComposeLifecycleConfig(
+                    compose_files=tuple(args.compose_file),
+                    working_directory=args.working_directory,
+                    timeout_seconds=args.timeout_seconds,
+                )
+            ).apply(decisions, execute=args.execute)
+            print(
+                json.dumps(
+                    {
+                        "project_id": snapshot.project_id,
+                        "execute": args.execute,
+                        "decisions": [decision.__dict__ for decision in decisions],
+                        "results": [_lifecycle_result_dict(result) for result in results],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        finally:
+            db.close()
+        return 0
     if args.command == "record-approval-response":
         db = V3Database(args.db)
         try:
@@ -435,6 +482,21 @@ def _broker_message_dict(message: BrokerMessage) -> dict[str, object]:
         "payload": message.payload,
         "created_at": message.created_at,
         "delivery_count": message.delivery_count,
+    }
+
+
+def _lifecycle_result_dict(result) -> dict[str, object]:  # type: ignore[no-untyped-def]
+    return {
+        "action": result.decision.action,
+        "role_instance_id": result.decision.role_instance_id,
+        "reason": result.decision.reason,
+        "service_name": result.service_name,
+        "command": list(result.command),
+        "working_directory": str(result.working_directory) if result.working_directory is not None else None,
+        "executed": result.executed,
+        "exit_code": result.exit_code,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
     }
 
 
