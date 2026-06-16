@@ -215,13 +215,13 @@ def evaluate_governance_checklist(
 class GovernanceInstructionSet:
     rules: tuple[str, ...] = field(
         default=(
-            "Consult every role marked C before completing the current phase, unless the accountable role records a justified governance exception.",
-            "Inform every role marked I when phase state changes, a major decision is made, a blocker appears, or a release occurs.",
-            "Ask the sponsor or stakeholder when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitment changes.",
-            "Consult Prompt Engineer when a slice changes prompt components, role instructions, safe-output tool guidance, context loading, memory instructions, or prompt-driven behaviour.",
-            "Do not continue through unresolved governance questions silently; ask, record the question, and wait or proceed only with an explicit documented assumption.",
-            "Resolve role disagreements through written review loops first, then request mediation from Project Manager or sponsor after the configured loop limit.",
-            "Write governance evidence into the work-item index and durable decision or risk registers where appropriate.",
+            "Consult every role marked C before completing the current phase by using `consult.request`, unless the accountable role records a justified governance exception with `governance.record_exception`.",
+            "Inform every role marked I with `informed.update` when phase state changes, a major decision is made, a blocker appears, or a release occurs.",
+            "Ask the sponsor or stakeholder with `stakeholder.ask_question` when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitment changes.",
+            "Consult Prompt Engineer with `consult.request` when a slice changes prompt components, role instructions, safe-output tool guidance, context loading, memory instructions, or prompt-driven behaviour.",
+            "Do not continue through unresolved governance questions silently; ask with the appropriate consultation or stakeholder-question tool, record the question, and wait or proceed only with an explicit documented assumption.",
+            "Resolve role disagreements through written review loops first, then request mediation from Project Manager or sponsor after the configured loop limit using the appropriate consult or stakeholder-question tool.",
+            "Write governance evidence into the work-item index with `document.write_work_item_index` and durable decision or risk registers where appropriate.",
         )
     )
 

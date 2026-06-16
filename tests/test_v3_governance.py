@@ -68,7 +68,12 @@ def test_governance_prompt_rules_are_explicit_about_consultation() -> None:
 
     assert "<governance-instructions>" in prompt_section
     assert "Consult every role marked C" in prompt_section
-    assert "Consult Prompt Engineer when a slice changes prompt components" in prompt_section
+    assert "`consult.request`" in prompt_section
+    assert "`informed.update`" in prompt_section
+    assert "`stakeholder.ask_question`" in prompt_section
+    assert "`governance.record_exception`" in prompt_section
+    assert "`document.write_work_item_index`" in prompt_section
+    assert "Consult Prompt Engineer with `consult.request` when a slice changes prompt components" in prompt_section
     assert "Ask the sponsor" in prompt_section
     assert "Write governance evidence" in prompt_section
 
