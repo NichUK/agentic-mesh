@@ -164,10 +164,19 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         if adapter is None:
             self.send_error(HTTPStatus.NOT_FOUND, "document library root is not configured")
             return
-        if not adapter.exists(relative_path):
+        try:
+            exists = adapter.exists(relative_path)
+        except Exception as exc:
+            self.send_error(HTTPStatus.BAD_GATEWAY, f"document library lookup failed: {exc}")
+            return
+        if not exists:
             self.send_error(HTTPStatus.NOT_FOUND, f"artifact not found: {relative_path}")
             return
-        content = adapter.read_text(relative_path)
+        try:
+            content = adapter.read_text(relative_path)
+        except Exception as exc:
+            self.send_error(HTTPStatus.BAD_GATEWAY, f"document library read failed: {exc}")
+            return
         self._send_html(_artifact_page(relative_path, content))
 
     def _send_json_snapshot(self) -> None:

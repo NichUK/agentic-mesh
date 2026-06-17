@@ -192,6 +192,38 @@ def test_artifact_viewer_route_renders_work_item_scoped_artifact(tmp_path: Path)
     assert "work-items/work-1/index.md" in captured["html"]
 
 
+def test_artifact_viewer_route_reports_document_backend_errors(tmp_path: Path) -> None:
+    class FailingDocumentLibrary:
+        def exists(self, relative_path: str) -> bool:
+            raise RuntimeError("HTTP Error 401: Unauthorized")
+
+        def read_text(self, relative_path: str) -> str:
+            raise AssertionError("read_text should not be called after failed exists")
+
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+    finally:
+        db.close()
+
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.db_path = tmp_path / "v3.sqlite3"
+    Handler.project_id = "agentic-mesh-dev"
+    Handler.document_library = FailingDocumentLibrary()
+    handler = object.__new__(Handler)
+    captured: dict[str, object] = {}
+    handler.send_error = lambda status, message=None: captured.update(  # type: ignore[method-assign]
+        {"status": status, "message": message}
+    )
+
+    handler._render_artifact_route("work-1/index.md")
+
+    assert captured["status"].value == 502
+    assert captured["message"] == "document library lookup failed: HTTP Error 401: Unauthorized"
+
+
 def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
     broker = InMemoryBrokerAdapter()
