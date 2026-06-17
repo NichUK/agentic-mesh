@@ -211,6 +211,7 @@ python3 - <<'PY'
 import base64
 import json
 import os
+import shlex
 from pathlib import Path
 
 env_path = Path(os.environ["env_path"])
@@ -226,6 +227,9 @@ else:
 
 seen = set()
 updated_lines = []
+def env_line(key, value):
+    return f"{key}={shlex.quote(str(value))}"
+
 for line in lines:
     stripped = line.strip()
     if not stripped or stripped.startswith("#") or "=" not in line:
@@ -233,13 +237,13 @@ for line in lines:
         continue
     key, _value = line.split("=", 1)
     if key in payload:
-        updated_lines.append(f"{key}={payload[key]}")
+        updated_lines.append(env_line(key, payload[key]))
         seen.add(key)
     else:
         updated_lines.append(line)
 
 for key in sorted(set(payload) - seen):
-    updated_lines.append(f"{key}={payload[key]}")
+    updated_lines.append(env_line(key, payload[key]))
 
 tmp_path = env_path.with_suffix(env_path.suffix + ".tmp")
 tmp_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
@@ -248,6 +252,9 @@ tmp_path.replace(env_path)
 PY
 "@
 $remoteScript = $remoteScript -replace "`r`n", "`n"
+if (-not $remoteScript.EndsWith("`n")) {
+    $remoteScript += "`n"
+}
 
 $env:payload_b64 = $payload
 $env:env_path = $EnvPath
