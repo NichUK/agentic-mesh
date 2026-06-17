@@ -134,7 +134,29 @@ def _teams_config_check(project_config: V3ProjectConfig) -> PreflightCheck:
         return PreflightCheck("teams.config", False, "Teams connector is not configured.")
     if adapter in {"local", "local-teams", "in-memory"}:
         return PreflightCheck("teams.config", True, "Local Teams-shaped connector is configured.")
-    if adapter in {"graph", "microsoft-graph", "teams-graph", "teams-bot-connector"}:
+    if adapter == "teams-bot-connector":
+        role_bots = [role for role in project_config.roles if role.messaging_identity.display_name]
+        missing_refs = [
+            role.role_id
+            for role in role_bots
+            if not role.messaging_identity.bot_id_ref or not role.messaging_identity.secret_ref
+        ]
+        if missing_refs:
+            return PreflightCheck(
+                "teams.config",
+                False,
+                "Bot Framework Teams connector has role bots without bot_id_ref/secret_ref.",
+                ", ".join(missing_refs),
+            )
+        if not role_bots:
+            return PreflightCheck("teams.config", False, "Bot Framework Teams connector has no role bot identities.")
+        return PreflightCheck(
+            "teams.config",
+            True,
+            "Bot Framework Teams connector and role bot identities are configured.",
+            ", ".join(role.role_id for role in role_bots),
+        )
+    if adapter in {"graph", "microsoft-graph", "teams-graph"}:
         role_bots = [role for role in project_config.roles if role.messaging_identity.display_name]
         if not role_bots:
             return PreflightCheck("teams.config", False, "Graph Teams connector has no role bot identities.")
@@ -149,7 +171,43 @@ def _teams_config_check(project_config: V3ProjectConfig) -> PreflightCheck:
 
 def _teams_env_checks(project_config: V3ProjectConfig, env: dict[str, str]) -> list[PreflightCheck]:
     adapter = (project_config.teams_connector.adapter or "").casefold().replace("_", "-")
-    if adapter not in {"graph", "microsoft-graph", "teams-graph", "teams-bot-connector"}:
+    if adapter == "teams-bot-connector":
+        checks = [
+            _required_env_check(env, "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "teams.env.bot_service_url"),
+            _required_env_check(env, "AGENTIC_MESH_TENANT_ID", "teams.env.tenant"),
+        ]
+        configured_roles: list[str] = []
+        missing_roles: list[str] = []
+        for role in project_config.roles:
+            messaging = role.messaging_identity
+            if not messaging.display_name:
+                continue
+            app_key = _env_name_for_ref(messaging.bot_id_ref) if messaging.bot_id_ref else ""
+            secret_key = _env_name_for_ref(messaging.secret_ref) if messaging.secret_ref else ""
+            if app_key and secret_key and env.get(app_key) and env.get(secret_key):
+                configured_roles.append(role.role_id)
+            else:
+                missing_roles.append(role.role_id)
+        if configured_roles:
+            checks.append(
+                PreflightCheck(
+                    "teams.env.role_bot_coverage",
+                    True,
+                    "At least one Bot Framework role identity is configured for agent-owned Teams messaging.",
+                    f"configured={', '.join(configured_roles)}; missing={', '.join(missing_roles) or 'none'}",
+                )
+            )
+        else:
+            checks.append(
+                PreflightCheck(
+                    "teams.env.role_bot_coverage",
+                    False,
+                    "At least one Bot Framework role identity must be configured for agent-owned Teams messaging.",
+                    f"missing={', '.join(missing_roles) or 'all'}",
+                )
+            )
+        return checks
+    if adapter not in {"graph", "microsoft-graph", "teams-graph"}:
         return []
     checks = [
         _required_env_check(env, "AGENTIC_MESH_TEAMS_TOKEN", "teams.env.token"),
@@ -171,6 +229,10 @@ def _teams_env_checks(project_config: V3ProjectConfig, env: dict[str, str]) -> l
     ]
     checks.append(_teams_sender_is_not_sponsor_check(project_config, env))
     return checks
+
+
+def _env_name_for_ref(ref: str) -> str:
+    return "".join(char if char.isalnum() else "_" for char in ref).upper()
 
 
 def _teams_sender_is_not_sponsor_check(project_config: V3ProjectConfig, env: dict[str, str]) -> PreflightCheck:

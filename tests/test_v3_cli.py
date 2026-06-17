@@ -15,6 +15,7 @@ from agentic_mesh_v3.cli import _stakeholder_bridge
 from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
+from agentic_mesh_v3.connectors import BotFrameworkTeamsBridge
 from agentic_mesh_v3.connectors import GraphTeamsBridge
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.connectors import StakeholderMessage
@@ -500,10 +501,12 @@ roles:
         raise AssertionError("OneDrive-backed dogfood runs should require an access token")
 
 
-def test_cli_preflight_live_reports_missing_graph_env(tmp_path: Path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+def test_cli_preflight_live_reports_missing_bot_framework_env(tmp_path: Path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_TOKEN", raising=False)
     monkeypatch.delenv("AGENTIC_MESH_TEAMS_TOKEN", raising=False)
     monkeypatch.delenv("AGENTIC_MESH_TEAMS_SENDER_USER_ID", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_TENANT_ID", raising=False)
     project_config = tmp_path / "project.yaml"
     python_exe = Path(sys.executable).as_posix()
     roles = "\n".join(
@@ -517,7 +520,7 @@ def test_cli_preflight_live_reports_missing_graph_env(tmp_path: Path, monkeypatc
         )
     )
     role_bots = "\n".join(
-        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}"
+        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}\n        secret_ref: bot-{role_id}-secret"
         for role_id in (
             "engineering",
             "product-manager",
@@ -565,23 +568,19 @@ roles:
     failed = {check["check_id"] for check in output["checks"] if not check["passed"]}
     assert "documents.env" in failed
     assert "documents.env.scopes" in failed
-    assert "teams.env.token" in failed
-    assert "teams.env.scopes.chat" in failed
-    assert "teams.env.scopes.send" in failed
-    assert "teams.env.sender" in failed
+    assert "teams.env.bot_service_url" in failed
+    assert "teams.env.tenant" in failed
+    assert "teams.env.role_bot_coverage" in failed
 
 
-def test_cli_preflight_live_accepts_graph_token_scopes(
+def test_cli_preflight_live_accepts_bot_framework_env(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("AGENTIC_MESH_ONEDRIVE_TOKEN", _jwt_with_scopes("Files.ReadWrite.All"))
-    monkeypatch.setenv(
-        "AGENTIC_MESH_TEAMS_TOKEN",
-        _jwt_with_scopes("Chat.Create ChatMessage.Send"),
-    )
-    monkeypatch.setenv("AGENTIC_MESH_TEAMS_SENDER_USER_ID", "sender-user")
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "https://smba.test/teams")
+    monkeypatch.setenv("AGENTIC_MESH_TENANT_ID", "tenant-1")
     project_config = tmp_path / "project.yaml"
     python_exe = Path(sys.executable).as_posix()
     roles = "\n".join(
@@ -595,7 +594,7 @@ def test_cli_preflight_live_accepts_graph_token_scopes(
         )
     )
     role_bots = "\n".join(
-        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}"
+        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}\n        secret_ref: bot-{role_id}-secret"
         for role_id in (
             "engineering",
             "product-manager",
@@ -604,6 +603,15 @@ def test_cli_preflight_live_accepts_graph_token_scopes(
             "release-manager",
         )
     )
+    for role_id in (
+        "engineering",
+        "product-manager",
+        "project-manager",
+        "qa-engineer",
+        "release-manager",
+    ):
+        monkeypatch.setenv(f"BOT_{role_id.upper().replace('-', '_')}", f"{role_id}-app-id")
+        monkeypatch.setenv(f"BOT_{role_id.upper().replace('-', '_')}_SECRET", f"{role_id}-secret")
     project_config.write_text(
         f"""
 project_id: agentic-mesh-dev
@@ -643,8 +651,8 @@ roles:
     assert output["passed"] is True
     passed = {check["check_id"] for check in output["checks"] if check["passed"]}
     assert "documents.env.scopes" in passed
-    assert "teams.env.scopes.chat" in passed
-    assert "teams.env.scopes.send" in passed
+    assert "teams.env.bot_service_url" in passed
+    assert "teams.env.role_bot_coverage" in passed
     details = " ".join(str(check["detail"]) for check in output["checks"])
     assert "eyJ" not in details
     assert "configured" in details
@@ -691,7 +699,7 @@ document_library:
   root_path: /documents
 connectors:
   teams:
-    adapter: teams-bot-connector
+    adapter: graph
     role_bots:
 {role_bots}
 stakeholder_contacts:
@@ -1147,7 +1155,7 @@ roles:
     assert isinstance(bridge, LocalTeamsBridge)
 
 
-def test_cli_stakeholder_bridge_requires_graph_token(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_cli_stakeholder_bridge_requires_bot_framework_env(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     project_config.write_text(
         """
@@ -1161,23 +1169,30 @@ document_library:
 connectors:
   teams:
     adapter: teams-bot-connector
+    role_bots:
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: bot-product-manager
+        secret_ref: bot-product-manager-secret
 roles:
   product-manager:
     instances: 1
 """,
         encoding="utf-8",
     )
-    monkeypatch.delenv("AGENTIC_MESH_TEAMS_TOKEN", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", raising=False)
+    monkeypatch.delenv("BOT_PRODUCT_MANAGER", raising=False)
+    monkeypatch.delenv("BOT_PRODUCT_MANAGER_SECRET", raising=False)
 
     try:
         _stakeholder_bridge(argparse.Namespace(project_config=project_config))
     except ValueError as exc:
-        assert str(exc) == "AGENTIC_MESH_TEAMS_TOKEN is required for Graph-backed Teams outbound messaging"
+        assert str(exc) == "teams-bot-connector requires at least one role bot identity with configured app id and secret"
     else:
-        raise AssertionError("Graph-backed stakeholder bridge should require AGENTIC_MESH_TEAMS_TOKEN")
+        raise AssertionError("Bot Framework stakeholder bridge should require role bot environment")
 
 
-def test_cli_graph_stakeholder_bridge_routes_inbound_to_project_broker(
+def test_cli_bot_framework_stakeholder_bridge_routes_inbound_to_project_broker(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1194,6 +1209,11 @@ document_library:
 connectors:
   teams:
     adapter: teams-bot-connector
+    role_bots:
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: bot-product-manager
+        secret_ref: bot-product-manager-secret
 roles:
   product-manager:
     instances: 1
@@ -1201,7 +1221,9 @@ roles:
         encoding="utf-8",
     )
     broker = InMemoryBrokerAdapter()
-    monkeypatch.setenv("AGENTIC_MESH_TEAMS_TOKEN", "token")
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "https://smba.test/teams")
+    monkeypatch.setenv("BOT_PRODUCT_MANAGER", "pm-app-id")
+    monkeypatch.setenv("BOT_PRODUCT_MANAGER_SECRET", "pm-secret")
 
     bridge = _stakeholder_bridge(argparse.Namespace(project_config=project_config), broker=broker)
     subjects = bridge.route_inbound(
@@ -1215,7 +1237,7 @@ roles:
         )
     )
 
-    assert isinstance(bridge, GraphTeamsBridge)
+    assert isinstance(bridge, BotFrameworkTeamsBridge)
     assert subjects == ["agent.product-manager"]
     pending = broker.pending("agent-inbox")
     assert [message.subject for message in pending] == ["agent.product-manager"]

@@ -355,6 +355,7 @@ class V3ToolService:
                 text_markdown=_required(payload, "text_markdown"),
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "normal"),
+                sender_role=role_from_instance(role_instance_id),
             )
         )
         self._record_delivery_receipt(
@@ -382,6 +383,7 @@ class V3ToolService:
                     text_markdown=text_markdown,
                     thread_ref=thread_ref,
                     importance=str(payload.get("importance") or "normal"),
+                    sender_role=role_from_instance(role_instance_id),
                 )
             )
         except Exception as exc:
@@ -464,6 +466,7 @@ class V3ToolService:
                 text_markdown=text_markdown,
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "high"),
+                sender_role=role_from_instance(role_instance_id),
             )
         )
         self._record_delivery_receipt(
@@ -507,6 +510,7 @@ class V3ToolService:
                 text_markdown=text_markdown,
                 thread_ref=_optional(payload.get("thread_ref")),
                 importance=str(payload.get("importance") or "high"),
+                sender_role=role_from_instance(role_instance_id),
             )
         )
         self._record_delivery_receipt(

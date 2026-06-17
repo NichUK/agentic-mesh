@@ -1,4 +1,6 @@
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
+from agentic_mesh_v3.connectors import BotFrameworkRoleIdentity
+from agentic_mesh_v3.connectors import BotFrameworkTeamsBridge
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.connectors import OutboundMessage
 from agentic_mesh_v3.connectors import GraphTeamsBridge
@@ -134,6 +136,122 @@ class FakeGraphTeamsTransport:
     def get_json(self, url: str) -> dict[str, object]:
         self.gets.append(url)
         return self.get_responses.get(url, {"value": []})
+
+
+class FakeBotFrameworkTransport:
+    def __init__(self) -> None:
+        self.forms: list[tuple[str, dict[str, str]]] = []
+        self.posts: list[tuple[str, dict[str, object], str]] = []
+
+    def post_form(self, url: str, payload: dict[str, str]) -> dict[str, object]:
+        self.forms.append((url, payload))
+        return {"access_token": "bot-token", "expires_in": 3600}
+
+    def post_json(self, url: str, payload: dict[str, object], *, authorization: str) -> dict[str, object]:
+        self.posts.append((url, payload, authorization))
+        if url.endswith("/v3/conversations"):
+            return {"id": "conversation-1"}
+        return {"id": "activity-1"}
+
+
+def test_bot_framework_teams_bridge_sends_as_role_bot_to_personal_user() -> None:
+    transport = FakeBotFrameworkTransport()
+    bridge = BotFrameworkTeamsBridge(
+        role_identities={
+            "product-manager": BotFrameworkRoleIdentity(
+                role_id="product-manager",
+                app_id="pm-app-id",
+                app_secret="pm-secret",
+                display_name="AM-Product Manager",
+            )
+        },
+        service_url="https://smba.test/teams",
+        tenant_id="tenant-1",
+        transport=transport,
+    )
+
+    receipt = bridge.send(
+        OutboundMessage(
+            connector="teams",
+            target_ref="user:sponsor-user",
+            text_markdown="**Please approve**",
+            sender_role="product-manager",
+        )
+    )
+
+    assert receipt.delivery_id == "activity-1"
+    assert transport.forms[0][1]["client_id"] == "pm-app-id"
+    assert transport.forms[0][1]["scope"] == "https://api.botframework.com/.default"
+    assert transport.posts[0][0] == "https://smba.test/teams/v3/conversations"
+    assert transport.posts[0][1]["bot"] == {"id": "pm-app-id", "name": "AM-Product Manager"}
+    assert transport.posts[1][0] == "https://smba.test/teams/v3/conversations/conversation-1/activities"
+    assert transport.posts[1][1]["textFormat"] == "markdown"
+    assert transport.posts[1][2] == "Bearer bot-token"
+
+
+def test_bot_framework_teams_bridge_requires_sender_role_when_multiple_bots() -> None:
+    bridge = BotFrameworkTeamsBridge(
+        role_identities={
+            "product-manager": BotFrameworkRoleIdentity(
+                role_id="product-manager",
+                app_id="pm-app-id",
+                app_secret="pm-secret",
+                display_name="AM-Product Manager",
+            ),
+            "release-manager": BotFrameworkRoleIdentity(
+                role_id="release-manager",
+                app_id="rm-app-id",
+                app_secret="rm-secret",
+                display_name="AM-Release Manager",
+            ),
+        },
+        service_url="https://smba.test/teams",
+        transport=FakeBotFrameworkTransport(),
+    )
+
+    try:
+        bridge.send(
+            OutboundMessage(
+                connector="teams",
+                target_ref="user:sponsor-user",
+                text_markdown="No sender.",
+            )
+        )
+    except Exception as exc:
+        assert "sender_role is required" in str(exc)
+    else:
+        raise AssertionError("multiple role bot identities require a sender_role")
+
+
+def test_bot_framework_teams_bridge_routes_inbound_through_broker() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    bridge = BotFrameworkTeamsBridge(
+        role_identities={
+            "product-manager": BotFrameworkRoleIdentity(
+                role_id="product-manager",
+                app_id="pm-app-id",
+                app_secret="pm-secret",
+                display_name="AM-Product Manager",
+            )
+        },
+        service_url="https://smba.test/teams",
+        transport=FakeBotFrameworkTransport(),
+        inbound_broker=broker,
+    )
+
+    subjects = bridge.route_inbound(
+        StakeholderMessage(
+            connector="teams",
+            message_id="msg-1",
+            source_type="dm",
+            sender_ref="sponsor",
+            conversation_ref="dm:product-manager",
+            text="Hello.",
+        )
+    )
+
+    assert subjects == ["agent.product-manager"]
 
 
 def test_graph_teams_bridge_posts_threaded_markdown_reply() -> None:

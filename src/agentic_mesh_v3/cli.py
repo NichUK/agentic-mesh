@@ -22,6 +22,8 @@ from agentic_mesh_v3.broker import BrokerMessage
 from agentic_mesh_v3.config_materializer import build_role_instance_config
 from agentic_mesh_v3.config_materializer import materialize_project_agent_configs
 from agentic_mesh_v3.compose import render_role_services_compose
+from agentic_mesh_v3.connectors import BotFrameworkRoleIdentity
+from agentic_mesh_v3.connectors import BotFrameworkTeamsBridge
 from agentic_mesh_v3.connectors import GraphTeamsBridge
 from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.connectors import StakeholderBridge
@@ -994,7 +996,23 @@ def _stakeholder_bridge(
             stream=stream,
             role_ids=role_ids,
         )
-    if adapter in {"graph", "microsoft-graph", "teams-graph", "teams-bot-connector"}:
+    if adapter == "teams-bot-connector":
+        if broker is None:
+            broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
+            _ensure_agent_stream(
+                broker,
+                stream=stream,
+                role_ids=role_ids,
+            )
+        return BotFrameworkTeamsBridge(
+            role_identities=_bot_framework_role_identities_from_env(config),
+            service_url=_required_env("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL"),
+            tenant_id=os.environ.get("AGENTIC_MESH_TENANT_ID"),
+            inbound_broker=broker,
+            inbound_stream=stream,
+            role_ids=role_ids,
+        )
+    if adapter in {"graph", "microsoft-graph", "teams-graph"}:
         access_token = os.environ.get("AGENTIC_MESH_TEAMS_TOKEN")
         if not access_token:
             raise ValueError("AGENTIC_MESH_TEAMS_TOKEN is required for Graph-backed Teams outbound messaging")
@@ -1014,6 +1032,47 @@ def _stakeholder_bridge(
             role_ids=role_ids,
         )
     raise ValueError(f"unsupported Teams connector adapter: {config.teams_connector.adapter}")
+
+
+def _bot_framework_role_identities_from_env(config: V3ProjectConfig) -> dict[str, BotFrameworkRoleIdentity]:
+    identities: dict[str, BotFrameworkRoleIdentity] = {}
+    for role in config.roles:
+        messaging = role.messaging_identity
+        if not messaging.display_name:
+            continue
+        if not messaging.bot_id_ref or not messaging.secret_ref:
+            raise ValueError(f"Teams role bot `{role.role_id}` must define bot_id_ref and secret_ref")
+        app_id = _optional_env(_env_name_for_ref(messaging.bot_id_ref))
+        app_secret = _optional_env(_env_name_for_ref(messaging.secret_ref))
+        if app_id is None or app_secret is None:
+            continue
+        identities[role.role_id] = BotFrameworkRoleIdentity(
+            role_id=role.role_id,
+            app_id=app_id,
+            app_secret=app_secret,
+            display_name=messaging.display_name,
+        )
+    if not identities:
+        raise ValueError("teams-bot-connector requires at least one role bot identity with configured app id and secret")
+    return identities
+
+
+def _env_name_for_ref(ref: str) -> str:
+    return "".join(char if char.isalnum() else "_" for char in ref).upper()
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        raise ValueError(f"{name} is required")
+    return value.strip()
+
+
+def _optional_env(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return None
+    return value.strip()
 
 
 def _teams_activity_router(args: argparse.Namespace) -> TeamsActivityRouter | None:
