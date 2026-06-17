@@ -18,7 +18,7 @@ fi
 : "${AGENTIC_MESH_URL_ROOT:=http://linuxch:8100}"
 : "${AGENTIC_MESH_V3_STATUS_PORT:=8100}"
 : "${AGENTIC_MESH_NATS_STATE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/v3/nats}"
-: "${AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime agentic-mesh-dev-product-manager-1 agentic-mesh-dev-project-manager-1 agentic-mesh-dev-engineering-1 agentic-mesh-dev-qa-engineer-1 agentic-mesh-dev-release-manager-1}"
+: "${AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor agentic-mesh-dev-product-manager-1 agentic-mesh-dev-project-manager-1 agentic-mesh-dev-engineering-1 agentic-mesh-dev-qa-engineer-1 agentic-mesh-dev-release-manager-1}"
 : "${AGENTIC_MESH_STOP_LEGACY_SERVICES:=1}"
 
 export AGENTIC_MESH_WORKSPACE_HOST_PATH

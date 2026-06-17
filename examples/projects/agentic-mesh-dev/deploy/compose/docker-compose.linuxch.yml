@@ -11,6 +11,15 @@ services:
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
       - /var/run/docker.sock:/var/run/docker.sock
 
+  v3-supervisor:
+    restart: unless-stopped
+    volumes:
+      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
+      - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
+      - /var/run/docker.sock:/var/run/docker.sock
+
   v3-dogfood-proof:
     volumes:
       - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro

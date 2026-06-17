@@ -46,6 +46,7 @@ from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
 from agentic_mesh_v3.lifecycle import ComposeLifecycleExecutor
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
+from agentic_mesh_v3.lifecycle import refresh_agent_statuses_from_broker
 from agentic_mesh_v3.live_preflight import LivePreflightResult
 from agentic_mesh_v3.live_preflight import PreflightCheck
 from agentic_mesh_v3.live_preflight import run_live_preflight
@@ -108,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_tick_parser.add_argument("--working-directory", type=Path)
     supervisor_tick_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_tick_parser.add_argument("--execute", action="store_true")
+    supervisor_tick_parser.add_argument("--refresh-inbox-from-broker", action="store_true")
     supervisor_loop_parser = subparsers.add_parser("run-project-supervisor-loop")
     supervisor_loop_parser.add_argument("--cycles", type=int, required=True)
     supervisor_loop_parser.add_argument("--poll-seconds", type=float, default=5.0)
@@ -120,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_loop_parser.add_argument("--working-directory", type=Path)
     supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_loop_parser.add_argument("--execute", action="store_true")
+    supervisor_loop_parser.add_argument("--refresh-inbox-from-broker", action="store_true")
     supervisor_service_parser = subparsers.add_parser("run-project-supervisor-service")
     supervisor_service_mode = supervisor_service_parser.add_mutually_exclusive_group(required=True)
     supervisor_service_mode.add_argument("--continuous", action="store_true")
@@ -134,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_service_parser.add_argument("--working-directory", type=Path)
     supervisor_service_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_service_parser.add_argument("--execute", action="store_true")
+    supervisor_service_parser.add_argument("--refresh-inbox-from-broker", action="store_true")
     approval_parser = subparsers.add_parser("record-approval-response")
     approval_parser.add_argument("--approval-id", required=True)
     approval_parser.add_argument("--status", required=True, choices=["approved", "rejected", "changes_requested"])
@@ -699,7 +703,7 @@ def _run_project_supervisor_tick(args: argparse.Namespace) -> dict[str, object]:
     db = V3Database(args.db)
     try:
         db.migrate()
-        lifecycle_payload = _run_supervisor_lifecycle(db, args)
+        lifecycle_payload = _run_supervisor_lifecycle(db, args, project_config=project_config)
         sweep_payload = _run_supervisor_sweep(db, args, project_config=project_config)
         payload = {
             "project_id": args.project_id,
@@ -785,10 +789,34 @@ def _validate_supervisor_args(args: argparse.Namespace) -> None:
         raise ValueError("--timeout-seconds must be positive")
 
 
-def _run_supervisor_lifecycle(db: V3Database, args: argparse.Namespace) -> dict[str, object]:
+def _run_supervisor_lifecycle(
+    db: V3Database,
+    args: argparse.Namespace,
+    *,
+    project_config: V3ProjectConfig,
+) -> dict[str, object]:
     snapshot = db.status_snapshot(project_id=args.project_id)
+    agents = snapshot.agents
+    if getattr(args, "refresh_inbox_from_broker", False):
+        broker = build_broker_adapter(
+            adapter=project_config.broker.adapter,
+            servers=project_config.broker.servers,
+        )
+        role_instance_ids = (
+            f"{project_config.project_id}.{role.role_id}.{instance_index}"
+            for role in project_config.roles
+            for instance_index in range(1, role.instances + 1)
+        )
+        agents = refresh_agent_statuses_from_broker(
+            agents,
+            role_instance_ids=role_instance_ids,
+            broker=broker,
+            stream=project_config.broker.stream,
+        )
+        for status in agents:
+            db.upsert_agent_status(status)
     decisions = plan_lifecycle_actions(
-        snapshot.agents,
+        agents,
         policy=HibernationPolicy(
             idle_after_seconds=args.idle_after_seconds,
             min_warm_instances_per_role=args.min_warm_instances_per_role,
@@ -819,6 +847,7 @@ def _run_supervisor_lifecycle(db: V3Database, args: argparse.Namespace) -> dict[
     return {
         "execute": args.execute,
         "compose_configured": bool(args.compose_file),
+        "inbox_refreshed_from_broker": bool(getattr(args, "refresh_inbox_from_broker", False)),
         "decisions": [decision.__dict__ for decision in decisions],
         "results": [_lifecycle_result_dict(result) for result in results],
         "decision_count": len(decisions),

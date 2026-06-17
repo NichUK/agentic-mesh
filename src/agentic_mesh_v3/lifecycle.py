@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import replace
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
@@ -10,6 +11,7 @@ import subprocess
 from typing import Iterable
 from typing import Protocol
 
+from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.reporting import AgentStatus
 
 
@@ -292,6 +294,55 @@ def plan_lifecycle_actions(
                 warm_instances -= 1
 
     return tuple(decisions)
+
+
+def refresh_agent_statuses_from_broker(
+    statuses: Iterable[AgentStatus],
+    *,
+    role_instance_ids: Iterable[str],
+    broker: BrokerAdapter,
+    stream: str,
+    pending_limit: int = 10_000,
+) -> tuple[AgentStatus, ...]:
+    """Refresh inbox/dead-letter depths from the broker before lifecycle planning.
+
+    A hibernated or stopped role cannot update its own `inbox_depth`, so the
+    runtime supervisor must inspect the broker directly before deciding whether
+    to wake it.
+    """
+
+    if pending_limit < 1:
+        raise ValueError("pending_limit must be positive")
+    by_instance = {status.role_instance_id: status for status in statuses}
+    for role_instance_id in role_instance_ids:
+        by_instance.setdefault(
+            role_instance_id,
+            AgentStatus(
+                role_instance_id=role_instance_id,
+                container_state="missing",
+                heartbeat_at=None,
+            ),
+        )
+
+    refreshed: list[AgentStatus] = []
+    for role_instance_id in sorted(by_instance):
+        status = by_instance[role_instance_id]
+        role_id, _ = _role_and_instance(role_instance_id)
+        inbox_depth = 0
+        for consumer, subject in (
+            (role_instance_id, f"agent.{role_id}"),
+            (f"{role_instance_id}.relevance", f"agent.{role_id}.relevance"),
+        ):
+            broker.ensure_consumer(stream, consumer, filter_subject=subject)
+            inbox_depth += len(broker.pending(stream, consumer, limit=pending_limit))
+        refreshed.append(
+            replace(
+                status,
+                inbox_depth=inbox_depth,
+                dead_letter_depth=len(broker.dead_letters(stream, limit=pending_limit)),
+            )
+        )
+    return tuple(refreshed)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:

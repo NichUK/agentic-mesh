@@ -12,6 +12,7 @@ from agentic_mesh_v3.lifecycle import RoleContainerSpec
 from agentic_mesh_v3.lifecycle import compose_lifecycle_command
 from agentic_mesh_v3.lifecycle import plan_lifecycle_action
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
+from agentic_mesh_v3.lifecycle import refresh_agent_statuses_from_broker
 from agentic_mesh_v3.reporting import AgentStatus
 
 
@@ -216,6 +217,41 @@ def test_lifecycle_batch_accounts_for_wakes_before_hibernating_idle_instances() 
         "agentic-mesh-dev.product-manager.2": "wake",
         "agentic-mesh-dev.product-manager.1": "hibernate",
     }
+
+
+def test_lifecycle_refreshes_stopped_agent_inbox_depth_from_broker() -> None:
+    class FakeBroker:
+        def __init__(self) -> None:
+            self.consumers: list[tuple[str, str, str | None]] = []
+
+        def ensure_consumer(self, stream: str, consumer: str, *, filter_subject: str | None = None):  # type: ignore[no-untyped-def]
+            self.consumers.append((stream, consumer, filter_subject))
+
+        def pending(self, stream: str, consumer: str | None = None, *, limit: int = 20):  # type: ignore[no-untyped-def]
+            del stream, limit
+            return [object(), object()] if consumer == "agentic-mesh-dev.product-manager.1" else []
+
+        def dead_letters(self, stream: str, *, limit: int = 20):  # type: ignore[no-untyped-def]
+            del stream, limit
+            return []
+
+    statuses = refresh_agent_statuses_from_broker(
+        [
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.product-manager.1",
+                container_state="hibernated",
+                heartbeat_at=None,
+                inbox_depth=0,
+            )
+        ],
+        role_instance_ids=("agentic-mesh-dev.product-manager.1",),
+        broker=FakeBroker(),  # type: ignore[arg-type]
+        stream="agent-inbox",
+    )
+
+    assert statuses[0].inbox_depth == 2
+    decision = plan_lifecycle_action(status=statuses[0], policy=HibernationPolicy())
+    assert decision.action == "wake"
 
 
 def test_compose_lifecycle_command_maps_wake_and_hibernate_to_compose(tmp_path: Path) -> None:

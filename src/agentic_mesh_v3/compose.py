@@ -96,6 +96,7 @@ def _supervisor_command(
         "--poll-seconds",
         _format_seconds(poll_seconds),
         "--publish-sweep-to-project-manager",
+        "--refresh-inbox-from-broker",
     ]
     if compose_file:
         command.extend(["--compose-file", compose_file])

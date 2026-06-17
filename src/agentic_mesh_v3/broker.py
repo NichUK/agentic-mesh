@@ -279,23 +279,7 @@ class NatsJetStreamAdapter:
     def pending(self, stream: str, consumer: str | None = None, *, limit: int = 20) -> list[BrokerMessage]:
         if limit < 1:
             raise ValueError("limit must be positive")
-        if consumer is None:
-            messages = [
-                _nats_entry_message(entry)
-                for (candidate_stream, _, _), entry in self._acked_messages.items()
-                if candidate_stream == stream
-            ]
-        else:
-            messages = [
-                _nats_entry_message(entry)
-                for (candidate_stream, candidate_consumer, _), entry in self._acked_messages.items()
-                if candidate_stream == stream and candidate_consumer == consumer
-            ]
-        return [
-            _nats_broker_message_record(message_id=message_id, message=raw)
-            for (_, _, message_id), raw in self._acked_messages.items()
-            if raw in messages
-        ][:limit]
+        return self._run(self._pending(stream, consumer, limit=limit))
 
     def dead_letters(self, stream: str, *, limit: int = 20) -> list[BrokerMessage]:
         if limit < 1:
@@ -433,6 +417,34 @@ class NatsJetStreamAdapter:
         finally:
             await nc.close()
 
+    async def _pending(self, stream: str, consumer: str | None, *, limit: int) -> list[BrokerMessage]:
+        nc = await self._connect()
+        try:
+            js = nc.jetstream()
+            if consumer is None:
+                info = await js.stream_info(stream)
+                return _synthetic_pending_messages(
+                    count=int(getattr(info.state, "messages", 0) or 0),
+                    limit=limit,
+                    stream=stream,
+                    subject="",
+                )
+            info = await js.consumer_info(stream, _nats_consumer_name(consumer))
+            config = getattr(info, "config", None)
+            subject = str(getattr(config, "filter_subject", "") or "")
+            count = int(getattr(info, "num_pending", 0) or 0) + int(
+                getattr(info, "num_ack_pending", 0) or 0
+            )
+            return _synthetic_pending_messages(
+                count=count,
+                limit=limit,
+                stream=stream,
+                subject=subject,
+                consumer=consumer,
+            )
+        finally:
+            await nc.close()
+
 
 def build_broker_adapter(*, adapter: str, servers: str | None = None) -> BrokerAdapter:
     if adapter == "in-memory":
@@ -496,6 +508,25 @@ def _nats_broker_message_record(*, message_id: str, message: object) -> BrokerMe
         payload=payload,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _synthetic_pending_messages(
+    *,
+    count: int,
+    limit: int,
+    stream: str,
+    subject: str,
+    consumer: str | None = None,
+) -> list[BrokerMessage]:
+    return [
+        BrokerMessage(
+            message_id=f"{stream}:{consumer or 'stream'}:pending:{index}",
+            subject=subject,
+            payload={"pending": True},
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        for index in range(min(count, limit))
+    ]
 
 
 def _nats_entry_message(entry: object) -> object:

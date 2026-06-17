@@ -96,6 +96,26 @@ def test_dogfood_compose_defines_v3_nats_profile() -> None:
     assert "${AGENTIC_MESH_NATS_STATE_HOST_PATH:-../../state/v3/nats}:/data" in service["volumes"]
 
 
+def test_dogfood_compose_runs_v3_supervisor_with_broker_wake() -> None:
+    compose = _load_dogfood_compose()
+    runtime_service = compose["services"]["v3-runtime"]
+    service = compose["services"]["v3-supervisor"]
+    command = service["command"]
+
+    assert service["image"] == runtime_service["image"]
+    assert service["environment"] == runtime_service["environment"]
+    assert service["volumes"] == runtime_service["volumes"]
+    assert service["working_dir"] == runtime_service["working_dir"]
+    assert service["depends_on"] == ["v3-nats", "v3-runtime"]
+    assert service["profiles"] == ["v3"]
+    assert "run-project-supervisor-service" in command
+    assert "--continuous" in command
+    assert "--refresh-inbox-from-broker" in command
+    assert "--execute" in command
+    assert "--compose-file /mesh/project/deploy/compose/docker-compose.yml" in command
+    assert "--compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml" in command
+
+
 def test_dogfood_compose_defines_v3_dogfood_proof_runner() -> None:
     compose = _load_dogfood_compose()
     service = compose["services"]["v3-dogfood-proof"]
@@ -117,6 +137,7 @@ def test_linuxch_overlay_restarts_v3_runtime_and_mounts_docker_for_proof() -> No
 
     assert "  v3-nats:\n    restart: unless-stopped" in overlay
     assert "  v3-runtime:\n    restart: unless-stopped" in overlay
+    assert "  v3-supervisor:" in overlay
     assert "  v3-dogfood-proof:" in overlay
     assert "/var/run/docker.sock:/var/run/docker.sock" in overlay
 
@@ -198,7 +219,7 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
 
     assert 'AGENTIC_MESH_V3_STATUS_PORT:=8100' in script
     assert 'export AGENTIC_MESH_FORCE_V3_STATUS_PORT="$AGENTIC_MESH_V3_STATUS_PORT"' in script
-    assert "AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime agentic-mesh-dev-product-manager-1" in script
+    assert "AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor agentic-mesh-dev-product-manager-1" in script
     assert "agentic-mesh-dev-project-manager-1" in script
     assert "agentic-mesh-dev-engineering-1" in script
     assert "agentic-mesh-dev-qa-engineer-1" in script

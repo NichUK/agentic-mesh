@@ -102,6 +102,7 @@ def test_render_role_services_compose_can_include_supervisor_service(tmp_path: P
         "--poll-seconds",
         "30",
         "--publish-sweep-to-project-manager",
+        "--refresh-inbox-from-broker",
         "--compose-file",
         "/mesh/state/roles.yml",
         "--execute",
