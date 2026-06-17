@@ -25,6 +25,16 @@ class ConversationRecorder(Protocol):
     def record(self, message: StakeholderMessage) -> None:
         """Persist an inbound stakeholder message for later agent context."""
 
+    def record_route_result(
+        self,
+        message: StakeholderMessage,
+        *,
+        subjects: tuple[str, ...],
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        """Persist the outcome of routing a captured message to agent inboxes."""
+
 
 class ApprovalResponseRecorder(Protocol):
     def record(self, message: StakeholderMessage) -> bool:
@@ -54,6 +64,34 @@ class DatabaseConversationRecorder:
                 thread_ref=message.thread_ref,
                 mentioned_roles=message.mentioned_roles,
             )
+        finally:
+            db.close()
+
+    def record_route_result(
+        self,
+        message: StakeholderMessage,
+        *,
+        subjects: tuple[str, ...],
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        db = V3Database(self.db_path)
+        try:
+            db.migrate()
+            with db.connection:
+                db.record_event(
+                    "teams_activity.route_result",
+                    "conversation",
+                    message.message_id,
+                    {
+                        "connector": message.connector,
+                        "conversation_ref": message.conversation_ref,
+                        "source_type": message.source_type,
+                        "subjects": list(subjects),
+                        "status": status,
+                        "error": error,
+                    },
+                )
         finally:
             db.close()
 
@@ -192,7 +230,24 @@ class TeamsActivityRouter:
             self.approval_response_recorder.record(message)
         if self.question_response_recorder is not None:
             self.question_response_recorder.record(message)
-        return self.bridge.route_inbound(message)
+        try:
+            subjects = self.bridge.route_inbound(message)
+        except Exception as exc:
+            if self.conversation_recorder is not None:
+                self.conversation_recorder.record_route_result(
+                    message,
+                    subjects=(),
+                    status="failed",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            raise
+        if self.conversation_recorder is not None:
+            self.conversation_recorder.record_route_result(
+                message,
+                subjects=tuple(subjects),
+                status="routed" if subjects else "no_route",
+            )
+        return subjects
 
 
 def teams_role_identities_from_project_config(config: V3ProjectConfig) -> tuple[TeamsRoleIdentity, ...]:

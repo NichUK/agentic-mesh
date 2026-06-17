@@ -13,6 +13,10 @@ from typing import Protocol
 from uuid import uuid4
 
 
+NATS_CONSUMER_ACK_WAIT_SECONDS = 3600.0
+NATS_CONSUMER_MAX_DELIVER = 3
+
+
 @dataclass(frozen=True)
 class BrokerMessage:
     message_id: str
@@ -318,12 +322,20 @@ class NatsJetStreamAdapter:
                 durable_name=durable_name,
                 ack_policy="explicit",
                 filter_subject=filter_subject,
+                ack_wait=NATS_CONSUMER_ACK_WAIT_SECONDS,
+                max_deliver=NATS_CONSUMER_MAX_DELIVER,
             )
             try:
                 info = await js.consumer_info(stream, durable_name)
                 existing_config = getattr(info, "config", None)
                 existing_filter = getattr(existing_config, "filter_subject", None)
-                if existing_filter == filter_subject:
+                existing_ack_wait = getattr(existing_config, "ack_wait", None)
+                existing_max_deliver = getattr(existing_config, "max_deliver", None)
+                if (
+                    existing_filter == filter_subject
+                    and existing_ack_wait == NATS_CONSUMER_ACK_WAIT_SECONDS
+                    and existing_max_deliver == NATS_CONSUMER_MAX_DELIVER
+                ):
                     return
                 await js.delete_consumer(stream, durable_name)
             except Exception:

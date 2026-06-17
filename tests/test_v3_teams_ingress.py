@@ -233,6 +233,13 @@ def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
     try:
         db.migrate()
         messages = db.list_conversation_messages("team:team-1/channel:channel-1")
+        route_event = db.connection.execute(
+            """
+            SELECT event_type, aggregate_id, payload_json
+            FROM events
+            WHERE aggregate_id='msg-3' AND event_type='teams_activity.route_result'
+            """
+        ).fetchone()
     finally:
         db.close()
 
@@ -241,6 +248,58 @@ def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
     assert messages[0]["text"] == "AM-Product Manager please review this."
     assert messages[0]["sender_ref"] == "user-1"
     assert messages[0]["mentioned_roles"] == ("product-manager",)
+    assert route_event is not None
+    assert '"status": "routed"' in route_event["payload_json"]
+    assert '"agent.product-manager"' in route_event["payload_json"]
+
+
+def test_teams_activity_router_records_route_failure_after_context_capture(tmp_path) -> None:
+    class FailingBridge:
+        def route_inbound(self, message):  # noqa: ANN001
+            raise RuntimeError("broker unavailable")
+
+    db_path = tmp_path / "v3.sqlite3"
+    router = TeamsActivityRouter(
+        FailingBridge(),  # type: ignore[arg-type]
+        role_identities=(
+            TeamsRoleIdentity("product-manager", "AM-Product Manager", bot_id="bot-product"),
+        ),
+        conversation_recorder=DatabaseConversationRecorder(db_path),
+    )
+
+    try:
+        router.route_activity(
+            {
+                "id": "msg-failed-route",
+                "text": "Please respond.",
+                "conversation": {"id": "dm-1", "conversationType": "personal"},
+                "from": {"id": "user-1"},
+                "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+            }
+        )
+    except RuntimeError as exc:
+        assert "broker unavailable" in str(exc)
+    else:
+        raise AssertionError("route failure should be surfaced")
+
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        messages = db.list_conversation_messages("dm:product-manager")
+        route_event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE aggregate_id='msg-failed-route' AND event_type='teams_activity.route_result'
+            """
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert messages[0]["message_id"] == "msg-failed-route"
+    assert route_event is not None
+    assert '"status": "failed"' in route_event["payload_json"]
+    assert "RuntimeError: broker unavailable" in route_event["payload_json"]
 
 
 def test_teams_activity_router_records_approval_response_and_notifies_requesting_role(tmp_path) -> None:

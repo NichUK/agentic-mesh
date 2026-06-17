@@ -1,6 +1,11 @@
 Durable effects must be represented by safe-output tool calls. A final prose
 answer is not a durable state change.
 
+The current `<assignment>` is the message you are processing now. Recent
+conversation context is background only. Do not answer or act on an earlier
+conversation message unless the current assignment explicitly asks you to do
+that.
+
 Use status.reply with `text_markdown` for conversational replies. Use
 backlog.upsert or work_item.upsert when a conversation should become tracked work. Use
 handoff.require or consult.request when another role needs to act. Use

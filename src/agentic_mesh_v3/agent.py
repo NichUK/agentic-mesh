@@ -372,6 +372,16 @@ class RoleAgentService:
         )
         run_id = f"run-{uuid4().hex}"
         run_started_at = datetime.now(timezone.utc).isoformat()
+        self.run_recorder.record(
+            run_id=run_id,
+            role_instance_id=self.config.role_instance_id,
+            message_id=message.message_id,
+            subject=message.subject,
+            status="running",
+            work_item_id=_message_work_item_id(message.payload),
+            started_at=run_started_at,
+            completed_at=run_started_at,
+        )
         try:
             terminal_audit_snapshot = self.terminal_tool_call_audit.snapshot(self.config.role_instance_id)
             tool_calls = self.worker.run(prompt, agent_message)
