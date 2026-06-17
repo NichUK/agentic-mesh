@@ -7,7 +7,9 @@ from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 from agentic_mesh_v3.teams_ingress import TeamsRoleIdentity
+from agentic_mesh_v3.server import DashboardAuthConfig
 from agentic_mesh_v3.server import V3StatusHandler
+from agentic_mesh_v3.server import dashboard_auth_config_from_env
 from agentic_mesh_v3.server import _artifact_page
 from agentic_mesh_v3.server import _teams_activity_response
 from agentic_mesh_v3.tools import V3ToolService
@@ -31,6 +33,64 @@ def test_artifact_page_preserves_mermaid_diagrams_with_controlled_loader() -> No
     assert "cdn.jsdelivr.net/npm/mermaid" in html
     assert "mermaid.initialize" in html
     assert "alert" not in html
+
+
+def test_dashboard_auth_config_from_env_enables_bearer_and_proxy_users() -> None:
+    config = dashboard_auth_config_from_env(
+        {
+            "AGENTIC_MESH_DASHBOARD_AUTH_TOKEN": "secret",
+            "AGENTIC_MESH_DASHBOARD_ALLOWED_USERS": "nich@example.test, ops@example.test",
+            "AGENTIC_MESH_DASHBOARD_USER_HEADERS": "X-Test-User",
+        }
+    )
+
+    assert config.enabled is True
+    assert config.bearer_token == "secret"
+    assert config.allowed_users == ("nich@example.test", "ops@example.test")
+    assert config.trusted_user_headers == ("X-Test-User",)
+
+
+def test_dashboard_auth_rejects_status_without_authenticated_user() -> None:
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.dashboard_auth = DashboardAuthConfig(enabled=True, bearer_token="secret")
+    handler = object.__new__(Handler)
+    handler.headers = {}
+    captured: dict[str, object] = {}
+    handler.send_response = lambda status: captured.__setitem__("status", status)  # type: ignore[method-assign]
+    handler.send_header = lambda *args: None  # type: ignore[method-assign]
+    handler.end_headers = lambda: None  # type: ignore[method-assign]
+
+    class Writer:
+        def write(self, body: bytes) -> None:
+            captured["body"] = body
+
+    handler.wfile = Writer()
+
+    assert handler._authorize_dashboard_request() is False
+    assert captured["status"].value == 401
+    assert b"Authentication required" in captured["body"]
+
+
+def test_dashboard_auth_accepts_bearer_or_trusted_proxy_user() -> None:
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.dashboard_auth = DashboardAuthConfig(
+        enabled=True,
+        bearer_token="secret",
+        allowed_users=("nich@example.test",),
+        trusted_user_headers=("X-Test-User",),
+    )
+    handler = object.__new__(Handler)
+    handler.headers = {"Authorization": "Bearer secret"}
+
+    assert handler._authorize_dashboard_request() is True
+
+    handler.headers = {"X-Test-User": "nich@example.test"}
+
+    assert handler._authorize_dashboard_request() is True
 
 
 def test_status_handler_snapshot_uses_v3_db(tmp_path: Path) -> None:

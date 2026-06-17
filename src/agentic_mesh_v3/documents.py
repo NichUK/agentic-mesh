@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import posixpath
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 from typing import Protocol
 from typing import TYPE_CHECKING
 from urllib.parse import quote
+from urllib.parse import urlencode
 
 if TYPE_CHECKING:
     from agentic_mesh_v3.project_config import V3DocumentLibraryConfig
@@ -229,13 +231,17 @@ class OneDriveDocumentLibraryAdapter:
         framework_id: str = "togaf-sdlc-v1",
         graph_base_url: str = "https://graph.microsoft.com/v1.0",
         transport: "GraphDocumentTransport | None" = None,
+        token_provider: "GraphAccessTokenProvider | None" = None,
     ) -> None:
         self.drive_id = drive_id
         self.access_token = access_token
         self.root_path = root_path
         self.framework_id = framework_for(framework_id).framework_id
         self.graph_base_url = graph_base_url.rstrip("/")
-        self.transport = transport or UrlLibGraphDocumentTransport(access_token=access_token)
+        self.transport = transport or UrlLibGraphDocumentTransport(
+            access_token=access_token,
+            token_provider=token_provider,
+        )
 
     def write_text(self, relative_path: str, content: str) -> DocumentRef:
         graph_path = self._graph_path(relative_path)
@@ -278,12 +284,84 @@ class GraphDocumentTransport(Protocol):
         """Return whether a Graph drive item exists."""
 
 
+class GraphAccessTokenProvider(Protocol):
+    def access_token(self, *, force_refresh: bool = False) -> str | None:
+        """Return a Graph access token, refreshing it when requested."""
+
+
+class RefreshTokenGraphAccessTokenProvider:
+    """Refresh Microsoft Graph access tokens from a persisted device-flow token."""
+
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        tenant_id: str,
+        refresh_token: str,
+        scopes: tuple[str, ...],
+        token_base_url: str = "https://login.microsoftonline.com",
+    ) -> None:
+        if not client_id.strip():
+            raise ValueError("client_id is required")
+        if not tenant_id.strip():
+            raise ValueError("tenant_id is required")
+        if not refresh_token.strip():
+            raise ValueError("refresh_token is required")
+        self.client_id = client_id.strip()
+        self.tenant_id = tenant_id.strip()
+        self.refresh_token = refresh_token.strip()
+        self.scopes = scopes
+        self.token_base_url = token_base_url.rstrip("/")
+        self._access_token: str | None = None
+
+    def access_token(self, *, force_refresh: bool = False) -> str | None:
+        if self._access_token is not None and not force_refresh:
+            return self._access_token
+        response = self._request_token()
+        token = response.get("access_token")
+        if not isinstance(token, str) or not token.strip():
+            raise RuntimeError("Graph refresh response did not contain an access token")
+        new_refresh_token = response.get("refresh_token")
+        if isinstance(new_refresh_token, str) and new_refresh_token.strip():
+            self.refresh_token = new_refresh_token.strip()
+        self._access_token = token.strip()
+        return self._access_token
+
+    def _request_token(self) -> dict[str, object]:
+        import urllib.request
+
+        body = urlencode(
+            {
+                "grant_type": "refresh_token",
+                "client_id": self.client_id,
+                "refresh_token": self.refresh_token,
+                "scope": " ".join(self.scopes),
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.token_base_url}/{quote(self.tenant_id, safe='')}/oauth2/v2.0/token",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = json.loads(response.read().decode("utf-8"))
+        if not isinstance(raw, dict):
+            raise RuntimeError("Graph refresh response was not an object")
+        return raw
+
+
 class UrlLibGraphDocumentTransport:
-    def __init__(self, *, access_token: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        access_token: str | None,
+        token_provider: GraphAccessTokenProvider | None = None,
+    ) -> None:
         self.access_token = access_token
+        self.token_provider = token_provider
 
     def put_text(self, url: str, content: str) -> dict[str, object]:
-        import json
         import urllib.request
 
         request = urllib.request.Request(
@@ -292,14 +370,17 @@ class UrlLibGraphDocumentTransport:
             method="PUT",
             headers=self._headers(content_type="text/plain; charset=utf-8"),
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8"))
+        with self._open_with_refresh(request) as response:
+            raw = json.loads(response.read().decode("utf-8"))
+        if not isinstance(raw, dict):
+            raise RuntimeError("Graph upload response was not an object")
+        return raw
 
     def get_text(self, url: str) -> str:
         import urllib.request
 
         request = urllib.request.Request(url, headers=self._headers())
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with self._open_with_refresh(request) as response:
             return response.read().decode("utf-8")
 
     def exists(self, url: str) -> bool:
@@ -308,19 +389,36 @@ class UrlLibGraphDocumentTransport:
 
         request = urllib.request.Request(url, headers=self._headers(), method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=30):
+            with self._open_with_refresh(request):
                 return True
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return False
             raise
 
+    def _open_with_refresh(self, request: "urllib.request.Request"):
+        import urllib.error
+        import urllib.request
+
+        try:
+            return urllib.request.urlopen(request, timeout=30)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 401 or self.token_provider is None:
+                raise
+            token = self.token_provider.access_token(force_refresh=True)
+            if not token:
+                raise
+            request.remove_header("Authorization")
+            request.add_header("Authorization", f"Bearer {token}")
+            return urllib.request.urlopen(request, timeout=30)
+
     def _headers(self, *, content_type: str | None = None) -> dict[str, str]:
         headers = {"Accept": "application/json"}
         if content_type is not None:
             headers["Content-Type"] = content_type
-        if self.access_token:
-            headers["Authorization"] = f"Bearer {self.access_token}"
+        token = self.token_provider.access_token() if self.token_provider is not None else self.access_token
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         return headers
 
 
@@ -330,6 +428,7 @@ def build_document_library_adapter(
     access_token: str | None = None,
     graph_base_url: str = "https://graph.microsoft.com/v1.0",
     transport: GraphDocumentTransport | None = None,
+    token_provider: GraphAccessTokenProvider | None = None,
 ) -> DocumentLibraryAdapter:
     adapter = config.adapter.casefold().replace("_", "-")
     if adapter in {"local", "filesystem", "file", "git"}:
@@ -339,8 +438,8 @@ def build_document_library_adapter(
     if adapter in {"onedrive", "sharepoint"}:
         if not config.drive_id:
             raise ValueError("document_library.drive_id is required for OneDrive/SharePoint document libraries")
-        if transport is None and not access_token:
-            raise ValueError("AGENTIC_MESH_ONEDRIVE_TOKEN is required for OneDrive/SharePoint document libraries")
+        if transport is None and not access_token and token_provider is None:
+            raise ValueError("AGENTIC_MESH_ONEDRIVE_TOKEN or refresh-token configuration is required for OneDrive/SharePoint document libraries")
         return OneDriveDocumentLibraryAdapter(
             config.drive_id,
             access_token=access_token,
@@ -348,6 +447,7 @@ def build_document_library_adapter(
             framework_id=config.structure_policy,
             graph_base_url=graph_base_url,
             transport=transport,
+            token_provider=token_provider,
         )
     raise ValueError(f"unsupported document library adapter: {config.adapter}")
 

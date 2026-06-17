@@ -39,6 +39,7 @@ from agentic_mesh_v3.dogfood_audit import audit_v3_dogfood_completion
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.documents import build_document_library_adapter
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.documents import RefreshTokenGraphAccessTokenProvider
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import RaciMatrix
 from agentic_mesh_v3.governance import load_raci_matrix_from_flow
@@ -934,10 +935,33 @@ def _document_library_adapter(args: argparse.Namespace, *, required: bool = Fals
         return build_document_library_adapter(
             config,
             access_token=os.environ.get("AGENTIC_MESH_ONEDRIVE_TOKEN"),
+            token_provider=_graph_refresh_token_provider(),
         )
     if required:
         raise ValueError("--document-library-root or --project-config is required")
     return None
+
+
+def _graph_refresh_token_provider() -> RefreshTokenGraphAccessTokenProvider | None:
+    client_id = os.environ.get("AGENTIC_MESH_GRAPH_CLIENT_ID")
+    tenant_id = os.environ.get("AGENTIC_MESH_GRAPH_TENANT_ID") or os.environ.get("AGENTIC_MESH_TENANT_ID")
+    refresh_token = os.environ.get("AGENTIC_MESH_GRAPH_REFRESH_TOKEN")
+    if not client_id or not tenant_id or not refresh_token:
+        return None
+    scopes = tuple(
+        scope.strip()
+        for scope in (
+            os.environ.get("AGENTIC_MESH_GRAPH_SCOPES")
+            or "https://graph.microsoft.com/Files.ReadWrite.All offline_access"
+        ).split()
+        if scope.strip()
+    )
+    return RefreshTokenGraphAccessTokenProvider(
+        client_id=client_id,
+        tenant_id=tenant_id,
+        refresh_token=refresh_token,
+        scopes=scopes,
+    )
 
 
 def _project_uses_onedrive_document_library(args: argparse.Namespace) -> bool:

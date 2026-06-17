@@ -17,7 +17,8 @@ $scopes = @(
     "https://graph.microsoft.com/Chat.Create",
     "https://graph.microsoft.com/Chat.ReadWrite",
     "https://graph.microsoft.com/ChatMessage.Send",
-    "https://graph.microsoft.com/ChannelMessage.Send"
+    "https://graph.microsoft.com/ChannelMessage.Send",
+    "offline_access"
 )
 
 function Get-ScopedGraphToken {
@@ -105,7 +106,7 @@ function Get-DeviceCodeGraphToken {
                     client_id = $ClientId
                     device_code = $deviceResponse.device_code
                 }
-            return $tokenResponse.access_token
+            return $tokenResponse
         }
         catch {
             $errorBody = $null
@@ -147,6 +148,7 @@ function Get-DeviceCodeGraphToken {
     throw "Device-code login expired before completion."
 }
 
+$deviceTokenResponse = $null
 $token = Get-ScopedGraphToken
 if (-not $token -and -not $SkipDeviceLogin) {
     if (-not $GraphClientId) {
@@ -156,7 +158,8 @@ if (-not $token -and -not $SkipDeviceLogin) {
         $TenantId = Get-DefaultTenantId
     }
     Write-Host "Scoped Graph token is not available. Starting Agentic Mesh device-code login..."
-    $token = Get-DeviceCodeGraphToken -ClientId $GraphClientId -Tenant $TenantId -Scopes $scopes
+    $deviceTokenResponse = Get-DeviceCodeGraphToken -ClientId $GraphClientId -Tenant $TenantId -Scopes $scopes
+    $token = $deviceTokenResponse.access_token
 }
 if (-not $token) {
     throw "Azure CLI did not return a scoped Graph access token. Run this script with -GraphClientId or set AGENTIC_MESH_GRAPH_CLIENT_ID to use Agentic Mesh device-code login."
@@ -165,6 +168,17 @@ if (-not $token) {
 $updates = @{
     AGENTIC_MESH_ONEDRIVE_TOKEN = $token
     AGENTIC_MESH_TEAMS_TOKEN = $token
+    AGENTIC_MESH_GRAPH_SCOPES = ($scopes -join " ")
+}
+
+if ($GraphClientId) {
+    $updates.AGENTIC_MESH_GRAPH_CLIENT_ID = $GraphClientId
+}
+if ($TenantId) {
+    $updates.AGENTIC_MESH_GRAPH_TENANT_ID = $TenantId
+}
+if ($deviceTokenResponse -and $deviceTokenResponse.refresh_token) {
+    $updates.AGENTIC_MESH_GRAPH_REFRESH_TOKEN = $deviceTokenResponse.refresh_token
 }
 
 if ($DriveId) {

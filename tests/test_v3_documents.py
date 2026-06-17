@@ -1,9 +1,11 @@
 from pathlib import Path
+from urllib.error import HTTPError
 
 from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import DocumentLibraryError
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
 from agentic_mesh_v3.documents import OneDriveDocumentLibraryAdapter
+from agentic_mesh_v3.documents import UrlLibGraphDocumentTransport
 from agentic_mesh_v3.documents import WorkItemIndex
 from agentic_mesh_v3.documents import build_document_library_adapter
 from agentic_mesh_v3.documents import framework_for
@@ -329,3 +331,37 @@ def test_document_library_factory_accepts_onedrive_token_without_custom_transpor
     )
 
     assert isinstance(adapter, OneDriveDocumentLibraryAdapter)
+
+
+def test_graph_document_transport_refreshes_once_after_unauthorized(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class FakeProvider:
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def access_token(self, *, force_refresh: bool = False) -> str:
+            self.calls.append(force_refresh)
+            return "fresh-token" if force_refresh else "expired-token"
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def read(self) -> bytes:
+            return b"hello"
+
+    calls = []
+
+    def fake_urlopen(request, timeout):  # noqa: ANN001
+        calls.append(request.headers.get("Authorization"))
+        if len(calls) == 1:
+            raise HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    transport = UrlLibGraphDocumentTransport(access_token=None, token_provider=FakeProvider())
+
+    assert transport.get_text("https://graph.test/item/content") == "hello"
+    assert calls == ["Bearer expired-token", "Bearer fresh-token"]

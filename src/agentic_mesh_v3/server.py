@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import html
+import hmac
 import re
+import os
+from dataclasses import dataclass
 from dataclasses import asdict
 from dataclasses import is_dataclass
 from http import HTTPStatus
@@ -24,14 +27,32 @@ from agentic_mesh_v3.reporting import render_work_item_detail_page
 from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 
 
+@dataclass(frozen=True)
+class DashboardAuthConfig:
+    enabled: bool = False
+    bearer_token: str | None = None
+    allowed_users: tuple[str, ...] = ()
+    trusted_user_headers: tuple[str, ...] = (
+        "Cf-Access-Authenticated-User-Email",
+        "X-MS-CLIENT-PRINCIPAL-NAME",
+        "X-Forwarded-User",
+    )
+
+
 class V3StatusHandler(BaseHTTPRequestHandler):
     db_path: Path
     project_id: str
     document_library: DocumentLibraryAdapter | None = None
     teams_activity_router: TeamsActivityRouter | None = None
+    dashboard_auth: DashboardAuthConfig = DashboardAuthConfig()
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/healthz":
+            self._send_json({"status": "ok", "runtime": "agentic_mesh_v3"})
+            return
+        if not self._authorize_dashboard_request():
+            return
         if path in {"/", "/status"}:
             self._send_html(self._render_status())
             return
@@ -46,9 +67,6 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             return
         if path == "/status.json":
             self._send_json_snapshot()
-            return
-        if path == "/healthz":
-            self._send_json({"status": "ok", "runtime": "agentic_mesh_v3"})
             return
         if path.startswith("/work-item/") and path.endswith(".json"):
             work_item_id = unquote(path.removeprefix("/work-item/")[: -len(".json")]).strip("/")
@@ -72,6 +90,39 @@ class V3StatusHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         return
+
+    def _authorize_dashboard_request(self) -> bool:
+        config = self.dashboard_auth
+        if not config.enabled:
+            return True
+        auth_header = self.headers.get("Authorization") or ""
+        if config.bearer_token and auth_header.startswith("Bearer "):
+            supplied = auth_header.removeprefix("Bearer ").strip()
+            if hmac.compare_digest(supplied, config.bearer_token):
+                return True
+        allowed_users = {user.casefold() for user in config.allowed_users}
+        for header in config.trusted_user_headers:
+            user = (self.headers.get(header) or "").strip()
+            if not user:
+                continue
+            if not allowed_users or user.casefold() in allowed_users:
+                return True
+        self._send_auth_required()
+        return False
+
+    def _send_auth_required(self) -> None:
+        body = (
+            "<!doctype html><html><head><title>Authentication required</title></head>"
+            "<body><h1>Authentication required</h1>"
+            "<p>The Agentic Mesh dashboard and artifact viewer require an authenticated, authorized user.</p>"
+            "</body></html>"
+        ).encode("utf-8")
+        self.send_response(HTTPStatus.UNAUTHORIZED)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("WWW-Authenticate", 'Bearer realm="agentic-mesh-dashboard"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _snapshot(self):
         db = V3Database(self.db_path)
@@ -240,6 +291,7 @@ def serve(
     port: int = 8080,
     document_library: DocumentLibraryAdapter | None = None,
     teams_activity_router: TeamsActivityRouter | None = None,
+    dashboard_auth: DashboardAuthConfig | None = None,
 ) -> None:
     class Handler(V3StatusHandler):
         pass
@@ -248,8 +300,32 @@ def serve(
     Handler.project_id = project_id
     Handler.document_library = document_library
     Handler.teams_activity_router = teams_activity_router
+    Handler.dashboard_auth = dashboard_auth or dashboard_auth_config_from_env()
     server = ThreadingHTTPServer((host, port), Handler)
     server.serve_forever()
+
+
+def dashboard_auth_config_from_env(env: dict[str, str] | None = None) -> DashboardAuthConfig:
+    source = env if env is not None else os.environ
+    enabled_raw = (source.get("AGENTIC_MESH_DASHBOARD_AUTH_ENABLED") or "").strip().casefold()
+    bearer_token = (source.get("AGENTIC_MESH_DASHBOARD_AUTH_TOKEN") or "").strip() or None
+    allowed_users = tuple(
+        user.strip()
+        for user in (source.get("AGENTIC_MESH_DASHBOARD_ALLOWED_USERS") or "").split(",")
+        if user.strip()
+    )
+    header_names = tuple(
+        header.strip()
+        for header in (source.get("AGENTIC_MESH_DASHBOARD_USER_HEADERS") or "").split(",")
+        if header.strip()
+    )
+    enabled = enabled_raw in {"1", "true", "yes", "on"} or bool(bearer_token or allowed_users)
+    return DashboardAuthConfig(
+        enabled=enabled,
+        bearer_token=bearer_token,
+        allowed_users=allowed_users,
+        trusted_user_headers=header_names or DashboardAuthConfig().trusted_user_headers,
+    )
 
 
 def _teams_activity_response(activity: dict[str, Any], router: TeamsActivityRouter) -> dict[str, object]:
