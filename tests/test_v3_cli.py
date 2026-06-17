@@ -658,6 +658,90 @@ roles:
     assert "configured" in details
 
 
+def test_cli_preflight_live_rejects_reserved_codex_model_alias(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("AGENTIC_MESH_ONEDRIVE_TOKEN", _jwt_with_scopes("Files.ReadWrite.All"))
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "https://smba.test/teams")
+    monkeypatch.setenv("AGENTIC_MESH_TENANT_ID", "tenant-1")
+    for role_id in (
+        "engineering",
+        "product-manager",
+        "project-manager",
+        "qa-engineer",
+        "release-manager",
+    ):
+        monkeypatch.setenv(f"BOT_{role_id.upper().replace('-', '_')}", f"{role_id}-app-id")
+        monkeypatch.setenv(f"BOT_{role_id.upper().replace('-', '_')}_SECRET", f"{role_id}-secret")
+    project_config = tmp_path / "project.yaml"
+    python_exe = Path(sys.executable).as_posix()
+    roles = "\n".join(
+        f"""  {role_id}:
+    instances: 1
+    worker:
+      adapter: codex-cli
+      model: {"codex" if role_id == "product-manager" else "gpt-5.5"}"""
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    role_bots = "\n".join(
+        f"      {role_id}:\n        display_name: AM-{role_id}\n        bot_id_ref: bot-{role_id}\n        secret_ref: bot-{role_id}-secret"
+        for role_id in (
+            "engineering",
+            "product-manager",
+            "project-manager",
+            "qa-engineer",
+            "release-manager",
+        )
+    )
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: drive-123
+  root_path: /documents
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    role_bots:
+{role_bots}
+stakeholder_contacts:
+  sponsor:
+    display_name: Sponsor
+    connector: teams
+    target_ref: user:sponsor-user
+release_deployment_targets:
+  local-smoke:
+    type: command
+    command:
+      - "{python_exe}"
+      - -c
+      - "print('preflight deploy target')"
+roles:
+{roles}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--project-config", str(project_config), "preflight-live"])
+    output = json.loads(capsys.readouterr().out)
+
+    assert result == 1
+    failed = {check["check_id"]: check for check in output["checks"] if not check["passed"]}
+    assert "workers.codex_cli.model" in failed
+    assert failed["workers.codex_cli.model"]["detail"] == "product-manager"
+
+
 def test_cli_preflight_live_rejects_sender_user_as_sponsor(
     tmp_path: Path,
     monkeypatch,

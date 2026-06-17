@@ -28,6 +28,26 @@ def test_local_teams_bridge_routes_dm_to_role_inbox() -> None:
     assert broker.fetch("agent-inbox", "pm")[0].payload["text"] == "Give me a status update."
 
 
+def test_local_teams_bridge_ensures_inbound_subject_before_publish() -> None:
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+
+    subjects = bridge.route_inbound(
+        StakeholderMessage(
+            connector="teams",
+            message_id="msg-1",
+            source_type="dm",
+            sender_ref="sponsor",
+            conversation_ref="dm:product-manager",
+            text="Are you there?",
+        )
+    )
+
+    assert subjects == ["agent.product-manager"]
+    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
+    assert broker.fetch("agent-inbox", "pm")[0].payload["text"] == "Are you there?"
+
+
 def test_local_teams_bridge_routes_unmentioned_channel_to_project_context() -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager", "project.context"])

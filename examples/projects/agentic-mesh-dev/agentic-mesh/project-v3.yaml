@@ -73,7 +73,7 @@ roles:
     instances: 1
     worker:
       adapter: codex-cli
-      model: codex
+      model: gpt-5.5
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -87,7 +87,7 @@ roles:
     instances: 1
     worker:
       adapter: codex-cli
-      model: codex
+      model: gpt-5.5
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -101,7 +101,7 @@ roles:
     instances: 1
     worker:
       adapter: codex-cli
-      model: codex
+      model: gpt-5.5
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -117,7 +117,7 @@ roles:
     instances: 1
     worker:
       adapter: codex-cli
-      model: codex
+      model: gpt-5.5
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -132,7 +132,7 @@ roles:
     instances: 1
     worker:
       adapter: codex-cli
-      model: codex
+      model: gpt-5.5
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:

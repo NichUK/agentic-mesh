@@ -91,6 +91,8 @@ class LocalTeamsBridge:
             else:
                 for role in self.role_ids:
                     _append_unique(subjects, f"agent.{role}.relevance")
+        if subjects:
+            self.broker.ensure_stream(self.stream, subjects)
         for subject in subjects:
             self.broker.publish(
                 self.stream,

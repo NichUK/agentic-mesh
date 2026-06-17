@@ -51,6 +51,7 @@ def run_live_preflight(
     env = env if env is not None else dict(os.environ)
     checks: list[PreflightCheck] = []
     checks.append(_roles_check(project_config))
+    checks.extend(_worker_config_checks(project_config))
     checks.append(_document_config_check(project_config))
     checks.extend(_document_env_checks(project_config, env))
     checks.append(_teams_config_check(project_config))
@@ -80,6 +81,24 @@ def _roles_check(project_config: V3ProjectConfig) -> PreflightCheck:
             ", ".join(missing),
         )
     return PreflightCheck("roles.required", True, "Required V3 dogfood roles are configured.")
+
+
+def _worker_config_checks(project_config: V3ProjectConfig) -> list[PreflightCheck]:
+    invalid_codex_model_roles = sorted(
+        role.role_id
+        for role in project_config.roles
+        if role.worker.adapter == "codex-cli" and (role.worker.model or "").casefold() == "codex"
+    )
+    if invalid_codex_model_roles:
+        return [
+            PreflightCheck(
+                "workers.codex_cli.model",
+                False,
+                "Codex CLI workers must use an account-supported model name, not the reserved `codex` alias.",
+                ", ".join(invalid_codex_model_roles),
+            )
+        ]
+    return [PreflightCheck("workers.codex_cli.model", True, "Codex CLI worker model names are deployable.")]
 
 
 def _document_config_check(project_config: V3ProjectConfig) -> PreflightCheck:

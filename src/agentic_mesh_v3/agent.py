@@ -402,22 +402,8 @@ class RoleAgentService:
             self._report_status(container_state="running", current_work=None)
             return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=audited_tool_calls)
         except Exception as exc:
-            if message.delivery_count + 1 >= self.max_delivery_attempts:
-                self.broker.dead_letter(
-                    self.config.inbox_stream,
-                    claimed.consumer,
-                    message.message_id,
-                    reason=str(exc),
-                )
-                status = "dead_lettered"
-            else:
-                self.broker.nack(
-                    self.config.inbox_stream,
-                    claimed.consumer,
-                    message.message_id,
-                    reason=str(exc),
-                )
-                status = "failed"
+            status = "dead_lettered" if message.delivery_count + 1 >= self.max_delivery_attempts else "failed"
+            completed_at = datetime.now(timezone.utc).isoformat()
             self.run_recorder.record(
                 run_id=run_id,
                 role_instance_id=self.config.role_instance_id,
@@ -427,8 +413,22 @@ class RoleAgentService:
                 work_item_id=_message_work_item_id(message.payload),
                 error=str(exc),
                 started_at=run_started_at,
-                completed_at=datetime.now(timezone.utc).isoformat(),
+                completed_at=completed_at,
             )
+            if message.delivery_count + 1 >= self.max_delivery_attempts:
+                self.broker.dead_letter(
+                    self.config.inbox_stream,
+                    claimed.consumer,
+                    message.message_id,
+                    reason=str(exc),
+                )
+            else:
+                self.broker.nack(
+                    self.config.inbox_stream,
+                    claimed.consumer,
+                    message.message_id,
+                    reason=str(exc),
+                )
             self._report_status(container_state="running", current_work=None, governance_waits=(str(exc),))
             return AgentRunResult(message_id=message.message_id, status=status, error=str(exc))
 

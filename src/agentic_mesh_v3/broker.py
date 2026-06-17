@@ -313,17 +313,21 @@ class NatsJetStreamAdapter:
         try:
             js = nc.jetstream()
             durable_name = _nats_consumer_name(consumer)
-            try:
-                await js.consumer_info(stream, durable_name)
-                return
-            except Exception:
-                pass
             ConsumerConfig = _import_nats_consumer_config()
             config = ConsumerConfig(
                 durable_name=durable_name,
                 ack_policy="explicit",
                 filter_subject=filter_subject,
             )
+            try:
+                info = await js.consumer_info(stream, durable_name)
+                existing_config = getattr(info, "config", None)
+                existing_filter = getattr(existing_config, "filter_subject", None)
+                if existing_filter == filter_subject:
+                    return
+                await js.delete_consumer(stream, durable_name)
+            except Exception:
+                pass
             await js.add_consumer(stream, config=config)
         finally:
             await nc.close()
