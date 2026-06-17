@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
+from http.cookies import SimpleCookie
+import hashlib
 import html
 import hmac
 import re
 import os
+import time
 from dataclasses import dataclass
 from dataclasses import asdict
 from dataclasses import is_dataclass
@@ -13,6 +17,8 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
+from urllib.parse import parse_qs
+from urllib.parse import quote
 from urllib.parse import urlparse
 
 import bleach
@@ -32,6 +38,8 @@ class DashboardAuthConfig:
     enabled: bool = False
     bearer_token: str | None = None
     allowed_users: tuple[str, ...] = ()
+    session_secret: str | None = None
+    session_ttl_seconds: int = 43200
     trusted_user_headers: tuple[str, ...] = (
         "Cf-Access-Authenticated-User-Email",
         "X-MS-CLIENT-PRINCIPAL-NAME",
@@ -45,11 +53,19 @@ class V3StatusHandler(BaseHTTPRequestHandler):
     document_library: DocumentLibraryAdapter | None = None
     teams_activity_router: TeamsActivityRouter | None = None
     dashboard_auth: DashboardAuthConfig = DashboardAuthConfig()
+    dashboard_session_cookie_name: str = "agentic_mesh_dashboard"
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/healthz":
             self._send_json({"status": "ok", "runtime": "agentic_mesh_v3"})
+            return
+        if path == "/login":
+            self._send_dashboard_login_page()
+            return
+        if path == "/favicon.ico":
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.end_headers()
             return
         if not self._authorize_dashboard_request():
             return
@@ -83,6 +99,12 @@ class V3StatusHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/login":
+            self._handle_dashboard_login()
+            return
+        if path == "/logout":
+            self._handle_dashboard_logout()
+            return
         if path == "/teams/activity":
             self._handle_teams_activity()
             return
@@ -100,6 +122,10 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             supplied = auth_header.removeprefix("Bearer ").strip()
             if hmac.compare_digest(supplied, config.bearer_token):
                 return True
+        secret = config.session_secret or config.bearer_token
+        cookie_value = self._dashboard_session_cookie_value()
+        if secret and cookie_value and _verify_dashboard_session_cookie(cookie_value, secret):
+            return True
         allowed_users = {user.casefold() for user in config.allowed_users}
         for header in config.trusted_user_headers:
             user = (self.headers.get(header) or "").strip()
@@ -110,11 +136,31 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         self._send_auth_required()
         return False
 
+    def _dashboard_session_cookie_value(self) -> str | None:
+        raw_cookie = self.headers.get("Cookie") or ""
+        if not raw_cookie:
+            return None
+        cookie = SimpleCookie(raw_cookie)
+        morsel = cookie.get(self.dashboard_session_cookie_name)
+        if morsel is None:
+            return None
+        return morsel.value
+
     def _send_auth_required(self) -> None:
+        config = self.dashboard_auth
+        if config.bearer_token:
+            next_path = _safe_dashboard_next_path(self.path)
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", f"/login?next={quote(next_path, safe='/?:=&%')}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         body = (
             "<!doctype html><html><head><title>Authentication required</title></head>"
             "<body><h1>Authentication required</h1>"
             "<p>The Agentic Mesh dashboard and artifact viewer require an authenticated, authorized user.</p>"
+            "<p>No local dashboard login token is configured. Use a trusted identity proxy or set "
+            "<code>AGENTIC_MESH_DASHBOARD_AUTH_TOKEN</code>.</p>"
             "</body></html>"
         ).encode("utf-8")
         self.send_response(HTTPStatus.UNAUTHORIZED)
@@ -123,6 +169,70 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_dashboard_login_page(self, *, error: str | None = None, status: HTTPStatus = HTTPStatus.OK) -> None:
+        config = self.dashboard_auth
+        if not config.enabled:
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", "/status")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if not config.bearer_token:
+            self._send_auth_required()
+            return
+        query = parse_qs(urlparse(self.path).query)
+        next_path = _safe_dashboard_next_path((query.get("next") or ["/status"])[0])
+        error_html = f"<p><strong>{html.escape(error)}</strong></p>" if error else ""
+        body = (
+            "<!doctype html><html><head><title>Agentic Mesh login</title></head>"
+            "<body><h1>Agentic Mesh Dashboard Login</h1>"
+            "<p>Enter the configured dashboard access token to view status pages and artifacts.</p>"
+            f"{error_html}"
+            '<form method="post" action="/login">'
+            f'<input type="hidden" name="next" value="{html.escape(next_path, quote=True)}">'
+            '<p><label>Access token <input type="password" name="token" autocomplete="current-password" autofocus></label></p>'
+            '<p><button type="submit">Sign in</button></p>'
+            "</form></body></html>"
+        )
+        self._send_html(body, status=status)
+
+    def _handle_dashboard_login(self) -> None:
+        config = self.dashboard_auth
+        if not config.enabled or not config.bearer_token:
+            self._send_auth_required()
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length).decode("utf-8") if length else ""
+        fields = parse_qs(body)
+        supplied = (fields.get("token") or [""])[0]
+        next_path = _safe_dashboard_next_path((fields.get("next") or ["/status"])[0])
+        if not hmac.compare_digest(supplied, config.bearer_token):
+            self._send_dashboard_login_page(error="Invalid dashboard access token.", status=HTTPStatus.UNAUTHORIZED)
+            return
+        secret = config.session_secret or config.bearer_token
+        cookie_value = _create_dashboard_session_cookie(secret, ttl_seconds=config.session_ttl_seconds)
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", next_path)
+        self.send_header(
+            "Set-Cookie",
+            (
+                f"{self.dashboard_session_cookie_name}={cookie_value}; "
+                f"Max-Age={config.session_ttl_seconds}; Path=/; HttpOnly; SameSite=Lax"
+            ),
+        )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _handle_dashboard_logout(self) -> None:
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/login")
+        self.send_header(
+            "Set-Cookie",
+            f"{self.dashboard_session_cookie_name}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
+        )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _snapshot(self):
         db = V3Database(self.db_path)
@@ -274,9 +384,9 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_html(self, content: str) -> None:
+    def _send_html(self, content: str, *, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = content.encode("utf-8")
-        self.send_response(HTTPStatus.OK)
+        self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -319,13 +429,56 @@ def dashboard_auth_config_from_env(env: dict[str, str] | None = None) -> Dashboa
         for header in (source.get("AGENTIC_MESH_DASHBOARD_USER_HEADERS") or "").split(",")
         if header.strip()
     )
+    session_secret = (source.get("AGENTIC_MESH_DASHBOARD_SESSION_SECRET") or "").strip() or None
+    try:
+        session_ttl_seconds = int((source.get("AGENTIC_MESH_DASHBOARD_SESSION_TTL_SECONDS") or "").strip() or "43200")
+    except ValueError:
+        session_ttl_seconds = 43200
+    session_ttl_seconds = max(60, session_ttl_seconds)
     enabled = enabled_raw in {"1", "true", "yes", "on"} or bool(bearer_token or allowed_users)
     return DashboardAuthConfig(
         enabled=enabled,
         bearer_token=bearer_token,
         allowed_users=allowed_users,
+        session_secret=session_secret,
+        session_ttl_seconds=session_ttl_seconds,
         trusted_user_headers=header_names or DashboardAuthConfig().trusted_user_headers,
     )
+
+
+def _create_dashboard_session_cookie(secret: str, *, ttl_seconds: int, now: float | None = None) -> str:
+    expires_at = int((now if now is not None else time.time()) + ttl_seconds)
+    payload = f"dashboard:{expires_at}"
+    signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}:{signature}".encode("utf-8")).decode("ascii")
+
+
+def _verify_dashboard_session_cookie(value: str, secret: str, *, now: float | None = None) -> bool:
+    try:
+        decoded = base64.urlsafe_b64decode(value.encode("ascii")).decode("utf-8")
+        scope, expires_raw, signature = decoded.split(":", 2)
+        expires_at = int(expires_raw)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    if scope != "dashboard":
+        return False
+    if expires_at < int(now if now is not None else time.time()):
+        return False
+    payload = f"{scope}:{expires_at}"
+    expected = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature, expected)
+
+
+def _safe_dashboard_next_path(raw: str) -> str:
+    parsed = urlparse(raw)
+    if parsed.scheme or parsed.netloc:
+        return "/status"
+    path = parsed.path or "/status"
+    if not path.startswith("/") or path.startswith("//"):
+        return "/status"
+    if path in {"/login", "/logout"}:
+        return "/status"
+    return path + (f"?{parsed.query}" if parsed.query else "")
 
 
 def _teams_activity_response(activity: dict[str, Any], router: TeamsActivityRouter) -> dict[str, object]:

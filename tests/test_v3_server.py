@@ -10,7 +10,9 @@ from agentic_mesh_v3.teams_ingress import TeamsRoleIdentity
 from agentic_mesh_v3.server import DashboardAuthConfig
 from agentic_mesh_v3.server import V3StatusHandler
 from agentic_mesh_v3.server import dashboard_auth_config_from_env
+from agentic_mesh_v3.server import _create_dashboard_session_cookie
 from agentic_mesh_v3.server import _artifact_page
+from agentic_mesh_v3.server import _verify_dashboard_session_cookie
 from agentic_mesh_v3.server import _teams_activity_response
 from agentic_mesh_v3.tools import V3ToolService
 
@@ -41,12 +43,16 @@ def test_dashboard_auth_config_from_env_enables_bearer_and_proxy_users() -> None
             "AGENTIC_MESH_DASHBOARD_AUTH_TOKEN": "secret",
             "AGENTIC_MESH_DASHBOARD_ALLOWED_USERS": "nich@example.test, ops@example.test",
             "AGENTIC_MESH_DASHBOARD_USER_HEADERS": "X-Test-User",
+            "AGENTIC_MESH_DASHBOARD_SESSION_SECRET": "session-secret",
+            "AGENTIC_MESH_DASHBOARD_SESSION_TTL_SECONDS": "900",
         }
     )
 
     assert config.enabled is True
     assert config.bearer_token == "secret"
     assert config.allowed_users == ("nich@example.test", "ops@example.test")
+    assert config.session_secret == "session-secret"
+    assert config.session_ttl_seconds == 900
     assert config.trusted_user_headers == ("X-Test-User",)
 
 
@@ -54,7 +60,7 @@ def test_dashboard_auth_rejects_status_without_authenticated_user() -> None:
     class Handler(V3StatusHandler):
         pass
 
-    Handler.dashboard_auth = DashboardAuthConfig(enabled=True, bearer_token="secret")
+    Handler.dashboard_auth = DashboardAuthConfig(enabled=True, allowed_users=("nich@example.test",))
     handler = object.__new__(Handler)
     handler.headers = {}
     captured: dict[str, object] = {}
@@ -71,6 +77,25 @@ def test_dashboard_auth_rejects_status_without_authenticated_user() -> None:
     assert handler._authorize_dashboard_request() is False
     assert captured["status"].value == 401
     assert b"Authentication required" in captured["body"]
+
+
+def test_dashboard_auth_redirects_to_login_when_local_token_is_configured() -> None:
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.dashboard_auth = DashboardAuthConfig(enabled=True, bearer_token="secret")
+    handler = object.__new__(Handler)
+    handler.headers = {}
+    handler.path = "/artifact-viewer/work-1/index.md"
+    captured: dict[str, object] = {"headers": []}
+    handler.send_response = lambda status: captured.__setitem__("status", status)  # type: ignore[method-assign]
+    handler.send_header = lambda *args: captured["headers"].append(args)  # type: ignore[attr-defined, method-assign]
+    handler.end_headers = lambda: None  # type: ignore[method-assign]
+
+    assert handler._authorize_dashboard_request() is False
+
+    assert captured["status"].value == 302
+    assert ("Location", "/login?next=/artifact-viewer/work-1/index.md") in captured["headers"]
 
 
 def test_dashboard_auth_accepts_bearer_or_trusted_proxy_user() -> None:
@@ -91,6 +116,26 @@ def test_dashboard_auth_accepts_bearer_or_trusted_proxy_user() -> None:
     handler.headers = {"X-Test-User": "nich@example.test"}
 
     assert handler._authorize_dashboard_request() is True
+
+
+def test_dashboard_auth_accepts_valid_session_cookie() -> None:
+    class Handler(V3StatusHandler):
+        pass
+
+    cookie_value = _create_dashboard_session_cookie("session-secret", ttl_seconds=900)
+    Handler.dashboard_auth = DashboardAuthConfig(
+        enabled=True,
+        bearer_token="secret",
+        session_secret="session-secret",
+    )
+    handler = object.__new__(Handler)
+    handler.headers = {"Cookie": f"agentic_mesh_dashboard={cookie_value}"}
+    handler.path = "/status"
+
+    assert handler._authorize_dashboard_request() is True
+    deterministic_cookie = _create_dashboard_session_cookie("session-secret", ttl_seconds=900, now=1000)
+    assert _verify_dashboard_session_cookie(deterministic_cookie, "session-secret", now=1100) is True
+    assert _verify_dashboard_session_cookie(deterministic_cookie, "session-secret", now=2000) is False
 
 
 def test_status_handler_snapshot_uses_v3_db(tmp_path: Path) -> None:
