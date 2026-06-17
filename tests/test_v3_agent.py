@@ -74,6 +74,12 @@ class RecordingTerminalWorkerWithClaimMismatch(RecordingTerminalWorker):
         return ["terminal:status.reply", "call-claimed-but-not-recorded"]
 
 
+class RecordingTerminalThenFailWorker(RecordingTerminalWorker):
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        super().run(prompt, message)
+        raise RuntimeError("worker failed after recording safe outputs")
+
+
 class RecordingReplyOnlyWorker:
     def __init__(self, tools: V3ToolService, role_instance_id: str) -> None:
         self.tools = tools
@@ -129,7 +135,7 @@ def _config(tmp_path: Path) -> RoleInstanceConfig:
 def test_role_agent_processes_inbox_and_records_memory(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
-    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
     memory = InMemoryRoleMemory()
     service = RoleAgentService(
         config=_config(tmp_path),
@@ -904,6 +910,38 @@ def test_role_agent_uses_audited_tool_calls_not_worker_stdout_claims(tmp_path: P
     assert result.tool_calls == recorded_tool_calls
     assert runs[0]["tool_calls"] == recorded_tool_calls
     assert "call-claimed-but-not-recorded" not in result.tool_calls
+
+
+def test_role_agent_completes_when_worker_fails_after_terminal_safe_outputs(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingTerminalThenFailWorker(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        result = service.run_once()
+        recorded_tool_calls = tuple(str(call["call_id"]) for call in db.list_tool_calls())
+        runs = db.list_agent_runs(role_instance_id)
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert result.tool_calls == recorded_tool_calls
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["error"] is None
+    broker.ensure_consumer("agent-inbox", "pm-1", filter_subject="agent.product-manager")
+    assert broker.fetch("agent-inbox", "pm-1") == []
 
 
 def test_role_agent_records_successful_run_to_database(tmp_path: Path) -> None:

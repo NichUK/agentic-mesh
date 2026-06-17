@@ -402,6 +402,38 @@ class RoleAgentService:
             self._report_status(container_state="running", current_work=None)
             return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=audited_tool_calls)
         except Exception as exc:
+            try:
+                audited_tool_calls = self.terminal_tool_call_audit.verify_terminal_call(
+                    self.config.role_instance_id,
+                    terminal_audit_snapshot,
+                    [],
+                )
+            except Exception:
+                audited_tool_calls = ()
+            if audited_tool_calls:
+                self.memory.record_observation(
+                    self.config.role_instance_id,
+                    (
+                        f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} "
+                        f"with {len(audited_tool_calls)} audited tool calls after worker error: {exc}"
+                    ),
+                    source_ref=_message_memory_source_ref(message),
+                )
+                self.run_recorder.record(
+                    run_id=run_id,
+                    role_instance_id=self.config.role_instance_id,
+                    message_id=message.message_id,
+                    subject=message.subject,
+                    status="completed",
+                    work_item_id=_message_work_item_id(message.payload),
+                    tool_calls=audited_tool_calls,
+                    error=None,
+                    started_at=run_started_at,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+                self.broker.ack(self.config.inbox_stream, claimed.consumer, message.message_id)
+                self._report_status(container_state="running", current_work=None)
+                return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=audited_tool_calls)
             status = "dead_lettered" if message.delivery_count + 1 >= self.max_delivery_attempts else "failed"
             completed_at = datetime.now(timezone.utc).isoformat()
             self.run_recorder.record(
