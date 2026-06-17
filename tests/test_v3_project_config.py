@@ -193,6 +193,36 @@ roles:
     assert resolved == Path("config/flows/sdlc-v3.yaml")
 
 
+def test_resolve_project_flow_config_path_falls_back_to_config_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+flow:
+  template: sdlc
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    config_root = tmp_path / "system"
+    flow_root = config_root / "config" / "flows"
+    flow_root.mkdir(parents=True)
+    (flow_root / "sdlc-v3.yaml").write_text("raci: []\n", encoding="utf-8")
+    other_cwd = tmp_path / "missing-current-flow-root"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+    monkeypatch.setenv("AGENTIC_MESH_CONFIG_ROOT", str(config_root))
+
+    resolved = resolve_project_flow_config_path(project_file, load_project_config(project_file))
+
+    assert resolved == flow_root / "sdlc-v3.yaml"
+
+
 def test_load_project_config_defaults_document_library_structure_policy(tmp_path: Path) -> None:
     project_file = tmp_path / "project.yaml"
     project_file.write_text(

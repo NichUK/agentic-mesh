@@ -137,12 +137,20 @@ def resolve_project_flow_config_path(
         return path if path.is_absolute() else project_config_path.parent / path
     if project_config.flow.template is None:
         return None
+    stock_dirs = [stock_flows_dir]
+    config_root = os.environ.get("AGENTIC_MESH_CONFIG_ROOT")
+    if config_root:
+        rooted = Path(config_root) / stock_flows_dir
+        if rooted not in stock_dirs:
+            stock_dirs.append(rooted)
     for filename in _flow_template_candidates(project_config.flow.template):
-        candidate = stock_flows_dir / filename
-        if candidate.exists():
-            return candidate
+        for stock_dir in stock_dirs:
+            candidate = stock_dir / filename
+            if candidate.exists():
+                return candidate
+    searched = ", ".join(str(path) for path in stock_dirs)
     raise FileNotFoundError(
-        f"flow template `{project_config.flow.template}` not found under {stock_flows_dir}"
+        f"flow template `{project_config.flow.template}` not found under {searched}"
     )
 
 
