@@ -1202,6 +1202,11 @@ def _read_tool_instructions(path: Path | None) -> str:
 
 def _read_existing_prompt(path: Path) -> str:
     if not path.exists():
+        config_root = os.environ.get("AGENTIC_MESH_CONFIG_ROOT")
+        if config_root:
+            rooted = Path(config_root) / path
+            if rooted.exists():
+                return rooted.read_text(encoding="utf-8").strip()
         raise FileNotFoundError(f"prompt component not found: {path}")
     return path.read_text(encoding="utf-8").strip()
 

@@ -2098,6 +2098,78 @@ raci:
     ]
 
 
+def test_cli_materialize_agent_configs_resolves_prompts_from_config_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project" / "agentic-mesh" / "project.yaml"
+    project_config.parent.mkdir(parents=True)
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  product-manager:
+    template: product-manager
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    roles_dir = tmp_path / "roles"
+    roles_dir.mkdir()
+    (roles_dir / "product-manager.yaml").write_text(_role_template("product-manager"), encoding="utf-8")
+    config_root = tmp_path / "system"
+    prompt_root = config_root / "config" / "prompts" / "worker"
+    prompt_root.mkdir(parents=True)
+    (prompt_root / "system-security.xml").write_text("System security from config root.", encoding="utf-8")
+    (prompt_root / "instructions.xml").write_text("Instructions from config root.", encoding="utf-8")
+    (prompt_root / "safe-outputs.xml").write_text("Safe outputs from config root.", encoding="utf-8")
+    other_cwd = tmp_path / "other-cwd"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+    monkeypatch.setenv("AGENTIC_MESH_CONFIG_ROOT", str(config_root))
+
+    result = main(
+        [
+            "--project-config",
+            str(project_config),
+            "materialize-agent-configs",
+            "--image",
+            "agentic-mesh-v3:local",
+            "--source-repo",
+            str(tmp_path / "source"),
+            "--deployed-runtime",
+            str(tmp_path / "runtime"),
+            "--organisation-config-repo",
+            str(tmp_path / "org"),
+            "--project-config-repo",
+            str(tmp_path / "project"),
+            "--agent-config-root",
+            str(tmp_path / "agents"),
+            "--runtime-state-dir",
+            str(tmp_path / "state"),
+            "--document-library-root",
+            str(tmp_path / "documents"),
+            "--role-templates-dir",
+            str(roles_dir),
+        ]
+    )
+
+    system_prompt = (tmp_path / "agents" / "product-manager" / "1" / "system.md").read_text(encoding="utf-8")
+    tools_prompt = (tmp_path / "agents" / "product-manager" / "1" / "tools.md").read_text(encoding="utf-8")
+    assert result == 0
+    assert "agentic-mesh-dev.product-manager.1" in capsys.readouterr().out
+    assert "System security from config root." in system_prompt
+    assert "Instructions from config root." in system_prompt
+    assert "Safe outputs from config root." in tools_prompt
+
+
 def test_cli_materialize_agent_configs_uses_project_flow_template_raci(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     project_config.write_text(
