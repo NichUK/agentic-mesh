@@ -302,6 +302,55 @@ def test_teams_activity_router_records_route_failure_after_context_capture(tmp_p
     assert "RuntimeError: broker unavailable" in route_event["payload_json"]
 
 
+def test_teams_activity_router_routes_even_when_sidecar_recorder_fails(tmp_path) -> None:
+    class FailingApprovalRecorder:
+        def record(self, message):  # noqa: ANN001
+            raise RuntimeError("approval database unavailable")
+
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    db_path = tmp_path / "v3.sqlite3"
+    router = TeamsActivityRouter(
+        LocalTeamsBridge(broker),
+        role_identities=(
+            TeamsRoleIdentity("product-manager", "AM-Product Manager", bot_id="bot-product"),
+        ),
+        conversation_recorder=DatabaseConversationRecorder(db_path),
+        approval_response_recorder=FailingApprovalRecorder(),
+    )
+
+    subjects = router.route_activity(
+        {
+            "id": "msg-sidecar-failed",
+            "text": "Please respond.",
+            "conversation": {"id": "dm-1", "conversationType": "personal"},
+            "from": {"id": "user-1"},
+            "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
+        }
+    )
+
+    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
+    message = broker.fetch("agent-inbox", "pm")[0]
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        route_event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE aggregate_id='msg-sidecar-failed' AND event_type='teams_activity.route_result'
+            """
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert subjects == ["agent.product-manager"]
+    assert message.payload["text"] == "Please respond."
+    assert route_event is not None
+    assert '"status": "routed"' in route_event["payload_json"]
+    assert "approval_response_recorder: RuntimeError: approval database unavailable" in route_event["payload_json"]
+
+
 def test_teams_activity_router_records_approval_response_and_notifies_requesting_role(tmp_path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])

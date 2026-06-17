@@ -224,29 +224,46 @@ class TeamsActivityRouter:
 
     def route_activity(self, activity: dict[str, Any]) -> list[str]:
         message = normalize_teams_activity(activity, role_identities=self.role_identities)
+        sidecar_errors: list[str] = []
         if self.conversation_recorder is not None:
-            self.conversation_recorder.record(message)
+            try:
+                self.conversation_recorder.record(message)
+            except Exception as exc:
+                sidecar_errors.append(f"conversation_recorder: {type(exc).__name__}: {exc}")
         if self.approval_response_recorder is not None:
-            self.approval_response_recorder.record(message)
+            try:
+                self.approval_response_recorder.record(message)
+            except Exception as exc:
+                sidecar_errors.append(f"approval_response_recorder: {type(exc).__name__}: {exc}")
         if self.question_response_recorder is not None:
-            self.question_response_recorder.record(message)
+            try:
+                self.question_response_recorder.record(message)
+            except Exception as exc:
+                sidecar_errors.append(f"question_response_recorder: {type(exc).__name__}: {exc}")
         try:
             subjects = self.bridge.route_inbound(message)
         except Exception as exc:
             if self.conversation_recorder is not None:
-                self.conversation_recorder.record_route_result(
-                    message,
-                    subjects=(),
-                    status="failed",
-                    error=f"{type(exc).__name__}: {exc}",
-                )
+                try:
+                    self.conversation_recorder.record_route_result(
+                        message,
+                        subjects=(),
+                        status="failed",
+                        error="; ".join([*sidecar_errors, f"{type(exc).__name__}: {exc}"]),
+                    )
+                except Exception:
+                    pass
             raise
         if self.conversation_recorder is not None:
-            self.conversation_recorder.record_route_result(
-                message,
-                subjects=tuple(subjects),
-                status="routed" if subjects else "no_route",
-            )
+            try:
+                self.conversation_recorder.record_route_result(
+                    message,
+                    subjects=tuple(subjects),
+                    status="routed" if subjects else "no_route",
+                    error="; ".join(sidecar_errors) if sidecar_errors else None,
+                )
+            except Exception:
+                pass
         return subjects
 
 
