@@ -322,6 +322,7 @@ class NatsJetStreamAdapter:
                 durable_name=durable_name,
                 ack_policy="explicit",
                 filter_subject=filter_subject,
+                deliver_policy="new",
                 ack_wait=NATS_CONSUMER_ACK_WAIT_SECONDS,
                 max_deliver=NATS_CONSUMER_MAX_DELIVER,
             )
@@ -329,10 +330,12 @@ class NatsJetStreamAdapter:
                 info = await js.consumer_info(stream, durable_name)
                 existing_config = getattr(info, "config", None)
                 existing_filter = getattr(existing_config, "filter_subject", None)
+                existing_deliver_policy = getattr(existing_config, "deliver_policy", None)
                 existing_ack_wait = getattr(existing_config, "ack_wait", None)
                 existing_max_deliver = getattr(existing_config, "max_deliver", None)
                 if (
                     existing_filter == filter_subject
+                    and str(existing_deliver_policy).lower().endswith("new")
                     and existing_ack_wait == NATS_CONSUMER_ACK_WAIT_SECONDS
                     and existing_max_deliver == NATS_CONSUMER_MAX_DELIVER
                 ):

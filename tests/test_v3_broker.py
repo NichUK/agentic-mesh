@@ -11,12 +11,14 @@ class FakeConsumerConfig:
         durable_name: str,
         ack_policy: str,
         filter_subject: str | None = None,
+        deliver_policy: str | None = None,
         ack_wait: float | None = None,
         max_deliver: int | None = None,
     ) -> None:
         self.durable_name = durable_name
         self.ack_policy = ack_policy
         self.filter_subject = filter_subject
+        self.deliver_policy = deliver_policy
         self.ack_wait = ack_wait
         self.max_deliver = max_deliver
 
@@ -35,11 +37,13 @@ class FakeJetStream:
         *,
         consumer_exists: bool = False,
         existing_filter_subject: str | None = None,
+        existing_deliver_policy: str = "new",
         existing_ack_wait: float = broker_module.NATS_CONSUMER_ACK_WAIT_SECONDS,
         existing_max_deliver: int = broker_module.NATS_CONSUMER_MAX_DELIVER,
     ) -> None:
         self.consumer_exists = consumer_exists
         self.existing_filter_subject = existing_filter_subject
+        self.existing_deliver_policy = existing_deliver_policy
         self.existing_ack_wait = existing_ack_wait
         self.existing_max_deliver = existing_max_deliver
         self.added_config: object | None = None
@@ -54,6 +58,7 @@ class FakeJetStream:
                 (),
                 {
                     "filter_subject": self.existing_filter_subject,
+                    "deliver_policy": self.existing_deliver_policy,
                     "ack_wait": self.existing_ack_wait,
                     "max_deliver": self.existing_max_deliver,
                 },
@@ -274,6 +279,7 @@ def test_nats_ensure_consumer_uses_nats_consumer_config(monkeypatch) -> None:  #
     assert fake_js.added_config.durable_name == "pm-1"
     assert fake_js.added_config.ack_policy == "explicit"
     assert fake_js.added_config.filter_subject == "agent.product-manager"
+    assert fake_js.added_config.deliver_policy == "new"
     assert fake_js.added_config.ack_wait == broker_module.NATS_CONSUMER_ACK_WAIT_SECONDS
     assert fake_js.added_config.max_deliver == broker_module.NATS_CONSUMER_MAX_DELIVER
     assert fake_connection.closed is True
@@ -358,6 +364,28 @@ def test_nats_ensure_consumer_recreates_short_ack_wait(monkeypatch) -> None:  # 
     assert fake_js.delete_consumer_calls == [("agent-inbox", "pm-1")]
     assert isinstance(fake_js.added_config, FakeConsumerConfig)
     assert fake_js.added_config.ack_wait == broker_module.NATS_CONSUMER_ACK_WAIT_SECONDS
+
+
+def test_nats_ensure_consumer_recreates_historical_replay_policy(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    adapter = NatsJetStreamAdapter("nats://localhost:4222")
+    fake_js = FakeJetStream(
+        consumer_exists=True,
+        existing_filter_subject="agent.product-manager",
+        existing_deliver_policy="all",
+    )
+    fake_connection = FakeNatsConnection(fake_js)
+
+    async def fake_connect() -> FakeNatsConnection:
+        return fake_connection
+
+    monkeypatch.setattr(adapter, "_connect", fake_connect)
+    monkeypatch.setattr(broker_module, "_import_nats_consumer_config", lambda: FakeConsumerConfig)
+
+    adapter.ensure_consumer("agent-inbox", "pm-1", filter_subject="agent.product-manager")
+
+    assert fake_js.delete_consumer_calls == [("agent-inbox", "pm-1")]
+    assert isinstance(fake_js.added_config, FakeConsumerConfig)
+    assert fake_js.added_config.deliver_policy == "new"
 
 
 def test_nats_fetch_accepts_property_metadata_and_uses_normalized_durable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
