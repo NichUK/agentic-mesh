@@ -49,6 +49,7 @@ def test_dogfood_compose_defines_v3_runtime_profile() -> None:
     assert "AGENTIC_MESH_ONEDRIVE_DRIVE_ID" in service["environment"]
     assert "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID" in service["environment"]
     assert "AGENTIC_MESH_TENANT_ID" in service["environment"]
+    assert "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT" in service["environment"]
     assert "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL" in service["environment"]
     assert "AGENTIC_MESH_PROJECT_TEAM_ID" in service["environment"]
     assert "AGENTIC_MESH_PROJECT_CHANNEL_ID" in service["environment"]
@@ -120,6 +121,7 @@ def test_linuxch_deploy_script_preserves_v3_live_environment() -> None:
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT",
         "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL",
         "AGENTIC_MESH_TENANT_ID",
         "AGENTIC_MESH_PROJECT_TEAM_ID",
@@ -146,6 +148,7 @@ def test_dogfood_compose_env_example_lists_required_v3_live_inputs() -> None:
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT",
         "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL",
         "AGENTIC_MESH_TENANT_ID",
         "AGENTIC_MESH_PROJECT_TEAM_ID",

@@ -49,15 +49,16 @@ connectors:
     tenant_id: ${AGENTIC_MESH_TENANT_ID}
     graph_base_url: https://graph.microsoft.com/v1.0
     ingress:
-      public_endpoint: ${AGENTIC_MESH_TEAMS_BOT_SERVICE_URL}
+      public_endpoint: ${AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT}
       listen_host: 0.0.0.0
       listen_port: 3978
-      path: /api/messages
+      path: /teams/activity
     bot_service:
       resource_group: agentic-mesh-dev
       location: global
       sku: F0
       name_template: am-{role_id_safe}
+      endpoint: ${AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT}
     role_bots:
       business-analyst:
         display_name: AM-Business Analyst

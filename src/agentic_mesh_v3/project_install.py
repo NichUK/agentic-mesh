@@ -1915,7 +1915,7 @@ def _teams_public_endpoint(project_config: dict[str, Any]) -> str:
                 endpoint = ingress.get("public_endpoint")
                 if isinstance(endpoint, str) and endpoint.strip():
                     return endpoint.strip()
-    return "https://agentic-mesh.local/api/messages"
+    return "https://agentic-mesh.local/teams/activity"
 
 
 def _teams_app_icon_bytes(package_root: Path) -> tuple[bytes, bytes]:

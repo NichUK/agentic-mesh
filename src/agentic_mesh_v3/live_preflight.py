@@ -192,6 +192,7 @@ def _teams_env_checks(project_config: V3ProjectConfig, env: dict[str, str]) -> l
     adapter = (project_config.teams_connector.adapter or "").casefold().replace("_", "-")
     if adapter == "teams-bot-connector":
         checks = [
+            _required_env_check(env, "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT", "teams.env.public_endpoint"),
             _required_env_check(env, "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "teams.env.bot_service_url"),
             _required_env_check(env, "AGENTIC_MESH_TENANT_ID", "teams.env.tenant"),
         ]

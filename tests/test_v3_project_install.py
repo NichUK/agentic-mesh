@@ -357,7 +357,7 @@ connectors:
   teams:
     tenant_id: ${AGENTIC_MESH_TENANT_ID}
     ingress:
-      public_endpoint: ${AGENTIC_MESH_TEAMS_BOT_SERVICE_URL}
+      public_endpoint: ${AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT}
     team:
       id: ${AGENTIC_MESH_PROJECT_TEAM_ID}
       name: dev-agentic-mesh
@@ -381,7 +381,7 @@ roles:
         encoding="utf-8",
     )
     monkeypatch.setenv("AGENTIC_MESH_TENANT_ID", "tenant-dogfood")
-    monkeypatch.setenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "https://agentic-mesh.example/api/messages")
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT", "https://agentic-mesh.example/teams/activity")
     monkeypatch.setenv("AGENTIC_MESH_PROJECT_TEAM_ID", "team-dogfood")
     monkeypatch.setenv("AGENTIC_MESH_PROJECT_CHANNEL_ID", "channel-dogfood")
     monkeypatch.setenv("AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID", "aad-sponsor")
@@ -389,7 +389,7 @@ roles:
     project = _load_yaml(project_file)
 
     assert project["connectors"]["teams"]["tenant_id"] == "tenant-dogfood"
-    assert project["connectors"]["teams"]["ingress"]["public_endpoint"] == "https://agentic-mesh.example/api/messages"
+    assert project["connectors"]["teams"]["ingress"]["public_endpoint"] == "https://agentic-mesh.example/teams/activity"
     assert project["connectors"]["teams"]["team"]["id"] == "team-dogfood"
     assert project["connectors"]["teams"]["channels"]["project"]["id"] == "channel-dogfood"
     assert project["connectors"]["teams"]["people"][0]["external_refs"] == ["aad-sponsor"]
