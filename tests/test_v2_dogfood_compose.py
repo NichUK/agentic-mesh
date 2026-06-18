@@ -45,6 +45,13 @@ def test_dogfood_compose_defines_v3_runtime_profile() -> None:
     assert service["ports"] == ["${AGENTIC_MESH_V3_STATUS_PORT:-8100}:8080"]
     assert service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project-v3.yaml"
     assert service["environment"]["AGENTIC_MESH_STATE_ROOT"] == "/mesh/project/state/v3"
+    assert service["environment"]["AGENTIC_MESH_SYSTEM_HOST_PATH"] == "${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}"
+    assert service["environment"]["AGENTIC_MESH_PROJECT_HOST_PATH"] == "${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}"
+    assert service["environment"]["AGENTIC_MESH_WORKSPACE_HOST_PATH"] == "${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}"
+    assert (
+        service["environment"]["AGENTIC_MESH_CODEX_HOME_HOST_PATH"]
+        == "${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}"
+    )
     assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in service["environment"]
     assert "AGENTIC_MESH_ONEDRIVE_DRIVE_ID" in service["environment"]
     assert "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID" in service["environment"]
