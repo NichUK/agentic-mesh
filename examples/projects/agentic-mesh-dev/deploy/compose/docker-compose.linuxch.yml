@@ -28,55 +28,13 @@ services:
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
       - /var/run/docker.sock:/var/run/docker.sock
 
-  v2-runtime:
-    restart: unless-stopped
-
-  v2-teams-ingress:
-    restart: unless-stopped
-
-  v2-supervisor:
-    restart: unless-stopped
-
-  agentic-mesh-dev-business-analyst-1:
-    restart: unless-stopped
-
   agentic-mesh-dev-product-manager-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-prompt-engineer-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-ux-designer-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-enterprise-architect-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-solution-architect-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-security-architect-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-platform-engineer-1:
     restart: unless-stopped
 
   agentic-mesh-dev-engineering-1:
     restart: unless-stopped
 
-  agentic-mesh-dev-engineering-2:
-    restart: unless-stopped
-
   agentic-mesh-dev-qa-engineer-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-technical-writer-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-delivery-manager-1:
-    restart: unless-stopped
-
-  agentic-mesh-dev-research-analyst-1:
     restart: unless-stopped
 
   agentic-mesh-dev-release-manager-1:

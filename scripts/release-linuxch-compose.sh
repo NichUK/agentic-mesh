@@ -19,7 +19,7 @@ fi
 : "${AGENTIC_MESH_V3_STATUS_PORT:=8100}"
 : "${AGENTIC_MESH_NATS_STATE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/v3/nats}"
 : "${AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor agentic-mesh-dev-product-manager-1 agentic-mesh-dev-project-manager-1 agentic-mesh-dev-engineering-1 agentic-mesh-dev-qa-engineer-1 agentic-mesh-dev-release-manager-1}"
-: "${AGENTIC_MESH_STOP_LEGACY_SERVICES:=1}"
+: "${AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS:=1}"
 
 export AGENTIC_MESH_WORKSPACE_HOST_PATH
 export AGENTIC_MESH_RUNTIME_BUILD_CONTEXT
@@ -32,20 +32,30 @@ export AGENTIC_MESH_V3_STATUS_PORT
 export AGENTIC_MESH_FORCE_V3_STATUS_PORT="$AGENTIC_MESH_V3_STATUS_PORT"
 export AGENTIC_MESH_NATS_STATE_HOST_PATH
 export AGENTIC_MESH_RELEASE_SERVICES
-export AGENTIC_MESH_STOP_LEGACY_SERVICES
+export AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS
 
 cd "$REPO_ROOT"
 mkdir -p "$AGENTIC_MESH_NATS_STATE_HOST_PATH"
-if [ "$AGENTIC_MESH_STOP_LEGACY_SERVICES" = "1" ]; then
-  legacy_container_ids="$(
-    {
-      docker ps -q --filter "name=agentic-mesh-v2-"
-      docker ps -q --filter "name=agentic-mesh-agentic-mesh-dev-"
-    } | sort -u
-  )"
-  if [ -n "$legacy_container_ids" ]; then
-    printf '%s\n' "$legacy_container_ids" | xargs docker stop
-  fi
+if [ "$AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS" = "1" ]; then
+  legacy_v2_container_names="
+agentic-mesh-v2-runtime-1
+agentic-mesh-v2-teams-ingress-1
+agentic-mesh-v2-supervisor-1
+agentic-mesh-agentic-mesh-dev-business-analyst-1-1
+agentic-mesh-agentic-mesh-dev-prompt-engineer-1-1
+agentic-mesh-agentic-mesh-dev-ux-designer-1-1
+agentic-mesh-agentic-mesh-dev-enterprise-architect-1-1
+agentic-mesh-agentic-mesh-dev-solution-architect-1-1
+agentic-mesh-agentic-mesh-dev-security-architect-1-1
+agentic-mesh-agentic-mesh-dev-platform-engineer-1-1
+agentic-mesh-agentic-mesh-dev-engineering-2-1
+agentic-mesh-agentic-mesh-dev-technical-writer-1-1
+agentic-mesh-agentic-mesh-dev-delivery-manager-1-1
+agentic-mesh-agentic-mesh-dev-research-analyst-1-1
+"
+  for container_name in $legacy_v2_container_names; do
+    docker rm -f "$container_name" >/dev/null 2>&1 || true
+  done
 fi
 sh scripts/deploy-linuxch-compose.sh --profile build-image build runtime-image
 sh scripts/deploy-linuxch-compose.sh --profile v3 up -d v3-nats
@@ -68,4 +78,4 @@ sh scripts/deploy-linuxch-compose.sh --profile v3 run --rm --no-deps v3-runtime 
   --document-library-root /mesh/project/documents \
   --role-templates-dir /mesh/system/config/roles \
   --local-dev-override
-sh scripts/deploy-linuxch-compose.sh --profile v3 up -d $AGENTIC_MESH_RELEASE_SERVICES
+sh scripts/deploy-linuxch-compose.sh --profile v3 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES
