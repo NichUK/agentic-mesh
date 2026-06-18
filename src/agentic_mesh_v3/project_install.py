@@ -1539,7 +1539,7 @@ def _build_teams_app_package(
     manifest = {
         "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
         "manifestVersion": "1.17",
-        "version": "0.1.0",
+        "version": "1.0.0",
         "id": app_manifest_id,
         "developer": {
             "name": "Seerstone Systems Ltd",

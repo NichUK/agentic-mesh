@@ -173,6 +173,8 @@ def test_v3_project_installer_generates_teams_package_without_icon_assets(tmp_pa
     assert package_path.exists()
     with zipfile.ZipFile(package_path) as archive:
         assert sorted(archive.namelist()) == ["color.png", "manifest.json", "outline.png"]
+        manifest = yaml.safe_load(archive.read("manifest.json"))
+        assert manifest["version"] == "1.0.0"
         assert archive.read("color.png").startswith(b"\x89PNG")
         assert archive.read("outline.png").startswith(b"\x89PNG")
     assert any(
