@@ -78,6 +78,7 @@ class RoleContainerSpec:
 class HibernationPolicy:
     idle_after_seconds: int = 1800
     min_warm_instances_per_role: int = 1
+    pending_inbox_stale_after_seconds: int = 120
 
 
 @dataclass(frozen=True)
@@ -252,6 +253,16 @@ def plan_lifecycle_action(
     if status.current_work:
         return LifecycleDecision("none", status.role_instance_id, "agent has active work")
     if status.inbox_depth > 0:
+        heartbeat = _parse_datetime(status.heartbeat_at)
+        if heartbeat is None:
+            return LifecycleDecision("wake", status.role_instance_id, "pending inbox messages and missing heartbeat")
+        stale_for = current_time - heartbeat
+        if stale_for >= timedelta(seconds=policy.pending_inbox_stale_after_seconds):
+            return LifecycleDecision(
+                "wake",
+                status.role_instance_id,
+                f"pending inbox messages and stale heartbeat for {int(stale_for.total_seconds())} seconds",
+            )
         return LifecycleDecision("none", status.role_instance_id, "agent has pending inbox messages")
     if warm_instances_for_role <= policy.min_warm_instances_per_role:
         return LifecycleDecision("none", status.role_instance_id, "minimum warm pool would be violated")

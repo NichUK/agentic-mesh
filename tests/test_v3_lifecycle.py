@@ -208,6 +208,48 @@ def test_lifecycle_retries_failed_agent_with_pending_inbox() -> None:
     assert decision.reason == "retry failed lifecycle action for pending inbox messages"
 
 
+def test_lifecycle_wakes_running_agent_with_stale_heartbeat_and_pending_inbox() -> None:
+    now = datetime(2026, 6, 18, 12, 5, tzinfo=timezone.utc)
+
+    decision = plan_lifecycle_action(
+        status=AgentStatus(
+            role_instance_id="agentic-mesh-dev.delivery-manager.1",
+            container_state="running",
+            heartbeat_at="2026-06-18T12:00:00+00:00",
+            inbox_depth=1,
+        ),
+        policy=HibernationPolicy(
+            min_warm_instances_per_role=0,
+            pending_inbox_stale_after_seconds=120,
+        ),
+        now=now,
+    )
+
+    assert decision.action == "wake"
+    assert decision.reason == "pending inbox messages and stale heartbeat for 300 seconds"
+
+
+def test_lifecycle_keeps_running_agent_with_fresh_heartbeat_and_pending_inbox() -> None:
+    now = datetime(2026, 6, 18, 12, 0, 30, tzinfo=timezone.utc)
+
+    decision = plan_lifecycle_action(
+        status=AgentStatus(
+            role_instance_id="agentic-mesh-dev.delivery-manager.1",
+            container_state="running",
+            heartbeat_at="2026-06-18T12:00:00+00:00",
+            inbox_depth=1,
+        ),
+        policy=HibernationPolicy(
+            min_warm_instances_per_role=0,
+            pending_inbox_stale_after_seconds=120,
+        ),
+        now=now,
+    )
+
+    assert decision.action == "none"
+    assert decision.reason == "agent has pending inbox messages"
+
+
 def test_lifecycle_batch_hibernates_only_idle_instances_above_warm_pool() -> None:
     decisions = plan_lifecycle_actions(
         [
