@@ -150,7 +150,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -165,7 +165,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -180,7 +180,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -195,7 +195,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -212,7 +212,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -227,7 +227,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -244,7 +244,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -259,7 +259,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -274,7 +274,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -289,7 +289,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -304,7 +304,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -321,7 +321,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -337,7 +337,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -352,7 +352,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
@@ -367,7 +367,7 @@ roles:
     worker:
       adapter: persistent-session
       model: gpt-5.5
-      timeout_seconds: 300
+      timeout_seconds: 14400
       reasoning_effort: high
       sandbox_mode: danger-full-access
       auth:
