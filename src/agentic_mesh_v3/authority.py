@@ -5,7 +5,9 @@ from dataclasses import dataclass
 
 BASE_TOOLS = {
     "agent.heartbeat",
+    "approval.request",
     "artifact.link",
+    "backlog.upsert",
     "blocker.raise",
     "consult.request",
     "conversation.compact_context",
@@ -26,53 +28,18 @@ BASE_TOOLS = {
     "status.complete",
     "status.reply",
     "status.update",
-}
-
-WORK_PROGRESSION_ROLES = {
-    "business-analyst",
-    "delivery-manager",
-    "engineering",
-    "enterprise-architect",
-    "platform-engineer",
-    "product-manager",
-    "project-manager",
-    "prompt-engineer",
-    "qa-engineer",
-    "release-manager",
-    "research-analyst",
-    "security-architect",
-    "solution-architect",
-    "technical-writer",
-    "ux-designer",
+    "work_item.reopen",
+    "work_item.update_state",
+    "work_item.upsert",
 }
 
 ROLE_TOOLS = {
-    "project-manager": {
-        "approval.request",
-        "backlog.upsert",
-        "work_item.reopen",
-        "work_item.upsert",
-    },
-    "product-manager": {
-        "approval.request",
-        "backlog.upsert",
-        "work_item.reopen",
-        "work_item.upsert",
-    },
-    "qa-engineer": {
-        "approval.request",
-    },
     "release-manager": {
-        "approval.request",
         "release.close",
         "release.deploy",
         "release.record",
-        "work_item.reopen",
     },
 }
-
-for _role_id in WORK_PROGRESSION_ROLES:
-    ROLE_TOOLS.setdefault(_role_id, set()).add("work_item.update_state")
 
 
 @dataclass(frozen=True)

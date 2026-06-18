@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agentic_mesh_v3.agent import AgentMemory
+from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
@@ -1528,6 +1529,7 @@ def _build_role_agent_service(
         kwargs["terminal_tool_call_audit"] = terminal_tool_call_audit
     kwargs["message_journal"] = db
     kwargs["session_recorder"] = db
+    kwargs["failure_reporter"] = DatabaseAgentFailureReporter(db)
     return RoleAgentService(
         config=service_config,
         broker=broker,

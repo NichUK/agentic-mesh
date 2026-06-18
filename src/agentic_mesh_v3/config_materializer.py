@@ -147,6 +147,12 @@ def materialize_project_agent_configs(
                     for repository in project_config.target_repositories
                 },
                 environment={
+                    "AGENTIC_MESH_DB": "/mesh/state/agentic-mesh-v3.sqlite3",
+                    "AGENTIC_MESH_PROJECT_CONFIG": "/mesh/project/agentic-mesh/project.yaml",
+                    "AGENTIC_MESH_PROJECT_ID": project_config.project_id,
+                    "AGENTIC_MESH_ROLE_ID": role.role_id,
+                    "AGENTIC_MESH_ROLE_INSTANCE_ID": role_instance_id,
+                    "AGENTIC_MESH_RUNTIME_STATE_DIR": "/mesh/state",
                     "PROJECT_ID": project_config.project_id,
                     "ROLE_ID": role.role_id,
                     "ROLE_INSTANCE_ID": role_instance_id,
@@ -270,9 +276,33 @@ def _role_tool_instructions(role_id: str, base_instructions: str, *, document_fr
         "",
         "## Role-Scoped Safe-Output Tool Catalog",
         "",
-        "Allowed tools for this role are marked `allowed`; blocked tools are shown so agents do not guess authority.",
-        "A valid run must record at least one allowed DO tool and at least one allowed REPLY tool; a single tool can satisfy both when it is marked both.",
     ]
+    if "python -m agentic_mesh_v3.cli" not in base_instructions:
+        lines.extend(
+            [
+                "Record safe-output calls through MCP when available. When using the CLI front door inside a role container, use:",
+                "",
+                "```bash",
+                "python -m agentic_mesh_v3.cli \\",
+                '  --db "${AGENTIC_MESH_DB:-/mesh/state/agentic-mesh-v3.sqlite3}" \\',
+                '  --project-id "${AGENTIC_MESH_PROJECT_ID:-agentic-mesh-dev}" \\',
+                '  --project-config "${AGENTIC_MESH_PROJECT_CONFIG:-/mesh/project/agentic-mesh/project.yaml}" \\',
+                "  tool-call \\",
+                '  --role-instance-id "<exact value from <role-instance>>" \\',
+                '  --tool-name "<allowed.tool_name>" \\',
+                "  --payload-json '<valid JSON object>'",
+                "```",
+                "",
+                "Use the returned `call_id` values in the operational completion envelope. Do not invent call IDs.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "Allowed tools for this role are marked `allowed`; blocked tools are shown so agents do not guess authority.",
+            "A valid run must record at least one allowed DO tool and at least one allowed REPLY tool; a single tool can satisfy both when it is marked both.",
+        ]
+    )
     for entry in tool_catalog_for_role(role_id):
         status = "allowed" if entry.allowed else "blocked"
         terminal = " terminal" if entry.terminal else ""

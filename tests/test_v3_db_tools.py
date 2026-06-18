@@ -671,7 +671,7 @@ def test_v3_tool_service_allows_authorized_terminal_reopen(tmp_path: Path) -> No
     assert "Sponsor confirmed" in event["payload_json"]
 
 
-def test_v3_tool_service_reopen_requires_authority_and_terminal_source(tmp_path: Path) -> None:
+def test_v3_tool_service_reopen_requires_terminal_source(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
         db.migrate()
@@ -690,13 +690,13 @@ def test_v3_tool_service_reopen_requires_authority_and_terminal_source(tmp_path:
                 payload={
                     "work_item_id": "work-1",
                     "state": "active",
-                    "reason": "Try to reopen without authority.",
+                    "reason": "Try to reopen active work.",
                 },
             )
-        except PermissionError as exc:
-            assert "work_item.reopen" in str(exc)
+        except ValueError as exc:
+            assert "is not terminal" in str(exc)
         else:
-            raise AssertionError("engineering should not have reopen authority")
+            raise AssertionError("non-terminal work should not be reopened")
 
         try:
             V3ToolService(db).call(

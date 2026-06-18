@@ -170,6 +170,20 @@ class AgentSessionRecorder(Protocol):
         """Record role-owned worker session metadata."""
 
 
+class AgentFailureReporter(Protocol):
+    def report_dead_letter(
+        self,
+        *,
+        role_instance_id: str,
+        role_id: str,
+        message_id: str,
+        work_item_id: str | None,
+        error: str,
+        payload: dict[str, object],
+    ) -> None:
+        """Project an exhausted agent-delivery failure into the work-item read model."""
+
+
 class NullMessageJournalRecorder:
     def record_message_journal(self, **_: object) -> str:
         return ""
@@ -177,6 +191,11 @@ class NullMessageJournalRecorder:
 
 class NullAgentSessionRecorder:
     def upsert_agent_session(self, **_: object) -> None:
+        return None
+
+
+class NullAgentFailureReporter:
+    def report_dead_letter(self, **_: object) -> None:
         return None
 
 
@@ -297,6 +316,40 @@ class DatabaseAgentRunRecorder:
         )
 
 
+class DatabaseAgentFailureReporter:
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+    def report_dead_letter(
+        self,
+        *,
+        role_instance_id: str,
+        role_id: str,
+        message_id: str,
+        work_item_id: str | None,
+        error: str,
+        payload: dict[str, object],
+    ) -> None:
+        if not work_item_id:
+            return
+        next_action = (
+            f"Agent delivery dead-lettered for {role_instance_id} on message {message_id}: {error}. "
+            "Review the agent/tool wiring or retry the role after correcting the failure."
+        )
+        self.db.update_work_item_state(  # type: ignore[attr-defined]
+            work_item_id=work_item_id,
+            state="blocked",
+            owner_role=role_id,
+            current_phase=_payload_text(payload, "current_phase"),
+            next_action=next_action,
+            source_ref=f"message:{message_id}",
+            correlation_id=_message_correlation_id(payload),
+            trace_id=_payload_text(payload, "trace_id"),
+            created_by_role_instance=role_instance_id,
+            origin_message_id=_payload_text(payload, "source_message_id") or message_id,
+        )
+
+
 class InMemoryRoleMemory:
     def __init__(self) -> None:
         self._memory: dict[str, list[str]] = {}
@@ -383,6 +436,7 @@ class RoleAgentService:
     run_recorder: AgentRunRecorder = field(default_factory=NullAgentRunRecorder)
     message_journal: MessageJournalRecorder = field(default_factory=NullMessageJournalRecorder)
     session_recorder: AgentSessionRecorder = field(default_factory=NullAgentSessionRecorder)
+    failure_reporter: AgentFailureReporter = field(default_factory=NullAgentFailureReporter)
     max_delivery_attempts: int = 3
 
     def __post_init__(self) -> None:
@@ -577,6 +631,25 @@ class RoleAgentService:
                     delivery_attempt=message.delivery_count + 1,
                     summary=str(exc),
                 )
+                try:
+                    self.failure_reporter.report_dead_letter(
+                        role_instance_id=self.config.role_instance_id,
+                        role_id=self.config.role_id,
+                        message_id=message.message_id,
+                        work_item_id=_message_work_item_id(message.payload),
+                        error=str(exc),
+                        payload=message.payload,
+                    )
+                except Exception as report_exc:
+                    self._journal_message(
+                        message,
+                        stage="failed",
+                        direction="inbound",
+                        status="failure_projection_failed",
+                        broker_consumer=claimed.consumer,
+                        delivery_attempt=message.delivery_count + 1,
+                        summary=f"Failed to project dead-letter to work item: {report_exc}",
+                    )
             else:
                 self.broker.nack(
                     self.config.inbox_stream,

@@ -1,7 +1,11 @@
 x-agentic-mesh-env: &agentic-mesh-env
   AGENTIC_MESH_CONFIG_ROOT: /mesh/system
+  AGENTIC_MESH_DB: /mesh/project/state/v3/agentic-mesh-v3.sqlite3
   AGENTIC_MESH_PROMPT_CONFIG_ROOT: /mesh/system/config/prompts
+  AGENTIC_MESH_PROJECT_CONFIG: /mesh/project/agentic-mesh/project-v3.yaml
   AGENTIC_MESH_PROJECT_FILE: /mesh/project/agentic-mesh/project-v3.yaml
+  AGENTIC_MESH_PROJECT_ID: agentic-mesh-dev
+  AGENTIC_MESH_RUNTIME_STATE_DIR: /mesh/project/state/v3
   AGENTIC_MESH_STATE_ROOT: /mesh/project/state/v3
   AGENTIC_MESH_WORKSPACE_ROOT: /mesh/workspaces/agentic-mesh
   AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}

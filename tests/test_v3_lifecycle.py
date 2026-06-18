@@ -95,6 +95,8 @@ def test_role_container_spec_generates_service_command(tmp_path: Path) -> None:
         "agentic-mesh-v3",
         "--db",
         "/mesh/state/agentic-mesh-v3.sqlite3",
+        "--project-id",
+        "agentic-mesh-dev",
         "--project-config",
         "/mesh/project/agentic-mesh/project.yaml",
         "run-agent-service",

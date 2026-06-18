@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
+from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
 from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
@@ -708,6 +709,52 @@ def test_role_agent_requeues_if_worker_calls_no_tools(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert "did not call any tool" in (result.error or "")
     assert broker.depth("agent-inbox").pending == 1
+
+
+def test_role_agent_blocks_linked_work_item_on_dead_letter(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {
+            "request": "status",
+            "work_item_id": "work-123",
+            "correlation_id": "corr-123",
+            "source_message_id": "msg-123",
+        },
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-123",
+            title="Shape product",
+            description="Shape the product scope.",
+            state="waiting_agent",
+            owner_role="product-manager",
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=NoToolWorker(),
+            memory=InMemoryRoleMemory(),
+            failure_reporter=DatabaseAgentFailureReporter(db),
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        detail = db.work_item_detail("work-123")
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "dead_lettered"
+    assert detail is not None
+    assert detail.state == "blocked"
+    assert detail.owner_role == "product-manager"
+    assert "Agent delivery dead-lettered" in detail.next_action
+    assert published.message_id in detail.next_action
 
 
 def test_role_agent_requeues_if_worker_calls_no_terminal_tool(tmp_path: Path) -> None:
