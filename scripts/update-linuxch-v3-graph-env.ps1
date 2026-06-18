@@ -259,7 +259,7 @@ os.chmod(tmp_path, 0o600)
 tmp_path.replace(env_path)
 PY
 "@
-$remoteScript = $remoteScript -replace "`r`n", "`n"
+$remoteScript = $remoteScript -replace "`r", ""
 if (-not $remoteScript.EndsWith("`n")) {
     $remoteScript += "`n"
 }

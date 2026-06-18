@@ -69,7 +69,7 @@ PY
 $command
 "@
 
-$remoteScript = $remoteScript -replace "`r`n", "`n"
+$remoteScript = $remoteScript -replace "`r", ""
 if (-not $remoteScript.EndsWith("`n")) {
     $remoteScript += "`n"
 }
