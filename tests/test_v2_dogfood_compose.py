@@ -164,7 +164,7 @@ def test_linuxch_v3_project_install_script_cleans_up_graph_token_file() -> None:
     assert 'trap cleanup EXIT' in script
     assert 'rm -f "$token_file"' in script
     assert 'os.environ.get("AGENTIC_MESH_TEAMS_TOKEN", "").strip()' in script
-    assert "AGENTIC_MESH_TEAMS_TOKEN is missing from" in script
+    assert "AGENTIC_MESH_TEAMS_TOKEN is missing from environment" in script
 
 
 def test_linuxch_graph_env_refresh_helper_requests_required_scopes_and_updates_remote_env() -> None:

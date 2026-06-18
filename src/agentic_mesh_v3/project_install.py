@@ -1355,7 +1355,7 @@ def _expand_env_refs(value: Any) -> Any:
             name = match.group(1)
             resolved = os.environ.get(name)
             if resolved is None:
-                raise ValueError(f"Environment variable `{name}` is required")
+                raise ValueError(f"Environment variable `{name}` is required by project or organization configuration")
             return resolved
 
         return _ENV_REF_RE.sub(replace, value)

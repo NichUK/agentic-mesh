@@ -58,7 +58,7 @@ from pathlib import Path
 
 token = os.environ.get("AGENTIC_MESH_TEAMS_TOKEN", "").strip()
 if not token:
-    raise SystemExit("AGENTIC_MESH_TEAMS_TOKEN is missing from $EnvPath")
+    raise SystemExit("AGENTIC_MESH_TEAMS_TOKEN is missing from environment")
 
 Path("/tmp/agentic-mesh-v3-graph-token.json").write_text(
     json.dumps({"access_token": token}),
