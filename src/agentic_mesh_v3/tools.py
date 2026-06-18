@@ -73,6 +73,8 @@ class V3ToolService:
         payload = dict(payload)
         if tool_name == "noop" and not payload.get("reason"):
             payload["reason"] = "No durable action was applicable for this assignment."
+        if tool_name == "decision.record" and not payload.get("summary"):
+            payload["summary"] = _decision_summary(payload)
         if tool_name == "stakeholder.ask_question" and not payload.get("record_id"):
             payload["record_id"] = f"question-{uuid4().hex}"
         with self.telemetry.span(
@@ -874,6 +876,17 @@ def _optional(value: Any) -> str | None:
         return None
     text = str(value)
     return text if text else None
+
+
+def _decision_summary(payload: dict[str, Any]) -> str:
+    for key in ("decision", "rationale", "description"):
+        value = _optional(payload.get(key))
+        if value is not None:
+            return value
+    work_item_id = _optional(payload.get("work_item_id"))
+    if work_item_id is not None:
+        return f"Decision recorded for {work_item_id}."
+    return "Decision recorded."
 
 
 def _safe_relative_path(value: str) -> str:
