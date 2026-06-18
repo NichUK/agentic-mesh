@@ -46,10 +46,10 @@ connectors:
   teams:
     adapter: teams-bot-connector
     identity_model: role_bots
-    tenant_id: 564b667c-5b1a-4bbc-bb43-918b0b765a9b
+    tenant_id: ${AGENTIC_MESH_TENANT_ID}
     graph_base_url: https://graph.microsoft.com/v1.0
     ingress:
-      public_endpoint: https://vpn.nixnet.com/api/messages
+      public_endpoint: ${AGENTIC_MESH_TEAMS_BOT_SERVICE_URL}
       listen_host: 0.0.0.0
       listen_port: 3978
       path: /api/messages
@@ -115,11 +115,11 @@ connectors:
         bot_id_ref: teams-bot-ux-designer-app-id
         secret_ref: teams-bot-ux-designer-secret
     team:
-      id: e664f0d3-2d3f-4ef4-9102-2b99e1601169
+      id: ${AGENTIC_MESH_PROJECT_TEAM_ID}
       name: dev-agentic-mesh
     channels:
       project:
-        id: 19:fS0LN3jkUb5T7hMvueOm-o1PHRoIAk4lm_8MscXSCXE1@thread.tacv2
+        id: ${AGENTIC_MESH_PROJECT_CHANNEL_ID}
         name: project
     authority_groups:
       sponsors:
@@ -132,7 +132,7 @@ connectors:
     - person_id: nicholas-overend
       display_name: Nicholas Overend
       external_refs:
-      - 2485de4b-4331-48f6-805d-68106b09be1b
+      - ${AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID}
       groups:
       - sponsors
       - release-board

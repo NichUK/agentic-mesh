@@ -46,23 +46,27 @@ export PYTHONPATH="src:`${PYTHONPATH:-}"
 set -a
 . $quotedEnvPath
 set +a
-if [ -z "`${AGENTIC_MESH_TEAMS_TOKEN:-}" ]; then
-  echo "AGENTIC_MESH_TEAMS_TOKEN is missing from $EnvPath" >&2
-  exit 2
-fi
+token_file=/tmp/agentic-mesh-v3-graph-token.json
+cleanup() {
+  rm -f "$token_file"
+}
+trap cleanup EXIT
 python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
+token = os.environ.get("AGENTIC_MESH_TEAMS_TOKEN", "").strip()
+if not token:
+    raise SystemExit("AGENTIC_MESH_TEAMS_TOKEN is missing from $EnvPath")
+
 Path("/tmp/agentic-mesh-v3-graph-token.json").write_text(
-    json.dumps({"access_token": os.environ["AGENTIC_MESH_TEAMS_TOKEN"]}),
+    json.dumps({"access_token": token}),
     encoding="utf-8",
 )
 os.chmod("/tmp/agentic-mesh-v3-graph-token.json", 0o600)
 PY
 $command
-rm -f /tmp/agentic-mesh-v3-graph-token.json
 "@
 
 $remoteScript = $remoteScript -replace "`r`n", "`n"

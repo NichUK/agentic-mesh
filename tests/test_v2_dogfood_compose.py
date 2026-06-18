@@ -48,6 +48,11 @@ def test_dogfood_compose_defines_v3_runtime_profile() -> None:
     assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in service["environment"]
     assert "AGENTIC_MESH_ONEDRIVE_DRIVE_ID" in service["environment"]
     assert "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID" in service["environment"]
+    assert "AGENTIC_MESH_TENANT_ID" in service["environment"]
+    assert "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL" in service["environment"]
+    assert "AGENTIC_MESH_PROJECT_TEAM_ID" in service["environment"]
+    assert "AGENTIC_MESH_PROJECT_CHANNEL_ID" in service["environment"]
+    assert "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID" in service["environment"]
 
 
 def test_dogfood_compose_defines_v3_nats_profile() -> None:
@@ -115,6 +120,11 @@ def test_linuxch_deploy_script_preserves_v3_live_environment() -> None:
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL",
+        "AGENTIC_MESH_TENANT_ID",
+        "AGENTIC_MESH_PROJECT_TEAM_ID",
+        "AGENTIC_MESH_PROJECT_CHANNEL_ID",
+        "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID",
         "AGENTIC_MESH_V3_STATUS_PORT",
         "AGENTIC_MESH_NATS_STATE_HOST_PATH",
     ]:
@@ -136,11 +146,25 @@ def test_dogfood_compose_env_example_lists_required_v3_live_inputs() -> None:
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL",
+        "AGENTIC_MESH_TENANT_ID",
+        "AGENTIC_MESH_PROJECT_TEAM_ID",
+        "AGENTIC_MESH_PROJECT_CHANNEL_ID",
+        "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID",
         "AGENTIC_MESH_V3_STATUS_PORT",
         "AGENTIC_MESH_NATS_STATE_HOST_PATH",
     ]:
         assert f"{name}=" in env_example
     assert "AGENTIC_MESH_V3_STATUS_PORT=8100" in env_example
+
+
+def test_linuxch_v3_project_install_script_cleans_up_graph_token_file() -> None:
+    script = Path("scripts/install-linuxch-v3-project.ps1").read_text(encoding="utf-8")
+
+    assert 'trap cleanup EXIT' in script
+    assert 'rm -f "$token_file"' in script
+    assert 'os.environ.get("AGENTIC_MESH_TEAMS_TOKEN", "").strip()' in script
+    assert "AGENTIC_MESH_TEAMS_TOKEN is missing from" in script
 
 
 def test_linuxch_graph_env_refresh_helper_requests_required_scopes_and_updates_remote_env() -> None:

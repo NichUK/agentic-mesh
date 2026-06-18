@@ -4,11 +4,13 @@ from pathlib import Path
 from typing import Any
 import zipfile
 
+import pytest
 import yaml
 
 from agentic_mesh_v3.project_install import GraphRequestError
 from agentic_mesh_v3.project_install import InstallOptions
 from agentic_mesh_v3.project_install import ProjectInstaller
+from agentic_mesh_v3.project_install import _load_yaml
 
 
 class FakeGraphClient:
@@ -190,3 +192,52 @@ def test_v3_dogfood_project_configures_all_role_bots() -> None:
     role_bots = set(project["connectors"]["teams"]["role_bots"])
 
     assert role_bots == roles
+
+
+def test_v3_project_install_load_yaml_expands_placeholder_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+connectors:
+  teams:
+    tenant_id: ${AGENTIC_MESH_TENANT_ID}
+    ingress:
+      public_endpoint: ${AGENTIC_MESH_TEAMS_BOT_SERVICE_URL}
+    team:
+      id: ${AGENTIC_MESH_PROJECT_TEAM_ID}
+      name: dev-agentic-mesh
+    channels:
+      project:
+        id: ${AGENTIC_MESH_PROJECT_CHANNEL_ID}
+        name: project
+    role_bots:
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: teams-bot-product-manager-app-id
+        secret_ref: teams-bot-product-manager-secret
+    people:
+      - person_id: nicholas-overend
+        external_refs:
+          - ${AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID}
+roles:
+  product-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENTIC_MESH_TENANT_ID", "tenant-dogfood")
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "https://agentic-mesh.example/api/messages")
+    monkeypatch.setenv("AGENTIC_MESH_PROJECT_TEAM_ID", "team-dogfood")
+    monkeypatch.setenv("AGENTIC_MESH_PROJECT_CHANNEL_ID", "channel-dogfood")
+    monkeypatch.setenv("AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID", "aad-sponsor")
+
+    project = _load_yaml(project_file)
+
+    assert project["connectors"]["teams"]["tenant_id"] == "tenant-dogfood"
+    assert project["connectors"]["teams"]["ingress"]["public_endpoint"] == "https://agentic-mesh.example/api/messages"
+    assert project["connectors"]["teams"]["team"]["id"] == "team-dogfood"
+    assert project["connectors"]["teams"]["channels"]["project"]["id"] == "channel-dogfood"
+    assert project["connectors"]["teams"]["people"][0]["external_refs"] == ["aad-sponsor"]

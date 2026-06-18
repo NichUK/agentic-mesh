@@ -137,6 +137,11 @@ connectors:
 def test_load_v3_dogfood_project_config_uses_onedrive_and_deployment_target(monkeypatch) -> None:
     monkeypatch.setenv("AGENTIC_MESH_ONEDRIVE_DRIVE_ID", "drive-dogfood")
     monkeypatch.setenv("AGENTIC_MESH_SPONSOR_TEAMS_USER_ID", "sponsor-user")
+    monkeypatch.setenv("AGENTIC_MESH_TENANT_ID", "tenant-dogfood")
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "https://agentic-mesh.example/api/messages")
+    monkeypatch.setenv("AGENTIC_MESH_PROJECT_TEAM_ID", "team-dogfood")
+    monkeypatch.setenv("AGENTIC_MESH_PROJECT_CHANNEL_ID", "channel-dogfood")
+    monkeypatch.setenv("AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID", "aad-sponsor")
 
     config = load_project_config(DOGFOOD_V3_PROJECT_FILE)
 

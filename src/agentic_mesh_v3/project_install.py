@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -18,6 +20,7 @@ import yaml
 
 
 GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+_ENV_REF_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
 
 
 @dataclass(frozen=True)
@@ -1340,7 +1343,27 @@ def _load_yaml(path: Path | None) -> dict[str, Any]:
         raw = yaml.safe_load(handle)
     if not isinstance(raw, dict):
         raise ValueError(f"{path} must contain a YAML mapping")
-    return raw
+    expanded = _expand_env_refs(raw)
+    if not isinstance(expanded, dict):
+        raise ValueError(f"{path} must contain a YAML mapping")
+    return expanded
+
+
+def _expand_env_refs(value: Any) -> Any:
+    if isinstance(value, str):
+        def replace(match: re.Match[str]) -> str:
+            name = match.group(1)
+            resolved = os.environ.get(name)
+            if resolved is None:
+                raise ValueError(f"Environment variable `{name}` is required")
+            return resolved
+
+        return _ENV_REF_RE.sub(replace, value)
+    if isinstance(value, list):
+        return [_expand_env_refs(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _expand_env_refs(item) for key, item in value.items()}
+    return value
 
 
 def _gateway_bots(project_config: dict[str, Any]) -> dict[str, dict[str, Any]]:
