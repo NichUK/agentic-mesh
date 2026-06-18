@@ -636,11 +636,10 @@ class V3Database:
         inbox_depth = int(existing["inbox_depth"]) if existing else 0
         dead_letter_depth = int(existing["dead_letter_depth"]) if existing else 0
         governance_waits: tuple[str, ...] = ()
-        if status_state == "lifecycle_failed":
-            failure_detail = stderr.strip() or stdout.strip() or f"{action} exited with {exit_code}"
-            governance_waits = (f"Lifecycle {action} failed for {service_name}: {failure_detail}",)
-        elif existing:
+        if existing:
             governance_waits = tuple(json.loads(existing["governance_waits_json"] or "[]"))
+            if status_state == "lifecycle_failed":
+                governance_waits = tuple(wait for wait in governance_waits if not wait.startswith("Lifecycle "))
 
         self.upsert_agent_status(
             AgentStatus(
@@ -1837,6 +1836,7 @@ class V3Database:
                 if latest_lifecycle_action and latest_lifecycle_action.get("created_at")
                 else None
             ),
+            last_lifecycle_error=_lifecycle_error(latest_lifecycle_action),
         )
 
 
@@ -1854,6 +1854,22 @@ def _optional_int(value: object) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _lifecycle_error(latest_lifecycle_action: dict[str, Any] | None) -> str | None:
+    if not latest_lifecycle_action:
+        return None
+    exit_code = _optional_int(latest_lifecycle_action.get("exit_code"))
+    if exit_code in (None, 0):
+        return None
+    stderr = str(latest_lifecycle_action.get("stderr") or "").strip()
+    if stderr:
+        return stderr
+    stdout = str(latest_lifecycle_action.get("stdout") or "").strip()
+    if stdout:
+        return stdout
+    action = str(latest_lifecycle_action.get("action") or "lifecycle action")
+    return f"{action} exited with {exit_code}"
 
 
 def _agent_run_row(row: sqlite3.Row) -> dict[str, Any]:

@@ -30,6 +30,7 @@ class AgentStatus:
     last_lifecycle_executed: bool | None = None
     last_lifecycle_at: str | None = None
     last_activity_at: str | None = None
+    last_lifecycle_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,8 @@ def render_status_page(snapshot: ReportingSnapshot) -> str:
             _attention_table(snapshot.work_items, stale_only=True),
             "<h2>Governance Waits</h2>",
             _governance_waits_table(snapshot.agents),
+            "<h2>Agent Lifecycle Alerts</h2>",
+            _agent_lifecycle_alerts_table(snapshot.agents),
             "<h2>Active Work</h2>",
             _work_table(snapshot.work_items),
             "<h2>Recent Completions</h2>",
@@ -197,7 +200,7 @@ def render_agents_page(snapshot: ReportingSnapshot) -> str:
             f"<td>{memory}</td>"
             f"<td>{last_run}</td>"
             f"<td>{_agent_current_work_cell(agent.current_work)}</td>"
-            f"<td>{_list_cell(agent.governance_waits)}</td>"
+            f"<td>{_list_cell(_visible_governance_waits(agent))}</td>"
             "</tr>"
         )
     return _page("Agents", ["<h1>Agents</h1>", f"<table>{''.join(rows)}</table>"])
@@ -339,9 +342,15 @@ def _agent_lifecycle_cell(agent: AgentStatus) -> str:
         parts.append(f"<br><small>Executed: {str(agent.last_lifecycle_executed).lower()}</small>")
     if agent.last_lifecycle_exit_code is not None:
         parts.append(f"<br><small>Exit: {agent.last_lifecycle_exit_code}</small>")
+    if agent.last_lifecycle_error:
+        parts.append(f"<br><small>{html.escape(agent.last_lifecycle_error)}</small>")
     if agent.last_lifecycle_reason:
         parts.append(f"<br><small>{html.escape(agent.last_lifecycle_reason)}</small>")
     return "".join(parts)
+
+
+def _visible_governance_waits(agent: AgentStatus) -> tuple[str, ...]:
+    return tuple(item for item in agent.governance_waits if not item.startswith("Lifecycle "))
 
 
 def _list_cell(items: tuple[str, ...]) -> str:
@@ -426,17 +435,44 @@ def _blocked_work_table(items: tuple[WorkItemStatus, ...]) -> str:
 def _governance_waits_table(items: tuple[AgentStatus, ...]) -> str:
     rows = ["<tr><th>Agent</th><th>Current Work</th><th>Governance Waits</th></tr>"]
     for item in items:
-        if not item.governance_waits:
+        governance_waits = _visible_governance_waits(item)
+        if not governance_waits:
             continue
         rows.append(
             "<tr>"
             f"<td>{html.escape(item.role_instance_id)}</td>"
             f"<td>{html.escape(item.current_work or '')}</td>"
-            f"<td>{html.escape(', '.join(item.governance_waits))}</td>"
+            f"<td>{html.escape(', '.join(governance_waits))}</td>"
             "</tr>"
         )
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"3\">None recorded.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _agent_lifecycle_alerts_table(items: tuple[AgentStatus, ...]) -> str:
+    rows = ["<tr><th>Agent</th><th>Service</th><th>Action</th><th>Problem</th><th>Updated</th></tr>"]
+    for item in items:
+        legacy_lifecycle_waits = tuple(wait for wait in item.governance_waits if wait.startswith("Lifecycle "))
+        has_failed_lifecycle = item.container_state == "lifecycle_failed" or (
+            item.last_lifecycle_exit_code is not None and item.last_lifecycle_exit_code != 0
+        )
+        if not has_failed_lifecycle and not legacy_lifecycle_waits:
+            continue
+        problem = item.last_lifecycle_error or "; ".join(legacy_lifecycle_waits) or "Lifecycle action failed."
+        if item.last_lifecycle_exit_code is not None and not item.last_lifecycle_error:
+            problem = f"{problem} Exit code: {item.last_lifecycle_exit_code}."
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.role_instance_id)}</td>"
+            f"<td>{html.escape(item.last_lifecycle_service or '')}</td>"
+            f"<td>{html.escape(item.last_lifecycle_action or '')}</td>"
+            f"<td>{html.escape(problem)}</td>"
+            f"<td>{html.escape(item.last_lifecycle_at or item.last_activity_at or '')}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"5\">No agent lifecycle alerts recorded.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 

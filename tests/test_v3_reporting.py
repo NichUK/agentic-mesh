@@ -76,6 +76,7 @@ def test_reporting_pages_include_required_status_data() -> None:
     assert "Blocked Work" in status_html
     assert "Stale Work" in status_html
     assert "Governance Waits" in status_html
+    assert "Agent Lifecycle Alerts" in status_html
     assert "Active Work" in status_html
     assert '<a href="/work-item/work-1">work-1</a>' in status_html
     assert '<a href="/work-item/work-blocked">work-blocked</a>' in status_html
@@ -98,6 +99,39 @@ def test_reporting_pages_include_required_status_data() -> None:
     assert "<li>Missing consultation evidence for `qa-engineer`.</li>" in agents_html
     assert "<td>1</td>" in agents_html
     assert "<strong>Work item:</strong> work-1" in work_html
+
+
+def test_lifecycle_failures_are_not_rendered_as_governance_waits() -> None:
+    snapshot = ReportingSnapshot(
+        project_id="agentic-mesh-dev",
+        agents=(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.solution-architect.1",
+                container_state="lifecycle_failed",
+                heartbeat_at="2026-06-17T10:00:00Z",
+                governance_waits=(
+                    "Lifecycle hibernate failed for agentic-mesh-dev-solution-architect-1: no such service",
+                ),
+                last_lifecycle_action="hibernate",
+                last_lifecycle_reason="idle",
+                last_lifecycle_service="agentic-mesh-dev-solution-architect-1",
+                last_lifecycle_exit_code=1,
+                last_lifecycle_executed=True,
+                last_lifecycle_at="2026-06-17 10:00:00",
+                last_lifecycle_error="no such service",
+            ),
+        ),
+    )
+
+    html = render_status_page(snapshot)
+    agents_html = render_agents_page(snapshot)
+
+    governance_section = html.split("<h2>Agent Lifecycle Alerts</h2>", 1)[0]
+    assert "Lifecycle hibernate failed" not in governance_section
+    assert "No such service" not in governance_section
+    assert "agentic-mesh-dev-solution-architect-1" in html
+    assert "no such service" in html
+    assert "Lifecycle hibernate failed" not in agents_html
 
 
 def test_artifact_viewer_path_is_work_item_scoped() -> None:
