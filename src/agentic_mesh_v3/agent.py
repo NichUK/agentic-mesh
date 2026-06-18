@@ -101,6 +101,11 @@ class TerminalToolCallAudit(Protocol):
         """Verify the run recorded terminal calls and return audited call ids/names."""
 
 
+class SafeOutputImporter(Protocol):
+    def import_safe_outputs(self, *, role_instance_id: str, before: object) -> None:
+        """Import external safe-output records into the DB-backed tool-call audit projection."""
+
+
 class AgentRunRecorder(Protocol):
     def record(
         self,
@@ -216,14 +221,17 @@ class NullTerminalToolCallAudit:
 
 
 class DatabaseTerminalToolCallAudit:
-    def __init__(self, db: object) -> None:
+    def __init__(self, db: object, *, safe_output_importer: SafeOutputImporter | None = None) -> None:
         self.db = db
+        self.safe_output_importer = safe_output_importer
 
     def snapshot(self, role_instance_id: str) -> frozenset[str]:
         return frozenset(self._tool_call_ids(role_instance_id))
 
     def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> tuple[str, ...]:
         del tool_calls
+        if self.safe_output_importer is not None:
+            self.safe_output_importer.import_safe_outputs(role_instance_id=role_instance_id, before=before)
         before_ids = set(before) if isinstance(before, (frozenset, set)) else set()
         new_calls = self._new_tool_calls(role_instance_id, before_ids)
         if not any(bool(row.get("terminal")) for row in new_calls):
