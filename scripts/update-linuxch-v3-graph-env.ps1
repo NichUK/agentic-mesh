@@ -18,6 +18,11 @@ $scopes = @(
     "https://graph.microsoft.com/Chat.ReadWrite",
     "https://graph.microsoft.com/ChatMessage.Send",
     "https://graph.microsoft.com/ChannelMessage.Send",
+    "https://graph.microsoft.com/AppCatalog.ReadWrite.All",
+    "https://graph.microsoft.com/TeamsAppInstallation.ReadWriteForTeam",
+    "https://graph.microsoft.com/TeamsAppInstallation.ReadWriteForUser",
+    "https://graph.microsoft.com/TeamsAppInstallation.ReadForUser",
+    "https://graph.microsoft.com/Application.ReadWrite.All",
     "offline_access"
 )
 

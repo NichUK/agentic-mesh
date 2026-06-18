@@ -45,16 +45,55 @@ stakeholder_contacts:
 connectors:
   teams:
     adapter: teams-bot-connector
+    identity_model: role_bots
+    tenant_id: 564b667c-5b1a-4bbc-bb43-918b0b765a9b
     graph_base_url: https://graph.microsoft.com/v1.0
+    ingress:
+      public_endpoint: https://vpn.nixnet.com/api/messages
+      listen_host: 0.0.0.0
+      listen_port: 3978
+      path: /api/messages
     role_bots:
+      business-analyst:
+        display_name: AM-Business Analyst
+        bot_id_ref: teams-bot-business-analyst-app-id
+        secret_ref: teams-bot-business-analyst-secret
+      delivery-manager:
+        display_name: AM-Delivery Manager
+        bot_id_ref: teams-bot-delivery-manager-app-id
+        secret_ref: teams-bot-delivery-manager-secret
+      enterprise-architect:
+        display_name: AM-Enterprise Architect
+        bot_id_ref: teams-bot-enterprise-architect-app-id
+        secret_ref: teams-bot-enterprise-architect-secret
+      platform-engineer:
+        display_name: AM-Platform Engineer
+        bot_id_ref: teams-bot-platform-engineer-app-id
+        secret_ref: teams-bot-platform-engineer-secret
       product-manager:
         display_name: AM-Product Manager
         bot_id_ref: teams-bot-product-manager-app-id
         secret_ref: teams-bot-product-manager-secret
+      prompt-engineer:
+        display_name: AM-Prompt Engineer
+        bot_id_ref: teams-bot-prompt-engineer-app-id
+        secret_ref: teams-bot-prompt-engineer-secret
       project-manager:
         display_name: AM-Project Manager
         bot_id_ref: teams-bot-project-manager-app-id
         secret_ref: teams-bot-project-manager-secret
+      research-analyst:
+        display_name: AM-Research Analyst
+        bot_id_ref: teams-bot-research-analyst-app-id
+        secret_ref: teams-bot-research-analyst-secret
+      security-architect:
+        display_name: AM-Security Architect
+        bot_id_ref: teams-bot-security-architect-app-id
+        secret_ref: teams-bot-security-architect-secret
+      solution-architect:
+        display_name: AM-Solution Architect
+        bot_id_ref: teams-bot-solution-architect-app-id
+        secret_ref: teams-bot-solution-architect-secret
       engineering:
         display_name: AM-Engineering
         bot_id_ref: teams-bot-engineering-app-id
@@ -67,6 +106,37 @@ connectors:
         display_name: AM-Release Manager
         bot_id_ref: teams-bot-release-manager-app-id
         secret_ref: teams-bot-release-manager-secret
+      technical-writer:
+        display_name: AM-Technical Writer
+        bot_id_ref: teams-bot-technical-writer-app-id
+        secret_ref: teams-bot-technical-writer-secret
+      ux-designer:
+        display_name: AM-UX Designer
+        bot_id_ref: teams-bot-ux-designer-app-id
+        secret_ref: teams-bot-ux-designer-secret
+    team:
+      id: e664f0d3-2d3f-4ef4-9102-2b99e1601169
+      name: dev-agentic-mesh
+    channels:
+      project:
+        id: 19:fS0LN3jkUb5T7hMvueOm-o1PHRoIAk4lm_8MscXSCXE1@thread.tacv2
+        name: project
+    authority_groups:
+      sponsors:
+      - sponsor
+      release-board:
+      - release_approver
+      operators:
+      - operator
+    people:
+    - person_id: nicholas-overend
+      display_name: Nicholas Overend
+      external_refs:
+      - 2485de4b-4331-48f6-805d-68106b09be1b
+      groups:
+      - sponsors
+      - release-board
+      - operators
 roles:
   business-analyst:
     template: business-analyst
