@@ -26,7 +26,8 @@ $argsList = @(
     "--project-file", (Quote-Sh $ProjectFile),
     "--organization-file", (Quote-Sh $OrganizationFile),
     "--graph-token-file", "/tmp/agentic-mesh-v3-graph-token.json",
-    "--teams-app-package-root", (Quote-Sh $TeamsAppPackageRoot)
+    "--teams-app-package-root", (Quote-Sh $TeamsAppPackageRoot),
+    "--secret-env-file", (Quote-Sh $EnvPath)
 )
 if ($Apply) { $argsList += "--apply" }
 if ($AllowCreateTeam) { $argsList += "--allow-create-team" }

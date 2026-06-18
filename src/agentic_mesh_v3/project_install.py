@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -325,6 +326,7 @@ class ProjectInstaller:
         options: InstallOptions,
         teams_app_package_root: Path | None = None,
         azure_bot_client: Any | None = None,
+        secret_env_file: Path | None = None,
     ) -> None:
         self.graph = graph_client
         self.azure_bot = azure_bot_client or AzureCliBotServiceClient()
@@ -333,6 +335,7 @@ class ProjectInstaller:
         self.options = options
         self.teams_app_package_root = teams_app_package_root
         self.teams_app_packages = _load_published_teams_apps(teams_app_package_root)
+        self.secret_env_file = secret_env_file
         self.operations: list[InstallOperation] = []
         self.expected_team_app_names: set[str] = set()
         self.expected_team_app_ids: set[str] = set()
@@ -605,9 +608,11 @@ class ProjectInstaller:
     ) -> None:
         apps = self._find_applications_by_display_name(display_name)
         app_id: str | None = None
+        app_object_id: str | None = None
         if apps:
             app = apps[0]
             app_id = _optional_string(app.get("appId"))
+            app_object_id = _optional_string(app.get("id"))
             self.operations.append(
                 InstallOperation(
                     action="ensure_entra_app",
@@ -645,6 +650,7 @@ class ProjectInstaller:
                     body={"displayName": display_name, "signInAudience": "AzureADMyOrg"},
                 )
                 app_id = _optional_string(created.get("appId"))
+                app_object_id = _optional_string(created.get("id"))
                 self.operations.append(
                     InstallOperation(
                         action="ensure_entra_app",
@@ -666,6 +672,7 @@ class ProjectInstaller:
                 )
 
         if app_id is not None:
+            self._ensure_env_value(ref=bot_id_ref, value=app_id, redacted=False)
             self._ensure_service_principal(app_id=app_id, display_name=display_name)
             self._ensure_bot_service(
                 role_id=role_id,
@@ -675,24 +682,60 @@ class ProjectInstaller:
                 bot_service=bot_service,
             )
 
-        if self.options.allow_secret_rotation:
+        if self._env_ref_has_value(secret_ref):
             self.operations.append(
                 InstallOperation(
                     action="ensure_secret",
                     target=secret_ref,
-                    status="planned" if not self.options.apply else "blocked",
-                    detail="Secret rotation is intentionally not implemented until a secret provider is configured.",
+                    status="reused",
+                    detail="Secret value is already configured externally; installer did not rotate it.",
+                )
+            )
+        elif not self.options.allow_secret_rotation:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_secret",
+                    target=secret_ref,
+                    status="planned",
+                    detail="Secret is missing and would be created when --allow-secret-rotation is supplied.",
+                    required_permission="Application.ReadWrite.All",
+                )
+            )
+        elif not self.options.apply:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_secret",
+                    target=secret_ref,
+                    status="planned",
+                    detail="Secret creation planned; rerun with --apply to mutate Entra state.",
+                    required_permission="Application.ReadWrite.All",
+                )
+            )
+        elif self.secret_env_file is None:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_secret",
+                    target=secret_ref,
+                    status="blocked",
+                    detail="Secret creation requires --secret-env-file so the generated value can be stored without printing it.",
+                    required_permission="Application.ReadWrite.All",
+                )
+            )
+        elif app_object_id is None:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_secret",
+                    target=secret_ref,
+                    status="blocked",
+                    detail="Secret creation requires the Entra application object id, but it was not returned by Graph.",
                     required_permission="Application.ReadWrite.All",
                 )
             )
         else:
-            self.operations.append(
-                InstallOperation(
-                    action="ensure_secret",
-                    target=secret_ref,
-                    status="skipped",
-                    detail="Secret value is managed externally; installer validated the reference only.",
-                )
+            self._create_and_store_secret(
+                app_object_id=app_object_id,
+                role_id=role_id,
+                secret_ref=secret_ref,
             )
 
         self._ensure_team_app_install(
@@ -700,6 +743,72 @@ class ProjectInstaller:
             display_name=display_name,
             team_id=team_id,
             bot_app_id=app_id,
+        )
+
+    def _ensure_env_value(self, *, ref: str, value: str, redacted: bool) -> None:
+        env_name = _env_name_for_ref(ref)
+        if not env_name:
+            return
+        if os.environ.get(env_name):
+            return
+        if self.secret_env_file is None:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_env_value",
+                    target=ref,
+                    status="planned",
+                    detail=f"Environment variable `{env_name}` is missing and would be written when --secret-env-file is supplied.",
+                )
+            )
+            return
+        _update_env_file(self.secret_env_file, {env_name: value})
+        os.environ[env_name] = value
+        self.operations.append(
+            InstallOperation(
+                action="ensure_env_value",
+                target=ref,
+                status="updated",
+                detail=f"Wrote `{env_name}` to the configured secret env file."
+                if not redacted
+                else f"Wrote redacted secret `{env_name}` to the configured secret env file.",
+            )
+        )
+
+    def _env_ref_has_value(self, ref: str) -> bool:
+        env_name = _env_name_for_ref(ref)
+        return bool(env_name and os.environ.get(env_name))
+
+    def _create_and_store_secret(self, *, app_object_id: str, role_id: str, secret_ref: str) -> None:
+        try:
+            response = self.graph.request(
+                "POST",
+                f"/applications/{urllib.parse.quote(app_object_id, safe='')}/addPassword",
+                body={"passwordCredential": {"displayName": f"Agentic Mesh {role_id} bot secret"}},
+            )
+        except GraphRequestError as exc:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_secret",
+                    target=secret_ref,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="Application.ReadWrite.All",
+                    external_id=app_object_id,
+                )
+            )
+            return
+        secret_text = _required_string(response, "secretText")
+        key_id = _optional_string(response.get("keyId"))
+        self._ensure_env_value(ref=secret_ref, value=secret_text, redacted=True)
+        self.operations.append(
+            InstallOperation(
+                action="ensure_secret",
+                target=secret_ref,
+                status="created",
+                detail="Created an Entra client secret and stored it in the configured secret env file.",
+                required_permission="Application.ReadWrite.All",
+                external_id=key_id or app_object_id,
+            )
         )
 
     def _ensure_bot_service(
@@ -1718,6 +1827,7 @@ def run_project_install(
     graph_client: Any | None = None,
     graph_token_file: Path | None = None,
     teams_app_package_root: Path | None = None,
+    secret_env_file: Path | None = None,
 ) -> dict[str, Any]:
     project_config = _load_yaml(project_file)
     organization_config = _load_yaml(organization_file) if organization_file is not None else {}
@@ -1729,6 +1839,7 @@ def run_project_install(
         organization_config=organization_config,
         options=options,
         teams_app_package_root=teams_app_package_root,
+        secret_env_file=secret_env_file,
     )
     return installer.run()
 
@@ -1761,6 +1872,34 @@ def _expand_env_refs(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _expand_env_refs(item) for key, item in value.items()}
     return value
+
+
+def _env_name_for_ref(ref: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "_", ref.upper()).strip("_")
+
+
+def _update_env_file(path: Path, updates: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        lines = path.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = []
+    remaining = dict(updates)
+    output: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            output.append(line)
+            continue
+        key, _value = line.split("=", 1)
+        if key in remaining:
+            output.append(f"{key}={shlex.quote(str(remaining.pop(key)))}")
+        else:
+            output.append(line)
+    for key in sorted(remaining):
+        output.append(f"{key}={shlex.quote(str(remaining[key]))}")
+    path.write_text("\n".join(output) + "\n", encoding="utf-8")
+    path.chmod(0o600)
 
 
 def _gateway_bots(project_config: dict[str, Any]) -> dict[str, dict[str, Any]]:

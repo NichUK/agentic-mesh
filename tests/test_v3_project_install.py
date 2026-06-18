@@ -23,6 +23,7 @@ class FakeGraphClient:
         self.installed_apps = installed_apps or []
         self.fail_personal_installs = fail_personal_installs
         self.requests: list[tuple[str, str, dict[str, Any] | None]] = []
+        self.created_passwords: list[dict[str, Any]] = []
 
     def request(self, method: str, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
         self.requests.append((method, path, body))
@@ -60,6 +61,11 @@ class FakeGraphClient:
                 "appId": "bot-created-app-id",
                 "displayName": body["displayName"] if body is not None else "created",
             }
+        if path.startswith("/applications/") and path.endswith("/addPassword") and method == "POST":
+            object_id = path.split("/")[2]
+            payload = {"keyId": f"secret-{object_id}", "secretText": f"value-for-{object_id}"}
+            self.created_passwords.append({"object_id": object_id, "body": body, "response": payload})
+            return payload
         if path.startswith("/servicePrincipals?"):
             return {
                 "value": [
@@ -384,6 +390,43 @@ def test_v3_project_installer_updates_existing_azure_bot_service_endpoint() -> N
         and item["status"] == "updated"
         for item in result["operations"]
     )
+
+
+def test_v3_project_installer_creates_missing_secret_in_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    graph = FakeGraphClient()
+    env_file = tmp_path / ".env"
+    monkeypatch.delenv("TEAMS_BOT_PRODUCT_MANAGER_APP_ID", raising=False)
+    monkeypatch.delenv("TEAMS_BOT_PRODUCT_MANAGER_SECRET", raising=False)
+
+    result = ProjectInstaller(
+        graph_client=graph,
+        azure_bot_client=FakeAzureBotClient(
+            bots={
+                "am-product-manager": {
+                    "id": "/subscriptions/test/resourceGroups/agentic-mesh-dev/providers/Microsoft.BotService/botServices/am-product-manager",
+                    "name": "am-product-manager",
+                    "properties": {
+                        "msaAppId": "bot-product-manager-app-id",
+                        "endpoint": "https://agentic-mesh.example/api/messages",
+                        "enabledChannels": ["msteams"],
+                    },
+                }
+            }
+        ),
+        project_config=_project_config_with_bot_service(),
+        organization_config={},
+        options=InstallOptions(apply=True, allow_secret_rotation=True),
+        secret_env_file=env_file,
+    ).run()
+
+    env_text = env_file.read_text(encoding="utf-8")
+    assert "TEAMS_BOT_PRODUCT_MANAGER_APP_ID=bot-product-manager-app-id" in env_text
+    assert "TEAMS_BOT_PRODUCT_MANAGER_SECRET=value-for-app-product-manager" in env_text
+    assert graph.created_passwords[0]["object_id"] == "app-product-manager"
+    assert not any("value-for-app-product-manager" in item["detail"] for item in result["operations"])
+    assert any(item["action"] == "ensure_secret" and item["status"] == "created" for item in result["operations"])
 
 
 def test_v3_dogfood_project_configures_all_role_bots() -> None:

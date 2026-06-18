@@ -19,6 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--organization-file", type=Path)
     parser.add_argument("--graph-token-file", type=Path)
     parser.add_argument("--teams-app-package-root", type=Path)
+    parser.add_argument("--secret-env-file", type=Path)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--allow-create-team", action="store_true")
     parser.add_argument("--allow-create-channel", action="store_true")
@@ -49,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_secret_rotation=bool(args.allow_secret_rotation),
         ),
         teams_app_package_root=args.teams_app_package_root,
+        secret_env_file=args.secret_env_file,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["status"] in {"ok", "planned"} else 1

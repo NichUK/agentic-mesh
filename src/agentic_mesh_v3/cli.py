@@ -111,6 +111,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Folder containing published-apps.json for project Teams app package ids.",
     )
     install_parser.add_argument(
+        "--secret-env-file",
+        type=Path,
+        help="Env file where generated role bot credentials may be stored when explicitly allowed.",
+    )
+    install_parser.add_argument(
         "--apply",
         action="store_true",
         help="Apply allowed tenant mutations. Without this flag, only a plan/audit is produced.",
@@ -401,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
                     allow_secret_rotation=bool(args.allow_secret_rotation),
                 ),
                 teams_app_package_root=args.teams_app_package_root,
+                secret_env_file=args.secret_env_file,
             )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["status"] in {"ok", "planned"} else 1
