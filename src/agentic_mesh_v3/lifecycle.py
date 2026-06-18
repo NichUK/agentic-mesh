@@ -92,6 +92,7 @@ class ComposeLifecycleConfig:
     compose_files: tuple[Path, ...]
     working_directory: Path | None = None
     timeout_seconds: int = 300
+    project_name: str | None = None
 
     def __post_init__(self) -> None:
         if not self.compose_files:
@@ -149,6 +150,7 @@ def compose_lifecycle_command(
     prefix = [
         "docker",
         "compose",
+        *(() if not config.project_name else ("--project-name", config.project_name)),
         *[
             part
             for compose_file in config.compose_files
@@ -243,6 +245,8 @@ def plan_lifecycle_action(
         if warm_instances_for_role < policy.min_warm_instances_per_role:
             return LifecycleDecision("start", status.role_instance_id, "minimum warm pool requires a running instance")
         return LifecycleDecision("none", status.role_instance_id, "role instance is configured but asleep")
+    if status.container_state == "lifecycle_failed" and status.inbox_depth > 0:
+        return LifecycleDecision("wake", status.role_instance_id, "retry failed lifecycle action for pending inbox messages")
     if status.container_state != "running":
         return LifecycleDecision("none", status.role_instance_id, f"state {status.container_state} does not require action")
     if status.current_work:
