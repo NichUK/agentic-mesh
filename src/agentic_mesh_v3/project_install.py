@@ -1804,8 +1804,11 @@ def _resolve_az_path(az_path: str) -> str:
             r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
             r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
         ):
-            if Path(candidate).exists():
-                return candidate
+            try:
+                if Path(candidate).exists():
+                    return candidate
+            except OSError:
+                continue
     return az_path
 
 

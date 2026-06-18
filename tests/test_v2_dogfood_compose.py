@@ -161,7 +161,7 @@ def test_dogfood_compose_env_example_lists_required_v3_live_inputs() -> None:
 def test_linuxch_v3_project_install_script_cleans_up_graph_token_file() -> None:
     script = Path("scripts/install-linuxch-v3-project.ps1").read_text(encoding="utf-8")
 
-    assert "docker compose --profile v3" in script
+    assert "agentic_mesh_v3.project_install_cli" in script
     assert 'trap cleanup EXIT' in script
     assert 'rm -f "`$token_file"' in script
     assert 'printf "{\\"access_token\\":\\"%s\\"}" "`$AGENTIC_MESH_TEAMS_TOKEN"' in script
