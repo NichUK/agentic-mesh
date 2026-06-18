@@ -175,9 +175,15 @@ roles:
     container = json.loads((tmp_path / "agents" / "engineering" / "2" / "container.json").read_text(encoding="utf-8"))
     assert container["mounts"][str((project_file.parent / "../app").resolve(strict=False))] == "/mesh/workspaces/app"
     assert container["target_repositories"] == {"app": "/mesh/workspaces/app"}
+    assert container["environment"]["AGENTIC_MESH_DB"] == "/mesh/state/agentic-mesh-v3.sqlite3"
+    assert container["environment"]["AGENTIC_MESH_PROJECT_ID"] == "agentic-mesh-dev"
+    assert container["environment"]["AGENTIC_MESH_PROJECT_CONFIG"] == "/mesh/project/agentic-mesh/project.yaml"
+    assert container["environment"]["AGENTIC_MESH_ROLE_INSTANCE_ID"] == "agentic-mesh-dev.engineering.2"
     product_tools = (tmp_path / "agents" / "product-manager" / "1" / "tools.md").read_text(encoding="utf-8")
     assert "Use approved tools." in product_tools
     assert "Role-Scoped Safe-Output Tool Catalog" in product_tools
+    assert "python -m agentic_mesh_v3.cli" in product_tools
+    assert "--role-instance-id \"<exact value from <role-instance>>\"" in product_tools
     assert "A valid run must record at least one allowed DO tool and at least one allowed REPLY tool" in product_tools
     assert "`backlog.upsert`: allowed" in product_tools
     assert "`backlog.upsert`: allowed; categories: DO." in product_tools

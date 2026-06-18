@@ -72,22 +72,70 @@ def test_authority_allows_all_roles_to_consult_and_handoff() -> None:
     assert "handoff.require" in policy.allowed_tools_for_role("ux-designer")
 
 
-def test_authority_allows_starter_specialists_to_update_work_state() -> None:
+def test_authority_gives_starter_roles_common_operational_tools() -> None:
     policy = ToolAuthorityPolicy.default()
+    common_tools = {
+        "approval.request",
+        "backlog.upsert",
+        "blocker.raise",
+        "consult.request",
+        "decision.record",
+        "document.write_artifact",
+        "handoff.require",
+        "informed.update",
+        "memory.propose_update",
+        "messaging.send",
+        "risk.register",
+        "stakeholder.ask_question",
+        "status.reply",
+        "work_item.reopen",
+        "work_item.update_state",
+        "work_item.upsert",
+    }
 
     for role_id in (
         "business-analyst",
+        "delivery-manager",
+        "engineering",
         "enterprise-architect",
         "platform-engineer",
+        "product-manager",
+        "project-manager",
         "prompt-engineer",
+        "qa-engineer",
+        "release-manager",
         "research-analyst",
         "security-architect",
         "solution-architect",
         "technical-writer",
         "ux-designer",
     ):
-        assert "work_item.update_state" in policy.allowed_tools_for_role(role_id)
+        assert common_tools <= policy.allowed_tools_for_role(role_id)
+
+
+def test_authority_keeps_release_deploy_tools_release_manager_only() -> None:
+    policy = ToolAuthorityPolicy.default()
+
+    assert {"release.deploy", "release.record", "release.close"} <= policy.allowed_tools_for_role("release-manager")
+    for role_id in (
+        "business-analyst",
+        "delivery-manager",
+        "engineering",
+        "enterprise-architect",
+        "platform-engineer",
+        "product-manager",
+        "project-manager",
+        "prompt-engineer",
+        "qa-engineer",
+        "research-analyst",
+        "security-architect",
+        "solution-architect",
+        "technical-writer",
+        "ux-designer",
+    ):
         assert "release.deploy" not in policy.allowed_tools_for_role(role_id)
+        assert "release.record" not in policy.allowed_tools_for_role(role_id)
+        assert "release.close" not in policy.allowed_tools_for_role(role_id)
 
 
 def test_specialist_role_can_move_owned_work_forward(tmp_path: Path) -> None:

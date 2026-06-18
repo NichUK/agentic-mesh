@@ -51,11 +51,13 @@ class RoleContainerSpec:
     ) -> list[str]:
         """Return the command a role container should run for its service loop."""
 
-        role_id, instance_id = _role_and_instance(self.role_instance_id)
+        project_id, role_id, instance_id = _project_role_and_instance(self.role_instance_id)
         return [
             "agentic-mesh-v3",
             "--db",
             db_path,
+            "--project-id",
+            self.environment.get("PROJECT_ID", project_id),
             "--project-config",
             project_config_path,
             "run-agent-service",
@@ -386,6 +388,12 @@ def _role_and_instance(role_instance_id: str) -> tuple[str, str]:
     if len(parts) < 3 or not parts[-2] or not parts[-1]:
         raise ValueError("role_instance_id must use {project_id}.{role_id}.{instance_id}")
     return parts[-2], parts[-1]
+
+
+def _project_role_and_instance(role_instance_id: str) -> tuple[str, str, str]:
+    role_id, instance_id = _role_and_instance(role_instance_id)
+    project_id = ".".join(role_instance_id.split(".")[:-2])
+    return project_id, role_id, instance_id
 
 
 def _inbox_consumer_name(role_id: str, instance_id: str) -> str:
