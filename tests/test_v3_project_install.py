@@ -106,6 +106,7 @@ class FakeAzureBotClient:
     def __init__(self, bots: dict[str, dict[str, Any]] | None = None) -> None:
         self.bots = bots or {}
         self.created: list[dict[str, Any]] = []
+        self.updated_endpoints: list[dict[str, str]] = []
         self.enabled_channels: list[str] = []
 
     def show(self, *, resource_group: str, name: str) -> dict[str, Any] | None:
@@ -143,6 +144,18 @@ class FakeAzureBotClient:
                 "endpoint": endpoint,
                 "location": location,
                 "sku": sku,
+            }
+        )
+        return bot
+
+    def update_endpoint(self, *, resource_group: str, name: str, endpoint: str) -> dict[str, Any]:
+        bot = self.bots[name]
+        bot["properties"]["endpoint"] = endpoint
+        self.updated_endpoints.append(
+            {
+                "resource_group": resource_group,
+                "name": name,
+                "endpoint": endpoint,
             }
         )
         return bot
@@ -331,6 +344,44 @@ def test_v3_project_installer_creates_azure_bot_service_and_teams_channel() -> N
         item["action"] == "ensure_bot_service_channel"
         and item["target"] == "am-product-manager"
         and item["status"] == "created"
+        for item in result["operations"]
+    )
+
+
+def test_v3_project_installer_updates_existing_azure_bot_service_endpoint() -> None:
+    azure = FakeAzureBotClient(
+        bots={
+            "am-product-manager": {
+                "id": "/subscriptions/test/resourceGroups/agentic-mesh-dev/providers/Microsoft.BotService/botServices/am-product-manager",
+                "name": "am-product-manager",
+                "properties": {
+                    "msaAppId": "bot-product-manager-app-id",
+                    "endpoint": "https://old.example/api/messages",
+                    "enabledChannels": ["msteams"],
+                },
+            }
+        }
+    )
+
+    result = ProjectInstaller(
+        graph_client=FakeGraphClient(),
+        azure_bot_client=azure,
+        project_config=_project_config_with_bot_service(),
+        organization_config={},
+        options=InstallOptions(apply=True, allow_register_bot_services=True),
+    ).run()
+
+    assert azure.updated_endpoints == [
+        {
+            "resource_group": "agentic-mesh-dev",
+            "name": "am-product-manager",
+            "endpoint": "https://agentic-mesh.example/api/messages",
+        }
+    ]
+    assert any(
+        item["action"] == "ensure_bot_service"
+        and item["target"] == "am-product-manager"
+        and item["status"] == "updated"
         for item in result["operations"]
     )
 

@@ -206,6 +206,23 @@ class AzureCliBotServiceClient:
             ]
         )
 
+    def update_endpoint(self, *, resource_group: str, name: str, endpoint: str) -> dict[str, Any]:
+        return self._run_json(
+            [
+                self.az_path,
+                "bot",
+                "update",
+                "--resource-group",
+                resource_group,
+                "--name",
+                name,
+                "--endpoint",
+                endpoint,
+                "-o",
+                "json",
+            ]
+        )
+
     def ensure_msteams_channel(self, *, resource_group: str, name: str) -> dict[str, Any]:
         return self._run_json(
             [
@@ -805,15 +822,60 @@ class ProjectInstaller:
                 )
                 return
             if configured_endpoint and configured_endpoint != endpoint:
+                if not self.options.allow_register_bot_services:
+                    self.operations.append(
+                        InstallOperation(
+                            action="ensure_bot_service",
+                            target=bot_name,
+                            status="planned",
+                            detail=(
+                                f"Existing Azure Bot Service endpoint is `{configured_endpoint}`; "
+                                f"it would be updated to `{endpoint}` when --allow-register-bot-services is supplied."
+                            ),
+                            required_permission="Microsoft.BotService/botServices/write",
+                            external_id=_optional_string(existing.get("id")) or app_id,
+                        )
+                    )
+                    return
+                if not self.options.apply:
+                    self.operations.append(
+                        InstallOperation(
+                            action="ensure_bot_service",
+                            target=bot_name,
+                            status="planned",
+                            detail=(
+                                f"Existing Azure Bot Service endpoint is `{configured_endpoint}`; "
+                                f"update to `{endpoint}` is planned. Rerun with --apply to mutate Azure state."
+                            ),
+                            required_permission="Microsoft.BotService/botServices/write",
+                            external_id=_optional_string(existing.get("id")) or app_id,
+                        )
+                    )
+                    return
+                try:
+                    existing = self.azure_bot.update_endpoint(
+                        resource_group=resource_group,
+                        name=bot_name,
+                        endpoint=endpoint,
+                    )
+                except AzureCliError as exc:
+                    self.operations.append(
+                        InstallOperation(
+                            action="ensure_bot_service",
+                            target=bot_name,
+                            status="blocked",
+                            detail=exc.message,
+                            required_permission="Microsoft.BotService/botServices/write",
+                            external_id=_optional_string(existing.get("id")) or app_id,
+                        )
+                    )
+                    return
                 self.operations.append(
                     InstallOperation(
                         action="ensure_bot_service",
                         target=bot_name,
-                        status="needs_update",
-                        detail=(
-                            f"Existing Azure Bot Service endpoint is `{configured_endpoint}`; "
-                            f"expected `{endpoint}`. Endpoint update is not automated yet."
-                        ),
+                        status="updated",
+                        detail=f"Updated Azure Bot Service endpoint from `{configured_endpoint}` to `{endpoint}`.",
                         required_permission="Microsoft.BotService/botServices/write",
                         external_id=_optional_string(existing.get("id")) or app_id,
                     )
