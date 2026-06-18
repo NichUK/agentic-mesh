@@ -29,6 +29,7 @@ class InstallOptions:
     allow_create_team: bool = False
     allow_create_channel: bool = False
     allow_register_apps: bool = False
+    allow_register_bot_services: bool = False
     allow_install_apps: bool = False
     allow_uninstall_stale: bool = False
     allow_secret_rotation: bool = False
@@ -58,6 +59,12 @@ class GraphRequestError(RuntimeError):
     def __init__(self, status_code: int, message: str):
         super().__init__(message)
         self.status_code = status_code
+        self.message = message
+
+
+class AzureCliError(RuntimeError):
+    def __init__(self, message: str):
+        super().__init__(message)
         self.message = message
 
 
@@ -127,6 +134,101 @@ class AzureCliGraphClient:
             )
             self._token = str(json.loads(output)["accessToken"])
         return self._token
+
+
+class AzureCliBotServiceClient:
+    def __init__(self, *, az_path: str = "az") -> None:
+        self.az_path = _resolve_az_path(az_path)
+
+    def show(self, *, resource_group: str, name: str) -> dict[str, Any] | None:
+        result = subprocess.run(
+            [
+                self.az_path,
+                "bot",
+                "show",
+                "--resource-group",
+                resource_group,
+                "--name",
+                name,
+                "-o",
+                "json",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            combined = f"{result.stdout}\n{result.stderr}".casefold()
+            if "could not be found" in combined or "was not found" in combined or "not found" in combined:
+                return None
+            raise AzureCliError((result.stderr or result.stdout or "az bot show failed").strip())
+        if not result.stdout.strip():
+            return None
+        return json.loads(result.stdout)
+
+    def create(
+        self,
+        *,
+        resource_group: str,
+        name: str,
+        app_id: str,
+        tenant_id: str,
+        display_name: str,
+        endpoint: str,
+        location: str,
+        sku: str,
+    ) -> dict[str, Any]:
+        return self._run_json(
+            [
+                self.az_path,
+                "bot",
+                "create",
+                "--resource-group",
+                resource_group,
+                "--name",
+                name,
+                "--appid",
+                app_id,
+                "--app-type",
+                "SingleTenant",
+                "--tenant-id",
+                tenant_id,
+                "--display-name",
+                display_name,
+                "--endpoint",
+                endpoint,
+                "--sku",
+                sku,
+                "--location",
+                location,
+                "-o",
+                "json",
+            ]
+        )
+
+    def ensure_msteams_channel(self, *, resource_group: str, name: str) -> dict[str, Any]:
+        return self._run_json(
+            [
+                self.az_path,
+                "bot",
+                "msteams",
+                "create",
+                "--resource-group",
+                resource_group,
+                "--name",
+                name,
+                "-o",
+                "json",
+            ]
+        )
+
+    def _run_json(self, args: list[str]) -> dict[str, Any]:
+        result = subprocess.run(args, check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise AzureCliError((result.stderr or result.stdout or f"{args[0]} failed").strip())
+        if not result.stdout.strip():
+            return {}
+        return json.loads(result.stdout)
 
 
 class TokenGraphClient:
@@ -205,8 +307,10 @@ class ProjectInstaller:
         organization_config: dict[str, Any] | None = None,
         options: InstallOptions,
         teams_app_package_root: Path | None = None,
+        azure_bot_client: Any | None = None,
     ) -> None:
         self.graph = graph_client
+        self.azure_bot = azure_bot_client or AzureCliBotServiceClient()
         self.project_config = project_config
         self.organization_config = organization_config or {}
         self.options = options
@@ -227,6 +331,7 @@ class ProjectInstaller:
         channels = _mapping(teams.get("channels"), "connectors.teams.channels")
         role_bots = _mapping(teams.get("role_bots"), "connectors.teams.role_bots")
         people = _people_list(teams.get("people"))
+        bot_service = _mapping_or_empty(teams.get("bot_service"), "connectors.teams.bot_service")
         gateway_bots = _gateway_bots(self.project_config)
         self._record_expected_team_apps(role_bots=role_bots, gateway_bots=gateway_bots)
 
@@ -246,6 +351,8 @@ class ProjectInstaller:
                 bot_id_ref=_required_string(bot, "bot_id_ref"),
                 secret_ref=_required_string(bot, "secret_ref"),
                 team_id=resolved_team_id,
+                tenant_id=tenant_id,
+                bot_service=bot_service,
             )
         for gateway_id, bot in sorted(gateway_bots.items()):
             self._ensure_agent_identity(
@@ -254,6 +361,8 @@ class ProjectInstaller:
                 bot_id_ref=_required_string(bot, "bot_id_ref"),
                 secret_ref=_required_string(bot, "secret_ref"),
                 team_id=resolved_team_id,
+                tenant_id=tenant_id,
+                bot_service=bot_service,
             )
 
         self._detect_stale_agent_installs(team_id=resolved_team_id)
@@ -474,6 +583,8 @@ class ProjectInstaller:
         bot_id_ref: str,
         secret_ref: str,
         team_id: str | None,
+        tenant_id: str,
+        bot_service: dict[str, Any],
     ) -> None:
         apps = self._find_applications_by_display_name(display_name)
         app_id: str | None = None
@@ -539,6 +650,13 @@ class ProjectInstaller:
 
         if app_id is not None:
             self._ensure_service_principal(app_id=app_id, display_name=display_name)
+            self._ensure_bot_service(
+                role_id=role_id,
+                display_name=display_name,
+                app_id=app_id,
+                tenant_id=tenant_id,
+                bot_service=bot_service,
+            )
 
         if self.options.allow_secret_rotation:
             self.operations.append(
@@ -565,6 +683,211 @@ class ProjectInstaller:
             display_name=display_name,
             team_id=team_id,
             bot_app_id=app_id,
+        )
+
+    def _ensure_bot_service(
+        self,
+        *,
+        role_id: str,
+        display_name: str,
+        app_id: str,
+        tenant_id: str,
+        bot_service: dict[str, Any],
+    ) -> None:
+        if not bot_service:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_bot_service",
+                    target=display_name,
+                    status="skipped",
+                    detail="No connectors.teams.bot_service block configured; Azure Bot Service reconciliation skipped.",
+                    external_id=app_id,
+                )
+            )
+            return
+        resource_group = _required_string(bot_service, "resource_group")
+        location = _optional_string(bot_service.get("location")) or "global"
+        sku = _optional_string(bot_service.get("sku")) or "F0"
+        endpoint = _optional_string(bot_service.get("endpoint")) or _teams_public_endpoint(self.project_config)
+        name_template = _optional_string(bot_service.get("name_template")) or "am-{role_id}"
+        bot_name = _bot_service_name(name_template=name_template, role_id=role_id, display_name=display_name)
+
+        try:
+            existing = self.azure_bot.show(resource_group=resource_group, name=bot_name)
+        except AzureCliError as exc:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_bot_service",
+                    target=bot_name,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="Microsoft.BotService/botServices/read",
+                    external_id=app_id,
+                )
+            )
+            return
+
+        if existing is None:
+            if not self.options.allow_register_bot_services:
+                self.operations.append(
+                    InstallOperation(
+                        action="ensure_bot_service",
+                        target=bot_name,
+                        status="planned",
+                        detail="Azure Bot Service registration would be created when --allow-register-bot-services is supplied.",
+                        required_permission="Microsoft.BotService/botServices/write",
+                        external_id=app_id,
+                    )
+                )
+                return
+            if not self.options.apply:
+                self.operations.append(
+                    InstallOperation(
+                        action="ensure_bot_service",
+                        target=bot_name,
+                        status="planned",
+                        detail="Azure Bot Service creation planned; rerun with --apply to mutate Azure state.",
+                        required_permission="Microsoft.BotService/botServices/write",
+                        external_id=app_id,
+                    )
+                )
+                return
+            try:
+                existing = self.azure_bot.create(
+                    resource_group=resource_group,
+                    name=bot_name,
+                    app_id=app_id,
+                    tenant_id=tenant_id,
+                    display_name=display_name,
+                    endpoint=endpoint,
+                    location=location,
+                    sku=sku,
+                )
+            except AzureCliError as exc:
+                self.operations.append(
+                    InstallOperation(
+                        action="ensure_bot_service",
+                        target=bot_name,
+                        status="blocked",
+                        detail=exc.message,
+                        required_permission="Microsoft.BotService/botServices/write",
+                        external_id=app_id,
+                    )
+                )
+                return
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_bot_service",
+                    target=bot_name,
+                    status="created",
+                    detail="Created Azure Bot Service registration for the role bot.",
+                    required_permission="Microsoft.BotService/botServices/write",
+                    external_id=_optional_string(existing.get("id")) or app_id,
+                )
+            )
+        else:
+            properties = _mapping(existing.get("properties"), "bot.properties")
+            configured_app_id = _optional_string(properties.get("msaAppId"))
+            configured_endpoint = _optional_string(properties.get("endpoint"))
+            if configured_app_id and configured_app_id != app_id:
+                self.operations.append(
+                    InstallOperation(
+                        action="ensure_bot_service",
+                        target=bot_name,
+                        status="blocked",
+                        detail=(
+                            f"Existing Azure Bot Service uses app id `{configured_app_id}`, "
+                            f"but project role `{role_id}` expects `{app_id}`."
+                        ),
+                        required_permission="Microsoft.BotService/botServices/write",
+                        external_id=_optional_string(existing.get("id")) or configured_app_id,
+                    )
+                )
+                return
+            if configured_endpoint and configured_endpoint != endpoint:
+                self.operations.append(
+                    InstallOperation(
+                        action="ensure_bot_service",
+                        target=bot_name,
+                        status="needs_update",
+                        detail=(
+                            f"Existing Azure Bot Service endpoint is `{configured_endpoint}`; "
+                            f"expected `{endpoint}`. Endpoint update is not automated yet."
+                        ),
+                        required_permission="Microsoft.BotService/botServices/write",
+                        external_id=_optional_string(existing.get("id")) or app_id,
+                    )
+                )
+            else:
+                self.operations.append(
+                    InstallOperation(
+                        action="ensure_bot_service",
+                        target=bot_name,
+                        status="reused",
+                        detail="Found existing Azure Bot Service registration for the role bot.",
+                        external_id=_optional_string(existing.get("id")) or app_id,
+                    )
+                )
+
+        channels = _bot_service_channels(existing or {})
+        if "msteams" in channels:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_bot_service_channel",
+                    target=bot_name,
+                    status="reused",
+                    detail="Azure Bot Service already has the Microsoft Teams channel enabled.",
+                    external_id=app_id,
+                )
+            )
+            return
+        if not self.options.allow_register_bot_services:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_bot_service_channel",
+                    target=bot_name,
+                    status="planned",
+                    detail="Microsoft Teams channel would be enabled when --allow-register-bot-services is supplied.",
+                    required_permission="Microsoft.BotService/botServices/channels/write",
+                    external_id=app_id,
+                )
+            )
+            return
+        if not self.options.apply:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_bot_service_channel",
+                    target=bot_name,
+                    status="planned",
+                    detail="Microsoft Teams channel enablement planned; rerun with --apply to mutate Azure state.",
+                    required_permission="Microsoft.BotService/botServices/channels/write",
+                    external_id=app_id,
+                )
+            )
+            return
+        try:
+            self.azure_bot.ensure_msteams_channel(resource_group=resource_group, name=bot_name)
+        except AzureCliError as exc:
+            self.operations.append(
+                InstallOperation(
+                    action="ensure_bot_service_channel",
+                    target=bot_name,
+                    status="blocked",
+                    detail=exc.message,
+                    required_permission="Microsoft.BotService/botServices/channels/write",
+                    external_id=app_id,
+                )
+            )
+            return
+        self.operations.append(
+            InstallOperation(
+                action="ensure_bot_service_channel",
+                target=bot_name,
+                status="created",
+                detail="Enabled Microsoft Teams channel on the Azure Bot Service registration.",
+                required_permission="Microsoft.BotService/botServices/channels/write",
+                external_id=app_id,
+            )
         )
 
     def _ensure_service_principal(self, *, app_id: str, display_name: str) -> None:
@@ -1437,6 +1760,12 @@ def _mapping(value: object, field: str) -> dict[str, Any]:
     return value
 
 
+def _mapping_or_empty(value: object, field: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    return _mapping(value, field)
+
+
 def _required_string(mapping: dict[str, Any], key: str) -> str:
     value = mapping.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -1633,6 +1962,36 @@ def _safe_package_name(value: str) -> str:
         elif character in {":", "-", "_", " "}:
             safe.append("-")
     return "-".join("".join(safe).split("-"))
+
+
+def _bot_service_name(*, name_template: str, role_id: str, display_name: str) -> str:
+    clean_role = role_id.removeprefix("gateway:")
+    candidate = name_template.format(
+        role_id=clean_role,
+        role_id_safe=_safe_package_name(clean_role),
+        display_name=display_name,
+        display_name_safe=_safe_package_name(display_name),
+    )
+    safe = []
+    for character in candidate:
+        if character.isalnum() or character in {"-", "_"}:
+            safe.append(character)
+        elif character in {" ", ":", "."}:
+            safe.append("-")
+    name = "-".join("".join(safe).lower().split("-")).strip("-")
+    if not 4 <= len(name) <= 42:
+        raise ValueError(f"Azure Bot Service name `{name}` must be between 4 and 42 characters")
+    return name
+
+
+def _bot_service_channels(bot_service: dict[str, Any]) -> set[str]:
+    properties = bot_service.get("properties")
+    if not isinstance(properties, dict):
+        return set()
+    channels = properties.get("enabledChannels") or properties.get("configuredChannels") or []
+    if not isinstance(channels, list):
+        return set()
+    return {str(channel).casefold() for channel in channels}
 
 
 def _find_installed_team_app(

@@ -102,6 +102,57 @@ class FakeGraphClient:
         raise AssertionError(f"unexpected Graph byte request {method} {path}")
 
 
+class FakeAzureBotClient:
+    def __init__(self, bots: dict[str, dict[str, Any]] | None = None) -> None:
+        self.bots = bots or {}
+        self.created: list[dict[str, Any]] = []
+        self.enabled_channels: list[str] = []
+
+    def show(self, *, resource_group: str, name: str) -> dict[str, Any] | None:
+        return self.bots.get(name)
+
+    def create(
+        self,
+        *,
+        resource_group: str,
+        name: str,
+        app_id: str,
+        tenant_id: str,
+        display_name: str,
+        endpoint: str,
+        location: str,
+        sku: str,
+    ) -> dict[str, Any]:
+        bot = {
+            "id": f"/subscriptions/test/resourceGroups/{resource_group}/providers/Microsoft.BotService/botServices/{name}",
+            "name": name,
+            "properties": {
+                "msaAppId": app_id,
+                "endpoint": endpoint,
+                "enabledChannels": [],
+            },
+        }
+        self.bots[name] = bot
+        self.created.append(
+            {
+                "resource_group": resource_group,
+                "name": name,
+                "app_id": app_id,
+                "tenant_id": tenant_id,
+                "display_name": display_name,
+                "endpoint": endpoint,
+                "location": location,
+                "sku": sku,
+            }
+        )
+        return bot
+
+    def ensure_msteams_channel(self, *, resource_group: str, name: str) -> dict[str, Any]:
+        self.enabled_channels.append(name)
+        self.bots[name]["properties"]["enabledChannels"].append("msteams")
+        return {}
+
+
 def _project_config() -> dict[str, Any]:
     return {
         "project_id": "agentic-mesh-dev",
@@ -134,6 +185,19 @@ def _project_config() -> dict[str, Any]:
             }
         },
     }
+
+
+def _project_config_with_bot_service() -> dict[str, Any]:
+    project = _project_config()
+    teams = project["connectors"]["teams"]
+    teams["bot_service"] = {
+        "resource_group": "agentic-mesh-dev",
+        "location": "global",
+        "sku": "F0",
+        "name_template": "am-{role_id_safe}",
+    }
+    teams["role_bots"] = {"product-manager": teams["role_bots"]["product-manager"]}
+    return project
 
 
 def test_v3_project_installer_uses_v3_stale_agent_action_name() -> None:
@@ -212,6 +276,62 @@ def test_v3_project_installer_reuses_team_installed_app_id_for_personal_install(
             "teamsApp@odata.bind": "https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/teams-app-product-manager"
         }
         for request in graph.requests
+    )
+
+
+def test_v3_project_installer_plans_missing_azure_bot_service() -> None:
+    result = ProjectInstaller(
+        graph_client=FakeGraphClient(),
+        azure_bot_client=FakeAzureBotClient(),
+        project_config=_project_config_with_bot_service(),
+        organization_config={},
+        options=InstallOptions(apply=True),
+    ).run()
+
+    assert any(
+        item["action"] == "ensure_bot_service"
+        and item["target"] == "am-product-manager"
+        and item["status"] == "planned"
+        and item["required_permission"] == "Microsoft.BotService/botServices/write"
+        for item in result["operations"]
+    )
+
+
+def test_v3_project_installer_creates_azure_bot_service_and_teams_channel() -> None:
+    azure = FakeAzureBotClient()
+
+    result = ProjectInstaller(
+        graph_client=FakeGraphClient(),
+        azure_bot_client=azure,
+        project_config=_project_config_with_bot_service(),
+        organization_config={},
+        options=InstallOptions(apply=True, allow_register_bot_services=True),
+    ).run()
+
+    assert azure.created == [
+        {
+            "resource_group": "agentic-mesh-dev",
+            "name": "am-product-manager",
+            "app_id": "bot-product-manager-app-id",
+            "tenant_id": "tenant-1",
+            "display_name": "AM-Product Manager",
+            "endpoint": "https://agentic-mesh.example/api/messages",
+            "location": "global",
+            "sku": "F0",
+        }
+    ]
+    assert azure.enabled_channels == ["am-product-manager"]
+    assert any(
+        item["action"] == "ensure_bot_service"
+        and item["target"] == "am-product-manager"
+        and item["status"] == "created"
+        for item in result["operations"]
+    )
+    assert any(
+        item["action"] == "ensure_bot_service_channel"
+        and item["target"] == "am-product-manager"
+        and item["status"] == "created"
+        for item in result["operations"]
     )
 
 

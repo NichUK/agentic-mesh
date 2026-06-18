@@ -161,10 +161,11 @@ def test_dogfood_compose_env_example_lists_required_v3_live_inputs() -> None:
 def test_linuxch_v3_project_install_script_cleans_up_graph_token_file() -> None:
     script = Path("scripts/install-linuxch-v3-project.ps1").read_text(encoding="utf-8")
 
+    assert "docker compose --profile v3" in script
     assert 'trap cleanup EXIT' in script
-    assert 'rm -f "$token_file"' in script
-    assert 'os.environ.get("AGENTIC_MESH_TEAMS_TOKEN", "").strip()' in script
-    assert "AGENTIC_MESH_TEAMS_TOKEN is missing from environment" in script
+    assert 'rm -f "`$token_file"' in script
+    assert 'printf "{\\"access_token\\":\\"%s\\"}" "`$AGENTIC_MESH_TEAMS_TOKEN"' in script
+    assert 'chmod 600 "`$token_file"' in script
 
 
 def test_linuxch_graph_env_refresh_helper_requests_required_scopes_and_updates_remote_env() -> None:
@@ -192,7 +193,7 @@ def test_linuxch_graph_env_refresh_helper_requests_required_scopes_and_updates_r
     assert "oauth2/v2.0/token" in script
     assert script.count("-ErrorAction Stop") >= 2
     assert "ErrorDetails.Message" in script
-    assert '$remoteScript = $remoteScript -replace "`r`n", "`n"' in script
+    assert '$remoteScript = $remoteScript -replace "`r", ""' in script
     assert 'authorization_pending")' in script
     assert 'slow_down")' in script
     assert "--use-device-code" not in script

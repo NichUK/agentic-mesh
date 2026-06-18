@@ -10,6 +10,7 @@ param(
     [switch]$AllowCreateTeam,
     [switch]$AllowCreateChannel,
     [switch]$AllowRegisterApps,
+    [switch]$AllowRegisterBotServices,
     [switch]$AllowInstallApps,
     [switch]$AllowUninstallStale,
     [switch]$AllowSecretRotation
@@ -48,6 +49,7 @@ if ($Apply) { $argsList += "--apply" }
 if ($AllowCreateTeam) { $argsList += "--allow-create-team" }
 if ($AllowCreateChannel) { $argsList += "--allow-create-channel" }
 if ($AllowRegisterApps) { $argsList += "--allow-register-apps" }
+if ($AllowRegisterBotServices) { $argsList += "--allow-register-bot-services" }
 if ($AllowInstallApps) { $argsList += "--allow-install-apps" }
 if ($AllowUninstallStale) { $argsList += "--allow-uninstall-stale" }
 if ($AllowSecretRotation) { $argsList += "--allow-secret-rotation" }

@@ -53,6 +53,11 @@ connectors:
       listen_host: 0.0.0.0
       listen_port: 3978
       path: /api/messages
+    bot_service:
+      resource_group: agentic-mesh-dev
+      location: global
+      sku: F0
+      name_template: am-{role_id_safe}
     role_bots:
       business-analyst:
         display_name: AM-Business Analyst
