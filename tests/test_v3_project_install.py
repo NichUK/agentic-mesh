@@ -183,6 +183,36 @@ def test_v3_project_installer_generates_teams_package_without_icon_assets(tmp_pa
     )
 
 
+def test_v3_project_installer_reuses_team_installed_app_id_for_personal_install() -> None:
+    graph = FakeGraphClient(
+        installed_apps=[
+            {
+                "id": "installed-product-manager",
+                "teamsAppDefinition": {
+                    "displayName": "AM-Product Manager",
+                    "teamsAppId": "teams-app-product-manager",
+                },
+            }
+        ]
+    )
+
+    ProjectInstaller(
+        graph_client=graph,
+        project_config=_project_config(),
+        organization_config={},
+        options=InstallOptions(apply=True, allow_install_apps=True),
+    ).run()
+
+    assert any(
+        request[0] == "POST"
+        and request[1] == "/users/aad-nicholas/teamwork/installedApps"
+        and request[2] == {
+            "teamsApp@odata.bind": "https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/teams-app-product-manager"
+        }
+        for request in graph.requests
+    )
+
+
 def test_v3_dogfood_project_configures_all_role_bots() -> None:
     project = yaml.safe_load(
         Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml").read_text(encoding="utf-8")

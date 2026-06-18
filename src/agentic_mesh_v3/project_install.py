@@ -712,6 +712,18 @@ class ProjectInstaller:
             teams_app_ids=self._package_ids_for_role(role_id),
         )
         if existing is not None:
+            teams_app_id = _installed_teams_app_id(existing)
+            if teams_app_id is not None:
+                self.teams_app_packages[role_id] = TeamsAppPackage(
+                    role_id=role_id,
+                    display_name=display_name,
+                    teams_app_id=teams_app_id,
+                )
+                self.expected_team_app_ids.add(teams_app_id)
+                self.expected_team_app_names.add(display_name)
+                if self.teams_app_package_root is not None:
+                    self.teams_app_package_root.mkdir(parents=True, exist_ok=True)
+                    _write_published_teams_apps(self.teams_app_package_root, self.teams_app_packages)
             self.operations.append(
                 InstallOperation(
                     action="install_agent_to_team",
@@ -1641,3 +1653,8 @@ def _find_installed_team_app(
         if definition.get("displayName") == display_name:
             return item
     return None
+
+
+def _installed_teams_app_id(installed_app: dict[str, Any]) -> str | None:
+    definition = installed_app.get("teamsAppDefinition") or {}
+    return _optional_string(definition.get("teamsAppId"))
