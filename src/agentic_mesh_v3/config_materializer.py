@@ -105,7 +105,7 @@ def build_role_instance_config(
         tools_prompt_path=agent_config_dir / "tools.md",
         memory_db_path=runtime_state_dir / "memory" / f"{role_instance_id}.sqlite3",
         inbox_stream=inbox_stream,
-        inbox_consumer=role_instance_id,
+        inbox_consumer=f"{role_id}.{instance_id}",
     )
 
 

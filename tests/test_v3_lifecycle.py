@@ -229,12 +229,13 @@ def test_lifecycle_refreshes_stopped_agent_inbox_depth_from_broker() -> None:
 
         def pending(self, stream: str, consumer: str | None = None, *, limit: int = 20):  # type: ignore[no-untyped-def]
             del stream, limit
-            return [object(), object()] if consumer == "agentic-mesh-dev.product-manager.1" else []
+            return [object(), object()] if consumer == "product-manager.1" else []
 
         def dead_letters(self, stream: str, *, limit: int = 20):  # type: ignore[no-untyped-def]
             del stream, limit
             return []
 
+    broker = FakeBroker()
     statuses = refresh_agent_statuses_from_broker(
         [
             AgentStatus(
@@ -245,11 +246,12 @@ def test_lifecycle_refreshes_stopped_agent_inbox_depth_from_broker() -> None:
             )
         ],
         role_instance_ids=("agentic-mesh-dev.product-manager.1",),
-        broker=FakeBroker(),  # type: ignore[arg-type]
+        broker=broker,  # type: ignore[arg-type]
         stream="agent-inbox",
     )
 
     assert statuses[0].inbox_depth == 2
+    assert ("agent-inbox", "product-manager.1", "agent.product-manager") in broker.consumers
     decision = plan_lifecycle_action(status=statuses[0], policy=HibernationPolicy())
     assert decision.action == "wake"
 

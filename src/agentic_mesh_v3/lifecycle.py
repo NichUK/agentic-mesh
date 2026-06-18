@@ -327,11 +327,11 @@ def refresh_agent_statuses_from_broker(
     refreshed: list[AgentStatus] = []
     for role_instance_id in sorted(by_instance):
         status = by_instance[role_instance_id]
-        role_id, _ = _role_and_instance(role_instance_id)
+        role_id, instance_id = _role_and_instance(role_instance_id)
         inbox_depth = 0
         for consumer, subject in (
-            (role_instance_id, f"agent.{role_id}"),
-            (f"{role_instance_id}.relevance", f"agent.{role_id}.relevance"),
+            (_inbox_consumer_name(role_id, instance_id), f"agent.{role_id}"),
+            (f"{_inbox_consumer_name(role_id, instance_id)}.relevance", f"agent.{role_id}.relevance"),
         ):
             broker.ensure_consumer(stream, consumer, filter_subject=subject)
             inbox_depth += len(broker.pending(stream, consumer, limit=pending_limit))
@@ -362,6 +362,10 @@ def _role_and_instance(role_instance_id: str) -> tuple[str, str]:
     if len(parts) < 3 or not parts[-2] or not parts[-1]:
         raise ValueError("role_instance_id must use {project_id}.{role_id}.{instance_id}")
     return parts[-2], parts[-1]
+
+
+def _inbox_consumer_name(role_id: str, instance_id: str) -> str:
+    return f"{role_id}.{instance_id}"
 
 
 def _format_seconds(value: float) -> str:

@@ -70,7 +70,7 @@ def test_build_role_instance_config_uses_materialized_prompt_paths(tmp_path: Pat
     assert config.tools_prompt_path == tmp_path / "agent" / "tools.md"
     assert config.memory_db_path == tmp_path / "state" / "memory" / "agentic-mesh-dev.product-manager.1.sqlite3"
     assert config.inbox_stream == "agent-inbox"
-    assert config.inbox_consumer == "agentic-mesh-dev.product-manager.1"
+    assert config.inbox_consumer == "product-manager.1"
 
 
 def test_materialize_project_agent_configs_writes_each_role_instance(tmp_path: Path) -> None:
@@ -152,7 +152,7 @@ roles:
     assert engineering_2.container_spec.target_repositories == {
         "app": (project_file.parent / "../app").resolve(strict=False)
     }
-    assert engineering_2.role_service_config.inbox_consumer == "agentic-mesh-dev.engineering.2"
+    assert engineering_2.role_service_config.inbox_consumer == "engineering.2"
     assert engineering_2.role_service_config.memory_db_path == tmp_path / "state" / "memory" / "agentic-mesh-dev.engineering.2.sqlite3"
     engineering_project = (tmp_path / "agents" / "engineering" / "2" / "project.md").read_text(encoding="utf-8")
     assert "Build safely." in engineering_project

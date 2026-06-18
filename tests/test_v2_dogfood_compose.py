@@ -2,12 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from agentic_mesh_v2.container_lifecycle import ComposeRoleLifecycleConfig
-from agentic_mesh_v2.project_config import list_project_role_service_configs
-from agentic_mesh_v2.project_config import load_role_container_lifecycle_config
 
-
-PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml")
 V3_PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml")
 V3_LIVE_ROLE_IDS = {
     "product-manager",
@@ -18,53 +13,12 @@ V3_LIVE_ROLE_IDS = {
 }
 
 
-def test_dogfood_compose_runs_status_server_with_project_file() -> None:
+def test_dogfood_compose_does_not_define_v2_runtime_services() -> None:
     compose = _load_dogfood_compose()
-    service = compose["services"]["v2-runtime"]
-    command = service["command"]
 
-    assert "serve --host 0.0.0.0 --port 8080" in command
-    assert "--project-file /mesh/project/agentic-mesh/project.yaml" in command
-    assert service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project.yaml"
-    assert service["environment"]["CODEX_HOME"] == "/mesh/worker-auth/codex"
-    assert "/mesh/project" in "\n".join(service["volumes"])
-    assert "/mesh/worker-auth/codex" in "\n".join(service["volumes"])
-
-
-def test_dogfood_compose_runs_project_supervisor_service() -> None:
-    compose = _load_dogfood_compose()
-    runtime_service = compose["services"]["v2-runtime"]
-    service = compose["services"]["v2-supervisor"]
-    command = service["command"]
-
-    assert service["image"] == runtime_service["image"]
-    assert service["environment"] == runtime_service["environment"]
-    assert service["volumes"] == runtime_service["volumes"]
-    assert service["working_dir"] == runtime_service["working_dir"]
-    assert service["environment"]["AGENTIC_MESH_STATE_ROOT"] == "/mesh/project/state/v2"
-    assert "run-project-supervisor-service" in command
-    assert "--project-file /mesh/project/agentic-mesh/project.yaml" in command
-    assert "--continuous" in command
-    assert "--execute" in command
-    assert "--poll-seconds ${AGENTIC_MESH_SUPERVISOR_POLL_SECONDS:-5}" in command
-    assert service["depends_on"] == ["v2-runtime"]
-
-
-def test_dogfood_compose_runs_teams_ingress_service() -> None:
-    compose = _load_dogfood_compose()
-    runtime_service = compose["services"]["v2-runtime"]
-    service = compose["services"]["v2-teams-ingress"]
-    command = service["command"]
-
-    assert service["image"] == runtime_service["image"]
-    assert service["environment"] == runtime_service["environment"]
-    assert service["volumes"] == runtime_service["volumes"]
-    assert service["working_dir"] == runtime_service["working_dir"]
-    assert "serve-teams-ingress --host 0.0.0.0 --port 3978" in command
-    assert "--project-file /mesh/project/agentic-mesh/project.yaml" in command
-    assert "--path /api/messages" in command
-    assert service["ports"] == ["3978:3978"]
-    assert service["depends_on"] == ["v2-runtime"]
+    assert "v2-runtime" not in compose["services"]
+    assert "v2-teams-ingress" not in compose["services"]
+    assert "v2-supervisor" not in compose["services"]
 
 
 def test_dogfood_compose_defines_v3_runtime_profile() -> None:
@@ -224,9 +178,10 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
     assert "agentic-mesh-dev-engineering-1" in script
     assert "agentic-mesh-dev-qa-engineer-1" in script
     assert "agentic-mesh-dev-release-manager-1" in script
-    assert 'AGENTIC_MESH_STOP_LEGACY_SERVICES:=1' in script
-    assert 'docker ps -q --filter "name=agentic-mesh-v2-"' in script
-    assert 'docker ps -q --filter "name=agentic-mesh-agentic-mesh-dev-"' in script
+    assert 'AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS:=1' in script
+    assert "agentic-mesh-v2-runtime-1" in script
+    assert "agentic-mesh-agentic-mesh-dev-business-analyst-1-1" in script
+    assert 'docker ps -q --filter "name=agentic-mesh-agentic-mesh-dev-"' not in script
     assert "mkdir -p" in script and "AGENTIC_MESH_NATS_STATE_HOST_PATH" in script
     assert "--profile v3 up -d v3-nats" in script
     assert "--profile v3 run --rm --no-deps v3-runtime" in script
@@ -234,7 +189,7 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
     assert "--check-broker" in script
     assert "materialize-agent-configs" in script
     assert "--agent-config-root /mesh/project/state/v3/agent-configs" in script
-    assert "--profile v3 up -d $AGENTIC_MESH_RELEASE_SERVICES" in script
+    assert "--profile v3 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
 
 
 def test_v3_dogfood_project_config_uses_compose_nats_service_name() -> None:
@@ -244,71 +199,47 @@ def test_v3_dogfood_project_config_uses_compose_nats_service_name() -> None:
     assert "servers: nats://nats:4222" not in project_config
 
 
-def test_linuxch_overlay_restarts_project_supervisor_service() -> None:
+def test_linuxch_overlay_does_not_restart_v2_supervisor_service() -> None:
     overlay = _linuxch_overlay_text()
 
-    assert "v2-supervisor:" in overlay
-    assert "restart: unless-stopped" in overlay
+    assert "v2-supervisor:" not in overlay
 
 
-def test_linuxch_overlay_restarts_teams_ingress_service() -> None:
+def test_linuxch_overlay_does_not_restart_v2_teams_ingress_service() -> None:
     overlay = _linuxch_overlay_text()
 
-    assert "v2-teams-ingress:" in overlay
-    assert "restart: unless-stopped" in overlay
+    assert "v2-teams-ingress:" not in overlay
 
 
-def test_dogfood_project_config_defines_role_container_lifecycle() -> None:
-    config = load_role_container_lifecycle_config(PROJECT_FILE, role_id="product-manager")
-    lifecycle = ComposeRoleLifecycleConfig.from_mapping(config)
+def test_dogfood_compose_uses_v3_project_configuration_by_default() -> None:
+    compose = _load_dogfood_compose()
+    runtime_service = compose["services"]["v3-runtime"]
 
-    service_name = lifecycle.service_name(
-        project_id="agentic-mesh-dev",
-        role_id="product-manager",
-        role_instance_id="agentic-mesh-dev.product-manager.1",
-    )
-
-    assert service_name == "agentic-mesh-dev-product-manager-1"
-    assert lifecycle.working_directory == PROJECT_FILE.parent / "../deploy/compose"
-    assert [path.name for path in lifecycle.compose_files] == [
-        "docker-compose.yml",
-        "docker-compose.linuxch.yml",
-    ]
+    assert runtime_service["environment"]["AGENTIC_MESH_PROJECT_FILE"] == "/mesh/project/agentic-mesh/project-v3.yaml"
+    assert runtime_service["environment"]["AGENTIC_MESH_STATE_ROOT"] == "/mesh/project/state/v3"
 
 
 def test_v3_dogfood_project_config_exists_for_compose_profile() -> None:
     assert V3_PROJECT_FILE.exists()
 
 
-def test_dogfood_compose_runs_one_role_service_per_project_role_instance() -> None:
+def test_dogfood_compose_does_not_define_legacy_v2_role_services() -> None:
     compose = _load_dogfood_compose()
-    runtime_service = compose["services"]["v2-runtime"]
+    legacy_service_names = {
+        "agentic-mesh-dev-business-analyst-1",
+        "agentic-mesh-dev-prompt-engineer-1",
+        "agentic-mesh-dev-ux-designer-1",
+        "agentic-mesh-dev-enterprise-architect-1",
+        "agentic-mesh-dev-solution-architect-1",
+        "agentic-mesh-dev-security-architect-1",
+        "agentic-mesh-dev-platform-engineer-1",
+        "agentic-mesh-dev-engineering-2",
+        "agentic-mesh-dev-technical-writer-1",
+        "agentic-mesh-dev-delivery-manager-1",
+        "agentic-mesh-dev-research-analyst-1",
+    }
 
-    for role_config in list_project_role_service_configs(PROJECT_FILE):
-        if role_config.role_id in V3_LIVE_ROLE_IDS:
-            continue
-        lifecycle = ComposeRoleLifecycleConfig.from_mapping(
-            load_role_container_lifecycle_config(PROJECT_FILE, role_id=role_config.role_id)
-        )
-        service_name = lifecycle.service_name(
-            project_id=role_config.project_id,
-            role_id=role_config.role_id,
-            role_instance_id=role_config.role_instance_id,
-        )
-        service = compose["services"][service_name]
-        command = service["command"]
-
-        assert service["image"] == runtime_service["image"]
-        assert service["environment"] == runtime_service["environment"]
-        assert service["volumes"] == runtime_service["volumes"]
-        assert service["working_dir"] == runtime_service["working_dir"]
-        assert service["depends_on"] == ["v2-runtime"]
-        assert "run-role-service-loop" in command
-        assert f"--role-id {role_config.role_id}" in command
-        assert f"--role-instance-id {role_config.role_instance_id}" in command
-        assert "--continuous" in command
-        assert "--poll-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}" in command
-        assert "--worker-timeout-seconds" not in command
+    assert not (legacy_service_names & set(compose["services"]))
 
 
 def test_dogfood_compose_runs_v3_live_role_services() -> None:
@@ -337,15 +268,8 @@ def test_dogfood_compose_runs_v3_live_role_services() -> None:
 def test_linuxch_overlay_restarts_every_role_service() -> None:
     overlay = _linuxch_overlay_text()
 
-    for role_config in list_project_role_service_configs(PROJECT_FILE):
-        lifecycle = ComposeRoleLifecycleConfig.from_mapping(
-            load_role_container_lifecycle_config(PROJECT_FILE, role_id=role_config.role_id)
-        )
-        service_name = lifecycle.service_name(
-            project_id=role_config.project_id,
-            role_id=role_config.role_id,
-            role_instance_id=role_config.role_instance_id,
-        )
+    for role_id in V3_LIVE_ROLE_IDS:
+        service_name = f"agentic-mesh-dev-{role_id}-1"
         assert f"  {service_name}:\n    restart: unless-stopped" in overlay
 
 
