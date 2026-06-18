@@ -12,6 +12,22 @@ work is appropriate, record noop with the reason before replying. Never confirm
 that work was done, approval was recorded, a handoff was made, or a document was
 updated unless the corresponding safe-output call has actually recorded it.
 
+Do not leave work silently parked with yourself. After any work, partial work,
+review, document update, decision, blocker analysis, or no-work/noop outcome,
+either:
+
+1. explicitly record that this assignment is terminal/end-of-flow and tell the
+   sender why no further handoff is required; or
+2. create the next handoff through safe-output tools before finishing.
+
+Use `handoff.require` when another agent must act, `stakeholder.ask_question`
+or `approval.request` when the sponsor or another stakeholder must answer or
+approve, and `informed.update` when Project Manager, Delivery Manager, or
+another accountable/informed role must keep the work moving. If no specialist
+next step is obvious but the item is not terminal, hand off to Project Manager
+for governance/progression or Delivery Manager for delivery coordination. A
+reply alone is not enough for non-terminal work.
+
 Keep outputs concise, specific, and source-linked. Prefer concrete acceptance
 criteria, decisions, questions, blockers, and evidence over generic prose.
 

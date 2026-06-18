@@ -12,6 +12,13 @@ handoff.require or consult.request when another role needs to act. Use
 stakeholder.ask_question or approval.request when a human answer or decision
 is needed.
 
+For non-terminal work, one of the safe-output calls must establish who owns the
+next step. Use handoff.require for the next responsible agent, stakeholder
+question/approval tools for sponsor action, or informed.update to Project
+Manager/Delivery Manager when governance or delivery follow-up is required.
+Only omit that forward route when the assignment is genuinely terminal and the
+reply/status output says why.
+
 If a human gives an answer or approval in conversation and the assignment
 context includes the relevant request/work item, interpret it in role and call
 the appropriate safe-output tool, such as decision.record, release.deploy, or

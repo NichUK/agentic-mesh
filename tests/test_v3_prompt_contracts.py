@@ -37,6 +37,21 @@ def test_v3_safe_output_prompt_names_current_tools() -> None:
     assert "summary" in prompt
 
 
+def test_v3_worker_instructions_require_forward_route_or_terminal_closure() -> None:
+    instructions = Path("config/prompts/worker/instructions.xml").read_text(encoding="utf-8")
+    safe_outputs = Path("config/prompts/worker/safe-outputs.xml").read_text(encoding="utf-8")
+    normalized_instructions = " ".join(instructions.split())
+    normalized_safe_outputs = " ".join(safe_outputs.split())
+
+    assert "Do not leave work silently parked with yourself" in instructions
+    assert "explicitly record that this assignment is terminal/end-of-flow" in instructions
+    assert "create the next handoff through safe-output tools before finishing" in instructions
+    assert "Project Manager for governance/progression" in normalized_instructions
+    assert "Delivery Manager for delivery coordination" in normalized_instructions
+    assert "A reply alone is not enough for non-terminal work" in normalized_instructions
+    assert "one of the safe-output calls must establish who owns the next step" in normalized_safe_outputs
+
+
 def test_v3_role_templates_do_not_reference_removed_safe_output_tools() -> None:
     combined = "\n".join(path.read_text(encoding="utf-8") for path in Path("config/roles").glob("*.yaml"))
 
