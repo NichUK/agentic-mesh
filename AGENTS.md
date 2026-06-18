@@ -32,21 +32,24 @@ Committed architecture decisions:
 
 Core principles:
 
-- The active implementation direction is v3. New runtime reset work lives under
-  `src/agentic_mesh_v3`. V2 remains present but is frozen except for emergency
-  operational fixes while V3 proves the first end-to-end slice.
-- Do not add new code under `src/agentic_mesh`; the v1 package has been removed.
+- The active implementation is V3. Runtime code lives under
+  `src/agentic_mesh_v3`.
+- Do not add new runtime code under removed or legacy package paths.
 - V3 agents own work progression. The runtime provides platform services such
   as startup, hibernation, broker access, connector bridges, document-library
   access, reporting, config materialisation, and telemetry.
 - Governance is explicit. Agents must consult required RACI roles and
   stakeholders before completing phases, inform roles that must be informed,
   and record governance exceptions when consultation is intentionally skipped.
-- Runtime state is canonical in the v2 SQLite database first, with repository
-  interfaces kept suitable for Postgres later.
+- Runtime operational state and read models are stored in the V3 database, with
+  repository interfaces kept suitable for Postgres later.
+- The document library remains the canonical project knowledge base. Runtime
+  database records make work inspectable, recoverable, and observable; they do
+  not replace durable project documentation.
 - Role-agent work is recorded through safe-output calls and terminal run
   status, not by parsing free-text or legacy JSON result envelopes.
-- Long-running role services are the target operating model.
+- Long-running self-contained role services are the operating model. Agents own
+  role judgment, handoffs, consultations, documentation, and confirmation.
 - Permanent role templates are stable and rarely updated.
 - Projects apply project-specific overrides to role templates.
 - A project can run multiple instances of the same role.
@@ -81,11 +84,11 @@ Current example files:
 
 - `config/roles/product-manager.yaml`
 - `config/roles/engineering.yaml`
-- `examples/projects/agentic-mesh-dev/agentic-mesh/project.yaml`
+- `examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml`
 - `examples/projects/example-project/agentic-mesh/project.yaml`
 
 These are starter examples, not final canonical role templates. Runtime code
-should not depend on v1 file-backed queue/control-plane behavior.
+must target the V3 agent-owned runtime model.
 
 ## Product Positioning
 
@@ -237,8 +240,8 @@ Before committing:
 - Run `python scripts/check-pr-size.py --base origin/develop --committed-only` before pushing
   a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
-- Run `agentic-mesh status-json --db .tmp/v2-check.sqlite3` for a basic v2
-  runtime read-model smoke.
+- Run `python -m agentic_mesh_v3.cli status-json --db .tmp/v3/agentic-mesh-v3.sqlite3`
+  for a basic V3 runtime read-model smoke.
 - Run `agentic-mesh validate-topology ...` for source/runtime/project boundary
   changes.
 - Run `docker compose ... config --quiet` when Compose outputs change.
