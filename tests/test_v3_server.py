@@ -11,7 +11,9 @@ from agentic_mesh_v3.server import DashboardAuthConfig
 from agentic_mesh_v3.server import V3StatusHandler
 from agentic_mesh_v3.server import dashboard_auth_config_from_env
 from agentic_mesh_v3.server import _create_dashboard_session_cookie
+from agentic_mesh_v3.server import _entra_authorize_url
 from agentic_mesh_v3.server import _artifact_page
+from agentic_mesh_v3.server import _pkce_code_challenge
 from agentic_mesh_v3.server import _verify_dashboard_session_cookie
 from agentic_mesh_v3.server import _teams_activity_response
 from agentic_mesh_v3.tools import V3ToolService
@@ -56,7 +58,7 @@ def test_dashboard_auth_config_from_env_enables_bearer_and_proxy_users() -> None
     assert config.trusted_user_headers == ("X-Test-User",)
 
 
-def test_dashboard_auth_config_from_env_enables_entra_device_code_provider() -> None:
+def test_dashboard_auth_config_from_env_enables_entra_auth_code_provider() -> None:
     config = dashboard_auth_config_from_env(
         {
             "AGENTIC_MESH_DASHBOARD_AUTH_ENABLED": "true",
@@ -64,7 +66,7 @@ def test_dashboard_auth_config_from_env_enables_entra_device_code_provider() -> 
             "AGENTIC_MESH_DASHBOARD_ENTRA_CLIENT_ID": "client-id",
             "AGENTIC_MESH_DASHBOARD_ENTRA_TENANT_ID": "tenant-id",
             "AGENTIC_MESH_DASHBOARD_ENTRA_SCOPES": "openid profile email User.Read",
-            "AGENTIC_MESH_DASHBOARD_ENTRA_FLOW": "device_code",
+            "AGENTIC_MESH_URL_ROOT": "http://linuxch:8100",
         }
     )
 
@@ -73,7 +75,27 @@ def test_dashboard_auth_config_from_env_enables_entra_device_code_provider() -> 
     assert config.entra_client_id == "client-id"
     assert config.entra_tenant_id == "tenant-id"
     assert config.entra_scopes == "openid profile email User.Read"
-    assert config.entra_flow == "device_code"
+    assert config.entra_flow == "auth_code_pkce"
+    assert config.entra_redirect_uri == "http://linuxch:8100/auth/entra/callback"
+
+
+def test_entra_authorize_url_uses_pkce_and_redirect_uri() -> None:
+    config = DashboardAuthConfig(
+        auth_mode="entra",
+        entra_client_id="client-id",
+        entra_tenant_id="tenant-id",
+        entra_scopes="openid profile email User.Read",
+        entra_redirect_uri="http://linuxch:8100/auth/entra/callback",
+    )
+
+    url = _entra_authorize_url(config, state="state-1", code_verifier="verifier-1")
+
+    assert url.startswith("https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize?")
+    assert "response_type=code" in url
+    assert "redirect_uri=http%3A%2F%2Flinuxch%3A8100%2Fauth%2Fentra%2Fcallback" in url
+    assert "state=state-1" in url
+    assert f"code_challenge={_pkce_code_challenge('verifier-1')}" in url
+    assert "code_challenge_method=S256" in url
 
 
 def test_dashboard_auth_rejects_status_without_authenticated_user() -> None:

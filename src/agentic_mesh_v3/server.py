@@ -50,7 +50,9 @@ class DashboardAuthConfig:
     entra_client_id: str | None = None
     entra_tenant_id: str | None = None
     entra_scopes: str = "openid profile email User.Read"
-    entra_flow: str = "device_code"
+    entra_flow: str = "auth_code_pkce"
+    entra_redirect_uri: str | None = None
+    entra_client_secret: str | None = None
     trusted_user_headers: tuple[str, ...] = (
         "Cf-Access-Authenticated-User-Email",
         "X-MS-CLIENT-PRINCIPAL-NAME",
@@ -77,6 +79,9 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             return
         if path == "/auth/entra/device":
             self._handle_entra_device_poll()
+            return
+        if path == "/auth/entra/callback":
+            self._handle_entra_auth_code_callback()
             return
         if path == "/favicon.ico":
             self.send_response(HTTPStatus.NO_CONTENT)
@@ -137,7 +142,7 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             supplied = auth_header.removeprefix("Bearer ").strip()
             if hmac.compare_digest(supplied, config.bearer_token):
                 return True
-        secret = config.session_secret or config.bearer_token
+        secret = _dashboard_session_secret(config)
         cookie_value = self._dashboard_session_cookie_value()
         if secret and cookie_value and _verify_dashboard_session_cookie(cookie_value, secret):
             return True
@@ -196,7 +201,10 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if config.auth_mode == "entra":
-            self._start_entra_device_login()
+            if config.entra_flow == "device_code":
+                self._start_entra_device_login()
+            else:
+                self._start_entra_auth_code_login()
             return
         if not config.bearer_token:
             self._send_auth_required()
@@ -243,6 +251,93 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         )
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def _start_entra_auth_code_login(self) -> None:
+        config = self.dashboard_auth
+        if not config.entra_client_id or not config.entra_tenant_id or not config.entra_redirect_uri:
+            self._send_auth_required()
+            return
+        query = parse_qs(urlparse(self.path).query)
+        next_path = _safe_dashboard_next_path((query.get("next") or ["/status"])[0])
+        state = secrets.token_urlsafe(24)
+        verifier = _pkce_code_verifier()
+        login_state = {
+            "provider": "entra-auth-code",
+            "state": state,
+            "code_verifier": verifier,
+            "next": next_path,
+        }
+        cookie_value = _create_signed_dashboard_payload(
+            login_state,
+            _dashboard_session_secret(config),
+            ttl_seconds=900,
+        )
+        authorize_url = _entra_authorize_url(config, state=state, code_verifier=verifier)
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", authorize_url)
+        self.send_header(
+            "Set-Cookie",
+            f"{self.dashboard_oauth_cookie_name}={cookie_value}; Max-Age=900; Path=/; HttpOnly; SameSite=Lax",
+        )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _handle_entra_auth_code_callback(self) -> None:
+        config = self.dashboard_auth
+        query = parse_qs(urlparse(self.path).query)
+        if query.get("error"):
+            description = (query.get("error_description") or query.get("error") or ["Entra login failed"])[0]
+            self._send_html(
+                "<!doctype html><html><head><title>Agentic Mesh login failed</title></head>"
+                "<body><h1>Microsoft sign-in failed</h1>"
+                f"<p>{html.escape(description)}</p>"
+                '<p><a href="/login">Start again</a></p>'
+                "</body></html>",
+                status=HTTPStatus.UNAUTHORIZED,
+            )
+            return
+        cookie_value = _cookie_value(self.headers.get("Cookie") or "", self.dashboard_oauth_cookie_name)
+        state_payload = _verify_signed_dashboard_payload(cookie_value or "", _dashboard_session_secret(config))
+        supplied_state = (query.get("state") or [""])[0]
+        if (
+            not state_payload
+            or state_payload.get("provider") != "entra-auth-code"
+            or not hmac.compare_digest(str(state_payload.get("state") or ""), supplied_state)
+        ):
+            self._send_html(
+                "<!doctype html><html><head><title>Agentic Mesh login failed</title></head>"
+                "<body><h1>Microsoft sign-in failed</h1><p>Login state was missing or invalid.</p>"
+                '<p><a href="/login">Start again</a></p></body></html>',
+                status=HTTPStatus.UNAUTHORIZED,
+            )
+            return
+        code = (query.get("code") or [""])[0]
+        if not code:
+            self._send_html(
+                "<!doctype html><html><head><title>Agentic Mesh login failed</title></head>"
+                "<body><h1>Microsoft sign-in failed</h1><p>No authorization code was returned.</p>"
+                '<p><a href="/login">Start again</a></p></body></html>',
+                status=HTTPStatus.UNAUTHORIZED,
+            )
+            return
+        try:
+            token_response = _exchange_entra_auth_code_token(
+                config,
+                code=code,
+                code_verifier=str(state_payload["code_verifier"]),
+            )
+            self._complete_entra_login(
+                token_response,
+                _safe_dashboard_next_path(str(state_payload.get("next") or "/status")),
+            )
+        except Exception as exc:
+            self._send_html(
+                "<!doctype html><html><head><title>Agentic Mesh login failed</title></head>"
+                "<body><h1>Microsoft sign-in failed</h1>"
+                f"<p>{html.escape(str(exc))}</p>"
+                '<p><a href="/login">Start again</a></p></body></html>',
+                status=HTTPStatus.BAD_GATEWAY,
+            )
 
     def _start_entra_device_login(self, *, error: str | None = None) -> None:
         config = self.dashboard_auth
@@ -615,7 +710,12 @@ def dashboard_auth_config_from_env(env: dict[str, str] | None = None) -> Dashboa
         source.get("AGENTIC_MESH_DASHBOARD_ENTRA_SCOPES")
         or "openid profile email User.Read"
     ).strip()
-    entra_flow = (source.get("AGENTIC_MESH_DASHBOARD_ENTRA_FLOW") or "device_code").strip().casefold()
+    public_url_root = (source.get("AGENTIC_MESH_URL_ROOT") or "").strip().rstrip("/")
+    entra_flow = (source.get("AGENTIC_MESH_DASHBOARD_ENTRA_FLOW") or "auth_code_pkce").strip().casefold()
+    entra_redirect_uri = (source.get("AGENTIC_MESH_DASHBOARD_ENTRA_REDIRECT_URI") or "").strip()
+    if not entra_redirect_uri and public_url_root:
+        entra_redirect_uri = f"{public_url_root}/auth/entra/callback"
+    entra_client_secret = (source.get("AGENTIC_MESH_DASHBOARD_ENTRA_CLIENT_SECRET") or "").strip() or None
     if not auth_mode:
         auth_mode = "entra" if entra_client_id and entra_tenant_id else "token" if bearer_token else "proxy"
     enabled = enabled_raw in {"1", "true", "yes", "on"} or bool(bearer_token or allowed_users)
@@ -631,6 +731,8 @@ def dashboard_auth_config_from_env(env: dict[str, str] | None = None) -> Dashboa
         entra_tenant_id=entra_tenant_id,
         entra_scopes=entra_scopes,
         entra_flow=entra_flow,
+        entra_redirect_uri=entra_redirect_uri or None,
+        entra_client_secret=entra_client_secret,
         trusted_user_headers=header_names or DashboardAuthConfig().trusted_user_headers,
     )
 
@@ -707,6 +809,47 @@ def _request_entra_device_code(config: DashboardAuthConfig) -> dict[str, Any]:
     )
 
 
+def _entra_authorize_url(config: DashboardAuthConfig, *, state: str, code_verifier: str) -> str:
+    tenant = quote(config.entra_tenant_id or "common", safe="")
+    params = {
+        "client_id": config.entra_client_id or "",
+        "response_type": "code",
+        "redirect_uri": config.entra_redirect_uri or "",
+        "response_mode": "query",
+        "scope": config.entra_scopes,
+        "state": state,
+        "code_challenge": _pkce_code_challenge(code_verifier),
+        "code_challenge_method": "S256",
+    }
+    return f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?{urlencode(params)}"
+
+
+def _exchange_entra_auth_code_token(
+    config: DashboardAuthConfig,
+    *,
+    code: str,
+    code_verifier: str,
+) -> dict[str, Any]:
+    payload = {
+        "client_id": config.entra_client_id or "",
+        "scope": config.entra_scopes,
+        "code": code,
+        "redirect_uri": config.entra_redirect_uri or "",
+        "grant_type": "authorization_code",
+        "code_verifier": code_verifier,
+    }
+    if config.entra_client_secret:
+        payload["client_secret"] = config.entra_client_secret
+    try:
+        return _post_entra_form(config, "token", payload)
+    except HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            raise
+        raise RuntimeError(str(body.get("error_description") or body.get("error") or exc)) from exc
+
+
 def _poll_entra_device_token(config: DashboardAuthConfig, device_code: str) -> dict[str, Any]:
     try:
         return _post_entra_form(
@@ -742,6 +885,15 @@ def _post_entra_form(config: DashboardAuthConfig, endpoint: str, payload: dict[s
     if not isinstance(parsed, dict):
         raise RuntimeError("Entra token endpoint returned a non-object response")
     return parsed
+
+
+def _pkce_code_verifier() -> str:
+    return secrets.token_urlsafe(64)[:96]
+
+
+def _pkce_code_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def _decode_jwt_payload(token: str) -> dict[str, Any]:
