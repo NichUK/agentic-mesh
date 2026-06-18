@@ -103,7 +103,7 @@ def test_dashboard_auth_redirects_to_login_when_local_token_is_configured() -> N
     class Handler(V3StatusHandler):
         pass
 
-    Handler.dashboard_auth = DashboardAuthConfig(enabled=True, bearer_token="secret")
+    Handler.dashboard_auth = DashboardAuthConfig(enabled=True, auth_mode="token", bearer_token="secret")
     handler = object.__new__(Handler)
     handler.headers = {}
     handler.path = "/artifact-viewer/work-1/index.md"
@@ -124,6 +124,7 @@ def test_dashboard_auth_accepts_bearer_or_trusted_proxy_user() -> None:
 
     Handler.dashboard_auth = DashboardAuthConfig(
         enabled=True,
+        auth_mode="token",
         bearer_token="secret",
         allowed_users=("nich@example.test",),
         trusted_user_headers=("X-Test-User",),

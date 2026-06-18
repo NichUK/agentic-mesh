@@ -133,7 +133,7 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         if not config.enabled:
             return True
         auth_header = self.headers.get("Authorization") or ""
-        if config.bearer_token and auth_header.startswith("Bearer "):
+        if config.auth_mode == "token" and config.bearer_token and auth_header.startswith("Bearer "):
             supplied = auth_header.removeprefix("Bearer ").strip()
             if hmac.compare_digest(supplied, config.bearer_token):
                 return True
@@ -163,7 +163,9 @@ class V3StatusHandler(BaseHTTPRequestHandler):
 
     def _send_auth_required(self) -> None:
         config = self.dashboard_auth
-        if config.bearer_token or (config.auth_mode == "entra" and config.entra_client_id):
+        if (config.auth_mode == "token" and config.bearer_token) or (
+            config.auth_mode == "entra" and config.entra_client_id
+        ):
             next_path = _safe_dashboard_next_path(self.path)
             self.send_response(HTTPStatus.FOUND)
             self.send_header("Location", f"/login?next={quote(next_path, safe='/?:=&%')}")
@@ -217,7 +219,7 @@ class V3StatusHandler(BaseHTTPRequestHandler):
 
     def _handle_dashboard_login(self) -> None:
         config = self.dashboard_auth
-        if not config.enabled or not config.bearer_token:
+        if not config.enabled or config.auth_mode != "token" or not config.bearer_token:
             self._send_auth_required()
             return
         length = int(self.headers.get("Content-Length") or 0)
