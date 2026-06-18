@@ -4,7 +4,9 @@ import argparse
 import json
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from agentic_mesh_v3.agent import AgentMemory
 from agentic_mesh_v3.agent import DatabaseConversationContext
@@ -1441,7 +1443,7 @@ def _run_agent_once(args: argparse.Namespace):
             conversation_context=DatabaseConversationContext(db),
             work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
             status_reporter=DatabaseAgentStatusReporter(db),
-            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            terminal_tool_call_audit=_terminal_tool_call_audit(args, db=db, project_config=config, broker=broker),
         )
         return service.run_until_idle(max_messages=args.max_messages)
     finally:
@@ -1476,7 +1478,7 @@ def _run_agent_service(args: argparse.Namespace):
             conversation_context=DatabaseConversationContext(db),
             work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
             status_reporter=DatabaseAgentStatusReporter(db),
-            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            terminal_tool_call_audit=_terminal_tool_call_audit(args, db=db, project_config=config, broker=broker),
         )
         idle_since: float | None = None
         ticks = 0
@@ -1536,6 +1538,185 @@ def _build_role_agent_service(
         max_delivery_attempts=args.max_delivery_attempts,
         **kwargs,
     )
+
+
+def _terminal_tool_call_audit(
+    args: argparse.Namespace,
+    *,
+    db: V3Database,
+    project_config: V3ProjectConfig,
+    broker: BrokerAdapter,
+) -> DatabaseTerminalToolCallAudit:
+    safe_output_dir = Path(args.runtime_state_dir) / "safe-outputs"
+    importer = SafeOutputJsonlImporter(
+        db=db,
+        safe_output_dir=safe_output_dir,
+        tool_service=V3ToolService(
+            db,
+            _document_library_adapter(args),
+            deployment_targets=_deployment_targets(args),
+            stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
+            broker=broker,
+            broker_stream=project_config.broker.stream,
+        ),
+    )
+    return DatabaseTerminalToolCallAudit(db, safe_output_importer=importer)
+
+
+@dataclass
+class SafeOutputJsonlImporter:
+    db: V3Database
+    safe_output_dir: Path
+    tool_service: V3ToolService
+
+    def import_safe_outputs(self, *, role_instance_id: str, before: object) -> None:
+        before_ids = set(before) if isinstance(before, (frozenset, set)) else set()
+        imported_refs = _imported_safe_output_refs(self.db)
+        imported_signatures = _imported_safe_output_signatures(self.db)
+        for path in sorted(self.safe_output_dir.glob("*.safe-outputs.jsonl")):
+            for record in _read_safe_output_records(path):
+                context = record.get("context")
+                if not isinstance(context, dict):
+                    continue
+                if str(context.get("AGENTIC_MESH_ROLE_INSTANCE_ID") or "") != role_instance_id:
+                    continue
+                import_ref = str(context.get("AGENTIC_MESH_CORRELATION_ID") or "")
+                if not import_ref or import_ref in imported_refs or import_ref in before_ids:
+                    continue
+                tool_name = str(record.get("tool") or "")
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                mapped_tool, mapped_payload = _map_file_safe_output(tool_name, dict(payload))
+                _enrich_file_safe_output_payload(mapped_payload, context)
+                signature = _safe_output_signature(mapped_tool, mapped_payload)
+                if signature in imported_signatures:
+                    continue
+                mapped_payload["_safe_output_import_ref"] = import_ref
+                self.tool_service.call(
+                    role_instance_id=role_instance_id,
+                    tool_name=mapped_tool,
+                    payload=mapped_payload,
+                )
+                imported_refs.add(import_ref)
+                imported_signatures.add(signature)
+
+
+def _read_safe_output_records(path: Path) -> tuple[dict[str, Any], ...]:
+    records: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ()
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            records.append(payload)
+    return tuple(records)
+
+
+def _imported_safe_output_refs(db: V3Database) -> set[str]:
+    refs: set[str] = set()
+    for call in db.list_tool_calls():
+        try:
+            payload = json.loads(str(call.get("payload_json") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        ref = payload.get("_safe_output_import_ref")
+        if ref:
+            refs.add(str(ref))
+    return refs
+
+
+def _imported_safe_output_signatures(db: V3Database) -> set[str]:
+    signatures: set[str] = set()
+    for call in db.list_tool_calls():
+        tool_name = str(call.get("tool_name") or "")
+        try:
+            payload = json.loads(str(call.get("payload_json") or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            signatures.add(_safe_output_signature(tool_name, payload))
+    return signatures
+
+
+def _safe_output_signature(tool_name: str, payload: dict[str, Any]) -> str:
+    semantic_payload = {
+        key: value
+        for key, value in payload.items()
+        if key
+        not in {
+            "_safe_output_import_ref",
+            "correlation_id",
+            "message_id",
+            "source_message_id",
+            "trace_id",
+        }
+    }
+    return json.dumps({"tool": tool_name, "payload": semantic_payload}, sort_keys=True)
+
+
+def _enrich_file_safe_output_payload(payload: dict[str, Any], context: dict[str, Any]) -> None:
+    source_message_id = str(context.get("AGENTIC_MESH_MESSAGE_ID") or "")
+    correlation_id = str(context.get("AGENTIC_MESH_CORRELATION_ID") or "")
+    if source_message_id:
+        payload.setdefault("source_message_id", source_message_id)
+    if correlation_id:
+        payload.setdefault("correlation_id", correlation_id)
+
+
+def _map_file_safe_output(tool_name: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    if tool_name == "handoff.propose":
+        return "handoff.require", _normalise_legacy_handoff_payload(payload)
+    if tool_name == "status.report_completion":
+        message = str(payload.get("message") or payload.get("summary") or "Completed.")
+        mapped = dict(payload)
+        if payload.get("reply_target_ref") or payload.get("target_ref"):
+            mapped["text_markdown"] = message
+            mapped.setdefault("connector", "teams")
+            return "status.reply", mapped
+        mapped["summary"] = message
+        return "status.complete", mapped
+    return tool_name, payload
+
+
+def _normalise_legacy_handoff_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    mapped = dict(payload)
+    for field in ("consulted_roles", "informed_roles"):
+        mapped[field] = _list_from_legacy_value(mapped.get(field), separators=(",", ";"))
+    for field in (
+        "acceptance_criteria",
+        "evidence_requirements",
+        "artifact_links",
+        "open_decisions",
+        "open_risks",
+        "stakeholder_follow_up",
+    ):
+        mapped[field] = _list_from_legacy_value(mapped.get(field), separators=(";",))
+    return mapped
+
+
+def _list_from_legacy_value(value: object, *, separators: tuple[str, ...]) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    parts = [text]
+    for separator in separators:
+        next_parts: list[str] = []
+        for part in parts:
+            next_parts.extend(part.split(separator))
+        parts = next_parts
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _ensure_agent_stream(broker: BrokerAdapter, *, stream: str, role_ids: tuple[str, ...]) -> None:

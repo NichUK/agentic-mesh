@@ -14,6 +14,7 @@ from agentic_mesh_v3.cli import _ensure_agent_stream
 from agentic_mesh_v3.cli import _stakeholder_bridge
 from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
+from agentic_mesh_v3.cli import SafeOutputJsonlImporter
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import BotFrameworkTeamsBridge
 from agentic_mesh_v3.connectors import GraphTeamsBridge
@@ -23,6 +24,7 @@ from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.dogfood_agent_service import WORK_ITEM_ID as AGENT_DOGFOOD_WORK_ITEM_ID
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.reporting import AgentStatus
+from agentic_mesh_v3.tools import V3ToolService
 from agentic_mesh_v3.worker_adapters import CodexCliWorker
 from agentic_mesh_v3.worker_adapters import SafeOutputSubprocessWorker
 
@@ -31,6 +33,93 @@ def _jwt_with_scopes(scopes: str) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode("ascii").rstrip("=")
     payload = base64.urlsafe_b64encode(json.dumps({"scp": scopes}).encode("utf-8")).decode("ascii").rstrip("=")
     return f"{header}.{payload}.signature"
+
+
+def test_safe_output_jsonl_importer_maps_legacy_file_outputs_to_db_tool_calls(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-link-rewrite",
+            title="Artifact viewer link rewrite",
+            description="Rewrite portable document links at render time.",
+            state="waiting_agent",
+            owner_role="delivery-manager",
+            current_phase="delivery-planning",
+            next_action="Coordinate downstream delivery.",
+        )
+        safe_output_dir = tmp_path / "safe-outputs"
+        safe_output_dir.mkdir()
+        role_instance_id = "agentic-mesh-dev.delivery-manager.1"
+        output_path = safe_output_dir / "agent.delivery-manager-159.safe-outputs.jsonl"
+        records = [
+            {
+                "context": {
+                    "AGENTIC_MESH_ROLE_INSTANCE_ID": role_instance_id,
+                    "AGENTIC_MESH_CORRELATION_ID": "legacy-handoff-call",
+                },
+                "tool": "handoff.propose",
+                "payload": {
+                    "work_item_id": "work-link-rewrite",
+                    "target_role": "solution-architect",
+                    "phase": "system-design",
+                    "accountable_role": "solution-architect",
+                    "required_next_action": "Confirm document-link rendering architecture.",
+                    "acceptance_criteria": "relative links render correctly; absolute links are preserved",
+                    "evidence_requirements": "architecture note; implementation handoff",
+                    "artifact_links": "work-items/work-link-rewrite/020-product-definition.md",
+                    "open_decisions": "",
+                    "open_risks": "unsafe path traversal",
+                    "consulted_roles": "security-architect, platform-engineer",
+                    "informed_roles": "project-manager; delivery-manager",
+                    "stakeholder_follow_up": "None before architecture review",
+                },
+            },
+            {
+                "context": {
+                    "AGENTIC_MESH_ROLE_INSTANCE_ID": role_instance_id,
+                    "AGENTIC_MESH_CORRELATION_ID": "legacy-completion-call",
+                },
+                "tool": "status.report_completion",
+                "payload": {
+                    "message": "Delivery planning complete and handed to Solution Architect.",
+                    "work_item_id": "work-link-rewrite",
+                },
+            },
+            {
+                "context": {
+                    "AGENTIC_MESH_ROLE_INSTANCE_ID": role_instance_id,
+                    "AGENTIC_MESH_CORRELATION_ID": "legacy-completion-call-retry",
+                },
+                "tool": "status.report_completion",
+                "payload": {
+                    "message": "Delivery planning complete and handed to Solution Architect.",
+                    "work_item_id": "work-link-rewrite",
+                },
+            },
+        ]
+        output_path.write_text("\n".join(json.dumps(record) for record in records), encoding="utf-8")
+        importer = SafeOutputJsonlImporter(
+            db=db,
+            safe_output_dir=safe_output_dir,
+            tool_service=V3ToolService(db),
+        )
+
+        importer.import_safe_outputs(role_instance_id=role_instance_id, before=frozenset())
+        importer.import_safe_outputs(role_instance_id=role_instance_id, before=frozenset())
+        calls = db.list_tool_calls()
+        detail = db.work_item_detail("work-link-rewrite")
+    finally:
+        db.close()
+
+    assert {call["tool_name"] for call in calls} == {"handoff.require", "status.complete"}
+    assert len(calls) == 2
+    assert all(json.loads(str(call["payload_json"])).get("_safe_output_import_ref") for call in calls)
+    assert detail is not None
+    assert detail.state == "waiting_agent"
+    assert detail.owner_role == "solution-architect"
+    assert detail.current_phase == "system-design"
+    assert detail.next_action == "Confirm document-link rendering architecture."
 
 
 def test_cli_validate_topology_reports_valid_paths(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
