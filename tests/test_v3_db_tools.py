@@ -823,6 +823,51 @@ def test_v3_release_deploy_success_moves_work_to_released(tmp_path: Path) -> Non
     assert state_events == ["deploying", "released"]
 
 
+def test_v3_release_deploy_can_start_from_release_waiting_agent(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Deploy runtime",
+            description="Needs runtime deployment.",
+            state="waiting_agent",
+            owner_role="release-manager",
+            current_phase="deployment",
+        )
+        tools = V3ToolService(
+            db,
+            deployment_targets={
+                "runtime": CommandDeploymentTarget(
+                    target_id="runtime",
+                    command=(sys.executable, "-c", "print('deployment ok')"),
+                    rollback_plan="Restore previous runtime image.",
+                )
+            },
+        )
+
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.deploy",
+            payload={
+                "work_item_id": "work-1",
+                "target_id": "runtime",
+                "scope": "Runtime release",
+                "version_ref": "commit:abc123",
+                "approval_ref": "approval-release-1",
+                "smoke_evidence": "GET /healthz passed.",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "released"
+    assert detail.owner_role == "release-manager"
+    assert detail.releases[0].status == "deployed"
+
+
 def test_v3_release_deploy_unknown_target_fails_before_recording(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
@@ -1342,6 +1387,15 @@ def test_v3_tool_service_records_decisions_and_risks_as_governance_evidence(tmp_
             },
         )
         tools.call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="decision.record",
+            payload={
+                "work_item_id": "work-1",
+                "decision": "Product scope remains unchanged after release validation feedback.",
+                "target_ref": "product-release-check",
+            },
+        )
+        tools.call(
             role_instance_id="agentic-mesh-dev.security-architect.1",
             tool_name="risk.register",
             payload={
@@ -1358,13 +1412,23 @@ def test_v3_tool_service_records_decisions_and_risks_as_governance_evidence(tmp_
         db.close()
 
     assert detail is not None
-    records = {record.record_type: record for record in detail.governance_records}
-    assert records["decision.record"].summary == "Use NATS JetStream as the first V3 broker adapter."
-    assert records["decision.record"].status == "decision_recorded"
-    assert records["decision.record"].target_ref == "ADR-v3-broker"
-    assert records["risk.register"].summary == "Graph token scopes may block Teams installation automation."
-    assert records["risk.register"].status == "risk_open"
-    assert records["risk.register"].target_ref == "risk-identity-consent"
+    decision_records = [record for record in detail.governance_records if record.record_type == "decision.record"]
+    risk_records = {record.record_type: record for record in detail.governance_records if record.record_type != "decision.record"}
+    assert any(
+        record.summary == "Use NATS JetStream as the first V3 broker adapter."
+        and record.status == "decision_recorded"
+        and record.target_ref == "ADR-v3-broker"
+        for record in decision_records
+    )
+    assert any(
+        record.summary == "Product scope remains unchanged after release validation feedback."
+        and record.status == "decision_recorded"
+        and record.target_ref == "product-release-check"
+        for record in decision_records
+    )
+    assert risk_records["risk.register"].summary == "Graph token scopes may block Teams installation automation."
+    assert risk_records["risk.register"].status == "risk_open"
+    assert risk_records["risk.register"].target_ref == "risk-identity-consent"
     decision_register = (tmp_path / "documents" / "decisions" / "index.md").read_text(encoding="utf-8")
     risk_register = (tmp_path / "documents" / "risks" / "index.md").read_text(encoding="utf-8")
     assert "# Decision Register" in decision_register
