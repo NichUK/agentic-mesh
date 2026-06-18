@@ -71,6 +71,8 @@ class V3ToolService:
         terminal: bool | None = None,
     ) -> ToolResult:
         payload = dict(payload)
+        if tool_name == "noop" and not payload.get("reason"):
+            payload["reason"] = "No durable action was applicable for this assignment."
         if tool_name == "stakeholder.ask_question" and not payload.get("record_id"):
             payload["record_id"] = f"question-{uuid4().hex}"
         with self.telemetry.span(
