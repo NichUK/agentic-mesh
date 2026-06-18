@@ -193,6 +193,21 @@ def test_lifecycle_keeps_minimum_warm_instance_running() -> None:
     assert "minimum warm pool" in decision.reason
 
 
+def test_lifecycle_retries_failed_agent_with_pending_inbox() -> None:
+    decision = plan_lifecycle_action(
+        status=AgentStatus(
+            role_instance_id="agentic-mesh-dev.delivery-manager.1",
+            container_state="lifecycle_failed",
+            heartbeat_at=None,
+            inbox_depth=1,
+        ),
+        policy=HibernationPolicy(min_warm_instances_per_role=0),
+    )
+
+    assert decision.action == "wake"
+    assert decision.reason == "retry failed lifecycle action for pending inbox messages"
+
+
 def test_lifecycle_batch_hibernates_only_idle_instances_above_warm_pool() -> None:
     decisions = plan_lifecycle_actions(
         [
@@ -292,6 +307,7 @@ def test_compose_lifecycle_command_maps_wake_and_hibernate_to_compose(tmp_path: 
     config = ComposeLifecycleConfig(
         compose_files=(tmp_path / "compose.yml", tmp_path / "override.yml"),
         working_directory=tmp_path,
+        project_name="agentic-mesh",
     )
 
     wake = compose_lifecycle_command(
@@ -308,6 +324,8 @@ def test_compose_lifecycle_command_maps_wake_and_hibernate_to_compose(tmp_path: 
     assert wake.command == (
         "docker",
         "compose",
+        "--project-name",
+        "agentic-mesh",
         "-f",
         str(tmp_path / "compose.yml"),
         "-f",

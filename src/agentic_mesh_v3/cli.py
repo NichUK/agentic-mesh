@@ -134,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     lifecycle_apply_parser.add_argument("--idle-after-seconds", type=int, default=1800)
     lifecycle_apply_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     lifecycle_apply_parser.add_argument("--compose-file", type=Path, action="append", required=True)
+    lifecycle_apply_parser.add_argument("--compose-project-name")
     lifecycle_apply_parser.add_argument("--working-directory", type=Path)
     lifecycle_apply_parser.add_argument("--timeout-seconds", type=int, default=300)
     lifecycle_apply_parser.add_argument("--execute", action="store_true")
@@ -144,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_tick_parser.add_argument("--idle-after-seconds", type=int, default=1800)
     supervisor_tick_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_tick_parser.add_argument("--compose-file", type=Path, action="append")
+    supervisor_tick_parser.add_argument("--compose-project-name")
     supervisor_tick_parser.add_argument("--working-directory", type=Path)
     supervisor_tick_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_tick_parser.add_argument("--execute", action="store_true")
@@ -157,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_loop_parser.add_argument("--idle-after-seconds", type=int, default=1800)
     supervisor_loop_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_loop_parser.add_argument("--compose-file", type=Path, action="append")
+    supervisor_loop_parser.add_argument("--compose-project-name")
     supervisor_loop_parser.add_argument("--working-directory", type=Path)
     supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_loop_parser.add_argument("--execute", action="store_true")
@@ -172,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_service_parser.add_argument("--idle-after-seconds", type=int, default=1800)
     supervisor_service_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_service_parser.add_argument("--compose-file", type=Path, action="append")
+    supervisor_service_parser.add_argument("--compose-project-name")
     supervisor_service_parser.add_argument("--working-directory", type=Path)
     supervisor_service_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_service_parser.add_argument("--execute", action="store_true")
@@ -464,6 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                     compose_files=tuple(args.compose_file),
                     working_directory=args.working_directory,
                     timeout_seconds=args.timeout_seconds,
+                    project_name=args.compose_project_name,
                 )
             ).apply(decisions, execute=args.execute)
             for result in results:
@@ -922,6 +927,7 @@ def _run_supervisor_lifecycle(
                 compose_files=tuple(args.compose_file),
                 working_directory=args.working_directory,
                 timeout_seconds=args.timeout_seconds,
+                project_name=args.compose_project_name,
             )
         ).apply(decisions, execute=args.execute)
         for result in results:

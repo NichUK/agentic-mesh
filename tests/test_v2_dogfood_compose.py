@@ -84,6 +84,7 @@ def test_dogfood_compose_runs_v3_supervisor_with_broker_wake() -> None:
     assert "--execute" in command
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.yml" in command
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml" in command
+    assert "--compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh}" in command
 
 
 def test_dogfood_compose_defines_v3_dogfood_proof_runner() -> None:
