@@ -48,6 +48,12 @@ def test_dogfood_compose_defines_v3_runtime_profile() -> None:
     assert "AGENTIC_MESH_ONEDRIVE_TOKEN" in service["environment"]
     assert "AGENTIC_MESH_ONEDRIVE_DRIVE_ID" in service["environment"]
     assert "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID" in service["environment"]
+    assert "AGENTIC_MESH_TENANT_ID" in service["environment"]
+    assert "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT" in service["environment"]
+    assert "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL" in service["environment"]
+    assert "AGENTIC_MESH_PROJECT_TEAM_ID" in service["environment"]
+    assert "AGENTIC_MESH_PROJECT_CHANNEL_ID" in service["environment"]
+    assert "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID" in service["environment"]
 
 
 def test_dogfood_compose_defines_v3_nats_profile() -> None:
@@ -115,6 +121,12 @@ def test_linuxch_deploy_script_preserves_v3_live_environment() -> None:
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT",
+        "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL",
+        "AGENTIC_MESH_TENANT_ID",
+        "AGENTIC_MESH_PROJECT_TEAM_ID",
+        "AGENTIC_MESH_PROJECT_CHANNEL_ID",
+        "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID",
         "AGENTIC_MESH_V3_STATUS_PORT",
         "AGENTIC_MESH_NATS_STATE_HOST_PATH",
     ]:
@@ -136,11 +148,27 @@ def test_dogfood_compose_env_example_lists_required_v3_live_inputs() -> None:
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_SENDER_USER_ID",
+        "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT",
+        "AGENTIC_MESH_TEAMS_BOT_SERVICE_URL",
+        "AGENTIC_MESH_TENANT_ID",
+        "AGENTIC_MESH_PROJECT_TEAM_ID",
+        "AGENTIC_MESH_PROJECT_CHANNEL_ID",
+        "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID",
         "AGENTIC_MESH_V3_STATUS_PORT",
         "AGENTIC_MESH_NATS_STATE_HOST_PATH",
     ]:
         assert f"{name}=" in env_example
     assert "AGENTIC_MESH_V3_STATUS_PORT=8100" in env_example
+
+
+def test_linuxch_v3_project_install_script_cleans_up_graph_token_file() -> None:
+    script = Path("scripts/install-linuxch-v3-project.ps1").read_text(encoding="utf-8")
+
+    assert "agentic_mesh_v3.project_install_cli" in script
+    assert 'trap cleanup EXIT' in script
+    assert 'rm -f "`$token_file"' in script
+    assert 'printf "{\\"access_token\\":\\"%s\\"}" "`$AGENTIC_MESH_TEAMS_TOKEN"' in script
+    assert 'chmod 600 "`$token_file"' in script
 
 
 def test_linuxch_graph_env_refresh_helper_requests_required_scopes_and_updates_remote_env() -> None:
@@ -168,7 +196,7 @@ def test_linuxch_graph_env_refresh_helper_requests_required_scopes_and_updates_r
     assert "oauth2/v2.0/token" in script
     assert script.count("-ErrorAction Stop") >= 2
     assert "ErrorDetails.Message" in script
-    assert '$remoteScript = $remoteScript -replace "`r`n", "`n"' in script
+    assert '$remoteScript = $remoteScript -replace "`r", ""' in script
     assert 'authorization_pending")' in script
     assert 'slow_down")' in script
     assert "--use-device-code" not in script

@@ -18,6 +18,14 @@ $scopes = @(
     "https://graph.microsoft.com/Chat.ReadWrite",
     "https://graph.microsoft.com/ChatMessage.Send",
     "https://graph.microsoft.com/ChannelMessage.Send",
+    "https://graph.microsoft.com/AppCatalog.ReadWrite.All",
+    "https://graph.microsoft.com/Team.ReadBasic.All",
+    "https://graph.microsoft.com/Channel.ReadBasic.All",
+    "https://graph.microsoft.com/Group.Read.All",
+    "https://graph.microsoft.com/TeamsAppInstallation.ReadWriteForTeam",
+    "https://graph.microsoft.com/TeamsAppInstallation.ReadWriteForUser",
+    "https://graph.microsoft.com/TeamsAppInstallation.ReadForUser",
+    "https://graph.microsoft.com/Application.ReadWrite.All",
     "offline_access"
 )
 
@@ -251,7 +259,7 @@ os.chmod(tmp_path, 0o600)
 tmp_path.replace(env_path)
 PY
 "@
-$remoteScript = $remoteScript -replace "`r`n", "`n"
+$remoteScript = $remoteScript -replace "`r", ""
 if (-not $remoteScript.EndsWith("`n")) {
     $remoteScript += "`n"
 }
@@ -259,7 +267,8 @@ if (-not $remoteScript.EndsWith("`n")) {
 $env:payload_b64 = $payload
 $env:env_path = $EnvPath
 try {
-    $remoteScript | ssh $LinuxHost "bash -s"
+    $scriptPayload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
+    ssh $LinuxHost "printf '%s' '$scriptPayload' | base64 -d | bash -s"
 }
 finally {
     Remove-Item Env:\payload_b64 -ErrorAction SilentlyContinue

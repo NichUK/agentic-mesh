@@ -579,6 +579,7 @@ def test_cli_preflight_live_accepts_bot_framework_env(
     capsys,
 ) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("AGENTIC_MESH_ONEDRIVE_TOKEN", _jwt_with_scopes("Files.ReadWrite.All"))
+    monkeypatch.setenv("AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT", "https://agentic-mesh.example/teams/activity")
     monkeypatch.setenv("AGENTIC_MESH_TEAMS_BOT_SERVICE_URL", "https://smba.test/teams")
     monkeypatch.setenv("AGENTIC_MESH_TENANT_ID", "tenant-1")
     project_config = tmp_path / "project.yaml"

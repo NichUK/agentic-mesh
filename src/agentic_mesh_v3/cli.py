@@ -54,6 +54,10 @@ from agentic_mesh_v3.live_preflight import run_live_preflight
 from agentic_mesh_v3.memory import DatabaseRoleMemory
 from agentic_mesh_v3.observability import TelemetrySettings
 from agentic_mesh_v3.observability import configure_observability
+from agentic_mesh_v3.project_install import AzureCliGraphClient
+from agentic_mesh_v3.project_install import InstallOptions
+from agentic_mesh_v3.project_install import TokenGraphClient
+from agentic_mesh_v3.project_install import run_project_install
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.project_config import resolve_project_flow_config_path
 from agentic_mesh_v3.project_config import V3ProjectConfig
@@ -90,6 +94,39 @@ def main(argv: list[str] | None = None) -> int:
     broker_inspect_parser.add_argument("--stream")
     broker_inspect_parser.add_argument("--consumer")
     broker_inspect_parser.add_argument("--limit", type=int, default=20)
+    install_parser = subparsers.add_parser(
+        "install-project",
+        help="Reconcile V3 project connector resources such as Teams, Entra apps, channels, and role app installs.",
+    )
+    install_parser.add_argument("--project-file", type=Path, required=True)
+    install_parser.add_argument("--organization-file", type=Path)
+    install_parser.add_argument(
+        "--graph-token-file",
+        type=Path,
+        help="JSON file containing a Graph access_token. Use when Azure CLI cannot request the needed Teams scopes.",
+    )
+    install_parser.add_argument(
+        "--teams-app-package-root",
+        type=Path,
+        help="Folder containing published-apps.json for project Teams app package ids.",
+    )
+    install_parser.add_argument(
+        "--secret-env-file",
+        type=Path,
+        help="Env file where generated role bot credentials may be stored when explicitly allowed.",
+    )
+    install_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply allowed tenant mutations. Without this flag, only a plan/audit is produced.",
+    )
+    install_parser.add_argument("--allow-create-team", action="store_true")
+    install_parser.add_argument("--allow-create-channel", action="store_true")
+    install_parser.add_argument("--allow-register-apps", action="store_true")
+    install_parser.add_argument("--allow-register-bot-services", action="store_true")
+    install_parser.add_argument("--allow-install-apps", action="store_true")
+    install_parser.add_argument("--allow-uninstall-stale", action="store_true")
+    install_parser.add_argument("--allow-secret-rotation", action="store_true")
     lifecycle_plan_parser = subparsers.add_parser("lifecycle-plan")
     lifecycle_plan_parser.add_argument("--idle-after-seconds", type=int, default=1800)
     lifecycle_plan_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
@@ -257,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     topology_parser.add_argument("--local-dev-override", action="store_true")
 
     args = parser.parse_args(argv)
-    configure_observability(TelemetrySettings.from_env(service_name=f"agentic-mesh-v3.{args.command}"))
+    telemetry = configure_observability(TelemetrySettings.from_env(service_name=f"agentic-mesh-v3.{args.command}"))
     if args.command == "init-db":
         db = V3Database(args.db)
         try:
@@ -347,6 +384,32 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "install-project":
+        with telemetry.span("v3.cli.install_project", command=args.command):
+            graph_client = (
+                TokenGraphClient.from_file(args.graph_token_file)
+                if args.graph_token_file is not None
+                else AzureCliGraphClient()
+            )
+            result = run_project_install(
+                graph_client=graph_client,
+                project_file=args.project_file,
+                organization_file=args.organization_file,
+                options=InstallOptions(
+                    apply=bool(args.apply),
+                    allow_create_team=bool(args.allow_create_team),
+                    allow_create_channel=bool(args.allow_create_channel),
+                    allow_register_apps=bool(args.allow_register_apps),
+                    allow_register_bot_services=bool(args.allow_register_bot_services),
+                    allow_install_apps=bool(args.allow_install_apps),
+                    allow_uninstall_stale=bool(args.allow_uninstall_stale),
+                    allow_secret_rotation=bool(args.allow_secret_rotation),
+                ),
+                teams_app_package_root=args.teams_app_package_root,
+                secret_env_file=args.secret_env_file,
+            )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["status"] in {"ok", "planned"} else 1
     if args.command == "lifecycle-plan":
         if args.idle_after_seconds < 1:
             raise ValueError("--idle-after-seconds must be positive")
