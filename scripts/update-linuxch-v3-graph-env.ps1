@@ -267,7 +267,8 @@ if (-not $remoteScript.EndsWith("`n")) {
 $env:payload_b64 = $payload
 $env:env_path = $EnvPath
 try {
-    $remoteScript | ssh $LinuxHost "bash -s"
+    $scriptPayload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
+    ssh $LinuxHost "printf '%s' '$scriptPayload' | base64 -d | bash -s"
 }
 finally {
     Remove-Item Env:\payload_b64 -ErrorAction SilentlyContinue

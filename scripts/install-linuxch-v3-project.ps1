@@ -63,4 +63,5 @@ if (-not $remoteScript.EndsWith("`n")) {
     $remoteScript += "`n"
 }
 
-$remoteScript | ssh $LinuxHost "bash -s"
+$scriptPayload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($remoteScript))
+ssh $LinuxHost "printf '%s' '$scriptPayload' | base64 -d | bash -s"
