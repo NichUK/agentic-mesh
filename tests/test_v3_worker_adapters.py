@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import sys
 
 from agentic_mesh_v3.agent import AgentMessage
@@ -54,6 +55,19 @@ def test_safe_output_subprocess_worker_rejects_malformed_stdout(tmp_path: Path) 
         assert "stdout must be JSON" in str(exc)
     else:
         raise AssertionError("malformed worker stdout should raise")
+
+
+def test_safe_output_subprocess_worker_times_out_process_tree(tmp_path: Path) -> None:
+    worker_script = tmp_path / "worker.py"
+    worker_script.write_text("import time\ntime.sleep(10)\n", encoding="utf-8")
+    worker = SafeOutputSubprocessWorker(command=(sys.executable, str(worker_script)), timeout_seconds=1)
+
+    try:
+        worker.run("prompt", AgentMessage(message_id="msg-1", subject="agent.product-manager", payload={}))
+    except subprocess.TimeoutExpired as exc:
+        assert "worker subprocess timed out after 1 seconds" in str(exc.stderr)
+    else:
+        raise AssertionError("timed-out worker should raise")
 
 
 def test_build_worker_adapter_creates_subprocess_worker() -> None:

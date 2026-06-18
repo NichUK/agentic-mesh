@@ -52,6 +52,16 @@ def test_v3_worker_instructions_require_forward_route_or_terminal_closure() -> N
     assert "one of the safe-output calls must establish who owns the next step" in normalized_safe_outputs
 
 
+def test_v3_system_prompt_restricts_broad_filesystem_searches() -> None:
+    system_prompt = Path("config/prompts/worker/system-security.xml").read_text(encoding="utf-8")
+    normalized = " ".join(system_prompt.split())
+
+    assert "search only the assigned source repository" in normalized
+    assert "Do not recursively search `/mesh`" in normalized
+    assert "runtime state folders" in normalized
+    assert "mounted credential folders" in normalized
+
+
 def test_v3_role_templates_do_not_reference_removed_safe_output_tools() -> None:
     combined = "\n".join(path.read_text(encoding="utf-8") for path in Path("config/roles").glob("*.yaml"))
 

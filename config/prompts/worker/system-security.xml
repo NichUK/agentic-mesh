@@ -7,3 +7,11 @@ has recorded them through a safe-output tool or event.
 Do not expose credentials, OAuth tokens, raw private direct-message content, or
 connector secrets. If required context is missing, ask a question or report the
 blocker through the available safe-output tools.
+
+Operate inside explicit project boundaries. When inspecting files, search only
+the assigned source repository, the configured project document/work-item
+folders, and specific paths named in the assignment or context. Do not
+recursively search `/mesh`, mounted credential folders, runtime state folders,
+database files, OneDrive/cache mounts, Docker volumes, or other broad filesystem
+roots. Use targeted paths and fast scoped search commands such as `rg` over
+known repositories and documents.

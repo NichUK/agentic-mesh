@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from subprocess import CompletedProcess
 
 from agentic_mesh_v3.agent import AgentMessage
 from agentic_mesh_v3.agent import AgentWorker
@@ -22,7 +25,7 @@ class SafeOutputSubprocessWorker:
     timeout_seconds: int = 14400
 
     def run(self, prompt: str, message: AgentMessage) -> list[str]:
-        completed = subprocess.run(
+        completed = _run_worker_command(
             self.command,
             input=json.dumps(
                 {
@@ -37,7 +40,6 @@ class SafeOutputSubprocessWorker:
             capture_output=True,
             text=True,
             timeout=self.timeout_seconds,
-            check=False,
         )
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
@@ -61,7 +63,7 @@ class CodexCliWorker:
     sandbox_mode: str | None = None
 
     def run(self, prompt: str, message: AgentMessage) -> list[str]:
-        completed = subprocess.run(
+        completed = _run_worker_command(
             _codex_command_with_options(
                 self.command,
                 model=self.model,
@@ -72,7 +74,6 @@ class CodexCliWorker:
             capture_output=True,
             text=True,
             timeout=self.timeout_seconds,
-            check=False,
         )
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
@@ -182,6 +183,69 @@ def _validated_command(command: tuple[str, ...], *, adapter_name: str) -> tuple[
         if not isinstance(item, str) or not item.strip():
             raise ValueError(f"{adapter_name} command item {index} must be a non-empty string")
     return command
+
+
+def _run_worker_command(
+    command: tuple[str, ...] | list[str],
+    *,
+    input: str,
+    capture_output: bool,
+    text: bool,
+    timeout: int,
+) -> CompletedProcess[str]:
+    """Run a worker command and tear down its process tree on timeout."""
+
+    if not capture_output or not text:
+        raise ValueError("worker commands must capture text output")
+    popen_kwargs: dict[str, object] = {
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+    else:
+        popen_kwargs["start_new_session"] = True
+    process = subprocess.Popen(list(command), **popen_kwargs)  # noqa: S603 - command is validated at config load.
+    try:
+        stdout, stderr = process.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_tree(process)
+        stdout, stderr = process.communicate()
+        timeout_detail = f"worker subprocess timed out after {timeout} seconds"
+        stderr = "\n".join(part for part in (stderr, timeout_detail) if part)
+        raise subprocess.TimeoutExpired(
+            cmd=exc.cmd,
+            timeout=exc.timeout,
+            output=stdout,
+            stderr=stderr,
+        ) from exc
+    return CompletedProcess(list(command), process.returncode, stdout, stderr)
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(  # noqa: S603,S607 - best-effort local worker cleanup.
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
 
 
 def _tool_calls_from_stdout(stdout: str) -> list[str]:
