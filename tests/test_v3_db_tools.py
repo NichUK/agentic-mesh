@@ -2218,7 +2218,6 @@ def test_v3_tool_service_terminal_tools_require_context_before_recording(tmp_pat
         tools = V3ToolService(db)
 
         for tool_name, expected in (
-            ("noop", "reason is required for noop"),
             ("status.complete", "summary is required for status.complete"),
             ("report.incomplete", "reason is required for report.incomplete"),
         ):
@@ -2238,6 +2237,23 @@ def test_v3_tool_service_terminal_tools_require_context_before_recording(tmp_pat
         db.close()
 
     assert calls == []
+
+
+def test_v3_tool_service_noop_defaults_missing_reason(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        result = V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.delivery-manager.1",
+            tool_name="noop",
+            payload={},
+        )
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert result.tool_name == "noop"
+    assert calls[0]["payload"]["reason"] == "No durable action was applicable for this assignment."
 
 
 def test_v3_db_records_approval_response(tmp_path: Path) -> None:

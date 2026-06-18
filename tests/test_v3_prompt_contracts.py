@@ -44,6 +44,8 @@ def test_v3_worker_instructions_require_forward_route_or_terminal_closure() -> N
     normalized_safe_outputs = " ".join(safe_outputs.split())
 
     assert "Do not leave work silently parked with yourself" in instructions
+    assert "All agents share these standing operating instructions" in instructions
+    assert "common baseline safe-output tool set" in normalized_instructions
     assert "explicitly record that this assignment is terminal/end-of-flow" in instructions
     assert "create the next handoff through safe-output tools before finishing" in instructions
     assert "Project Manager for governance/progression" in normalized_instructions
