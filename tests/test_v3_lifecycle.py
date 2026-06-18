@@ -128,6 +128,38 @@ def test_lifecycle_wakes_hibernated_agent_with_inbox() -> None:
     assert "pending inbox" in decision.reason
 
 
+def test_lifecycle_keeps_missing_agent_asleep_without_inbox_or_warm_pool() -> None:
+    decision = plan_lifecycle_action(
+        status=AgentStatus(
+            role_instance_id="agentic-mesh-dev.solution-architect.1",
+            container_state="missing",
+            heartbeat_at=None,
+            inbox_depth=0,
+        ),
+        policy=HibernationPolicy(min_warm_instances_per_role=0),
+        warm_instances_for_role=0,
+    )
+
+    assert decision.action == "none"
+    assert "configured but asleep" in decision.reason
+
+
+def test_lifecycle_starts_missing_agent_with_pending_inbox() -> None:
+    decision = plan_lifecycle_action(
+        status=AgentStatus(
+            role_instance_id="agentic-mesh-dev.solution-architect.1",
+            container_state="missing",
+            heartbeat_at=None,
+            inbox_depth=1,
+        ),
+        policy=HibernationPolicy(min_warm_instances_per_role=0),
+        warm_instances_for_role=0,
+    )
+
+    assert decision.action == "start"
+    assert "pending inbox" in decision.reason
+
+
 def test_lifecycle_hibernates_idle_agent_when_warm_pool_allows() -> None:
     decision = plan_lifecycle_action(
         status=AgentStatus(

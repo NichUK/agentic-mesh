@@ -5,11 +5,21 @@ import yaml
 
 V3_PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml")
 V3_LIVE_ROLE_IDS = {
+    "business-analyst",
+    "delivery-manager",
+    "enterprise-architect",
+    "platform-engineer",
     "product-manager",
+    "prompt-engineer",
     "project-manager",
+    "research-analyst",
+    "security-architect",
+    "solution-architect",
     "engineering",
     "qa-engineer",
     "release-manager",
+    "technical-writer",
+    "ux-designer",
 }
 
 
@@ -173,11 +183,11 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
 
     assert 'AGENTIC_MESH_V3_STATUS_PORT:=8100' in script
     assert 'export AGENTIC_MESH_FORCE_V3_STATUS_PORT="$AGENTIC_MESH_V3_STATUS_PORT"' in script
-    assert "AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor agentic-mesh-dev-product-manager-1" in script
-    assert "agentic-mesh-dev-project-manager-1" in script
-    assert "agentic-mesh-dev-engineering-1" in script
-    assert "agentic-mesh-dev-qa-engineer-1" in script
-    assert "agentic-mesh-dev-release-manager-1" in script
+    assert "AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor otel-collector" in script
+    assert "AGENTIC_MESH_ROLE_SERVICES:=" in script
+    for role_id in V3_LIVE_ROLE_IDS:
+        assert f"agentic-mesh-dev-{role_id}-1" in script
+    assert "AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE:=1" in script
     assert 'AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS:=1' in script
     assert "agentic-mesh-v2-runtime-1" in script
     assert "agentic-mesh-agentic-mesh-dev-business-analyst-1-1" in script
@@ -190,6 +200,7 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
     assert "materialize-agent-configs" in script
     assert "--agent-config-root /mesh/project/state/v3/agent-configs" in script
     assert "--profile v3 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
+    assert "--profile v3 stop $AGENTIC_MESH_ROLE_SERVICES" in script
 
 
 def test_v3_dogfood_project_config_uses_compose_nats_service_name() -> None:
@@ -223,23 +234,13 @@ def test_v3_dogfood_project_config_exists_for_compose_profile() -> None:
     assert V3_PROJECT_FILE.exists()
 
 
-def test_dogfood_compose_does_not_define_legacy_v2_role_services() -> None:
+def test_dogfood_compose_defines_full_lazy_role_service_team() -> None:
     compose = _load_dogfood_compose()
-    legacy_service_names = {
-        "agentic-mesh-dev-business-analyst-1",
-        "agentic-mesh-dev-prompt-engineer-1",
-        "agentic-mesh-dev-ux-designer-1",
-        "agentic-mesh-dev-enterprise-architect-1",
-        "agentic-mesh-dev-solution-architect-1",
-        "agentic-mesh-dev-security-architect-1",
-        "agentic-mesh-dev-platform-engineer-1",
-        "agentic-mesh-dev-engineering-2",
-        "agentic-mesh-dev-technical-writer-1",
-        "agentic-mesh-dev-delivery-manager-1",
-        "agentic-mesh-dev-research-analyst-1",
-    }
+    service_names = set(compose["services"])
 
-    assert not (legacy_service_names & set(compose["services"]))
+    for role_id in V3_LIVE_ROLE_IDS:
+        assert f"agentic-mesh-dev-{role_id}-1" in service_names
+    assert "agentic-mesh-dev-engineering-2" not in service_names
 
 
 def test_dogfood_compose_runs_v3_live_role_services() -> None:

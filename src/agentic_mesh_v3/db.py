@@ -21,6 +21,7 @@ from agentic_mesh_v3.reporting import ArtifactStatus
 from agentic_mesh_v3.reporting import BacklogItemStatus
 from agentic_mesh_v3.reporting import DeliveryStatus
 from agentic_mesh_v3.reporting import GovernanceRecordStatus
+from agentic_mesh_v3.reporting import MessageTraceStatus
 from agentic_mesh_v3.reporting import ReleaseStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import WorkItemDetail
@@ -127,6 +128,20 @@ class V3Database:
                   completed_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS agent_sessions (
+                  session_id TEXT PRIMARY KEY,
+                  role_instance_id TEXT NOT NULL,
+                  provider TEXT NOT NULL,
+                  provider_session_ref TEXT,
+                  status TEXT NOT NULL,
+                  mode TEXT NOT NULL DEFAULT 'unknown',
+                  last_hydrated_at TEXT,
+                  last_compacted_at TEXT,
+                  prompt_version TEXT,
+                  memory_version TEXT,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS tool_calls (
                   call_id TEXT PRIMARY KEY,
                   role_instance_id TEXT NOT NULL,
@@ -146,6 +161,31 @@ class V3Database:
                   target_ref TEXT NOT NULL,
                   thread_ref TEXT,
                   status TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS message_journal (
+                  journal_id TEXT PRIMARY KEY,
+                  message_id TEXT NOT NULL,
+                  correlation_id TEXT NOT NULL,
+                  trace_id TEXT,
+                  span_id TEXT,
+                  direction TEXT NOT NULL,
+                  stage TEXT NOT NULL,
+                  connector TEXT,
+                  conversation_ref TEXT,
+                  thread_ref TEXT,
+                  source_ref TEXT,
+                  target_role TEXT,
+                  role_instance_id TEXT,
+                  work_item_id TEXT,
+                  queue_item_id TEXT,
+                  broker_subject TEXT,
+                  broker_consumer TEXT,
+                  delivery_attempt INTEGER NOT NULL DEFAULT 0,
+                  status TEXT NOT NULL,
+                  summary TEXT NOT NULL DEFAULT '',
+                  payload_hash TEXT,
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -250,6 +290,16 @@ class V3Database:
             _ensure_column(self.connection, "releases", "smoke_evidence", "TEXT NOT NULL DEFAULT 'not-recorded'")
             _ensure_column(self.connection, "releases", "closure_state", "TEXT NOT NULL DEFAULT 'open'")
             _ensure_column(self.connection, "artifacts", "url", "TEXT")
+            _ensure_column(self.connection, "agent_sessions", "mode", "TEXT NOT NULL DEFAULT 'unknown'")
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_message_journal_message ON message_journal(message_id, created_at)"
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_message_journal_work ON message_journal(work_item_id, created_at)"
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_message_journal_correlation ON message_journal(correlation_id, created_at)"
+            )
 
     def record_event(
         self,
@@ -266,6 +316,159 @@ class V3Database:
             (event_type, aggregate_type, aggregate_id, json.dumps(payload, sort_keys=True)),
         )
 
+    def record_message_journal(
+        self,
+        *,
+        message_id: str,
+        stage: str,
+        direction: str,
+        status: str,
+        correlation_id: str | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+        connector: str | None = None,
+        conversation_ref: str | None = None,
+        thread_ref: str | None = None,
+        source_ref: str | None = None,
+        target_role: str | None = None,
+        role_instance_id: str | None = None,
+        work_item_id: str | None = None,
+        queue_item_id: str | None = None,
+        broker_subject: str | None = None,
+        broker_consumer: str | None = None,
+        delivery_attempt: int = 0,
+        summary: str = "",
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        if not message_id:
+            raise ValueError("message_id is required")
+        if not stage:
+            raise ValueError("message journal stage is required")
+        if not direction:
+            raise ValueError("message journal direction is required")
+        correlation = correlation_id or f"corr-{message_id}"
+        payload_hash = _sha256(json.dumps(payload, sort_keys=True)) if payload is not None else None
+        journal_id = f"journal-{_sha256('|'.join([message_id, stage, direction, status, str(delivery_attempt), summary]))[:24]}"
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT OR IGNORE INTO message_journal(
+                  journal_id, message_id, correlation_id, trace_id, span_id, direction,
+                  stage, connector, conversation_ref, thread_ref, source_ref, target_role,
+                  role_instance_id, work_item_id, queue_item_id, broker_subject, broker_consumer,
+                  delivery_attempt, status, summary, payload_hash
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    journal_id,
+                    message_id,
+                    correlation,
+                    trace_id,
+                    span_id,
+                    direction,
+                    stage,
+                    connector,
+                    conversation_ref,
+                    thread_ref,
+                    source_ref,
+                    target_role,
+                    role_instance_id,
+                    work_item_id,
+                    queue_item_id,
+                    broker_subject,
+                    broker_consumer,
+                    delivery_attempt,
+                    status,
+                    summary,
+                    payload_hash,
+                ),
+            )
+            self.record_event(
+                "message_journal.recorded",
+                "message",
+                message_id,
+                {
+                    "journal_id": journal_id,
+                    "correlation_id": correlation,
+                    "direction": direction,
+                    "stage": stage,
+                    "status": status,
+                    "target_role": target_role,
+                    "role_instance_id": role_instance_id,
+                    "work_item_id": work_item_id,
+                    "queue_item_id": queue_item_id,
+                    "broker_subject": broker_subject,
+                    "broker_consumer": broker_consumer,
+                    "delivery_attempt": delivery_attempt,
+                },
+            )
+        return journal_id
+
+    def upsert_agent_session(
+        self,
+        *,
+        session_id: str,
+        role_instance_id: str,
+        provider: str,
+        status: str,
+        provider_session_ref: str | None = None,
+        mode: str = "unknown",
+        last_hydrated_at: str | None = None,
+        last_compacted_at: str | None = None,
+        prompt_version: str | None = None,
+        memory_version: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO agent_sessions(
+                  session_id, role_instance_id, provider, provider_session_ref, status, mode,
+                  last_hydrated_at, last_compacted_at, prompt_version, memory_version
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  role_instance_id=excluded.role_instance_id,
+                  provider=excluded.provider,
+                  provider_session_ref=excluded.provider_session_ref,
+                  status=excluded.status,
+                  mode=excluded.mode,
+                  last_hydrated_at=excluded.last_hydrated_at,
+                  last_compacted_at=excluded.last_compacted_at,
+                  prompt_version=excluded.prompt_version,
+                  memory_version=excluded.memory_version,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    session_id,
+                    role_instance_id,
+                    provider,
+                    provider_session_ref,
+                    status,
+                    mode,
+                    last_hydrated_at,
+                    last_compacted_at,
+                    prompt_version,
+                    memory_version,
+                ),
+            )
+            self.record_event(
+                "agent_session.upserted",
+                "agent",
+                role_instance_id,
+                {
+                    "session_id": session_id,
+                    "provider": provider,
+                    "provider_session_ref": provider_session_ref,
+                    "status": status,
+                    "mode": mode,
+                    "last_hydrated_at": last_hydrated_at,
+                    "last_compacted_at": last_compacted_at,
+                    "prompt_version": prompt_version,
+                    "memory_version": memory_version,
+                },
+            )
+
     def upsert_backlog_item(
         self,
         *,
@@ -276,6 +479,10 @@ class V3Database:
         owner_role: str,
         linked_work_item_id: str | None = None,
         source_ref: str | None = None,
+        correlation_id: str | None = None,
+        trace_id: str | None = None,
+        created_by_role_instance: str | None = None,
+        origin_message_id: str | None = None,
     ) -> None:
         with self.connection:
             self.connection.execute(
@@ -302,6 +509,11 @@ class V3Database:
                     "status": status,
                     "owner_role": owner_role,
                     "linked_work_item_id": linked_work_item_id,
+                    "source_ref": source_ref,
+                    "correlation_id": correlation_id,
+                    "trace_id": trace_id,
+                    "created_by_role_instance": created_by_role_instance,
+                    "origin_message_id": origin_message_id,
                 },
             )
 
@@ -317,6 +529,11 @@ class V3Database:
         current_phase: str | None = None,
         next_action: str = "",
         governance: dict[str, Any] | None = None,
+        source_ref: str | None = None,
+        correlation_id: str | None = None,
+        trace_id: str | None = None,
+        created_by_role_instance: str | None = None,
+        origin_message_id: str | None = None,
     ) -> None:
         existing = self.connection.execute(
             "SELECT state FROM work_items WHERE work_item_id=?",
@@ -369,7 +586,18 @@ class V3Database:
                 "work_item.upserted",
                 "work_item",
                 work_item_id,
-                {"title": title, "state": state, "owner_role": owner_role, "current_phase": current_phase},
+                {
+                    "title": title,
+                    "state": state,
+                    "owner_role": owner_role,
+                    "current_phase": current_phase,
+                    "source_ref": source_ref,
+                    "correlation_id": correlation_id,
+                    "trace_id": trace_id,
+                    "created_by_role_instance": created_by_role_instance,
+                    "origin_message_id": origin_message_id,
+                    "queue_item_id": queue_item_id,
+                },
             )
 
     def update_work_item_state(
@@ -381,6 +609,11 @@ class V3Database:
         current_phase: str | None = None,
         next_action: str = "",
         governance: dict[str, Any] | None = None,
+        source_ref: str | None = None,
+        correlation_id: str | None = None,
+        trace_id: str | None = None,
+        created_by_role_instance: str | None = None,
+        origin_message_id: str | None = None,
     ) -> None:
         existing = self.connection.execute(
             "SELECT state FROM work_items WHERE work_item_id=?",
@@ -435,6 +668,11 @@ class V3Database:
                     "current_phase": current_phase,
                     "next_action": next_action,
                     "governance": governance,
+                    "source_ref": source_ref,
+                    "correlation_id": correlation_id,
+                    "trace_id": trace_id,
+                    "created_by_role_instance": created_by_role_instance,
+                    "origin_message_id": origin_message_id,
                 },
             )
 
@@ -739,6 +977,20 @@ class V3Database:
                 call_id,
                 {"role_instance_id": role_instance_id, "tool_name": tool_name, "terminal": terminal},
             )
+            source_message_id = _payload_text(payload, "source_message_id") or _payload_text(payload, "message_id")
+            if source_message_id:
+                self.record_message_journal(
+                    message_id=source_message_id,
+                    correlation_id=_payload_text(payload, "correlation_id") or f"corr-{source_message_id}",
+                    direction="agent",
+                    stage="tool_call_recorded",
+                    status="recorded",
+                    role_instance_id=role_instance_id,
+                    work_item_id=_payload_text(payload, "work_item_id"),
+                    queue_item_id=_payload_text(payload, "queue_item_id"),
+                    summary=f"{tool_name} recorded as {call_id}",
+                    payload={"call_id": call_id, "tool_name": tool_name, "terminal": terminal},
+                )
 
     def record_outbound_delivery(
         self,
@@ -1418,7 +1670,12 @@ class V3Database:
                 {"message_id": message_id, "text_sha256": digest},
             )
 
-    def status_snapshot(self, *, project_id: str) -> ReportingSnapshot:
+    def status_snapshot(
+        self,
+        *,
+        project_id: str,
+        configured_role_instance_ids: tuple[str, ...] = (),
+    ) -> ReportingSnapshot:
         now = datetime.now(timezone.utc)
         backlog = tuple(
             BacklogItemStatus(
@@ -1491,11 +1748,13 @@ class V3Database:
         )
         latest_runs = self._latest_agent_runs()
         latest_lifecycle_actions = self._latest_agent_lifecycle_actions()
-        agents = tuple(
-            self._agent_status_from_row(
+        latest_sessions = self._latest_agent_sessions()
+        agents_by_id = {
+            row["role_instance_id"]: self._agent_status_from_row(
                 row,
                 latest_runs.get(row["role_instance_id"]),
                 latest_lifecycle_actions.get(row["role_instance_id"]),
+                latest_sessions.get(row["role_instance_id"]),
             )
             for row in self.connection.execute(
                 """
@@ -1516,7 +1775,38 @@ class V3Database:
                 ORDER BY a.role_instance_id ASC
                 """
             )
-        )
+        }
+        for role_instance_id in configured_role_instance_ids:
+            agents_by_id.setdefault(
+                role_instance_id,
+                AgentStatus(
+                    role_instance_id=role_instance_id,
+                    container_state="missing",
+                    heartbeat_at=None,
+                    last_activity_at=None,
+                    session_status=(
+                        str(latest_sessions[role_instance_id]["status"])
+                        if role_instance_id in latest_sessions
+                        else None
+                    ),
+                    session_provider=(
+                        str(latest_sessions[role_instance_id]["provider"])
+                        if role_instance_id in latest_sessions
+                        else None
+                    ),
+                    session_mode=(
+                        str(latest_sessions[role_instance_id]["mode"])
+                        if role_instance_id in latest_sessions
+                        else None
+                    ),
+                    session_last_hydrated_at=(
+                        str(latest_sessions[role_instance_id]["last_hydrated_at"])
+                        if role_instance_id in latest_sessions and latest_sessions[role_instance_id].get("last_hydrated_at")
+                        else None
+                    ),
+                ),
+            )
+        agents = tuple(agents_by_id[key] for key in sorted(agents_by_id))
         return ReportingSnapshot(
             project_id=project_id,
             backlog=backlog,
@@ -1656,6 +1946,32 @@ class V3Database:
                 (work_item_id,),
             )
         )
+        message_trace = tuple(
+            MessageTraceStatus(
+                message_id=row["message_id"],
+                correlation_id=row["correlation_id"],
+                direction=row["direction"],
+                stage=row["stage"],
+                status=row["status"],
+                target_role=row["target_role"],
+                role_instance_id=row["role_instance_id"],
+                broker_subject=row["broker_subject"],
+                broker_consumer=row["broker_consumer"],
+                summary=row["summary"],
+                created_at=row["created_at"],
+            )
+            for row in self.connection.execute(
+                """
+                SELECT message_id, correlation_id, direction, stage, status, target_role,
+                       role_instance_id, broker_subject, broker_consumer, summary, created_at
+                FROM message_journal
+                WHERE work_item_id=?
+                ORDER BY created_at ASC, journal_id ASC
+                LIMIT 100
+                """,
+                (work_item_id,),
+            )
+        )
         governance = json.loads(work["governance_json"] or "{}")
         context = _governance_context_from_values(
             work_item_id=work["work_item_id"],
@@ -1684,6 +2000,7 @@ class V3Database:
             governance_records=governance_records,
             agent_runs=agent_runs,
             deliveries=deliveries,
+            message_trace=message_trace,
             governance_checklist=governance_checklist,
         )
 
@@ -1794,11 +2111,25 @@ class V3Database:
             latest[row["aggregate_id"]] = payload
         return latest
 
+    def _latest_agent_sessions(self) -> dict[str, dict[str, Any]]:
+        latest: dict[str, dict[str, Any]] = {}
+        for row in self.connection.execute(
+            """
+            SELECT session_id, role_instance_id, provider, provider_session_ref, status, mode,
+                   last_hydrated_at, last_compacted_at, prompt_version, memory_version, updated_at
+            FROM agent_sessions
+            ORDER BY updated_at ASC, session_id ASC
+            """
+        ):
+            latest[row["role_instance_id"]] = dict(row)
+        return latest
+
     def _agent_status_from_row(
         self,
         row: sqlite3.Row,
         latest_run: dict[str, Any] | None,
         latest_lifecycle_action: dict[str, Any] | None,
+        latest_session: dict[str, Any] | None,
     ) -> AgentStatus:
         return AgentStatus(
             role_instance_id=row["role_instance_id"],
@@ -1837,6 +2168,14 @@ class V3Database:
                 else None
             ),
             last_lifecycle_error=_lifecycle_error(latest_lifecycle_action),
+            session_status=str(latest_session["status"]) if latest_session else None,
+            session_provider=str(latest_session["provider"]) if latest_session else None,
+            session_mode=str(latest_session["mode"]) if latest_session else None,
+            session_last_hydrated_at=(
+                str(latest_session["last_hydrated_at"])
+                if latest_session and latest_session.get("last_hydrated_at")
+                else None
+            ),
         )
 
 
@@ -1848,6 +2187,13 @@ def _tuple_strings(value: object) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value if str(item))
     return (str(value),)
+
+
+def _payload_text(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value)
 
 
 def _optional_int(value: object) -> int | None:

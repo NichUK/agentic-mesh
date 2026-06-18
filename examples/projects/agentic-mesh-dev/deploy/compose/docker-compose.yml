@@ -127,9 +127,41 @@ services:
     <<: *agentic-mesh-v3-role-service
     command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id product-manager --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/product-manager/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
 
+  agentic-mesh-dev-business-analyst-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id business-analyst --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/business-analyst/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-delivery-manager-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id delivery-manager --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/delivery-manager/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-enterprise-architect-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id enterprise-architect --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/enterprise-architect/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-platform-engineer-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id platform-engineer --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/platform-engineer/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-prompt-engineer-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id prompt-engineer --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/prompt-engineer/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
   agentic-mesh-dev-project-manager-1:
     <<: *agentic-mesh-v3-role-service
     command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id project-manager --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/project-manager/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-research-analyst-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id research-analyst --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/research-analyst/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-security-architect-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id security-architect --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/security-architect/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-solution-architect-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id solution-architect --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/solution-architect/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
 
   agentic-mesh-dev-engineering-1:
     <<: *agentic-mesh-v3-role-service
@@ -142,6 +174,14 @@ services:
   agentic-mesh-dev-release-manager-1:
     <<: *agentic-mesh-v3-role-service
     command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id release-manager --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/release-manager/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-technical-writer-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id technical-writer --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/technical-writer/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
+
+  agentic-mesh-dev-ux-designer-1:
+    <<: *agentic-mesh-v3-role-service
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-agent-service --role-id ux-designer --instance-id 1 --agent-config-dir /mesh/project/state/v3/agent-configs/ux-designer/1 --runtime-state-dir /mesh/project/state/v3 --max-messages 1 --poll-interval-seconds ${AGENTIC_MESH_ROLE_POLL_SECONDS:-5}
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.101.0

@@ -87,7 +87,7 @@ def _worker_config_checks(project_config: V3ProjectConfig) -> list[PreflightChec
     invalid_codex_model_roles = sorted(
         role.role_id
         for role in project_config.roles
-        if role.worker.adapter == "codex-cli" and (role.worker.model or "").casefold() == "codex"
+        if role.worker.adapter in {"codex-cli", "persistent-session"} and (role.worker.model or "").casefold() == "codex"
     )
     if invalid_codex_model_roles:
         return [

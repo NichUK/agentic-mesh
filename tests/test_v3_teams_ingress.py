@@ -240,6 +240,14 @@ def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
             WHERE aggregate_id='msg-3' AND event_type='teams_activity.route_result'
             """
         ).fetchone()
+        journal_rows = db.connection.execute(
+            """
+            SELECT stage, status, broker_subject
+            FROM message_journal
+            WHERE correlation_id='corr-msg-3'
+            ORDER BY created_at ASC, journal_id ASC
+            """
+        ).fetchall()
     finally:
         db.close()
 
@@ -251,6 +259,11 @@ def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
     assert route_event is not None
     assert '"status": "routed"' in route_event["payload_json"]
     assert '"agent.product-manager"' in route_event["payload_json"]
+    assert sorted(row["stage"] for row in journal_rows) == ["published", "published", "received", "routed", "routed"]
+    assert {row["broker_subject"] for row in journal_rows if row["broker_subject"]} == {
+        "project.context",
+        "agent.product-manager",
+    }
 
 
 def test_teams_activity_router_records_route_failure_after_context_capture(tmp_path) -> None:

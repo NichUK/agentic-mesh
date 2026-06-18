@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,22 @@ class DatabaseConversationRecorder:
                 thread_ref=message.thread_ref,
                 mentioned_roles=message.mentioned_roles,
             )
+            db.record_message_journal(
+                message_id=message.message_id,
+                correlation_id=f"corr-{message.message_id}",
+                direction="inbound",
+                stage="received",
+                status="persisted",
+                connector=message.connector,
+                conversation_ref=message.conversation_ref,
+                thread_ref=message.thread_ref,
+                source_ref=message.sender_ref,
+                summary=_message_summary(message.text),
+                payload={
+                    "source_type": message.source_type,
+                    "mentioned_roles": list(message.mentioned_roles),
+                },
+            )
         finally:
             db.close()
 
@@ -92,6 +109,49 @@ class DatabaseConversationRecorder:
                         "error": error,
                     },
                 )
+                for subject in subjects:
+                    target_role = _role_from_subject(subject)
+                    db.record_message_journal(
+                        message_id=message.message_id,
+                        correlation_id=f"corr-{message.message_id}",
+                        direction="inbound",
+                        stage="routed",
+                        status=status,
+                        connector=message.connector,
+                        conversation_ref=message.conversation_ref,
+                        thread_ref=message.thread_ref,
+                        source_ref=message.sender_ref,
+                        target_role=target_role,
+                        broker_subject=subject,
+                        summary=f"Routed to {subject}",
+                    )
+                    db.record_message_journal(
+                        message_id=f"msg-{_subject_digest(message.message_id, subject)}",
+                        correlation_id=f"corr-{message.message_id}",
+                        direction="broker",
+                        stage="published",
+                        status=status,
+                        connector=message.connector,
+                        conversation_ref=message.conversation_ref,
+                        thread_ref=message.thread_ref,
+                        source_ref=message.message_id,
+                        target_role=target_role,
+                        broker_subject=subject,
+                        summary=f"Published to {subject}",
+                    )
+                if not subjects:
+                    db.record_message_journal(
+                        message_id=message.message_id,
+                        correlation_id=f"corr-{message.message_id}",
+                        direction="inbound",
+                        stage="routed",
+                        status=status,
+                        connector=message.connector,
+                        conversation_ref=message.conversation_ref,
+                        thread_ref=message.thread_ref,
+                        source_ref=message.sender_ref,
+                        summary=error or "No route produced",
+                    )
         finally:
             db.close()
 
@@ -343,6 +403,22 @@ def stakeholder_question_response_id_from_text(text: str) -> str | None:
     if match is None:
         return None
     return match.group(0)
+
+
+def _subject_digest(message_id: str, subject: str) -> str:
+    return hashlib.sha256(f"{message_id}|{subject}".encode("utf-8")).hexdigest()[:24]
+
+
+def _role_from_subject(subject: str) -> str | None:
+    if not subject.startswith("agent."):
+        return None
+    role = subject.removeprefix("agent.")
+    return role.removesuffix(".relevance")
+
+
+def _message_summary(text: str, *, limit: int = 180) -> str:
+    compact = " ".join(text.split())
+    return compact if len(compact) <= limit else compact[: limit - 3] + "..."
 
 
 def _mentioned_roles(

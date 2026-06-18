@@ -92,10 +92,10 @@ def main(argv: list[str] | None = None) -> int:
     broker_inspect_parser.add_argument("--limit", type=int, default=20)
     lifecycle_plan_parser = subparsers.add_parser("lifecycle-plan")
     lifecycle_plan_parser.add_argument("--idle-after-seconds", type=int, default=1800)
-    lifecycle_plan_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    lifecycle_plan_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     lifecycle_apply_parser = subparsers.add_parser("lifecycle-apply")
     lifecycle_apply_parser.add_argument("--idle-after-seconds", type=int, default=1800)
-    lifecycle_apply_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    lifecycle_apply_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     lifecycle_apply_parser.add_argument("--compose-file", type=Path, action="append", required=True)
     lifecycle_apply_parser.add_argument("--working-directory", type=Path)
     lifecycle_apply_parser.add_argument("--timeout-seconds", type=int, default=300)
@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_tick_parser.add_argument("--publish-sweep-to-project-manager", action="store_true")
     supervisor_tick_parser.add_argument("--project-manager-role-id", default="project-manager")
     supervisor_tick_parser.add_argument("--idle-after-seconds", type=int, default=1800)
-    supervisor_tick_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    supervisor_tick_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_tick_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_tick_parser.add_argument("--working-directory", type=Path)
     supervisor_tick_parser.add_argument("--timeout-seconds", type=int, default=300)
@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_loop_parser.add_argument("--publish-sweep-to-project-manager", action="store_true")
     supervisor_loop_parser.add_argument("--project-manager-role-id", default="project-manager")
     supervisor_loop_parser.add_argument("--idle-after-seconds", type=int, default=1800)
-    supervisor_loop_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    supervisor_loop_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_loop_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_loop_parser.add_argument("--working-directory", type=Path)
     supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_service_parser.add_argument("--publish-sweep-to-project-manager", action="store_true")
     supervisor_service_parser.add_argument("--project-manager-role-id", default="project-manager")
     supervisor_service_parser.add_argument("--idle-after-seconds", type=int, default=1800)
-    supervisor_service_parser.add_argument("--min-warm-instances-per-role", type=int, default=1)
+    supervisor_service_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_service_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_service_parser.add_argument("--working-directory", type=Path)
     supervisor_service_parser.add_argument("--timeout-seconds", type=int, default=300)
@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     run_agent_parser.add_argument("--agent-config-dir", type=Path, required=True)
     run_agent_parser.add_argument("--runtime-state-dir", type=Path, required=True)
     run_agent_parser.add_argument("--max-messages", type=int, default=1)
-    run_agent_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess", "codex-cli"])
+    run_agent_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess", "codex-cli", "persistent-session"])
     run_agent_parser.add_argument("--worker-command-json")
     run_agent_parser.add_argument("--worker-timeout-seconds", type=int)
     run_agent_parser.add_argument("--worker-model")
@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     run_service_parser.add_argument("--poll-interval-seconds", type=float, default=5.0)
     run_service_parser.add_argument("--idle-exit-seconds", type=float)
     run_service_parser.add_argument("--max-ticks", type=int)
-    run_service_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess", "codex-cli"])
+    run_service_parser.add_argument("--worker", choices=["echo", "safe-output-subprocess", "codex-cli", "persistent-session"])
     run_service_parser.add_argument("--worker-command-json")
     run_service_parser.add_argument("--worker-timeout-seconds", type=int)
     run_service_parser.add_argument("--worker-model")
@@ -270,7 +270,11 @@ def main(argv: list[str] | None = None) -> int:
         db = V3Database(args.db)
         try:
             db.migrate()
-            snapshot = db.status_snapshot(project_id=args.project_id)
+            project_config = load_project_config(args.project_config) if args.project_config is not None else None
+            snapshot = db.status_snapshot(
+                project_id=args.project_id,
+                configured_role_instance_ids=_configured_role_instance_ids(project_config),
+            )
             print(
                 json.dumps(
                     {
@@ -447,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
                 responder_ref=args.responder_ref,
             )
             approval = db.approval_detail(args.approval_id)
-            published_message_id = _publish_approval_response(args, approval=approval)
+            published_message_id = _publish_approval_response(args, db=db, approval=approval)
             print(
                 json.dumps(
                     {
@@ -463,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
             db.close()
         return 0
     if args.command == "serve":
+        serve_project_config = load_project_config(args.project_config) if args.project_config is not None else None
         serve(
             db_path=args.db,
             project_id=args.project_id,
@@ -470,6 +475,7 @@ def main(argv: list[str] | None = None) -> int:
             port=args.port,
             document_library=_document_library_adapter(args),
             teams_activity_router=_teams_activity_router(args),
+            configured_role_instance_ids=_configured_role_instance_ids(serve_project_config),
         )
         return 0
     if args.command == "run-agent-once":
@@ -796,17 +802,16 @@ def _run_supervisor_lifecycle(
     *,
     project_config: V3ProjectConfig,
 ) -> dict[str, object]:
-    snapshot = db.status_snapshot(project_id=args.project_id)
+    role_instance_ids = _configured_role_instance_ids(project_config)
+    snapshot = db.status_snapshot(
+        project_id=args.project_id,
+        configured_role_instance_ids=role_instance_ids,
+    )
     agents = snapshot.agents
     if getattr(args, "refresh_inbox_from_broker", False):
         broker = build_broker_adapter(
             adapter=project_config.broker.adapter,
             servers=project_config.broker.servers,
-        )
-        role_instance_ids = (
-            f"{project_config.project_id}.{role.role_id}.{instance_index}"
-            for role in project_config.roles
-            for instance_index in range(1, role.instances + 1)
         )
         agents = refresh_agent_statuses_from_broker(
             agents,
@@ -816,6 +821,18 @@ def _run_supervisor_lifecycle(
         )
         for status in agents:
             db.upsert_agent_status(status)
+            if status.inbox_depth > 0:
+                db.record_message_journal(
+                    message_id=f"lifecycle-{status.role_instance_id}",
+                    correlation_id=f"corr-lifecycle-{status.role_instance_id}",
+                    direction="broker",
+                    stage="consumer_ready",
+                    status="ready",
+                    target_role=status.role_instance_id.split(".")[-2],
+                    role_instance_id=status.role_instance_id,
+                    delivery_attempt=0,
+                    summary=f"Durable consumer inspected with inbox depth {status.inbox_depth}.",
+                )
     decisions = plan_lifecycle_actions(
         agents,
         policy=HibernationPolicy(
@@ -825,6 +842,18 @@ def _run_supervisor_lifecycle(
     )
     results = ()
     if args.compose_file:
+        for decision in decisions:
+            if decision.action in {"start", "wake"}:
+                db.record_message_journal(
+                    message_id=f"lifecycle-{decision.role_instance_id}",
+                    correlation_id=f"corr-lifecycle-{decision.role_instance_id}",
+                    direction="lifecycle",
+                    stage="agent_wake_requested",
+                    status="requested",
+                    target_role=decision.role_instance_id.split(".")[-2],
+                    role_instance_id=decision.role_instance_id,
+                    summary=decision.reason,
+                )
         results = ComposeLifecycleExecutor(
             ComposeLifecycleConfig(
                 compose_files=tuple(args.compose_file),
@@ -845,6 +874,21 @@ def _run_supervisor_lifecycle(
                 stderr=result.stderr,
                 executed=result.executed,
             )
+            if (
+                result.decision.action in {"start", "wake"}
+                and result.executed
+                and result.exit_code == 0
+            ):
+                db.record_message_journal(
+                    message_id=f"lifecycle-{result.decision.role_instance_id}",
+                    correlation_id=f"corr-lifecycle-{result.decision.role_instance_id}",
+                    direction="lifecycle",
+                    stage="agent_started",
+                    status="started",
+                    target_role=result.decision.role_instance_id.split(".")[-2],
+                    role_instance_id=result.decision.role_instance_id,
+                    summary=f"Started Compose service {result.service_name}.",
+                )
     return {
         "execute": args.execute,
         "compose_configured": bool(args.compose_file),
@@ -899,7 +943,7 @@ def _broker_inspection_payload(
     }
 
 
-def _publish_approval_response(args: argparse.Namespace, *, approval: dict[str, object] | None) -> str | None:
+def _publish_approval_response(args: argparse.Namespace, *, db: V3Database, approval: dict[str, object] | None) -> str | None:
     if approval is None or args.project_config is None:
         return None
     project_config = load_project_config(args.project_config)
@@ -910,17 +954,48 @@ def _publish_approval_response(args: argparse.Namespace, *, approval: dict[str, 
     role_ids = tuple(role.role_id for role in project_config.roles)
     _ensure_agent_stream(broker, stream=project_config.broker.stream, role_ids=role_ids)
     requested_by_role = str(approval["requested_by_role"])
+    correlation_id = f"corr-{approval['approval_id']}"
+    work_item_id = str(approval["work_item_id"])
+    payload = {
+        "message_type": "approval.response_recorded",
+        "approval_id": str(approval["approval_id"]),
+        "work_item_id": work_item_id,
+        "status": str(approval["status"]),
+        "response": str(approval.get("response") or ""),
+        "responder_ref": args.responder_ref,
+        "correlation_id": correlation_id,
+    }
+    db.record_message_journal(
+        message_id=str(approval["approval_id"]),
+        stage="received",
+        direction="inbound",
+        status="recorded",
+        correlation_id=correlation_id,
+        connector="cli",
+        source_ref=args.responder_ref,
+        target_role=requested_by_role,
+        work_item_id=work_item_id,
+        summary="CLI approval response recorded",
+        payload=payload,
+    )
     message = broker.publish(
         project_config.broker.stream,
         f"agent.{requested_by_role}",
-        {
-            "message_type": "approval.response_recorded",
-            "approval_id": str(approval["approval_id"]),
-            "work_item_id": str(approval["work_item_id"]),
-            "status": str(approval["status"]),
-            "response": str(approval.get("response") or ""),
-            "responder_ref": args.responder_ref,
-        },
+        payload,
+    )
+    db.record_message_journal(
+        message_id=message.message_id,
+        stage="published",
+        direction="broker",
+        status="published",
+        correlation_id=correlation_id,
+        connector="cli",
+        source_ref=args.responder_ref,
+        target_role=requested_by_role,
+        work_item_id=work_item_id,
+        broker_subject=f"agent.{requested_by_role}",
+        summary="CLI approval response published to target role",
+        payload=payload,
     )
     return message.message_id
 
@@ -1291,6 +1366,7 @@ def _run_agent_once(args: argparse.Namespace):
         service = _build_role_agent_service(
             args,
             project_config=config,
+            db=db,
             broker=broker,
             memory=DatabaseRoleMemory(db),
             conversation_context=DatabaseConversationContext(db),
@@ -1325,6 +1401,7 @@ def _run_agent_service(args: argparse.Namespace):
         service = _build_role_agent_service(
             args,
             project_config=config,
+            db=db,
             broker=broker,
             memory=DatabaseRoleMemory(db),
             conversation_context=DatabaseConversationContext(db),
@@ -1357,6 +1434,7 @@ def _build_role_agent_service(
     args: argparse.Namespace,
     *,
     project_config: V3ProjectConfig,
+    db: V3Database,
     broker: BrokerAdapter,
     memory: AgentMemory,
     conversation_context: DatabaseConversationContext,
@@ -1377,6 +1455,8 @@ def _build_role_agent_service(
         kwargs["status_reporter"] = status_reporter
     if terminal_tool_call_audit is not None:
         kwargs["terminal_tool_call_audit"] = terminal_tool_call_audit
+    kwargs["message_journal"] = db
+    kwargs["session_recorder"] = db
     return RoleAgentService(
         config=service_config,
         broker=broker,
@@ -1395,6 +1475,16 @@ def _ensure_agent_stream(broker: BrokerAdapter, *, stream: str, role_ids: tuple[
         subjects.append(f"agent.{role_id}")
         subjects.append(f"agent.{role_id}.relevance")
     broker.ensure_stream(stream, subjects)
+
+
+def _configured_role_instance_ids(project_config: V3ProjectConfig | None) -> tuple[str, ...]:
+    if project_config is None:
+        return ()
+    return tuple(
+        f"{project_config.project_id}.{role.role_id}.{instance_index}"
+        for role in project_config.roles
+        for instance_index in range(1, role.instances + 1)
+    )
 
 
 def _worker_from_args(args: argparse.Namespace, *, project_config: V3ProjectConfig | None = None):

@@ -2569,6 +2569,23 @@ roles:
     assert pending[0].payload["approval_id"] == "approval-1"
     assert pending[0].payload["work_item_id"] == "work-1"
     assert pending[0].payload["status"] == "approved"
+    db = V3Database(db_path)
+    try:
+        rows = db.connection.execute(
+            """
+            SELECT stage, direction, connector, target_role, work_item_id, correlation_id
+            FROM message_journal
+            WHERE work_item_id = 'work-1'
+            ORDER BY created_at, journal_id
+            """
+        ).fetchall()
+    finally:
+        db.close()
+    assert sorted(row["stage"] for row in rows) == ["published", "received"]
+    assert {row["direction"] for row in rows} == {"inbound", "broker"}
+    assert {row["connector"] for row in rows} == {"cli"}
+    assert {row["target_role"] for row in rows} == {"product-manager"}
+    assert {row["correlation_id"] for row in rows} == {"corr-approval-1"}
 
 
 def test_cli_teams_activity_router_records_approval_responses(

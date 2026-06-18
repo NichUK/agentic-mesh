@@ -2461,3 +2461,19 @@ def test_v3_tool_service_approval_request_rejects_missing_work_item_without_reco
         db.close()
 
     assert approval is None
+
+
+def test_v3_status_snapshot_includes_configured_missing_role_instances(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        snapshot = db.status_snapshot(
+            project_id="agentic-mesh-dev",
+            configured_role_instance_ids=("agentic-mesh-dev.solution-architect.1",),
+        )
+    finally:
+        db.close()
+
+    assert len(snapshot.agents) == 1
+    assert snapshot.agents[0].role_instance_id == "agentic-mesh-dev.solution-architect.1"
+    assert snapshot.agents[0].container_state == "missing"

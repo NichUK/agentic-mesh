@@ -159,6 +159,10 @@ class V3ToolService:
                 owner_role=_required(payload, "owner_role"),
                 linked_work_item_id=_optional(payload.get("linked_work_item_id")),
                 source_ref=_optional(payload.get("source_ref")),
+                correlation_id=_optional(payload.get("correlation_id")),
+                trace_id=_optional(payload.get("trace_id")),
+                created_by_role_instance=role_instance_id,
+                origin_message_id=_optional(payload.get("source_message_id") or payload.get("message_id")),
             )
         elif tool_name == "work_item.upsert":
             owner_role = _required(payload, "owner_role")
@@ -179,6 +183,11 @@ class V3ToolService:
                     state=state,
                     current_phase=current_phase,
                 ),
+                source_ref=_optional(payload.get("source_ref")),
+                correlation_id=_optional(payload.get("correlation_id")),
+                trace_id=_optional(payload.get("trace_id")),
+                created_by_role_instance=role_instance_id,
+                origin_message_id=_optional(payload.get("source_message_id") or payload.get("message_id")),
             )
         elif tool_name == "work_item.update_state":
             self.db.update_work_item_state(
@@ -187,6 +196,11 @@ class V3ToolService:
                 owner_role=_optional(payload.get("owner_role")),
                 current_phase=_optional(payload.get("current_phase")),
                 next_action=str(payload.get("next_action") or ""),
+                source_ref=_optional(payload.get("source_ref")),
+                correlation_id=_optional(payload.get("correlation_id")),
+                trace_id=_optional(payload.get("trace_id")),
+                created_by_role_instance=role_instance_id,
+                origin_message_id=_optional(payload.get("source_message_id") or payload.get("message_id")),
             )
         elif tool_name == "work_item.reopen":
             self.db.reopen_work_item(
@@ -348,6 +362,7 @@ class V3ToolService:
     def _send_message(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         if self.stakeholder_bridge is None:
             raise ValueError("stakeholder bridge is not configured")
+        self._record_reply_requested(call_id=call_id, role_instance_id=role_instance_id, purpose="messaging.send", payload=payload)
         receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
@@ -376,6 +391,7 @@ class V3ToolService:
         thread_ref = _optional(payload.get("thread_ref")) or _optional(payload.get("reply_thread_ref"))
         connector = _required(payload, "connector")
         try:
+            self._record_reply_requested(call_id=call_id, role_instance_id=role_instance_id, purpose="status.reply", payload=payload)
             receipt = self.stakeholder_bridge.send(
                 OutboundMessage(
                     connector=connector,
@@ -397,6 +413,20 @@ class V3ToolService:
                 thread_ref=thread_ref,
                 work_item_id=_optional(payload.get("work_item_id")),
                 status="failed",
+            )
+            self.db.record_message_journal(
+                message_id=_optional(payload.get("source_message_id") or payload.get("message_id")) or call_id,
+                correlation_id=_optional(payload.get("correlation_id")),
+                direction="outbound",
+                stage="failed",
+                status="failed",
+                connector=connector,
+                conversation_ref=_optional(payload.get("conversation_ref")),
+                thread_ref=thread_ref,
+                source_ref=call_id,
+                role_instance_id=role_instance_id,
+                work_item_id=_optional(payload.get("work_item_id")),
+                summary=f"status.reply delivery failed: {type(exc).__name__}: {exc}",
             )
             raise
         else:
@@ -459,6 +489,12 @@ class V3ToolService:
             text_markdown = f"**Question**\n\n{question}\n\n{question_id_line}"
         elif question_id not in text_markdown:
             text_markdown = f"{text_markdown.rstrip()}\n\n{question_id_line}"
+        self._record_reply_requested(
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            purpose="stakeholder.ask_question",
+            payload=payload,
+        )
         receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
@@ -503,6 +539,12 @@ class V3ToolService:
             f"Work item: `{work_item_id}`\n\n"
             f"Approval ID: `{approval_id}`"
         )
+        self._record_reply_requested(
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            purpose="approval.request",
+            payload=payload,
+        )
         receipt = self.stakeholder_bridge.send(
             OutboundMessage(
                 connector=_required(payload, "connector"),
@@ -540,6 +582,43 @@ class V3ToolService:
             thread_ref=_optional(getattr(receipt, "thread_ref")),
             work_item_id=_optional(payload.get("work_item_id")),
             status="sent",
+        )
+        self.db.record_message_journal(
+            message_id=_optional(payload.get("source_message_id") or payload.get("message_id")) or str(getattr(receipt, "delivery_id")),
+            correlation_id=_optional(payload.get("correlation_id")),
+            direction="outbound",
+            stage="reply_delivered",
+            status="sent",
+            connector=str(getattr(receipt, "connector")),
+            conversation_ref=_optional(payload.get("conversation_ref")),
+            thread_ref=_optional(getattr(receipt, "thread_ref")),
+            source_ref=call_id,
+            role_instance_id=role_instance_id,
+            work_item_id=_optional(payload.get("work_item_id")),
+            summary=f"{purpose} delivered to {getattr(receipt, 'target_ref')}",
+        )
+
+    def _record_reply_requested(
+        self,
+        *,
+        call_id: str,
+        role_instance_id: str,
+        purpose: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self.db.record_message_journal(
+            message_id=_optional(payload.get("source_message_id") or payload.get("message_id")) or call_id,
+            correlation_id=_optional(payload.get("correlation_id")),
+            direction="outbound",
+            stage="reply_requested",
+            status="requested",
+            connector=_optional(payload.get("connector")),
+            conversation_ref=_optional(payload.get("conversation_ref")),
+            thread_ref=_optional(payload.get("thread_ref") or payload.get("reply_thread_ref")),
+            source_ref=call_id,
+            role_instance_id=role_instance_id,
+            work_item_id=_optional(payload.get("work_item_id")),
+            summary=f"{purpose} requested outbound delivery.",
         )
 
     def _compact_conversation_context(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -116,6 +117,62 @@ class AgentRunRecorder(Protocol):
         completed_at: str,
     ) -> None:
         """Record the durable outcome of one role-agent message run."""
+
+
+class MessageJournalRecorder(Protocol):
+    def record_message_journal(
+        self,
+        *,
+        message_id: str,
+        stage: str,
+        direction: str,
+        status: str,
+        correlation_id: str | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+        connector: str | None = None,
+        conversation_ref: str | None = None,
+        thread_ref: str | None = None,
+        source_ref: str | None = None,
+        target_role: str | None = None,
+        role_instance_id: str | None = None,
+        work_item_id: str | None = None,
+        queue_item_id: str | None = None,
+        broker_subject: str | None = None,
+        broker_consumer: str | None = None,
+        delivery_attempt: int = 0,
+        summary: str = "",
+        payload: dict[str, object] | None = None,
+    ) -> str:
+        """Record one durable message delivery stage."""
+
+
+class AgentSessionRecorder(Protocol):
+    def upsert_agent_session(
+        self,
+        *,
+        session_id: str,
+        role_instance_id: str,
+        provider: str,
+        status: str,
+        provider_session_ref: str | None = None,
+        mode: str = "unknown",
+        last_hydrated_at: str | None = None,
+        last_compacted_at: str | None = None,
+        prompt_version: str | None = None,
+        memory_version: str | None = None,
+    ) -> None:
+        """Record role-owned worker session metadata."""
+
+
+class NullMessageJournalRecorder:
+    def record_message_journal(self, **_: object) -> str:
+        return ""
+
+
+class NullAgentSessionRecorder:
+    def upsert_agent_session(self, **_: object) -> None:
+        return None
 
 
 class NullAgentStatusReporter:
@@ -316,6 +373,8 @@ class RoleAgentService:
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
     terminal_tool_call_audit: TerminalToolCallAudit = field(default_factory=NullTerminalToolCallAudit)
     run_recorder: AgentRunRecorder = field(default_factory=NullAgentRunRecorder)
+    message_journal: MessageJournalRecorder = field(default_factory=NullMessageJournalRecorder)
+    session_recorder: AgentSessionRecorder = field(default_factory=NullAgentSessionRecorder)
     max_delivery_attempts: int = 3
 
     def __post_init__(self) -> None:
@@ -354,6 +413,15 @@ class RoleAgentService:
             self._report_status(container_state="running", current_work=None)
             return None
         message = claimed.message
+        self._journal_message(
+            message,
+            stage="claimed",
+            direction="inbound",
+            status="claimed",
+            broker_consumer=claimed.consumer,
+            delivery_attempt=message.delivery_count + 1,
+            summary=f"Claimed by {self.config.role_instance_id}",
+        )
         self._report_status(container_state="running", current_work=_message_work_ref(message.payload))
         agent_message = AgentMessage(
             message_id=message.message_id,
@@ -370,6 +438,7 @@ class RoleAgentService:
             governance_context=prompt_governance_context,
             governance_checklist=prompt_governance_checklist,
         )
+        self._record_session(status="active")
         run_id = f"run-{uuid4().hex}"
         run_started_at = datetime.now(timezone.utc).isoformat()
         self.run_recorder.record(
@@ -383,6 +452,15 @@ class RoleAgentService:
             completed_at=run_started_at,
         )
         try:
+            self._journal_message(
+                message,
+                stage="worker_started",
+                direction="inbound",
+                status="running",
+                broker_consumer=claimed.consumer,
+                delivery_attempt=message.delivery_count + 1,
+                summary=f"Worker started for {self.config.role_instance_id}",
+            )
             terminal_audit_snapshot = self.terminal_tool_call_audit.snapshot(self.config.role_instance_id)
             tool_calls = self.worker.run(prompt, agent_message)
             if not tool_calls:
@@ -409,6 +487,15 @@ class RoleAgentService:
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
             self.broker.ack(self.config.inbox_stream, claimed.consumer, message.message_id)
+            self._journal_message(
+                message,
+                stage="acked",
+                direction="inbound",
+                status="completed",
+                broker_consumer=claimed.consumer,
+                delivery_attempt=message.delivery_count + 1,
+                summary=f"Processed by {self.config.role_instance_id}",
+            )
             self._report_status(container_state="running", current_work=None)
             return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=audited_tool_calls)
         except Exception as exc:
@@ -442,6 +529,15 @@ class RoleAgentService:
                     completed_at=datetime.now(timezone.utc).isoformat(),
                 )
                 self.broker.ack(self.config.inbox_stream, claimed.consumer, message.message_id)
+                self._journal_message(
+                    message,
+                    stage="acked",
+                    direction="inbound",
+                    status="completed_after_worker_error",
+                    broker_consumer=claimed.consumer,
+                    delivery_attempt=message.delivery_count + 1,
+                    summary=f"Audited terminal tool calls after worker error: {exc}",
+                )
                 self._report_status(container_state="running", current_work=None)
                 return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=audited_tool_calls)
             status = "dead_lettered" if message.delivery_count + 1 >= self.max_delivery_attempts else "failed"
@@ -464,12 +560,30 @@ class RoleAgentService:
                     message.message_id,
                     reason=str(exc),
                 )
+                self._journal_message(
+                    message,
+                    stage="dead_lettered",
+                    direction="inbound",
+                    status=status,
+                    broker_consumer=claimed.consumer,
+                    delivery_attempt=message.delivery_count + 1,
+                    summary=str(exc),
+                )
             else:
                 self.broker.nack(
                     self.config.inbox_stream,
                     claimed.consumer,
                     message.message_id,
                     reason=str(exc),
+                )
+                self._journal_message(
+                    message,
+                    stage="nacked",
+                    direction="inbound",
+                    status=status,
+                    broker_consumer=claimed.consumer,
+                    delivery_attempt=message.delivery_count + 1,
+                    summary=str(exc),
                 )
             self._report_status(container_state="running", current_work=None, governance_waits=(str(exc),))
             return AgentRunResult(message_id=message.message_id, status=status, error=str(exc))
@@ -485,6 +599,57 @@ class RoleAgentService:
             if messages:
                 return ClaimedAgentMessage(message=messages[0], consumer=consumer)
         return None
+
+    def _record_session(self, *, status: str) -> None:
+        hydrated_at = datetime.now(timezone.utc).isoformat()
+        provider = str(getattr(self.worker, "provider", self.worker.__class__.__name__))
+        mode = str(getattr(self.worker, "session_mode", "unknown"))
+        session_status = str(getattr(self.worker, "session_status", status))
+        session_id = f"session-{self.config.role_instance_id}"
+        memory_summary = self.memory.load_summary(self.config.role_instance_id)
+        self.session_recorder.upsert_agent_session(
+            session_id=session_id,
+            role_instance_id=self.config.role_instance_id,
+            provider=provider,
+            provider_session_ref=str(getattr(self.worker, "provider_session_ref", session_id)),
+            status=session_status,
+            mode=mode,
+            last_hydrated_at=hydrated_at,
+            prompt_version="v3",
+            memory_version=_message_memory_version(memory_summary),
+        )
+
+    def _journal_message(
+        self,
+        message: BrokerMessage,
+        *,
+        stage: str,
+        direction: str,
+        status: str,
+        broker_consumer: str | None = None,
+        delivery_attempt: int = 0,
+        summary: str = "",
+    ) -> None:
+        self.message_journal.record_message_journal(
+            message_id=message.message_id,
+            correlation_id=_message_correlation_id(message.payload),
+            direction=direction,
+            stage=stage,
+            status=status,
+            connector=_payload_text(message.payload, "connector"),
+            conversation_ref=_payload_text(message.payload, "conversation_ref"),
+            thread_ref=_payload_text(message.payload, "thread_ref") or _payload_text(message.payload, "reply_thread_ref"),
+            source_ref=_payload_text(message.payload, "source_message_id"),
+            target_role=self.config.role_id,
+            role_instance_id=self.config.role_instance_id,
+            work_item_id=_message_work_item_id(message.payload),
+            queue_item_id=_payload_text(message.payload, "queue_item_id"),
+            broker_subject=message.subject,
+            broker_consumer=broker_consumer,
+            delivery_attempt=delivery_attempt,
+            summary=summary,
+            payload=message.payload,
+        )
 
     def _consumer_subjects(self) -> tuple[tuple[str, str], ...]:
         return (
@@ -609,6 +774,21 @@ def _message_work_item_id(payload: dict[str, object]) -> str | None:
     if value is None or str(value).strip() == "":
         return None
     return str(value)
+
+
+def _payload_text(payload: dict[str, object], key: str) -> str | None:
+    value = payload.get(key)
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value)
+
+
+def _message_correlation_id(payload: dict[str, object]) -> str | None:
+    return _payload_text(payload, "correlation_id") or _payload_text(payload, "source_message_id")
+
+
+def _message_memory_version(memory_summary: str) -> str:
+    return hashlib.sha256(memory_summary.encode("utf-8")).hexdigest()
 
 
 def _message_memory_source_ref(message: BrokerMessage) -> str:

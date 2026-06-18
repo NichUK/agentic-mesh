@@ -18,7 +18,9 @@ fi
 : "${AGENTIC_MESH_URL_ROOT:=http://linuxch:8100}"
 : "${AGENTIC_MESH_V3_STATUS_PORT:=8100}"
 : "${AGENTIC_MESH_NATS_STATE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/v3/nats}"
-: "${AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor agentic-mesh-dev-product-manager-1 agentic-mesh-dev-project-manager-1 agentic-mesh-dev-engineering-1 agentic-mesh-dev-qa-engineer-1 agentic-mesh-dev-release-manager-1}"
+: "${AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor otel-collector}"
+: "${AGENTIC_MESH_ROLE_SERVICES:=agentic-mesh-dev-business-analyst-1 agentic-mesh-dev-delivery-manager-1 agentic-mesh-dev-enterprise-architect-1 agentic-mesh-dev-platform-engineer-1 agentic-mesh-dev-product-manager-1 agentic-mesh-dev-prompt-engineer-1 agentic-mesh-dev-project-manager-1 agentic-mesh-dev-research-analyst-1 agentic-mesh-dev-security-architect-1 agentic-mesh-dev-solution-architect-1 agentic-mesh-dev-engineering-1 agentic-mesh-dev-qa-engineer-1 agentic-mesh-dev-release-manager-1 agentic-mesh-dev-technical-writer-1 agentic-mesh-dev-ux-designer-1}"
+: "${AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE:=1}"
 : "${AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS:=1}"
 
 export AGENTIC_MESH_WORKSPACE_HOST_PATH
@@ -32,6 +34,8 @@ export AGENTIC_MESH_V3_STATUS_PORT
 export AGENTIC_MESH_FORCE_V3_STATUS_PORT="$AGENTIC_MESH_V3_STATUS_PORT"
 export AGENTIC_MESH_NATS_STATE_HOST_PATH
 export AGENTIC_MESH_RELEASE_SERVICES
+export AGENTIC_MESH_ROLE_SERVICES
+export AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE
 export AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS
 
 cd "$REPO_ROOT"
@@ -79,3 +83,6 @@ sh scripts/deploy-linuxch-compose.sh --profile v3 run --rm --no-deps v3-runtime 
   --role-templates-dir /mesh/system/config/roles \
   --local-dev-override
 sh scripts/deploy-linuxch-compose.sh --profile v3 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES
+if [ "$AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE" = "1" ] && [ "${AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES:-0}" = "0" ]; then
+  sh scripts/deploy-linuxch-compose.sh --profile v3 stop $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
+fi

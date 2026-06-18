@@ -94,6 +94,7 @@ class LocalTeamsBridge:
         if subjects:
             self.broker.ensure_stream(self.stream, subjects)
         for subject in subjects:
+            broker_message_id = _broker_message_id(message.message_id, subject)
             self.broker.publish(
                 self.stream,
                 subject,
@@ -101,6 +102,7 @@ class LocalTeamsBridge:
                     "message_type": "stakeholder.message",
                     "connector": message.connector,
                     "source_message_id": message.message_id,
+                    "correlation_id": f"corr-{message.message_id}",
                     "source_type": message.source_type,
                     "route_type": _route_type(message, subject, self.team_wide_trigger),
                     "sender_ref": message.sender_ref,
@@ -110,6 +112,7 @@ class LocalTeamsBridge:
                     "reply_thread_ref": message.reply_thread_ref,
                     "text": message.text,
                 },
+                message_id=broker_message_id,
             )
         return subjects
 
@@ -132,6 +135,11 @@ def _role_from_conversation_ref(conversation_ref: str) -> str | None:
 def _append_unique(subjects: list[str], subject: str) -> None:
     if subject not in subjects:
         subjects.append(subject)
+
+
+def _broker_message_id(source_message_id: str, subject: str) -> str:
+    digest = hashlib.sha256(f"{source_message_id}|{subject}".encode("utf-8")).hexdigest()[:24]
+    return f"msg-{digest}"
 
 
 def _route_type(message: StakeholderMessage, subject: str, team_wide_trigger: str) -> str:

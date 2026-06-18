@@ -68,6 +68,7 @@ class V3StatusHandler(BaseHTTPRequestHandler):
     dashboard_auth: DashboardAuthConfig = DashboardAuthConfig()
     dashboard_session_cookie_name: str = "agentic_mesh_dashboard"
     dashboard_oauth_cookie_name: str = "agentic_mesh_dashboard_oauth"
+    configured_role_instance_ids: tuple[str, ...] = ()
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -497,7 +498,10 @@ class V3StatusHandler(BaseHTTPRequestHandler):
         db = V3Database(self.db_path)
         try:
             db.migrate()
-            return db.status_snapshot(project_id=self.project_id)
+            return db.status_snapshot(
+                project_id=self.project_id,
+                configured_role_instance_ids=self.configured_role_instance_ids,
+            )
         finally:
             db.close()
 
@@ -661,6 +665,7 @@ def serve(
     document_library: DocumentLibraryAdapter | None = None,
     teams_activity_router: TeamsActivityRouter | None = None,
     dashboard_auth: DashboardAuthConfig | None = None,
+    configured_role_instance_ids: tuple[str, ...] = (),
 ) -> None:
     class Handler(V3StatusHandler):
         pass
@@ -670,6 +675,7 @@ def serve(
     Handler.document_library = document_library
     Handler.teams_activity_router = teams_activity_router
     Handler.dashboard_auth = dashboard_auth or dashboard_auth_config_from_env()
+    Handler.configured_role_instance_ids = configured_role_instance_ids
     server = ThreadingHTTPServer((host, port), Handler)
     server.serve_forever()
 

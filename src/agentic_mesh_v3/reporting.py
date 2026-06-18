@@ -31,6 +31,10 @@ class AgentStatus:
     last_lifecycle_at: str | None = None
     last_activity_at: str | None = None
     last_lifecycle_error: str | None = None
+    session_status: str | None = None
+    session_provider: str | None = None
+    session_mode: str | None = None
+    session_last_hydrated_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,21 @@ class DeliveryStatus:
 
 
 @dataclass(frozen=True)
+class MessageTraceStatus:
+    message_id: str
+    correlation_id: str
+    direction: str
+    stage: str
+    status: str
+    target_role: str | None = None
+    role_instance_id: str | None = None
+    broker_subject: str | None = None
+    broker_consumer: str | None = None
+    summary: str = ""
+    created_at: str | None = None
+
+
+@dataclass(frozen=True)
 class WorkItemDetail:
     work_item_id: str
     title: str
@@ -132,6 +151,7 @@ class WorkItemDetail:
     governance_records: tuple[GovernanceRecordStatus, ...] = ()
     agent_runs: tuple[AgentRunStatus, ...] = ()
     deliveries: tuple[DeliveryStatus, ...] = ()
+    message_trace: tuple[MessageTraceStatus, ...] = ()
     governance_checklist: GovernanceChecklist | None = None
 
 
@@ -180,7 +200,7 @@ def render_status_page(snapshot: ReportingSnapshot) -> str:
 
 def render_agents_page(snapshot: ReportingSnapshot) -> str:
     rows = [
-        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Last Activity</th><th>Inbox</th><th>Dead Letters</th><th>Lifecycle</th><th>Memory</th><th>Last Run</th><th>Current Work</th><th>Governance Waits</th></tr>"
+        "<tr><th>Agent</th><th>Container</th><th>Heartbeat</th><th>Last Activity</th><th>Inbox</th><th>Dead Letters</th><th>Session</th><th>Lifecycle</th><th>Memory</th><th>Last Run</th><th>Current Work</th><th>Governance Waits</th></tr>"
     ]
     for agent in snapshot.agents:
         memory = f"{agent.memory_count} entries"
@@ -196,6 +216,7 @@ def render_agents_page(snapshot: ReportingSnapshot) -> str:
             f"<td>{html.escape(agent.last_activity_at or '')}</td>"
             f"<td>{agent.inbox_depth}</td>"
             f"<td>{agent.dead_letter_depth}</td>"
+            f"<td>{_agent_session_cell(agent)}</td>"
             f"<td>{lifecycle}</td>"
             f"<td>{memory}</td>"
             f"<td>{last_run}</td>"
@@ -274,6 +295,8 @@ def render_work_item_detail_page(
             _agent_run_table(detail.agent_runs),
             "<h2>Outbound Deliveries</h2>",
             _delivery_table(detail.deliveries),
+            "<h2>Message Trace</h2>",
+            _message_trace_table(detail.message_trace),
         ],
     )
 
@@ -346,6 +369,21 @@ def _agent_lifecycle_cell(agent: AgentStatus) -> str:
         parts.append(f"<br><small>{html.escape(agent.last_lifecycle_error)}</small>")
     if agent.last_lifecycle_reason:
         parts.append(f"<br><small>{html.escape(agent.last_lifecycle_reason)}</small>")
+    return "".join(parts)
+
+
+def _agent_session_cell(agent: AgentStatus) -> str:
+    if not agent.session_status and not agent.session_provider and not agent.session_mode:
+        return ""
+    parts = []
+    if agent.session_status:
+        parts.append(f"<strong>{html.escape(agent.session_status)}</strong>")
+    if agent.session_provider:
+        parts.append(f"<br><small>{html.escape(agent.session_provider)}</small>")
+    if agent.session_mode:
+        parts.append(f"<br><small>{html.escape(agent.session_mode)}</small>")
+    if agent.session_last_hydrated_at:
+        parts.append(f"<br><small>Hydrated: {html.escape(agent.session_last_hydrated_at)}</small>")
     return "".join(parts)
 
 
@@ -597,6 +635,35 @@ def _delivery_table(items: tuple[DeliveryStatus, ...]) -> str:
         )
     if len(rows) == 1:
         rows.append("<tr><td colspan=\"6\">No outbound deliveries recorded for this work item.</td></tr>")
+    return f"<table>{''.join(rows)}</table>"
+
+
+def _message_trace_table(items: tuple[MessageTraceStatus, ...]) -> str:
+    rows = [
+        "<tr><th>Time</th><th>Message</th><th>Correlation</th><th>Direction</th><th>Stage</th><th>Status</th><th>Role</th><th>Broker</th><th>Summary</th></tr>"
+    ]
+    for item in items:
+        role = item.role_instance_id or item.target_role or ""
+        broker = "<br>".join(
+            html.escape(part)
+            for part in (item.broker_subject or "", item.broker_consumer or "")
+            if part
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.created_at or '')}</td>"
+            f"<td>{html.escape(item.message_id)}</td>"
+            f"<td>{html.escape(item.correlation_id)}</td>"
+            f"<td>{html.escape(item.direction)}</td>"
+            f"<td>{html.escape(item.stage)}</td>"
+            f"<td>{html.escape(item.status)}</td>"
+            f"<td>{html.escape(role)}</td>"
+            f"<td>{broker}</td>"
+            f"<td>{html.escape(item.summary)}</td>"
+            "</tr>"
+        )
+    if len(rows) == 1:
+        rows.append("<tr><td colspan=\"9\">No message trace recorded for this work item.</td></tr>")
     return f"<table>{''.join(rows)}</table>"
 
 

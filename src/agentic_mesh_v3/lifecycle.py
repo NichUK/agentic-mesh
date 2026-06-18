@@ -232,8 +232,17 @@ def plan_lifecycle_action(
     current_time = now or datetime.now(timezone.utc)
     if status.container_state in {"stopped", "hibernated"} and status.inbox_depth > 0:
         return LifecycleDecision("wake", status.role_instance_id, "pending inbox messages")
+    if (
+        status.container_state in {"stopped", "hibernated"}
+        and warm_instances_for_role < policy.min_warm_instances_per_role
+    ):
+        return LifecycleDecision("wake", status.role_instance_id, "minimum warm pool requires a running instance")
     if status.container_state == "missing":
-        return LifecycleDecision("start", status.role_instance_id, "role instance is missing")
+        if status.inbox_depth > 0:
+            return LifecycleDecision("start", status.role_instance_id, "pending inbox messages")
+        if warm_instances_for_role < policy.min_warm_instances_per_role:
+            return LifecycleDecision("start", status.role_instance_id, "minimum warm pool requires a running instance")
+        return LifecycleDecision("none", status.role_instance_id, "role instance is configured but asleep")
     if status.container_state != "running":
         return LifecycleDecision("none", status.role_instance_id, f"state {status.container_state} does not require action")
     if status.current_work:

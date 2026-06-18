@@ -68,11 +68,73 @@ connectors:
         bot_id_ref: teams-bot-release-manager-app-id
         secret_ref: teams-bot-release-manager-secret
 roles:
+  business-analyst:
+    template: business-analyst
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Own requirements analysis, stakeholder need capture, and requirements evidence before product or architecture commitments move forward.
+    write_paths:
+    - documents/work-items/**
+  delivery-manager:
+    template: delivery-manager
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Coordinate delivery flow, chase impediments, and ensure handoffs include required evidence and next actions.
+    write_paths:
+    - documents/work-items/**
+  enterprise-architect:
+    template: enterprise-architect
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Govern enterprise alignment, durable architecture direction, capability fit, and TOGAF-style traceability.
+    write_paths:
+    - documents/work-items/**
+  platform-engineer:
+    template: platform-engineer
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Own platform, runtime, deployment substrate, operational tooling, and infrastructure evidence.
+    write_paths:
+    - deploy/**
+    - config/**
+    - documents/work-items/**
   product-manager:
     template: product-manager
     instances: 1
     worker:
-      adapter: codex-cli
+      adapter: persistent-session
       model: gpt-5.5
       timeout_seconds: 300
       reasoning_effort: high
@@ -83,11 +145,28 @@ roles:
     - Shape product scope, acceptance criteria, and sponsor sign-off before downstream work.
     write_paths:
     - documents/work-items/**
+  prompt-engineer:
+    template: prompt-engineer
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Review and improve prompt contracts, role instructions, tool-use behaviour, and agent interaction quality.
+    write_paths:
+    - config/prompts/**
+    - config/roles/**
+    - documents/work-items/**
   project-manager:
     template: project-manager
     instances: 1
     worker:
-      adapter: codex-cli
+      adapter: persistent-session
       model: gpt-5.5
       timeout_seconds: 300
       reasoning_effort: high
@@ -98,11 +177,56 @@ roles:
     - Keep work progressing and close only after required evidence is recorded.
     write_paths:
     - documents/work-items/**
+  research-analyst:
+    template: research-analyst
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Provide source-backed research, alternatives analysis, and uncertainty notes when evidence is required.
+    write_paths:
+    - documents/work-items/**
+  security-architect:
+    template: security-architect
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Govern secure design, NIST SSDF/OWASP-aligned controls, threat/risk evidence, and security release considerations.
+    write_paths:
+    - documents/work-items/**
+  solution-architect:
+    template: solution-architect
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Own solution design, integration shape, architectural trade-offs, and downstream implementation constraints.
+    write_paths:
+    - documents/work-items/**
   engineering:
     template: engineering
     instances: 1
     worker:
-      adapter: codex-cli
+      adapter: persistent-session
       model: gpt-5.5
       timeout_seconds: 300
       reasoning_effort: high
@@ -119,7 +243,7 @@ roles:
     template: qa-engineer
     instances: 1
     worker:
-      adapter: codex-cli
+      adapter: persistent-session
       model: gpt-5.5
       timeout_seconds: 300
       reasoning_effort: high
@@ -135,7 +259,7 @@ roles:
     template: release-manager
     instances: 1
     worker:
-      adapter: codex-cli
+      adapter: persistent-session
       model: gpt-5.5
       timeout_seconds: 300
       reasoning_effort: high
@@ -144,5 +268,35 @@ roles:
         credential: codex-agentic-mesh-dev-team-q
     instructions:
     - Execute configured deployment targets and record rollback, smoke evidence, residual risk, and closure.
+    write_paths:
+    - documents/work-items/**
+  technical-writer:
+    template: technical-writer
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Produce clear durable documentation, release notes, operating notes, and document-library hygiene.
+    write_paths:
+    - documents/**
+  ux-designer:
+    template: ux-designer
+    instances: 1
+    worker:
+      adapter: persistent-session
+      model: gpt-5.5
+      timeout_seconds: 300
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+      auth:
+        credential: codex-agentic-mesh-dev-team-q
+    instructions:
+    - Own user experience, interaction design, information hierarchy, and UX acceptance evidence for user-facing work.
     write_paths:
     - documents/work-items/**

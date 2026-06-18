@@ -81,6 +81,26 @@ class CodexCliWorker:
         return _tool_calls_from_stdout(completed.stdout)
 
 
+@dataclass(frozen=True)
+class PersistentSessionWorker:
+    """Persistent-session worker surface with an explicit degraded fallback.
+
+    This adapter is the V3 contract boundary for long-lived provider sessions.
+    The first Codex implementation uses the existing CLI execution path while
+    exposing `session_mode` so dashboards do not mistake it for a true hot
+    model process. A future exec-server implementation can replace the inner
+    call without changing role-service wiring.
+    """
+
+    inner: AgentWorker
+    provider: str = "codex-cli"
+    session_mode: str = "resume-backed-degraded"
+    session_status: str = "degraded"
+
+    def run(self, prompt: str, message: AgentMessage) -> list[str]:
+        return self.inner.run(prompt, message)
+
+
 def build_worker_adapter(
     *,
     adapter: str,
@@ -104,6 +124,16 @@ def build_worker_adapter(
             model=_non_empty_optional("model", model),
             reasoning_effort=_reasoning_effort(reasoning_effort),
             sandbox_mode=_non_empty_optional("sandbox_mode", sandbox_mode),
+        )
+    if adapter == "persistent-session":
+        return PersistentSessionWorker(
+            inner=CodexCliWorker(
+                command=_validated_command(command or ("codex", "exec"), adapter_name=adapter),
+                timeout_seconds=timeout_seconds or 14400,
+                model=_non_empty_optional("model", model),
+                reasoning_effort=_reasoning_effort(reasoning_effort),
+                sandbox_mode=_non_empty_optional("sandbox_mode", sandbox_mode),
+            )
         )
     raise ValueError(f"unsupported V3 worker adapter: {adapter}")
 
