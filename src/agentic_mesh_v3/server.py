@@ -5,8 +5,10 @@ from http.cookies import SimpleCookie
 import hashlib
 import html
 import hmac
+import json
 import re
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from dataclasses import asdict
@@ -20,6 +22,10 @@ from urllib.parse import unquote
 from urllib.parse import parse_qs
 from urllib.parse import quote
 from urllib.parse import urlparse
+from urllib.parse import urlencode
+from urllib.error import HTTPError
+from urllib.request import Request
+from urllib.request import urlopen
 
 import bleach
 import markdown
@@ -36,10 +42,15 @@ from agentic_mesh_v3.teams_ingress import TeamsActivityRouter
 @dataclass(frozen=True)
 class DashboardAuthConfig:
     enabled: bool = False
+    auth_mode: str = "proxy"
     bearer_token: str | None = None
     allowed_users: tuple[str, ...] = ()
     session_secret: str | None = None
     session_ttl_seconds: int = 43200
+    entra_client_id: str | None = None
+    entra_tenant_id: str | None = None
+    entra_scopes: str = "openid profile email User.Read"
+    entra_flow: str = "device_code"
     trusted_user_headers: tuple[str, ...] = (
         "Cf-Access-Authenticated-User-Email",
         "X-MS-CLIENT-PRINCIPAL-NAME",
@@ -54,6 +65,7 @@ class V3StatusHandler(BaseHTTPRequestHandler):
     teams_activity_router: TeamsActivityRouter | None = None
     dashboard_auth: DashboardAuthConfig = DashboardAuthConfig()
     dashboard_session_cookie_name: str = "agentic_mesh_dashboard"
+    dashboard_oauth_cookie_name: str = "agentic_mesh_dashboard_oauth"
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -62,6 +74,9 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             return
         if path == "/login":
             self._send_dashboard_login_page()
+            return
+        if path == "/auth/entra/device":
+            self._handle_entra_device_poll()
             return
         if path == "/favicon.ico":
             self.send_response(HTTPStatus.NO_CONTENT)
@@ -148,7 +163,7 @@ class V3StatusHandler(BaseHTTPRequestHandler):
 
     def _send_auth_required(self) -> None:
         config = self.dashboard_auth
-        if config.bearer_token:
+        if config.bearer_token or (config.auth_mode == "entra" and config.entra_client_id):
             next_path = _safe_dashboard_next_path(self.path)
             self.send_response(HTTPStatus.FOUND)
             self.send_header("Location", f"/login?next={quote(next_path, safe='/?:=&%')}")
@@ -177,6 +192,9 @@ class V3StatusHandler(BaseHTTPRequestHandler):
             self.send_header("Location", "/status")
             self.send_header("Content-Length", "0")
             self.end_headers()
+            return
+        if config.auth_mode == "entra":
+            self._start_entra_device_login()
             return
         if not config.bearer_token:
             self._send_auth_required()
@@ -220,6 +238,150 @@ class V3StatusHandler(BaseHTTPRequestHandler):
                 f"{self.dashboard_session_cookie_name}={cookie_value}; "
                 f"Max-Age={config.session_ttl_seconds}; Path=/; HttpOnly; SameSite=Lax"
             ),
+        )
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _start_entra_device_login(self, *, error: str | None = None) -> None:
+        config = self.dashboard_auth
+        if not config.entra_client_id or not config.entra_tenant_id:
+            self._send_auth_required()
+            return
+        query = parse_qs(urlparse(self.path).query)
+        next_path = _safe_dashboard_next_path((query.get("next") or ["/status"])[0])
+        try:
+            device = _request_entra_device_code(config)
+        except Exception as exc:
+            self._send_html(
+                "<!doctype html><html><head><title>Agentic Mesh login</title></head>"
+                "<body><h1>Agentic Mesh Entra Login</h1>"
+                f"<p>Unable to start Entra device-code login: {html.escape(str(exc))}</p>"
+                "</body></html>",
+                status=HTTPStatus.BAD_GATEWAY,
+            )
+            return
+        expires_at = int(time.time()) + int(device.get("expires_in") or 900)
+        state = {
+            "provider": "entra-device-code",
+            "device_code": str(device["device_code"]),
+            "next": next_path,
+            "expires_at": expires_at,
+        }
+        cookie_value = _create_signed_dashboard_payload(
+            state,
+            _dashboard_session_secret(config),
+            ttl_seconds=int(device.get("expires_in") or 900),
+        )
+        verification_uri = str(device.get("verification_uri") or device.get("verification_url") or "")
+        user_code = str(device.get("user_code") or "")
+        interval = max(5, int(device.get("interval") or 5))
+        message = str(device.get("message") or "")
+        error_html = f"<p><strong>{html.escape(error)}</strong></p>" if error else ""
+        body = (
+            "<!doctype html><html><head><title>Agentic Mesh Entra Login</title>"
+            f'<meta http-equiv="refresh" content="{interval}; url=/auth/entra/device">'
+            "</head><body><h1>Agentic Mesh Entra Login</h1>"
+            "<p>Sign in with Microsoft Entra to access the Agentic Mesh dashboard and artifacts.</p>"
+            f"{error_html}"
+            f"<p>Open <a href=\"{html.escape(verification_uri, quote=True)}\" target=\"_blank\" rel=\"noopener noreferrer\">"
+            f"{html.escape(verification_uri)}</a> and enter this code:</p>"
+            f"<p><code>{html.escape(user_code)}</code></p>"
+            f"<p>{html.escape(message)}</p>"
+            "<p>This page will continue automatically after sign-in completes.</p>"
+            "</body></html>"
+        )
+        encoded = body.encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header(
+            "Set-Cookie",
+            (
+                f"{self.dashboard_oauth_cookie_name}={cookie_value}; "
+                f"Max-Age={int(device.get('expires_in') or 900)}; Path=/; HttpOnly; SameSite=Lax"
+            ),
+        )
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _handle_entra_device_poll(self) -> None:
+        config = self.dashboard_auth
+        secret = _dashboard_session_secret(config)
+        cookie_value = _cookie_value(self.headers.get("Cookie") or "", self.dashboard_oauth_cookie_name)
+        state = _verify_signed_dashboard_payload(cookie_value or "", secret)
+        if not state or state.get("provider") != "entra-device-code":
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", "/login")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if int(state.get("expires_at") or 0) < int(time.time()):
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", "/login")
+            self.send_header(
+                "Set-Cookie",
+                f"{self.dashboard_oauth_cookie_name}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
+            )
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        try:
+            token_response = _poll_entra_device_token(config, str(state["device_code"]))
+        except _EntraAuthorizationPending:
+            next_path = _safe_dashboard_next_path(str(state.get("next") or "/status"))
+            body = (
+                "<!doctype html><html><head><title>Agentic Mesh login pending</title>"
+                '<meta http-equiv="refresh" content="5; url=/auth/entra/device"></head>'
+                "<body><h1>Waiting for Microsoft sign-in</h1>"
+                "<p>Complete the device-code sign-in in the Microsoft page. This page will refresh automatically.</p>"
+                f"<p>After sign-in you will continue to <code>{html.escape(next_path)}</code>.</p>"
+                "</body></html>"
+            )
+            self._send_html(body)
+            return
+        except Exception as exc:
+            self._send_html(
+                "<!doctype html><html><head><title>Agentic Mesh login failed</title></head>"
+                "<body><h1>Microsoft sign-in failed</h1>"
+                f"<p>{html.escape(str(exc))}</p>"
+                '<p><a href="/login">Start again</a></p>'
+                "</body></html>",
+                status=HTTPStatus.BAD_GATEWAY,
+            )
+            return
+        self._complete_entra_login(token_response, _safe_dashboard_next_path(str(state.get("next") or "/status")))
+
+    def _complete_entra_login(self, token_response: dict[str, Any], next_path: str) -> None:
+        config = self.dashboard_auth
+        claims = _decode_jwt_payload(str(token_response.get("id_token") or ""))
+        _validate_entra_id_token_claims(claims, config)
+        user = _dashboard_user_from_entra_claims(claims)
+        if not _dashboard_user_is_allowed(user, config):
+            self._send_html(
+                "<!doctype html><html><head><title>Agentic Mesh access denied</title></head>"
+                "<body><h1>Access denied</h1>"
+                "<p>Your Microsoft Entra account is authenticated but is not authorized for this Agentic Mesh dashboard.</p>"
+                "</body></html>",
+                status=HTTPStatus.FORBIDDEN,
+            )
+            return
+        cookie_value = _create_dashboard_session_cookie(
+            _dashboard_session_secret(config),
+            ttl_seconds=config.session_ttl_seconds,
+            user=user,
+        )
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", next_path)
+        self.send_header(
+            "Set-Cookie",
+            (
+                f"{self.dashboard_session_cookie_name}={cookie_value}; "
+                f"Max-Age={config.session_ttl_seconds}; Path=/; HttpOnly; SameSite=Lax"
+            ),
+        )
+        self.send_header(
+            "Set-Cookie",
+            f"{self.dashboard_oauth_cookie_name}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
         )
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -418,6 +580,7 @@ def serve(
 def dashboard_auth_config_from_env(env: dict[str, str] | None = None) -> DashboardAuthConfig:
     source = env if env is not None else os.environ
     enabled_raw = (source.get("AGENTIC_MESH_DASHBOARD_AUTH_ENABLED") or "").strip().casefold()
+    auth_mode = (source.get("AGENTIC_MESH_DASHBOARD_AUTH_MODE") or "").strip().casefold()
     bearer_token = (source.get("AGENTIC_MESH_DASHBOARD_AUTH_TOKEN") or "").strip() or None
     allowed_users = tuple(
         user.strip()
@@ -435,38 +598,203 @@ def dashboard_auth_config_from_env(env: dict[str, str] | None = None) -> Dashboa
     except ValueError:
         session_ttl_seconds = 43200
     session_ttl_seconds = max(60, session_ttl_seconds)
+    entra_client_id = (
+        source.get("AGENTIC_MESH_DASHBOARD_ENTRA_CLIENT_ID")
+        or source.get("AGENTIC_MESH_GRAPH_CLIENT_ID")
+        or ""
+    ).strip() or None
+    entra_tenant_id = (
+        source.get("AGENTIC_MESH_DASHBOARD_ENTRA_TENANT_ID")
+        or source.get("AGENTIC_MESH_GRAPH_TENANT_ID")
+        or source.get("AGENTIC_MESH_TENANT_ID")
+        or ""
+    ).strip() or None
+    entra_scopes = (
+        source.get("AGENTIC_MESH_DASHBOARD_ENTRA_SCOPES")
+        or "openid profile email User.Read"
+    ).strip()
+    entra_flow = (source.get("AGENTIC_MESH_DASHBOARD_ENTRA_FLOW") or "device_code").strip().casefold()
+    if not auth_mode:
+        auth_mode = "entra" if entra_client_id and entra_tenant_id else "token" if bearer_token else "proxy"
     enabled = enabled_raw in {"1", "true", "yes", "on"} or bool(bearer_token or allowed_users)
+    enabled = enabled or (auth_mode == "entra" and bool(entra_client_id and entra_tenant_id))
     return DashboardAuthConfig(
         enabled=enabled,
+        auth_mode=auth_mode,
         bearer_token=bearer_token,
         allowed_users=allowed_users,
         session_secret=session_secret,
         session_ttl_seconds=session_ttl_seconds,
+        entra_client_id=entra_client_id,
+        entra_tenant_id=entra_tenant_id,
+        entra_scopes=entra_scopes,
+        entra_flow=entra_flow,
         trusted_user_headers=header_names or DashboardAuthConfig().trusted_user_headers,
     )
 
 
-def _create_dashboard_session_cookie(secret: str, *, ttl_seconds: int, now: float | None = None) -> str:
+def _dashboard_session_secret(config: DashboardAuthConfig) -> str:
+    return config.session_secret or config.bearer_token or config.entra_client_id or "agentic-mesh-dashboard"
+
+
+def _create_dashboard_session_cookie(
+    secret: str,
+    *,
+    ttl_seconds: int,
+    now: float | None = None,
+    user: dict[str, object] | None = None,
+) -> str:
     expires_at = int((now if now is not None else time.time()) + ttl_seconds)
-    payload = f"dashboard:{expires_at}"
-    signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    return base64.urlsafe_b64encode(f"{payload}:{signature}".encode("utf-8")).decode("ascii")
+    payload: dict[str, object] = {"scope": "dashboard", "expires_at": expires_at}
+    if user:
+        payload["user"] = user
+    return _create_signed_dashboard_payload(payload, secret, ttl_seconds=ttl_seconds, now=now)
 
 
 def _verify_dashboard_session_cookie(value: str, secret: str, *, now: float | None = None) -> bool:
+    payload = _verify_signed_dashboard_payload(value, secret, now=now)
+    return bool(payload and payload.get("scope") == "dashboard")
+
+
+def _create_signed_dashboard_payload(
+    payload: dict[str, object],
+    secret: str,
+    *,
+    ttl_seconds: int,
+    now: float | None = None,
+) -> str:
+    if "expires_at" not in payload:
+        payload = dict(payload)
+        payload["expires_at"] = int((now if now is not None else time.time()) + ttl_seconds)
+    body = base64.urlsafe_b64encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    signature = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{body}.{signature}"
+
+
+def _verify_signed_dashboard_payload(value: str, secret: str, *, now: float | None = None) -> dict[str, object] | None:
     try:
-        decoded = base64.urlsafe_b64decode(value.encode("ascii")).decode("utf-8")
-        scope, expires_raw, signature = decoded.split(":", 2)
-        expires_at = int(expires_raw)
-    except (ValueError, UnicodeDecodeError):
-        return False
-    if scope != "dashboard":
-        return False
+        body, signature = value.split(".", 1)
+        expected = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(body.encode("ascii")).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    expires_at = int(payload.get("expires_at") or 0)
     if expires_at < int(now if now is not None else time.time()):
-        return False
-    payload = f"{scope}:{expires_at}"
-    expected = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(signature, expected)
+        return None
+    return payload
+
+
+class _EntraAuthorizationPending(Exception):
+    pass
+
+
+def _request_entra_device_code(config: DashboardAuthConfig) -> dict[str, Any]:
+    return _post_entra_form(
+        config,
+        "devicecode",
+        {
+            "client_id": config.entra_client_id or "",
+            "scope": config.entra_scopes,
+        },
+    )
+
+
+def _poll_entra_device_token(config: DashboardAuthConfig, device_code: str) -> dict[str, Any]:
+    try:
+        return _post_entra_form(
+            config,
+            "token",
+            {
+                "client_id": config.entra_client_id or "",
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "device_code": device_code,
+            },
+        )
+    except HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            raise
+        if body.get("error") == "authorization_pending":
+            raise _EntraAuthorizationPending(str(body.get("error_description") or "authorization pending")) from exc
+        raise RuntimeError(str(body.get("error_description") or body.get("error") or exc)) from exc
+
+
+def _post_entra_form(config: DashboardAuthConfig, endpoint: str, payload: dict[str, str]) -> dict[str, Any]:
+    tenant = quote(config.entra_tenant_id or "common", safe="")
+    body = urlencode(payload).encode("utf-8")
+    request = Request(
+        f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/{endpoint}",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urlopen(request, timeout=20) as response:
+        parsed = json.loads(response.read().decode("utf-8"))
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Entra token endpoint returned a non-object response")
+    return parsed
+
+
+def _decode_jwt_payload(token: str) -> dict[str, Any]:
+    try:
+        payload = token.split(".")[1]
+        padded = payload + ("=" * (-len(payload) % 4))
+        parsed = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError("Entra response did not include a readable ID token") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Entra ID token payload was not an object")
+    return parsed
+
+
+def _validate_entra_id_token_claims(claims: dict[str, Any], config: DashboardAuthConfig) -> None:
+    if claims.get("aud") != config.entra_client_id:
+        raise RuntimeError("Entra ID token audience does not match the dashboard app registration")
+    if config.entra_tenant_id and claims.get("tid") != config.entra_tenant_id:
+        raise RuntimeError("Entra ID token tenant does not match the configured tenant")
+    if int(claims.get("exp") or 0) < int(time.time()):
+        raise RuntimeError("Entra ID token is expired")
+
+
+def _dashboard_user_from_entra_claims(claims: dict[str, Any]) -> dict[str, object]:
+    return {
+        "provider": "entra",
+        "tenant_id": claims.get("tid") or "",
+        "object_id": claims.get("oid") or claims.get("sub") or "",
+        "subject": claims.get("sub") or "",
+        "name": claims.get("name") or "",
+        "username": claims.get("preferred_username") or claims.get("email") or claims.get("upn") or "",
+        "roles": claims.get("roles") if isinstance(claims.get("roles"), list) else [],
+    }
+
+
+def _dashboard_user_is_allowed(user: dict[str, object], config: DashboardAuthConfig) -> bool:
+    if not config.allowed_users:
+        return True
+    allowed = {raw.casefold() for raw in config.allowed_users}
+    candidates = {
+        str(user.get("username") or "").casefold(),
+        str(user.get("object_id") or "").casefold(),
+        str(user.get("subject") or "").casefold(),
+    }
+    return bool(allowed.intersection(candidates))
+
+
+def _cookie_value(raw_cookie: str, name: str) -> str | None:
+    if not raw_cookie:
+        return None
+    cookie = SimpleCookie(raw_cookie)
+    morsel = cookie.get(name)
+    if morsel is None:
+        return None
+    return morsel.value
 
 
 def _safe_dashboard_next_path(raw: str) -> str:

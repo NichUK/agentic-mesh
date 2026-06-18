@@ -56,6 +56,26 @@ def test_dashboard_auth_config_from_env_enables_bearer_and_proxy_users() -> None
     assert config.trusted_user_headers == ("X-Test-User",)
 
 
+def test_dashboard_auth_config_from_env_enables_entra_device_code_provider() -> None:
+    config = dashboard_auth_config_from_env(
+        {
+            "AGENTIC_MESH_DASHBOARD_AUTH_ENABLED": "true",
+            "AGENTIC_MESH_DASHBOARD_AUTH_MODE": "entra",
+            "AGENTIC_MESH_DASHBOARD_ENTRA_CLIENT_ID": "client-id",
+            "AGENTIC_MESH_DASHBOARD_ENTRA_TENANT_ID": "tenant-id",
+            "AGENTIC_MESH_DASHBOARD_ENTRA_SCOPES": "openid profile email User.Read",
+            "AGENTIC_MESH_DASHBOARD_ENTRA_FLOW": "device_code",
+        }
+    )
+
+    assert config.enabled is True
+    assert config.auth_mode == "entra"
+    assert config.entra_client_id == "client-id"
+    assert config.entra_tenant_id == "tenant-id"
+    assert config.entra_scopes == "openid profile email User.Read"
+    assert config.entra_flow == "device_code"
+
+
 def test_dashboard_auth_rejects_status_without_authenticated_user() -> None:
     class Handler(V3StatusHandler):
         pass
