@@ -310,6 +310,38 @@ def test_v3_status_update_without_work_item_remains_audit_only(tmp_path: Path) -
     assert snapshot.work_items == ()
 
 
+def test_v3_tool_service_accepts_legacy_status_progress_alias(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Alias check",
+            description="Older agent prompt emitted a legacy progress tool name.",
+            state="waiting_agent",
+            owner_role="product-manager",
+        )
+        tools = V3ToolService(db)
+
+        result = tools.call(
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            tool_name="status.report_progress",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Progress recorded through legacy alias.",
+            },
+        )
+        detail = db.work_item_detail("work-1")
+        calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert result.tool_name == "status.update"
+    assert detail is not None
+    assert detail.next_action == "Progress recorded through legacy alias."
+    assert calls[-1]["tool_name"] == "status.update"
+
+
 def test_v3_work_item_upsert_preserves_supplied_governance_context(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

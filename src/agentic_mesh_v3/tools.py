@@ -70,6 +70,7 @@ class V3ToolService:
         payload: dict[str, Any],
         terminal: bool | None = None,
     ) -> ToolResult:
+        tool_name = _canonical_tool_name(tool_name)
         payload = dict(payload)
         if tool_name == "noop" and not payload.get("reason"):
             payload["reason"] = "No durable action was applicable for this assignment."
@@ -869,6 +870,13 @@ def _required(payload: dict[str, Any], key: str) -> str:
     if value is None or str(value) == "":
         raise ValueError(f"{key} is required")
     return str(value)
+
+
+def _canonical_tool_name(tool_name: str) -> str:
+    return {
+        "status.report_progress": "status.update",
+        "status.report_completion": "status.complete",
+    }.get(tool_name, tool_name)
 
 
 def _optional(value: Any) -> str | None:
