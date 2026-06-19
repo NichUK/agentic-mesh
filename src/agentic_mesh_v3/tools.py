@@ -24,6 +24,7 @@ from agentic_mesh_v3.documents import write_work_item_index
 from agentic_mesh_v3.observability import V3Telemetry
 from agentic_mesh_v3.observability import get_telemetry
 from agentic_mesh_v3.reporting import AgentStatus
+from agentic_mesh_v3.sweeps import ProjectSweepService
 from agentic_mesh_v3.tool_contracts import TERMINAL_TOOLS
 from agentic_mesh_v3.tool_contracts import validate_tool_required_fields
 
@@ -148,6 +149,9 @@ class V3ToolService:
             target_id = _required(payload, "target_id")
             if target_id not in self.deployment_targets:
                 raise ValueError(f"deployment target is not configured: {target_id}")
+        if tool_name == "runtime.sweep.request":
+            if self.broker is None or self.broker_stream is None:
+                raise ValueError("broker is not configured")
         if tool_name in {"document.write_artifact", "document.write_work_item_index", "document.write_root_work_item_index"}:
             if self.document_library is None:
                 raise ValueError("document library is not configured")
@@ -357,12 +361,50 @@ class V3ToolService:
                 tool_name=tool_name,
                 payload=payload,
             )
+        elif tool_name == "runtime.sweep.request":
+            self._request_runtime_sweep(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "status.update":
             self._update_status(payload)
         elif tool_name in TERMINAL_TOOLS:
             return
         else:
             raise ValueError(f"unknown V3 tool: {tool_name}")
+
+    def _request_runtime_sweep(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
+        if self.broker is None or self.broker_stream is None:
+            raise ValueError("broker is not configured")
+        target_role = str(payload.get("target_role") or "project-manager")
+        findings = ProjectSweepService(self.db).sweep()
+        published_message_ids = ProjectSweepService(self.db).publish_findings(
+            self.broker,
+            stream=self.broker_stream,
+            findings=findings,
+            project_manager_role_id=target_role,
+        )
+        event_payload = {
+            "call_id": call_id,
+            "reason": _required(payload, "reason"),
+            "target_role": target_role,
+            "finding_count": len(findings),
+            "published_message_count": len(published_message_ids),
+            "published_message_ids": list(published_message_ids),
+        }
+        with self.db.connection:
+            self.db.record_event("runtime.sweep_requested", "agent", role_instance_id, event_payload)
+        self.db.record_message_journal(
+            message_id=f"runtime-sweep-{call_id}",
+            correlation_id=str(payload.get("correlation_id") or f"corr-{call_id}"),
+            direction="runtime",
+            stage="tool_call_recorded",
+            status="completed",
+            target_role=target_role,
+            role_instance_id=role_instance_id,
+            summary=(
+                f"Runtime sweep requested: {len(findings)} findings, "
+                f"{len(published_message_ids)} published."
+            ),
+            payload=event_payload,
+        )
 
     def _send_message(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         if self.stakeholder_bridge is None:

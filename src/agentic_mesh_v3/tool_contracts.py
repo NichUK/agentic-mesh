@@ -28,6 +28,7 @@ DO_TOOLS = {
     "release.deploy",
     "release.record",
     "risk.register",
+    "runtime.sweep.request",
     "stakeholder.ask_question",
     "status.update",
     "work_item.reopen",
@@ -80,6 +81,10 @@ TOOL_DESCRIPTIONS = {
     "release.record": "Record release evidence without executing a deployment target.",
     "report.incomplete": "End the run with an explicit incomplete result. Requires `reason`.",
     "risk.register": "Register a work-item risk with impact or mitigation context.",
+    "runtime.sweep.request": (
+        "Ask the runtime to perform an immediate project-health sweep and publish actionable findings "
+        "to the Project Manager inbox."
+    ),
     "stakeholder.ask_question": "Ask a stakeholder a clarification or decision question.",
     "status.complete": "Report successful completion. Requires `summary`.",
     "status.reply": "Send or record a Markdown reply to a conversation or stakeholder. Requires `text_markdown`.",
@@ -133,6 +138,7 @@ TOOL_REQUIRED_FIELDS = {
     "release.record": ("work_item_id", "scope", "version_ref", "approval_ref", "deployment_result", "smoke_evidence", "rollback_plan"),
     "report.incomplete": ("reason",),
     "risk.register": ("work_item_id", "summary"),
+    "runtime.sweep.request": ("reason",),
     "stakeholder.ask_question": ("work_item_id", "question"),
     "status.complete": ("summary",),
     "status.reply": ("text_markdown",),

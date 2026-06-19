@@ -24,6 +24,7 @@ BASE_TOOLS = {
     "relevance.record",
     "report.incomplete",
     "risk.register",
+    "runtime.sweep.request",
     "stakeholder.ask_question",
     "status.complete",
     "status.reply",
