@@ -682,11 +682,6 @@ class RoleAgentService:
                 terminal_audit_snapshot,
                 tool_calls,
             )
-            self.memory.record_observation(
-                self.config.role_instance_id,
-                f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} with {len(audited_tool_calls)} audited tool calls",
-                source_ref=_message_memory_source_ref(message),
-            )
             self.run_recorder.record(
                 run_id=run_id,
                 role_instance_id=self.config.role_instance_id,
@@ -720,14 +715,6 @@ class RoleAgentService:
             except Exception:
                 audited_tool_calls = ()
             if audited_tool_calls:
-                self.memory.record_observation(
-                    self.config.role_instance_id,
-                    (
-                        f"{datetime.now(timezone.utc).isoformat()} processed {message.message_id} "
-                        f"with {len(audited_tool_calls)} audited tool calls after worker error: {exc}"
-                    ),
-                    source_ref=_message_memory_source_ref(message),
-                )
                 self.run_recorder.record(
                     run_id=run_id,
                     role_instance_id=self.config.role_instance_id,
@@ -1105,18 +1092,6 @@ def _message_correlation_id(payload: dict[str, object]) -> str | None:
 
 def _message_memory_version(memory_summary: str) -> str:
     return hashlib.sha256(memory_summary.encode("utf-8")).hexdigest()
-
-
-def _message_memory_source_ref(message: BrokerMessage) -> str:
-    for key, prefix in (
-        ("work_item_id", "work-item"),
-        ("conversation_ref", "conversation"),
-        ("source_message_id", "source-message"),
-    ):
-        value = message.payload.get(key)
-        if value is not None and str(value).strip():
-            return f"{prefix}:{value}"
-    return f"broker-message:{message.message_id}"
 
 
 def _reply_routing_prompt_section(payload: dict[str, object]) -> str:
