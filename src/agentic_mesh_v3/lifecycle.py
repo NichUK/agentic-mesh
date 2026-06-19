@@ -253,6 +253,16 @@ def plan_lifecycle_action(
     if status.container_state != "running":
         return LifecycleDecision("none", status.role_instance_id, f"state {status.container_state} does not require action")
     if status.current_work:
+        heartbeat = _parse_datetime(status.heartbeat_at)
+        if heartbeat is None:
+            return LifecycleDecision("wake", status.role_instance_id, "active work and missing heartbeat")
+        stale_for = current_time - heartbeat
+        if stale_for >= timedelta(seconds=policy.pending_inbox_stale_after_seconds):
+            return LifecycleDecision(
+                "wake",
+                status.role_instance_id,
+                f"active work and stale heartbeat for {int(stale_for.total_seconds())} seconds",
+            )
         return LifecycleDecision("none", status.role_instance_id, "agent has active work")
     if status.inbox_depth > 0:
         heartbeat = _parse_datetime(status.heartbeat_at)
