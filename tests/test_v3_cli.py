@@ -2090,6 +2090,8 @@ def test_cli_lifecycle_apply_dry_runs_compose_actions(tmp_path: Path, capsys) ->
             "lifecycle-apply",
             "--compose-file",
             str(tmp_path / "compose.yml"),
+            "--compose-profile",
+            "v3",
             "--working-directory",
             str(tmp_path),
         ]
@@ -2107,6 +2109,8 @@ def test_cli_lifecycle_apply_dry_runs_compose_actions(tmp_path: Path, capsys) ->
         "--no-recreate",
         "agentic-mesh-dev-product-manager-1",
     ]
+    assert "--profile" in output["results"][0]["command"]
+    assert "v3" in output["results"][0]["command"]
     assert output["results"][0]["executed"] is False
     assert output["results"][0]["working_directory"] == str(tmp_path)
 
@@ -2268,6 +2272,8 @@ roles:
             "run-project-supervisor-service",
             "--cycles",
             "1",
+            "--compose-profile",
+            "v3",
             "--poll-seconds",
             "0",
         ]
