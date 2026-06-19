@@ -31,6 +31,7 @@ import bleach
 import markdown
 
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.document_links import render_document_markdown_links
 from agentic_mesh_v3.documents import DocumentLibraryAdapter
 from agentic_mesh_v3.reporting import artifact_viewer_path
 from agentic_mesh_v3.reporting import render_agents_page
@@ -986,6 +987,7 @@ def _jsonable(value: Any) -> Any:
 
 def _artifact_page(relative_path: str, content: str) -> str:
     content = _strip_raw_script_blocks(content)
+    content = render_document_markdown_links(content, source_path=relative_path).content
     rendered = markdown.markdown(content, extensions=["tables", "fenced_code"])
     rendered, has_mermaid = _promote_mermaid_blocks(rendered)
     safe = bleach.clean(

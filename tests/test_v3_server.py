@@ -27,6 +27,31 @@ def test_artifact_page_renders_markdown_safely() -> None:
     assert "cdn.jsdelivr.net/npm/mermaid" not in html
 
 
+def test_artifact_page_rewrites_sibling_document_links_to_viewer_routes() -> None:
+    html = _artifact_page(
+        "work-items/work-artifact-viewer-link-rewrite/index.md",
+        "# Links\n\n[Product](020-product-definition.md)\n\n[External](https://example.test/path)",
+    )
+
+    assert (
+        'href="/artifact-viewer/work-items%2Fwork-artifact-viewer-link-rewrite%2F020-product-definition.md"'
+        in html
+    )
+    assert 'href="020-product-definition.md"' not in html
+    assert 'href="https://example.test/path"' in html
+
+
+def test_artifact_page_suppresses_unsafe_document_links() -> None:
+    html = _artifact_page(
+        "work-items/work-1/index.md",
+        "[secret](/mesh/project/state/token.txt) [escape](../../../secrets/token.txt)",
+    )
+
+    assert html.count('href="#document-link-unavailable"') == 2
+    assert "/mesh/project/state/token.txt" not in html
+    assert "../../../secrets/token.txt" not in html
+
+
 def test_artifact_page_preserves_mermaid_diagrams_with_controlled_loader() -> None:
     html = _artifact_page(
         "work-items/work-1/lifecycle.md",
