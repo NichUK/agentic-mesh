@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 from dataclasses import dataclass, field
+from json import JSONDecoder
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -234,6 +235,7 @@ def _codex_prompt_text(prompt: str, message: AgentMessage) -> str:
                 indent=2,
                 sort_keys=True,
             ),
+            _final_tool_execution_checklist(),
         ]
     )
 
@@ -255,6 +257,16 @@ def _codex_tool_contract_text() -> str:
             return candidate.read_text(encoding="utf-8").strip()
     searched = ", ".join(str(candidate) for candidate in candidates)
     raise FileNotFoundError(f"missing Codex tool contract prompt file; searched: {searched}")
+
+
+def _final_tool_execution_checklist() -> str:
+    return """FINAL EXECUTION CHECKLIST
+Before finishing this run:
+1. Call at least one allowed DO safe-output tool for the current assignment.
+2. Call at least one allowed REPLY safe-output tool for the result or next step.
+3. If work is non-terminal, create the required handoff, delegation, stakeholder question, approval request, blocker, or informed update before replying.
+4. After the tool calls succeed, write only the operational JSON envelope with real call IDs to stdout.
+5. If you cannot perform the requested action, call report.incomplete or blocker.raise instead of ending with prose."""
 
 
 def _non_empty_optional(name: str, value: str | None) -> str | None:
@@ -371,7 +383,7 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
 
 def _tool_calls_from_stdout(stdout: str) -> list[str]:
     try:
-        payload = json.loads(stdout or "{}")
+        payload = _json_object_from_stdout(stdout)
     except json.JSONDecodeError as exc:
         raise ValueError("worker subprocess stdout must be JSON") from exc
     if not isinstance(payload, dict):
@@ -391,3 +403,32 @@ def _tool_calls_from_stdout(stdout: str) -> list[str]:
         else:
             raise ValueError("worker subprocess tool call entries must be strings or objects")
     return calls
+
+
+def _json_object_from_stdout(stdout: str) -> dict[str, object]:
+    text = stdout.strip()
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = _extract_json_object(text)
+    if not isinstance(payload, dict):
+        raise ValueError("worker subprocess stdout must be a JSON object")
+    return payload
+
+
+def _extract_json_object(text: str) -> object:
+    decoder = JSONDecoder()
+    for index, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            payload, end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        suffix = text[index + end :].strip()
+        if suffix and suffix[0] not in {"`", "\n"}:
+            continue
+        return payload
+    raise json.JSONDecodeError("no JSON object found", text, 0)

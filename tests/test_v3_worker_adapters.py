@@ -141,6 +141,8 @@ def test_codex_cli_worker_wraps_prompt_with_safe_output_contract(tmp_path: Path)
         "assert 'status.reply' in prompt\n"
         "assert 'text_markdown' in prompt\n"
         "assert 'msg-1' in prompt\n"
+        "assert prompt.rstrip().endswith('instead of ending with prose.')\n"
+        "assert 'FINAL EXECUTION CHECKLIST' in prompt\n"
         "print(json.dumps({'tool_calls':['status.reply']}))\n",
         encoding="utf-8",
     )
@@ -152,6 +154,23 @@ def test_codex_cli_worker_wraps_prompt_with_safe_output_contract(tmp_path: Path)
     )
 
     assert calls == ["status.reply"]
+
+
+def test_codex_cli_worker_accepts_json_envelope_with_surrounding_text(tmp_path: Path) -> None:
+    worker_script = tmp_path / "codex_worker.py"
+    worker_script.write_text(
+        "print('OpenAI Codex status line')\n"
+        "print('{\"tool_calls\":[{\"tool_name\":\"status.reply\",\"call_id\":\"call-1\",\"terminal\":true}]}')\n",
+        encoding="utf-8",
+    )
+    worker = CodexCliWorker(command=(sys.executable, str(worker_script)), timeout_seconds=5)
+
+    calls = worker.run(
+        "<agentic-mesh-v3-agent>prompt</agentic-mesh-v3-agent>",
+        AgentMessage(message_id="msg-1", subject="agent.product-manager", payload={"text": "Hello"}),
+    )
+
+    assert calls == ["terminal:status.reply"]
 
 
 def test_codex_cli_command_builder_adds_exec_options() -> None:
