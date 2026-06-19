@@ -549,3 +549,51 @@ def test_lifecycle_results_update_agent_status_projection(tmp_path: Path) -> Non
     assert snapshot.agents[0].last_lifecycle_at is not None
     assert snapshot.agents[0].governance_waits == ()
     assert events["count"] == 2
+
+
+def test_wake_lifecycle_result_preserves_active_current_work(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                container_state="running",
+                heartbeat_at="2026-06-19T10:00:00+00:00",
+                current_work="work-release-123",
+                inbox_depth=2,
+            )
+        )
+
+        db.record_agent_lifecycle_result(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            action="wake",
+            reason="active work and stale heartbeat",
+            service_name="agentic-mesh-dev-release-manager-1",
+            command=("docker", "compose", "up", "-d", "agentic-mesh-dev-release-manager-1"),
+            working_directory=None,
+            exit_code=0,
+            executed=True,
+        )
+
+        wake_snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+        assert wake_snapshot.agents[0].container_state == "running"
+        assert wake_snapshot.agents[0].current_work == "work-release-123"
+
+        db.record_agent_lifecycle_result(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            action="hibernate",
+            reason="idle",
+            service_name="agentic-mesh-dev-release-manager-1",
+            command=("docker", "compose", "stop", "agentic-mesh-dev-release-manager-1"),
+            working_directory=None,
+            exit_code=0,
+            executed=True,
+        )
+
+        hibernate_snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    assert hibernate_snapshot.agents[0].container_state == "hibernated"
+    assert hibernate_snapshot.agents[0].current_work is None
