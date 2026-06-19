@@ -28,6 +28,7 @@ DO_TOOLS = {
     "release.deploy",
     "release.record",
     "risk.register",
+    "runtime.broker.inspect",
     "runtime.sweep.request",
     "stakeholder.ask_question",
     "status.update",
@@ -81,6 +82,10 @@ TOOL_DESCRIPTIONS = {
     "release.record": "Record release evidence without executing a deployment target.",
     "report.incomplete": "End the run with an explicit incomplete result. Requires `reason`.",
     "risk.register": "Register a work-item risk with impact or mitigation context.",
+    "runtime.broker.inspect": (
+        "Inspect broker inbox pressure, role consumer pending counts, and dead letters so an agent can diagnose "
+        "routing or stuck-work issues without privileged shell access."
+    ),
     "runtime.sweep.request": (
         "Ask the runtime to perform an immediate project-health sweep and publish actionable findings "
         "to the Project Manager inbox."
@@ -138,6 +143,7 @@ TOOL_REQUIRED_FIELDS = {
     "release.record": ("work_item_id", "scope", "version_ref", "approval_ref", "deployment_result", "smoke_evidence", "rollback_plan"),
     "report.incomplete": ("reason",),
     "risk.register": ("work_item_id", "summary"),
+    "runtime.broker.inspect": ("reason",),
     "runtime.sweep.request": ("reason",),
     "stakeholder.ask_question": ("work_item_id", "question"),
     "status.complete": ("summary",),

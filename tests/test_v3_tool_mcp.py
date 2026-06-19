@@ -2,11 +2,13 @@ from io import StringIO
 from pathlib import Path
 import json
 
+from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.tool_mcp import V3_TOOL_CATALOG_MCP_TOOL
 from agentic_mesh_v3.tool_mcp import V3_TOOL_MCP_TOOL
 from agentic_mesh_v3.tool_mcp import handle_v3_mcp_request
 from agentic_mesh_v3.tool_mcp import run_v3_mcp_stdio
+from agentic_mesh_v3.tools import V3ToolService
 
 
 def test_v3_mcp_lists_tool(tmp_path: Path) -> None:
@@ -88,6 +90,42 @@ def test_v3_mcp_records_tool_call(tmp_path: Path) -> None:
     assert len(calls) == 1
     assert calls[0]["tool_name"] == "status.reply"
     assert calls[0]["payload"]["text_markdown"] == "Product reply through MCP."
+
+
+def test_v3_mcp_returns_tool_output(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.release-manager"])
+    broker.publish("agent-inbox", "agent.release-manager", {"work_item_id": "work-release"})
+    try:
+        db.migrate()
+        response = handle_v3_mcp_request(
+            db,
+            {
+                "jsonrpc": "2.0",
+                "id": "call-output",
+                "method": "tools/call",
+                "params": {
+                    "name": V3_TOOL_MCP_TOOL,
+                    "arguments": {
+                        "role_instance_id": "agentic-mesh-dev.project-manager.1",
+                        "tool_name": "runtime.broker.inspect",
+                        "payload": {
+                            "reason": "Inspect release-manager inbox.",
+                            "role_ids": ["release-manager"],
+                        },
+                    },
+                },
+            },
+            service=V3ToolService(db, broker=broker, broker_stream="agent-inbox"),
+        )
+    finally:
+        db.close()
+
+    assert response is not None
+    output = response["result"]["structuredContent"]["output"]
+    assert output["inspection"]["role_consumers"][0]["role_id"] == "release-manager"
+    assert output["inspection"]["role_consumers"][0]["pending_count"] == 1
 
 
 def test_v3_mcp_stdio_handles_jsonrpc_lines(tmp_path: Path) -> None:

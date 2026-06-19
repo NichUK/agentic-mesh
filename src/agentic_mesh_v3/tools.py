@@ -9,6 +9,8 @@ from uuid import uuid4
 from agentic_mesh_v3.authority import ToolAuthorityPolicy
 from agentic_mesh_v3.authority import role_from_instance
 from agentic_mesh_v3.broker import BrokerAdapter
+from agentic_mesh_v3.broker_diagnostics import broker_inspection_payload
+from agentic_mesh_v3.broker_diagnostics import role_consumer_name
 from agentic_mesh_v3.connectors import OutboundMessage
 from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.db import V3Database
@@ -34,6 +36,7 @@ class ToolResult:
     call_id: str
     tool_name: str
     terminal: bool = False
+    output: dict[str, Any] | None = None
 
 
 class V3ToolService:
@@ -98,7 +101,7 @@ class V3ToolService:
                     payload=payload,
                     terminal=is_terminal,
                 )
-                self._apply_effect(
+                output = self._apply_effect(
                     call_id=call_id,
                     role_instance_id=role_instance_id,
                     tool_name=tool_name,
@@ -128,7 +131,7 @@ class V3ToolService:
                 tool_name=tool_name,
                 terminal=is_terminal,
             )
-            return ToolResult(call_id=call_id, tool_name=tool_name, terminal=is_terminal)
+            return ToolResult(call_id=call_id, tool_name=tool_name, terminal=is_terminal, output=output)
 
     def _validate_runtime_dependencies(self, *, tool_name: str, payload: dict[str, Any]) -> None:
         if tool_name == "messaging.send" and self.stakeholder_bridge is None:
@@ -152,13 +155,16 @@ class V3ToolService:
         if tool_name == "runtime.sweep.request":
             if self.broker is None or self.broker_stream is None:
                 raise ValueError("broker is not configured")
+        if tool_name == "runtime.broker.inspect":
+            if self.broker is None or self.broker_stream is None:
+                raise ValueError("broker is not configured")
         if tool_name in {"document.write_artifact", "document.write_work_item_index", "document.write_root_work_item_index"}:
             if self.document_library is None:
                 raise ValueError("document library is not configured")
 
     def _apply_effect(
         self, *, call_id: str, role_instance_id: str, tool_name: str, payload: dict[str, Any]
-    ) -> None:
+    ) -> dict[str, Any] | None:
         if tool_name == "backlog.upsert":
             self.db.upsert_backlog_item(
                 queue_item_id=_required(payload, "queue_item_id"),
@@ -363,12 +369,64 @@ class V3ToolService:
             )
         elif tool_name == "runtime.sweep.request":
             self._request_runtime_sweep(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
+        elif tool_name == "runtime.broker.inspect":
+            return self._inspect_broker(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "status.update":
             self._update_status(payload)
         elif tool_name in TERMINAL_TOOLS:
             return
         else:
             raise ValueError(f"unknown V3 tool: {tool_name}")
+        return None
+
+    def _inspect_broker(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.broker is None or self.broker_stream is None:
+            raise ValueError("broker is not configured")
+        limit = int(payload.get("limit") or 20)
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        role_ids = _role_ids_from_payload(payload)
+        instance_id = str(payload.get("instance_id") or "1")
+        consumer = _optional(payload.get("consumer"))
+        role_id = _optional(payload.get("role_id"))
+        if role_id:
+            if consumer:
+                raise ValueError("consumer and role_id cannot both be provided")
+            consumer = role_consumer_name(role_id, instance_id)
+            self.broker.ensure_consumer(self.broker_stream, consumer, filter_subject=f"agent.{role_id}")
+            if not role_ids:
+                role_ids = (role_id,)
+        inspection = broker_inspection_payload(
+            self.broker,
+            stream=self.broker_stream,
+            consumer=consumer,
+            limit=limit,
+            role_ids=role_ids,
+            instance_id=instance_id,
+        )
+        event_payload = {
+            "call_id": call_id,
+            "reason": _required(payload, "reason"),
+            "stream": self.broker_stream,
+            "consumer": consumer,
+            "limit": limit,
+            "role_ids": list(role_ids),
+            "inspection": inspection,
+        }
+        with self.db.connection:
+            self.db.record_event("runtime.broker_inspected", "agent", role_instance_id, event_payload)
+        self.db.record_message_journal(
+            message_id=f"runtime-broker-inspect-{call_id}",
+            correlation_id=str(payload.get("correlation_id") or f"corr-{call_id}"),
+            direction="runtime",
+            stage="tool_call_recorded",
+            status="completed",
+            target_role=role_from_instance(role_instance_id),
+            role_instance_id=role_instance_id,
+            summary=_broker_inspection_summary(inspection),
+            payload=event_payload,
+        )
+        return {"inspection": inspection}
 
     def _request_runtime_sweep(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         if self.broker is None or self.broker_stream is None:
@@ -944,6 +1002,43 @@ def _optional(value: Any) -> str | None:
         return None
     text = str(value)
     return text if text else None
+
+
+def _role_ids_from_payload(payload: dict[str, Any]) -> tuple[str, ...]:
+    value = payload.get("role_ids")
+    if value is None:
+        value = payload.get("roles")
+    if value is None:
+        role_id = _optional(payload.get("role_id"))
+        return (role_id,) if role_id else ()
+    if isinstance(value, str):
+        return tuple(part.strip() for part in value.split(",") if part.strip())
+    if isinstance(value, (list, tuple)):
+        return tuple(str(part).strip() for part in value if str(part).strip())
+    raise ValueError("role_ids must be a list or comma-separated string")
+
+
+def _broker_inspection_summary(inspection: dict[str, object]) -> str:
+    role_consumers = inspection.get("role_consumers")
+    if isinstance(role_consumers, list) and role_consumers:
+        parts = []
+        for item in role_consumers[:8]:
+            if not isinstance(item, dict):
+                continue
+            role_id = str(item.get("role_id") or "unknown")
+            pending_count = item.get("pending_count")
+            if pending_count is None:
+                pending = "unknown"
+            else:
+                pending = str(pending_count)
+            parts.append(f"{role_id}={pending}")
+        if parts:
+            return "Broker inspected: " + ", ".join(parts)
+    pending = inspection.get("pending")
+    pending_count = len(pending) if isinstance(pending, list) else 0
+    dead_letters = inspection.get("dead_letters")
+    dead_letter_count = len(dead_letters) if isinstance(dead_letters, list) else 0
+    return f"Broker inspected: {pending_count} pending sampled, {dead_letter_count} dead letters sampled."
 
 
 def _decision_summary(payload: dict[str, Any]) -> str:

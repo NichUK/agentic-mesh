@@ -1881,6 +1881,57 @@ def test_v3_tool_service_runtime_sweep_request_publishes_findings(tmp_path: Path
     assert payload["published_message_count"] == 1
 
 
+def test_v3_tool_service_runtime_broker_inspect_returns_role_depths(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.project-manager", "agent.release-manager"])
+    broker.publish("agent-inbox", "agent.release-manager", {"work_item_id": "work-release"})
+    broker.publish("agent-inbox", "agent.release-manager", {"work_item_id": "work-release-2"})
+    broker.publish("agent-inbox", "agent.project-manager", {"request": "status"})
+    try:
+        db.migrate()
+        result = V3ToolService(db, broker=broker, broker_stream="agent-inbox").call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="runtime.broker.inspect",
+            payload={
+                "reason": "Project Manager is checking stuck work routing.",
+                "role_ids": ["project-manager", "release-manager"],
+                "limit": 1,
+            },
+        )
+        event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type='runtime.broker_inspected'
+            """
+        ).fetchone()
+        journal = db.connection.execute(
+            """
+            SELECT message_id
+            FROM message_journal
+            WHERE stage='tool_call_recorded'
+            """
+        ).fetchall()
+    finally:
+        db.close()
+
+    assert result.tool_name == "runtime.broker.inspect"
+    assert result.output is not None
+    inspection = result.output["inspection"]
+    assert inspection["stream"] == "agent-inbox"
+    role_counts = {
+        item["role_id"]: item["pending_count"]
+        for item in inspection["role_consumers"]
+    }
+    assert role_counts == {"project-manager": 1, "release-manager": 2}
+    assert len(inspection["pending"]) == 1
+    assert event is not None
+    event_payload = json.loads(event["payload_json"])
+    assert event_payload["reason"] == "Project Manager is checking stuck work routing."
+    assert any(row["message_id"].startswith("runtime-broker-inspect-") for row in journal)
+
+
 def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
