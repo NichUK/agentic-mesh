@@ -309,7 +309,7 @@ def artifact_viewer_path(work_item_id: str, artifact_filename: str) -> str:
 
 
 def artifact_viewer_url(work_item_id: str, artifact_filename: str) -> str:
-    return f"/artifact-viewer/{quote(work_item_id)}/{quote(artifact_filename)}"
+    return f"/artifact-viewer/{quote(artifact_viewer_path(work_item_id, artifact_filename), safe='')}"
 
 
 def work_item_url(work_item_id: str) -> str:

@@ -1046,6 +1046,18 @@ def test_v3_release_deploy_retry_updates_failed_release_record(tmp_path: Path) -
         )
         detail = db.work_item_detail("work-1")
         release_count = db.connection.execute("SELECT COUNT(*) AS count FROM releases").fetchone()["count"]
+        deployment_runs = [
+            dict(row)
+            for row in db.connection.execute(
+                """
+                SELECT target_id, work_item_id, release_id, status, smoke_result, rollback_plan, command_json
+                FROM deployment_runs
+                WHERE work_item_id=?
+                ORDER BY rowid
+                """,
+                ("work-1",),
+            ).fetchall()
+        ]
     finally:
         db.close()
 
@@ -1054,6 +1066,14 @@ def test_v3_release_deploy_retry_updates_failed_release_record(tmp_path: Path) -
     assert detail is not None
     assert detail.state == "released"
     assert release_count == 1
+    assert len(deployment_runs) == 2
+    assert deployment_runs[-1]["target_id"] == "retry-target"
+    assert deployment_runs[-1]["work_item_id"] == "work-1"
+    assert deployment_runs[-1]["release_id"] == "release-work-1"
+    assert deployment_runs[-1]["status"] == "succeeded"
+    assert deployment_runs[-1]["smoke_result"] == "GET /healthz passed."
+    assert deployment_runs[-1]["rollback_plan"] == "Restore previous runtime image."
+    assert deployment_runs[-1]["command_json"] == "[]"
     assert detail.releases[0].status == "deployed"
     assert detail.releases[0].deployment_result == "runtime restarted and smoke passed"
     assert detail.releases[0].rollback_plan == "Restore previous runtime image."

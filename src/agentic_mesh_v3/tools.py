@@ -304,8 +304,28 @@ class V3ToolService:
                 next_action=f"Deployment target `{target_id}` is running.",
             )
             result = target.deploy()
+            release_id = str(payload.get("release_id") or f"release-{uuid4().hex}")
+            smoke_evidence = str(payload.get("smoke_evidence") or result.output or "not-recorded")
+            deployment_run_status = "succeeded" if result.status in {"deployed", "no_deployment"} else "failed"
+            command = list(getattr(target, "command", ()) or ())
+            self.db.record_deployment_run(
+                run_id=str(payload.get("deployment_run_id") or f"deployment-{uuid4().hex}"),
+                target_id=target_id,
+                work_item_id=work_item_id,
+                release_id=release_id,
+                status=deployment_run_status,
+                command=command,
+                smoke_result=smoke_evidence,
+                rollback_plan=result.rollback_plan,
+                evidence={
+                    "deployment_status": result.status,
+                    "deployment_output": result.output,
+                    "approval_ref": str(payload.get("approval_ref") or ""),
+                    "version_ref": str(payload.get("version_ref") or ""),
+                },
+            )
             self.db.record_release(
-                release_id=str(payload.get("release_id") or f"release-{uuid4().hex}"),
+                release_id=release_id,
                 work_item_id=work_item_id,
                 status=result.status,
                 scope=str(payload.get("scope") or f"Deployment target {target_id}"),
@@ -314,7 +334,7 @@ class V3ToolService:
                 residual_risks=str(payload.get("residual_risks") or "None recorded"),
                 version_ref=_required(payload, "version_ref"),
                 approval_ref=_required(payload, "approval_ref"),
-                smoke_evidence=str(payload.get("smoke_evidence") or result.output or "not-recorded"),
+                smoke_evidence=smoke_evidence,
                 closure_state="release_disposition_recorded",
             )
             if result.status == "failed":
