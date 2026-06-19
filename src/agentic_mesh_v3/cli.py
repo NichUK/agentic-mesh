@@ -98,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     broker_inspect_parser = subparsers.add_parser("broker-inspect")
     broker_inspect_parser.add_argument("--stream")
     broker_inspect_parser.add_argument("--consumer")
+    broker_inspect_parser.add_argument("--role-id")
+    broker_inspect_parser.add_argument("--instance-id", default="1")
     broker_inspect_parser.add_argument("--limit", type=int, default=20)
     install_parser = subparsers.add_parser(
         "install-project",
@@ -380,13 +382,21 @@ def main(argv: list[str] | None = None) -> int:
             servers=project_config.broker.servers,
         )
         stream = args.stream or project_config.broker.stream
+        consumer = args.consumer
+        if args.role_id:
+            if consumer:
+                raise ValueError("--consumer and --role-id cannot both be provided")
+            consumer = _role_consumer_name(args.role_id, args.instance_id)
+            broker.ensure_consumer(stream, consumer, filter_subject=f"agent.{args.role_id}")
         print(
             json.dumps(
                 _broker_inspection_payload(
                     broker,
                     stream=stream,
-                    consumer=args.consumer,
+                    consumer=consumer,
                     limit=args.limit,
+                    role_ids=tuple(role.role_id for role in project_config.roles),
+                    instance_id=args.instance_id,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -1008,13 +1018,52 @@ def _broker_inspection_payload(
     stream: str,
     consumer: str | None = None,
     limit: int = 20,
+    role_ids: tuple[str, ...] = (),
+    instance_id: str = "1",
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "stream": stream,
         "consumer": consumer,
         "pending": [_broker_message_dict(message) for message in broker.pending(stream, consumer, limit=limit)],
         "dead_letters": [_broker_message_dict(message) for message in broker.dead_letters(stream, limit=limit)],
     }
+    if role_ids:
+        payload["role_consumers"] = [
+            {
+                "role_id": role_id,
+                "consumer": _role_consumer_name(role_id, instance_id),
+                **_role_consumer_depth(broker, stream=stream, role_id=role_id, instance_id=instance_id, limit=limit),
+            }
+            for role_id in role_ids
+        ]
+    return payload
+
+
+def _role_consumer_name(role_id: str, instance_id: str) -> str:
+    role_id = role_id.strip()
+    instance_id = instance_id.strip()
+    if not role_id:
+        raise ValueError("role id is required")
+    if not instance_id:
+        raise ValueError("instance id is required")
+    return f"{role_id}.{instance_id}"
+
+
+def _role_consumer_depth(
+    broker: BrokerAdapter,
+    *,
+    stream: str,
+    role_id: str,
+    instance_id: str,
+    limit: int,
+) -> dict[str, object]:
+    consumer = _role_consumer_name(role_id, instance_id)
+    try:
+        broker.ensure_consumer(stream, consumer, filter_subject=f"agent.{role_id}")
+        pending = broker.pending(stream, consumer, limit=limit)
+    except Exception as exc:  # pragma: no cover - exercised by live adapters.
+        return {"pending_count": None, "error": str(exc)}
+    return {"pending_count": len(pending)}
 
 
 def _publish_approval_response(args: argparse.Namespace, *, db: V3Database, approval: dict[str, object] | None) -> str | None:

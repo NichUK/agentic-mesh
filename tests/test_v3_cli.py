@@ -1575,6 +1575,66 @@ def test_cli_broker_inspection_payload_lists_pending_and_dead_letters() -> None:
     ]
 
 
+def test_cli_broker_inspection_payload_summarises_role_consumers() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.>"])
+    broker.publish("agent-inbox", "agent.project-manager", {"text": "debug this"})
+    broker.publish("agent-inbox", "agent.delivery-manager", {"text": "coordinate"})
+    broker.publish("agent-inbox", "agent.delivery-manager", {"text": "follow up"})
+
+    payload = _broker_inspection_payload(
+        broker,
+        stream="agent-inbox",
+        role_ids=("project-manager", "delivery-manager", "qa-engineer"),
+    )
+
+    assert payload["role_consumers"] == [
+        {
+            "role_id": "project-manager",
+            "consumer": "project-manager.1",
+            "pending_count": 1,
+        },
+        {
+            "role_id": "delivery-manager",
+            "consumer": "delivery-manager.1",
+            "pending_count": 2,
+        },
+        {
+            "role_id": "qa-engineer",
+            "consumer": "qa-engineer.1",
+            "pending_count": 0,
+        },
+    ]
+
+
+def test_cli_broker_inspection_payload_lists_role_specific_pending_messages() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.>"])
+    broker.ensure_consumer("agent-inbox", "project-manager.1", filter_subject="agent.project-manager")
+    waiting = broker.publish("agent-inbox", "agent.project-manager", {"text": "debug this"})
+    broker.publish("agent-inbox", "agent.delivery-manager", {"text": "coordinate"})
+
+    payload = _broker_inspection_payload(
+        broker,
+        stream="agent-inbox",
+        consumer="project-manager.1",
+        role_ids=("project-manager", "delivery-manager"),
+    )
+
+    assert payload["consumer"] == "project-manager.1"
+    assert payload["pending"] == [
+        {
+            "message_id": waiting.message_id,
+            "subject": "agent.project-manager",
+            "payload": {"text": "debug this"},
+            "created_at": waiting.created_at,
+            "delivery_count": 0,
+        }
+    ]
+    assert payload["role_consumers"][0]["pending_count"] == 1
+    assert payload["role_consumers"][1]["pending_count"] == 1
+
+
 def test_cli_broker_inspect_requires_project_config() -> None:
     try:
         main(["broker-inspect"])
