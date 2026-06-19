@@ -33,6 +33,12 @@ x-agentic-mesh-volumes: &agentic-mesh-volumes
   - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
   - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
 
+x-agentic-mesh-role-volumes: &agentic-mesh-role-volumes
+  - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system
+  - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
+  - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
+  - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
+
 x-agentic-mesh-service: &agentic-mesh-service
   image: agentic-mesh:local
   build: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
@@ -109,6 +115,7 @@ x-agentic-mesh-v3-role-service: &agentic-mesh-v3-role-service
   <<: *agentic-mesh-v3-service
   depends_on:
     - v3-nats
+  volumes: *agentic-mesh-role-volumes
   restart: "no"
   profiles:
     - v3

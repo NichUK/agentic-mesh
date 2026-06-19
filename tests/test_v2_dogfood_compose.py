@@ -291,6 +291,15 @@ def test_dogfood_compose_defines_full_lazy_role_service_team() -> None:
 def test_dogfood_compose_runs_v3_live_role_services() -> None:
     compose = _load_dogfood_compose()
     runtime_service = compose["services"]["v3-runtime"]
+    expected_role_volumes = [
+        "${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system",
+        "${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project",
+        "${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh",
+        (
+            "${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/"
+            "codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex"
+        ),
+    ]
 
     for role_id in sorted(V3_LIVE_ROLE_IDS):
         service_name = f"agentic-mesh-dev-{role_id}-1"
@@ -299,7 +308,7 @@ def test_dogfood_compose_runs_v3_live_role_services() -> None:
 
         assert service["image"] == runtime_service["image"]
         assert service["environment"] == runtime_service["environment"]
-        assert service["volumes"] == runtime_service["volumes"]
+        assert service["volumes"] == expected_role_volumes
         assert service["working_dir"] == runtime_service["working_dir"]
         assert service["depends_on"] == ["v3-nats"]
         assert service["profiles"] == ["v3"]
@@ -309,6 +318,20 @@ def test_dogfood_compose_runs_v3_live_role_services() -> None:
         assert "--project-config /mesh/project/agentic-mesh/project-v3.yaml" in command
         assert f"--role-id {role_id}" in command
         assert f"--agent-config-dir /mesh/project/state/v3/agent-configs/{role_id}/1" in command
+
+
+def test_dogfood_compose_keeps_control_plane_read_only_but_role_workers_can_write_source() -> None:
+    compose = _load_dogfood_compose()
+
+    for service_name in ("v3-runtime", "v3-supervisor", "v3-dogfood-proof"):
+        assert "${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro" in compose["services"][service_name][
+            "volumes"
+        ]
+
+    for role_id in sorted(V3_LIVE_ROLE_IDS):
+        service = compose["services"][f"agentic-mesh-dev-{role_id}-1"]
+        assert "${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system" in service["volumes"]
+        assert "${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro" not in service["volumes"]
 
 
 def test_linuxch_overlay_keeps_lazy_role_services_stopped_until_wake() -> None:
