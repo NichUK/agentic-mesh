@@ -12,7 +12,9 @@ from agentic_mesh_v3.lifecycle import RoleContainerSpec
 from agentic_mesh_v3.lifecycle import compose_lifecycle_command
 from agentic_mesh_v3.lifecycle import plan_lifecycle_action
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
+from agentic_mesh_v3.lifecycle import reconcile_agent_statuses_with_compose
 from agentic_mesh_v3.lifecycle import refresh_agent_statuses_from_broker
+from agentic_mesh_v3.lifecycle import running_compose_services
 from agentic_mesh_v3.reporting import AgentStatus
 
 
@@ -510,6 +512,81 @@ def test_compose_lifecycle_executor_executes_with_injected_runner(tmp_path: Path
             7,
         )
     ]
+
+
+def test_running_compose_services_lists_only_running_service_names(tmp_path: Path) -> None:
+    calls = []
+
+    def runner(command, *, cwd, timeout_seconds):  # type: ignore[no-untyped-def]
+        calls.append((tuple(command), cwd, timeout_seconds))
+        return CommandExecutionResult(
+            exit_code=0,
+            stdout="v3-runtime\nagentic-mesh-dev-project-manager-1\n",
+        )
+
+    services = running_compose_services(
+        ComposeLifecycleConfig(
+            compose_files=(tmp_path / "compose.yml",),
+            working_directory=tmp_path,
+            timeout_seconds=9,
+            project_name="agentic-mesh",
+        ),
+        runner=runner,
+    )
+
+    assert services == frozenset({"v3-runtime", "agentic-mesh-dev-project-manager-1"})
+    assert calls == [
+        (
+            (
+                "docker",
+                "compose",
+                "--project-name",
+                "agentic-mesh",
+                "-f",
+                str(tmp_path / "compose.yml"),
+                "ps",
+                "--services",
+                "--filter",
+                "status=running",
+            ),
+            tmp_path,
+            9,
+        )
+    ]
+
+
+def test_compose_reconciliation_marks_phantom_running_agent_hibernated() -> None:
+    statuses = reconcile_agent_statuses_with_compose(
+        (
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                container_state="running",
+                heartbeat_at="2026-06-18T22:45:59+00:00",
+                current_work="work-release",
+                inbox_depth=3,
+                dead_letter_depth=0,
+            ),
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.project-manager.1",
+                container_state="running",
+                heartbeat_at="2026-06-18T22:45:59+00:00",
+                current_work=None,
+                inbox_depth=0,
+                dead_letter_depth=0,
+            ),
+        ),
+        running_services=("agentic-mesh-dev-project-manager-1",),
+    )
+
+    release_manager = statuses[0]
+    assert release_manager.container_state == "hibernated"
+    assert release_manager.current_work is None
+    assert release_manager.inbox_depth == 3
+    assert statuses[1].container_state == "running"
+
+    decision = plan_lifecycle_action(status=release_manager, policy=HibernationPolicy())
+    assert decision.action == "wake"
+    assert decision.reason == "pending inbox messages"
 
 
 def test_lifecycle_results_update_agent_status_projection(tmp_path: Path) -> None:

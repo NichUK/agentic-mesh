@@ -52,7 +52,9 @@ from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
 from agentic_mesh_v3.lifecycle import ComposeLifecycleExecutor
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
+from agentic_mesh_v3.lifecycle import reconcile_agent_statuses_with_compose
 from agentic_mesh_v3.lifecycle import refresh_agent_statuses_from_broker
+from agentic_mesh_v3.lifecycle import running_compose_services
 from agentic_mesh_v3.live_preflight import LivePreflightResult
 from agentic_mesh_v3.live_preflight import PreflightCheck
 from agentic_mesh_v3.live_preflight import run_live_preflight
@@ -916,6 +918,29 @@ def _run_supervisor_lifecycle(
                     delivery_attempt=0,
                     summary=f"Durable consumer inspected with inbox depth {status.inbox_depth}.",
                 )
+    if args.compose_file:
+        compose_config = ComposeLifecycleConfig(
+            compose_files=tuple(args.compose_file),
+            working_directory=args.working_directory,
+            timeout_seconds=args.timeout_seconds,
+            project_name=args.compose_project_name,
+        )
+        try:
+            running_services = running_compose_services(compose_config)
+        except Exception as exc:
+            db.record_event(
+                "agent.lifecycle_compose_reconcile_failed",
+                "project",
+                args.project_id,
+                {"error": str(exc)},
+            )
+        else:
+            agents = reconcile_agent_statuses_with_compose(
+                agents,
+                running_services=running_services,
+            )
+            for status in agents:
+                db.upsert_agent_status(status)
     decisions = plan_lifecycle_actions(
         agents,
         policy=HibernationPolicy(
@@ -937,14 +962,7 @@ def _run_supervisor_lifecycle(
                     role_instance_id=decision.role_instance_id,
                     summary=decision.reason,
                 )
-        results = ComposeLifecycleExecutor(
-            ComposeLifecycleConfig(
-                compose_files=tuple(args.compose_file),
-                working_directory=args.working_directory,
-                timeout_seconds=args.timeout_seconds,
-                project_name=args.compose_project_name,
-            )
-        ).apply(decisions, execute=args.execute)
+        results = ComposeLifecycleExecutor(compose_config).apply(decisions, execute=args.execute)
         for result in results:
             db.record_agent_lifecycle_result(
                 role_instance_id=result.decision.role_instance_id,

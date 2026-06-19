@@ -228,6 +228,73 @@ class ComposeLifecycleExecutor:
         return tuple(results)
 
 
+def running_compose_services(
+    config: ComposeLifecycleConfig,
+    *,
+    runner: LifecycleCommandRunner | None = None,
+) -> frozenset[str]:
+    """Return running Compose services for the configured project.
+
+    The supervisor uses this as a guard against stale DB projections. If a
+    short-lived role container exits after processing a message, its last DB
+    heartbeat can still say `running`; Compose is the runtime source for
+    whether the service is actually alive.
+    """
+
+    command = [
+        "docker",
+        "compose",
+        *(() if not config.project_name else ("--project-name", config.project_name)),
+        *[
+            part
+            for compose_file in config.compose_files
+            for part in ("-f", str(compose_file))
+        ],
+        "ps",
+        "--services",
+        "--filter",
+        "status=running",
+    ]
+    result = (runner or _run_lifecycle_command)(
+        command,
+        cwd=config.working_directory,
+        timeout_seconds=config.timeout_seconds,
+    )
+    if result.exit_code != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "docker compose ps failed")
+    return frozenset(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+
+def reconcile_agent_statuses_with_compose(
+    statuses: Iterable[AgentStatus],
+    *,
+    running_services: Iterable[str],
+) -> tuple[AgentStatus, ...]:
+    """Mark phantom-running role projections as hibernated.
+
+    `container_state=running` should mean there is a running role service. When
+    Compose says the service is absent/stopped, keep the inbox/dead-letter
+    depths but clear active work so lifecycle planning can wake the role again
+    for pending messages.
+    """
+
+    running_service_names = set(running_services)
+    reconciled: list[AgentStatus] = []
+    for status in statuses:
+        service_name = service_name_for_role(status.role_instance_id)
+        if status.container_state == "running" and service_name not in running_service_names:
+            reconciled.append(
+                replace(
+                    status,
+                    container_state="hibernated",
+                    current_work=None,
+                )
+            )
+            continue
+        reconciled.append(status)
+    return tuple(reconciled)
+
+
 def plan_lifecycle_action(
     *,
     status: AgentStatus,
