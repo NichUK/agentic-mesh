@@ -3,11 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import sys
+from subprocess import CompletedProcess
 
 from agentic_mesh_v3.agent import AgentMessage
+import agentic_mesh_v3.worker_adapters as worker_adapters
 from agentic_mesh_v3.worker_adapters import build_worker_adapter
 from agentic_mesh_v3.worker_adapters import CodexCliWorker
 from agentic_mesh_v3.worker_adapters import _codex_command_with_options
+from agentic_mesh_v3.worker_adapters import _codex_resume_command_with_options
+from agentic_mesh_v3.worker_adapters import PersistentSessionWorker
 from agentic_mesh_v3.worker_adapters import SafeOutputSubprocessWorker
 
 
@@ -161,6 +165,68 @@ def test_codex_cli_command_builder_adds_exec_options() -> None:
         "--config",
         'model_reasoning_effort="high"',
     ]
+
+
+def test_codex_resume_command_builder_adds_resume_options() -> None:
+    command = _codex_resume_command_with_options(
+        ("codex", "exec"),
+        model="gpt-5.5",
+        reasoning_effort="high",
+    )
+
+    assert command == [
+        "codex",
+        "exec",
+        "resume",
+        "--last",
+        "--model",
+        "gpt-5.5",
+        "--config",
+        'model_reasoning_effort="high"',
+        "-",
+    ]
+
+
+def test_persistent_session_worker_resumes_after_first_success(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    commands: list[list[str]] = []
+
+    def fake_run_worker_command(command, *, input, capture_output, text, timeout, env=None):  # type: ignore[no-untyped-def]
+        del capture_output, text, timeout, env
+        commands.append(list(command))
+        assert "SAFE-OUTPUT TOOL CONTRACT" in input
+        return CompletedProcess(
+            list(command),
+            0,
+            '{"tool_calls":[{"tool_name":"status.reply","terminal":true}]}',
+            "",
+        )
+
+    monkeypatch.setattr(worker_adapters, "_run_worker_command", fake_run_worker_command)
+    worker = PersistentSessionWorker(
+        codex_worker=CodexCliWorker(
+            command=("codex", "exec"),
+            timeout_seconds=5,
+        )
+    )
+
+    worker.run("prompt-one", AgentMessage(message_id="msg-1", subject="agent.project-manager", payload={}))
+    worker.run("prompt-two", AgentMessage(message_id="msg-2", subject="agent.project-manager", payload={}))
+
+    assert commands[0] == ["codex", "exec"]
+    assert commands[1] == ["codex", "exec", "resume", "--last", "-"]
+    assert worker.session_mode == "codex-exec-resume"
+    assert worker.session_status == "active"
+
+
+def test_build_persistent_session_worker_marks_custom_command_degraded() -> None:
+    worker = build_worker_adapter(
+        adapter="persistent-session",
+        command=("python", "-c", "print('{}')"),
+    )
+
+    assert isinstance(worker, PersistentSessionWorker)
+    assert worker.session_mode == "resume-backed-degraded"
+    assert worker.session_status == "degraded"
 
 
 def test_build_worker_adapter_creates_codex_cli_worker() -> None:

@@ -4,7 +4,7 @@ import json
 import os
 import signal
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -85,22 +85,50 @@ class CodexCliWorker:
 
 @dataclass(frozen=True)
 class PersistentSessionWorker:
-    """Persistent-session worker surface with an explicit degraded fallback.
+    """Persistent-session worker surface backed by Codex resumable sessions.
 
-    This adapter is the V3 contract boundary for long-lived provider sessions.
-    The first Codex implementation uses the existing CLI execution path while
-    exposing `session_mode` so dashboards do not mistake it for a true hot
-    model process. A future exec-server implementation can replace the inner
-    call without changing role-service wiring.
+    This adapter is the V3 contract boundary for long-lived provider sessions:
+    central DB memory remains canonical, while the provider session is an
+    accelerator for conversational continuity. Codex CLI currently exposes a
+    persisted resume path, so this adapter resumes the latest role-local Codex
+    session after the first successful fresh run.
     """
 
-    inner: AgentWorker
+    codex_worker: CodexCliWorker
     provider: str = "codex-cli"
-    session_mode: str = "resume-backed-degraded"
-    session_status: str = "degraded"
+    session_mode: str = "codex-exec-resume"
+    session_status: str = "active"
+    _fresh_session_started: bool = field(default=False, init=False, repr=False, compare=False)
 
     def run(self, prompt: str, message: AgentMessage) -> list[str]:
-        return self.inner.run(prompt, message)
+        prompt_text = _codex_prompt_text(prompt, message)
+        if self._fresh_session_started and _is_codex_exec_command(self.codex_worker.command):
+            try:
+                return self._run_resume(prompt_text, message)
+            except RuntimeError as exc:
+                if not _is_missing_resume_session_error(str(exc)):
+                    raise
+        calls = self.codex_worker.run(prompt, message)
+        object.__setattr__(self, "_fresh_session_started", True)
+        return calls
+
+    def _run_resume(self, prompt_text: str, message: AgentMessage) -> list[str]:
+        completed = _run_worker_command(
+            _codex_resume_command_with_options(
+                self.codex_worker.command,
+                model=self.codex_worker.model,
+                reasoning_effort=self.codex_worker.reasoning_effort,
+            ),
+            input=prompt_text,
+            capture_output=True,
+            text=True,
+            timeout=self.codex_worker.timeout_seconds,
+            env=_message_context_environment(message),
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
+            raise RuntimeError(f"codex-cli resume worker failed: {detail}")
+        return _tool_calls_from_stdout(completed.stdout)
 
 
 def build_worker_adapter(
@@ -128,14 +156,18 @@ def build_worker_adapter(
             sandbox_mode=_non_empty_optional("sandbox_mode", sandbox_mode),
         )
     if adapter == "persistent-session":
+        validated_command = _validated_command(command or ("codex", "exec"), adapter_name=adapter)
+        resumable = _is_codex_exec_command(validated_command)
         return PersistentSessionWorker(
-            inner=CodexCliWorker(
-                command=_validated_command(command or ("codex", "exec"), adapter_name=adapter),
+            codex_worker=CodexCliWorker(
+                command=validated_command,
                 timeout_seconds=timeout_seconds or 14400,
                 model=_non_empty_optional("model", model),
                 reasoning_effort=_reasoning_effort(reasoning_effort),
                 sandbox_mode=_non_empty_optional("sandbox_mode", sandbox_mode),
-            )
+            ),
+            session_mode="codex-exec-resume" if resumable else "resume-backed-degraded",
+            session_status="active" if resumable else "degraded",
         )
     raise ValueError(f"unsupported V3 worker adapter: {adapter}")
 
@@ -161,8 +193,30 @@ def _codex_command_with_options(
     return result
 
 
+def _codex_resume_command_with_options(
+    command: tuple[str, ...],
+    *,
+    model: str | None,
+    reasoning_effort: str | None,
+) -> list[str]:
+    if not _is_codex_exec_command(command):
+        return list(command)
+    result = [command[0], command[1], "resume", "--last"]
+    if model:
+        result.extend(["--model", model])
+    if reasoning_effort:
+        result.extend(["--config", f'model_reasoning_effort="{reasoning_effort}"'])
+    result.append("-")
+    return result
+
+
 def _is_codex_exec_command(command: tuple[str, ...]) -> bool:
     return len(command) >= 2 and Path(command[0]).name == "codex" and command[1] == "exec"
+
+
+def _is_missing_resume_session_error(detail: str) -> bool:
+    normalized = detail.casefold()
+    return "no session" in normalized or "no previous session" in normalized or "not found" in normalized
 
 
 def _codex_prompt_text(prompt: str, message: AgentMessage) -> str:
