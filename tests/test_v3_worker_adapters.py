@@ -126,6 +126,7 @@ def test_codex_cli_worker_wraps_prompt_with_safe_output_contract(tmp_path: Path)
         "assert '<agentic-mesh-v3-agent>' in prompt\n"
         "assert 'SAFE-OUTPUT TOOL CONTRACT' in prompt\n"
         "assert 'All roles share the same standing operating instructions' in prompt\n"
+        "assert 'follow the shared instructions' in prompt\n"
         "assert 'Every run must include a DO safe-output call' in prompt\n"
         "assert 'Non-terminal work MUST establish who owns the next step' in prompt\n"
         "assert 'A reply alone is not enough for non-terminal work' in prompt\n"
