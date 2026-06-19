@@ -507,7 +507,7 @@ class V3ToolService:
         return {"inspection": inspection}
 
     def _inspect_status(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        project_id = str(payload.get("project_id") or "project")
+        project_id = str(payload.get("project_id") or _project_from_instance(role_instance_id))
         include_recent = int(payload.get("include_recent") or 5)
         if include_recent < 0:
             raise ValueError("include_recent must be zero or positive")
@@ -1196,6 +1196,11 @@ def _role_ids_from_payload(payload: dict[str, Any]) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(part).strip() for part in value if str(part).strip())
     raise ValueError("role_ids must be a list or comma-separated string")
+
+
+def _project_from_instance(role_instance_id: str) -> str:
+    parts = role_instance_id.split(".")
+    return ".".join(parts[:-2]) if len(parts) >= 3 else "project"
 
 
 def _broker_inspection_summary(inspection: dict[str, object]) -> str:
