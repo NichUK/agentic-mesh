@@ -48,6 +48,8 @@ export AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS
 
 cd "$REPO_ROOT"
 mkdir -p "$AGENTIC_MESH_NATS_STATE_HOST_PATH"
+sh scripts/deploy-linuxch-compose.sh --profile v3 stop "$AGENTIC_MESH_SUPERVISOR_SERVICE" >/dev/null 2>&1 || true
+
 mkdir -p "$(dirname "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH")"
 
 lock_acquired=0
@@ -69,7 +71,6 @@ lock_acquired=1
 printf '%s\n' "$$" > "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH/owner"
 trap 'if [ "$lock_acquired" = "1" ]; then rm -rf "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH"; fi' EXIT INT TERM
 
-sh scripts/deploy-linuxch-compose.sh --profile v3 stop "$AGENTIC_MESH_SUPERVISOR_SERVICE" >/dev/null 2>&1 || true
 if [ "$AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS" = "1" ]; then
   legacy_v2_container_names="
 agentic-mesh-v2-runtime-1
