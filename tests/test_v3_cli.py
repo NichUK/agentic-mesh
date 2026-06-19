@@ -1282,6 +1282,52 @@ roles:
     assert result == 0
 
 
+def test_cli_tool_call_status_inspect_uses_project_configured_roles(
+    tmp_path: Path, capsys
+) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  project-manager:
+    instances: 1
+  solution-architect:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(tmp_path / "v3.sqlite3"),
+            "--project-config",
+            str(project_config),
+            "tool-call",
+            "--role-instance-id",
+            "agentic-mesh-dev.project-manager.1",
+            "--tool-name",
+            "runtime.status.inspect",
+            "--payload-json",
+            '{"reason":"check project status from a debug conversation"}',
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    agents = payload["output"]["inspection"]["agents"]
+    assert {agent["role_instance_id"] for agent in agents} == {
+        "agentic-mesh-dev.project-manager.1",
+        "agentic-mesh-dev.solution-architect.1",
+    }
+
+
 def test_cli_tool_call_does_not_require_document_library_config_for_broker_inspect(
     tmp_path: Path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
