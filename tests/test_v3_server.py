@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import quote
 
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
@@ -365,6 +366,58 @@ def test_artifact_viewer_route_renders_work_item_scoped_artifact(tmp_path: Path)
     assert "work-items/work-1/index.md" in captured["html"]
 
 
+def test_artifact_viewer_route_renders_encoded_document_relative_artifact(tmp_path: Path) -> None:
+    docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    docs.write_text("work-items/work-1/020-product-definition.md", "# Product")
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+    finally:
+        db.close()
+
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.db_path = tmp_path / "v3.sqlite3"
+    Handler.project_id = "agentic-mesh-dev"
+    Handler.document_library = docs
+    handler = object.__new__(Handler)
+    captured: dict[str, str] = {}
+    handler._send_html = lambda content: captured.__setitem__("html", content)  # type: ignore[method-assign]
+
+    handler._render_artifact_route(quote("work-items/work-1/020-product-definition.md", safe=""))
+
+    assert "<h1>Product</h1>" in captured["html"]
+    assert "work-items/work-1/020-product-definition.md" in captured["html"]
+
+
+def test_artifact_viewer_route_rejects_unsafe_encoded_artifact_without_raw_href(tmp_path: Path) -> None:
+    docs = LocalDocumentLibraryAdapter(tmp_path / "documents")
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+    finally:
+        db.close()
+
+    class Handler(V3StatusHandler):
+        pass
+
+    Handler.db_path = tmp_path / "v3.sqlite3"
+    Handler.project_id = "agentic-mesh-dev"
+    Handler.document_library = docs
+    handler = object.__new__(Handler)
+    captured: dict[str, object] = {}
+    handler.send_error = lambda status, message=None: captured.update(  # type: ignore[method-assign]
+        {"status": status, "message": message}
+    )
+
+    handler._render_artifact_route(quote("work-items/work-1/state/token.txt", safe=""))
+
+    assert captured["status"].value == 404
+    assert captured["message"] == "artifact not found"
+    assert "token.txt" not in str(captured["message"])
+
+
 def test_artifact_viewer_route_reports_document_backend_errors(tmp_path: Path) -> None:
     class FailingDocumentLibrary:
         def exists(self, relative_path: str) -> bool:
@@ -542,7 +595,7 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
     assert "extra_context" in html
     assert "<pre>" not in html
     assert "Work item index" in html
-    assert "/artifact-viewer/work-1/index.md" in html
+    assert "/artifact-viewer/work-items%2Fwork-1%2Findex.md" in html
     assert 'target="_blank" rel="noopener noreferrer">Work item index</a>' in html
     assert "Document framework" in html
     assert "togaf-sdlc-v1" in html

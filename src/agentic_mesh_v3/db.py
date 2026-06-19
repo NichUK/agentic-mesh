@@ -239,6 +239,20 @@ class V3Database:
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS deployment_runs (
+                  run_id TEXT PRIMARY KEY,
+                  target_id TEXT NOT NULL,
+                  work_item_id TEXT NOT NULL,
+                  release_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  command_json TEXT NOT NULL DEFAULT '[]',
+                  smoke_result TEXT NOT NULL,
+                  rollback_plan TEXT NOT NULL,
+                  evidence_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS role_memory (
                   memory_id TEXT PRIMARY KEY,
                   role_instance_id TEXT NOT NULL,
@@ -1395,6 +1409,54 @@ class V3Database:
                 "work_item",
                 work_item_id,
                 {"release_id": release_id, "status": status, "deployment_result": deployment_result},
+            )
+
+    def record_deployment_run(
+        self,
+        *,
+        run_id: str,
+        target_id: str,
+        work_item_id: str,
+        release_id: str,
+        status: str,
+        smoke_result: str,
+        rollback_plan: str,
+        command: list[str] | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO deployment_runs(
+                  run_id, target_id, work_item_id, release_id, status, command_json,
+                  smoke_result, rollback_plan, evidence_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                  status=excluded.status,
+                  command_json=excluded.command_json,
+                  smoke_result=excluded.smoke_result,
+                  rollback_plan=excluded.rollback_plan,
+                  evidence_json=excluded.evidence_json,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    run_id,
+                    target_id,
+                    work_item_id,
+                    release_id,
+                    status,
+                    json.dumps(command or [], sort_keys=True),
+                    smoke_result,
+                    rollback_plan,
+                    json.dumps(evidence or {}, sort_keys=True),
+                ),
+            )
+            self.record_event(
+                "deployment_run.recorded",
+                "work_item",
+                work_item_id,
+                {"run_id": run_id, "target_id": target_id, "status": status},
             )
 
     def update_release_closure_state(self, *, work_item_id: str, closure_state: str) -> None:

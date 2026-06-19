@@ -573,18 +573,23 @@ class V3StatusHandler(BaseHTTPRequestHandler):
 
     def _render_artifact_route(self, route_path: str) -> None:
         parts = [part for part in unquote(route_path).split("/") if part]
-        if len(parts) < 2:
-            self.send_error(HTTPStatus.NOT_FOUND, "artifact route requires work item id and filename")
+        relative_path: str | None = None
+        if parts and parts[0] == "work-items":
+            relative_path = _safe_artifact_relative_path("/".join(parts))
+        elif len(parts) >= 2:
+            work_item_id = parts[0]
+            filename = "/".join(parts[1:])
+            db = V3Database(self.db_path)
+            try:
+                db.migrate()
+                artifact = db.artifact_for(work_item_id, Path(filename).name)
+            finally:
+                db.close()
+            relative_path = artifact["relative_path"] if artifact else artifact_viewer_path(work_item_id, filename)
+            relative_path = _safe_artifact_relative_path(relative_path)
+        if relative_path is None:
+            self.send_error(HTTPStatus.NOT_FOUND, "artifact not found")
             return
-        work_item_id = parts[0]
-        filename = "/".join(parts[1:])
-        db = V3Database(self.db_path)
-        try:
-            db.migrate()
-            artifact = db.artifact_for(work_item_id, Path(filename).name)
-        finally:
-            db.close()
-        relative_path = artifact["relative_path"] if artifact else artifact_viewer_path(work_item_id, filename)
         adapter = self.document_library
         if adapter is None:
             self.send_error(HTTPStatus.NOT_FOUND, "document library root is not configured")
@@ -973,6 +978,33 @@ def _safe_dashboard_next_path(raw: str) -> str:
 def _teams_activity_response(activity: dict[str, Any], router: TeamsActivityRouter) -> dict[str, object]:
     subjects = router.route_activity(activity)
     return {"status": "routed", "subjects": subjects}
+
+
+_UNSAFE_ARTIFACT_ROUTE_PARTS = {
+    ".ssh",
+    "credential",
+    "credentials",
+    "oauth",
+    "private",
+    "secret",
+    "secrets",
+    "state",
+    "token",
+    "tokens",
+}
+
+
+def _safe_artifact_relative_path(raw_path: str) -> str | None:
+    clean = unquote(str(raw_path)).replace("\\", "/").lstrip("/")
+    if "\x00" in clean:
+        return None
+    parts = [part for part in clean.split("/") if part]
+    if len(parts) < 3 or parts[0] != "work-items":
+        return None
+    lowered = {part.casefold() for part in parts}
+    if any(part in {".", ".."} for part in parts) or lowered & _UNSAFE_ARTIFACT_ROUTE_PARTS:
+        return None
+    return "/".join(parts)
 
 
 def _jsonable(value: Any) -> Any:
