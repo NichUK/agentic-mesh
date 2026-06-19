@@ -10,11 +10,14 @@ import pytest
 
 from agentic_mesh_v3.cli import _teams_activity_router
 from agentic_mesh_v3.cli import _broker_inspection_payload
+from agentic_mesh_v3.cli import _build_role_agent_service
 from agentic_mesh_v3.cli import _ensure_agent_stream
 from agentic_mesh_v3.cli import _stakeholder_bridge
 from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.cli import SafeOutputJsonlImporter
+from agentic_mesh_v3.agent import DatabaseConversationContext
+from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import BotFrameworkTeamsBridge
 from agentic_mesh_v3.connectors import GraphTeamsBridge
@@ -22,6 +25,7 @@ from agentic_mesh_v3.connectors import LocalTeamsBridge
 from agentic_mesh_v3.connectors import StakeholderMessage
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.dogfood_agent_service import WORK_ITEM_ID as AGENT_DOGFOOD_WORK_ITEM_ID
+from agentic_mesh_v3.memory import DatabaseRoleMemory
 from agentic_mesh_v3.project_config import load_project_config
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.tools import V3ToolService
@@ -1671,7 +1675,13 @@ def test_cli_lifecycle_apply_dry_runs_compose_actions(tmp_path: Path, capsys) ->
     assert output["execute"] is False
     assert output["results"][0]["action"] == "wake"
     assert output["results"][0]["service_name"] == "agentic-mesh-dev-product-manager-1"
-    assert output["results"][0]["command"][-3:] == ["up", "-d", "agentic-mesh-dev-product-manager-1"]
+    assert output["results"][0]["command"][-5:] == [
+        "up",
+        "-d",
+        "--no-deps",
+        "--no-recreate",
+        "agentic-mesh-dev-product-manager-1",
+    ]
     assert output["results"][0]["executed"] is False
     assert output["results"][0]["working_directory"] == str(tmp_path)
 
@@ -1987,6 +1997,88 @@ roles:
     assert snapshot.agents[0].role_instance_id == "agentic-mesh-dev.product-manager.1"
     assert snapshot.agents[0].container_state == "running"
     assert snapshot.agents[0].inbox_depth == 0
+
+
+def test_cli_role_agent_service_builder_records_runs_to_database(tmp_path: Path) -> None:
+    project_config_path = tmp_path / "project.yaml"
+    project_config_path.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  project-manager:
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+    project_config = load_project_config(project_config_path)
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.project-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.project-manager",
+        {"request": "status", "work_item_id": "work-operator-check"},
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-operator-check",
+            title="Operator status check",
+            description="Verify role service run recording.",
+            state="waiting_agent",
+            owner_role="project-manager",
+        )
+        agent_config_dir = tmp_path / "agent"
+        agent_config_dir.mkdir()
+        (agent_config_dir / "system.md").write_text("System instructions.", encoding="utf-8")
+        (agent_config_dir / "role.md").write_text("Project Manager role.", encoding="utf-8")
+        (agent_config_dir / "organisation.md").write_text("Organisation instructions.", encoding="utf-8")
+        (agent_config_dir / "project.md").write_text("Project instructions.", encoding="utf-8")
+        (agent_config_dir / "tools.md").write_text("Use safe-output tools.", encoding="utf-8")
+        (agent_config_dir / "raci.json").write_text("[]", encoding="utf-8")
+        service = _build_role_agent_service(
+            argparse.Namespace(
+                role_id="project-manager",
+                instance_id="1",
+                agent_config_dir=agent_config_dir,
+                runtime_state_dir=tmp_path / "state",
+                worker="echo",
+                worker_command_json=None,
+                worker_timeout_seconds=None,
+                worker_model=None,
+                worker_reasoning_effort=None,
+                worker_sandbox_mode=None,
+                max_delivery_attempts=3,
+            ),
+            project_config=project_config,
+            db=db,
+            broker=broker,
+            memory=DatabaseRoleMemory(db),
+            conversation_context=DatabaseConversationContext(db),
+            work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
+        )
+
+        result = service.run_once()
+        runs = db.list_agent_runs("agentic-mesh-dev.project-manager.1")
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert len(runs) == 1
+    assert runs[0]["message_id"] == published.message_id
+    assert runs[0]["work_item_id"] == "work-operator-check"
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["tool_calls"] == (
+        f"noop:{published.message_id}",
+        f"status.complete:{published.message_id}",
+    )
 
 
 def test_cli_materialize_agent_configs_writes_configs_and_compose(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
