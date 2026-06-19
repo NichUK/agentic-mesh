@@ -14,6 +14,7 @@ from agentic_mesh_v3.cli import _build_role_agent_service
 from agentic_mesh_v3.cli import _ensure_agent_stream
 from agentic_mesh_v3.cli import _stakeholder_bridge
 from agentic_mesh_v3.cli import _worker_from_args
+from agentic_mesh_v3.cli import _enrich_tool_call_payload_from_env
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.cli import SafeOutputJsonlImporter
 from agentic_mesh_v3.agent import DatabaseConversationContext
@@ -37,6 +38,58 @@ def _jwt_with_scopes(scopes: str) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none"}').decode("ascii").rstrip("=")
     payload = base64.urlsafe_b64encode(json.dumps({"scp": scopes}).encode("utf-8")).decode("ascii").rstrip("=")
     return f"{header}.{payload}.signature"
+
+
+def test_cli_enriches_status_reply_payload_from_message_environment() -> None:
+    payload = {"text_markdown": "Project Manager reply."}
+
+    _enrich_tool_call_payload_from_env(
+        "status.reply",
+        payload,
+        {
+            "AGENTIC_MESH_MESSAGE_ID": "msg-1",
+            "AGENTIC_MESH_CORRELATION_ID": "corr-msg-1",
+            "AGENTIC_MESH_CONNECTOR": "teams",
+            "AGENTIC_MESH_CONVERSATION_REF": "dm:project-manager",
+            "AGENTIC_MESH_REPLY_TARGET_REF": "chat:conversation-1",
+            "AGENTIC_MESH_REPLY_THREAD_REF": "thread-1",
+            "AGENTIC_MESH_WORK_ITEM_ID": "work-1",
+            "AGENTIC_MESH_QUEUE_ITEM_ID": "queue-1",
+        },
+    )
+
+    assert payload == {
+        "text_markdown": "Project Manager reply.",
+        "source_message_id": "msg-1",
+        "correlation_id": "corr-msg-1",
+        "connector": "teams",
+        "conversation_ref": "dm:project-manager",
+        "reply_target_ref": "chat:conversation-1",
+        "reply_thread_ref": "thread-1",
+        "work_item_id": "work-1",
+        "queue_item_id": "queue-1",
+    }
+
+
+def test_cli_enrichment_preserves_explicit_status_reply_target() -> None:
+    payload = {
+        "text_markdown": "Release Manager reply.",
+        "connector": "teams",
+        "reply_target_ref": "chat:explicit",
+    }
+
+    _enrich_tool_call_payload_from_env(
+        "status.reply",
+        payload,
+        {
+            "AGENTIC_MESH_MESSAGE_ID": "msg-1",
+            "AGENTIC_MESH_CONNECTOR": "teams",
+            "AGENTIC_MESH_REPLY_TARGET_REF": "chat:source",
+        },
+    )
+
+    assert payload["source_message_id"] == "msg-1"
+    assert payload["reply_target_ref"] == "chat:explicit"
 
 
 def test_safe_output_jsonl_importer_maps_legacy_file_outputs_to_db_tool_calls(tmp_path: Path) -> None:

@@ -40,6 +40,7 @@ class SafeOutputSubprocessWorker:
             capture_output=True,
             text=True,
             timeout=self.timeout_seconds,
+            env=_message_context_environment(message),
         )
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
@@ -74,6 +75,7 @@ class CodexCliWorker:
             capture_output=True,
             text=True,
             timeout=self.timeout_seconds,
+            env=_message_context_environment(message),
         )
         if completed.returncode != 0:
             detail = completed.stderr.strip() or completed.stdout.strip() or f"exit code {completed.returncode}"
@@ -232,6 +234,7 @@ def _run_worker_command(
     capture_output: bool,
     text: bool,
     timeout: int,
+    env: dict[str, str] | None = None,
 ) -> CompletedProcess[str]:
     """Run a worker command and tear down its process tree on timeout."""
 
@@ -243,6 +246,8 @@ def _run_worker_command(
         "stderr": subprocess.PIPE,
         "text": True,
     }
+    if env:
+        popen_kwargs["env"] = {**os.environ, **env}
     if os.name == "nt":
         popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
     else:
@@ -262,6 +267,27 @@ def _run_worker_command(
             stderr=stderr,
         ) from exc
     return CompletedProcess(list(command), process.returncode, stdout, stderr)
+
+
+def _message_context_environment(message: AgentMessage) -> dict[str, str]:
+    env = {
+        "AGENTIC_MESH_MESSAGE_ID": message.message_id,
+        "AGENTIC_MESH_CORRELATION_ID": str(message.payload.get("correlation_id") or f"corr-{message.message_id}"),
+    }
+    for payload_key, env_key in (
+        ("connector", "AGENTIC_MESH_CONNECTOR"),
+        ("conversation_ref", "AGENTIC_MESH_CONVERSATION_REF"),
+        ("reply_target_ref", "AGENTIC_MESH_REPLY_TARGET_REF"),
+        ("reply_thread_ref", "AGENTIC_MESH_REPLY_THREAD_REF"),
+        ("source_type", "AGENTIC_MESH_SOURCE_TYPE"),
+        ("sender_ref", "AGENTIC_MESH_SENDER_REF"),
+        ("work_item_id", "AGENTIC_MESH_WORK_ITEM_ID"),
+        ("queue_item_id", "AGENTIC_MESH_QUEUE_ITEM_ID"),
+    ):
+        value = message.payload.get(payload_key)
+        if value is not None and str(value) != "":
+            env[env_key] = str(value)
+    return env
 
 
 def _terminate_process_tree(process: subprocess.Popen[str]) -> None:

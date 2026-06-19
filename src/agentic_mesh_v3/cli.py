@@ -585,6 +585,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             db.migrate()
             payload = json.loads(args.payload_json)
+            _enrich_tool_call_payload_from_env(args.tool_name, payload)
             adapter = _document_library_adapter(args) if _tool_needs_document_library(args.tool_name) else None
             broker, broker_stream = (
                 _tool_broker(args) if _tool_needs_broker(args.tool_name, payload) else (None, None)
@@ -1803,6 +1804,40 @@ def _enrich_file_safe_output_payload(payload: dict[str, Any], context: dict[str,
         payload.setdefault("source_message_id", source_message_id)
     if correlation_id:
         payload.setdefault("correlation_id", correlation_id)
+    for env_key, payload_key in (
+        ("AGENTIC_MESH_CONNECTOR", "connector"),
+        ("AGENTIC_MESH_CONVERSATION_REF", "conversation_ref"),
+        ("AGENTIC_MESH_REPLY_TARGET_REF", "reply_target_ref"),
+        ("AGENTIC_MESH_REPLY_THREAD_REF", "reply_thread_ref"),
+        ("AGENTIC_MESH_WORK_ITEM_ID", "work_item_id"),
+        ("AGENTIC_MESH_QUEUE_ITEM_ID", "queue_item_id"),
+    ):
+        value = str(context.get(env_key) or "")
+        if value:
+            payload.setdefault(payload_key, value)
+
+
+def _enrich_tool_call_payload_from_env(tool_name: str, payload: dict[str, Any], env: dict[str, str] | None = None) -> None:
+    source = env if env is not None else os.environ
+    source_message_id = source.get("AGENTIC_MESH_MESSAGE_ID")
+    correlation_id = source.get("AGENTIC_MESH_CORRELATION_ID")
+    if source_message_id:
+        payload.setdefault("source_message_id", source_message_id)
+    if correlation_id:
+        payload.setdefault("correlation_id", correlation_id)
+    if tool_name != "status.reply":
+        return
+    for env_key, payload_key in (
+        ("AGENTIC_MESH_CONNECTOR", "connector"),
+        ("AGENTIC_MESH_CONVERSATION_REF", "conversation_ref"),
+        ("AGENTIC_MESH_REPLY_TARGET_REF", "reply_target_ref"),
+        ("AGENTIC_MESH_REPLY_THREAD_REF", "reply_thread_ref"),
+        ("AGENTIC_MESH_WORK_ITEM_ID", "work_item_id"),
+        ("AGENTIC_MESH_QUEUE_ITEM_ID", "queue_item_id"),
+    ):
+        value = source.get(env_key)
+        if value:
+            payload.setdefault(payload_key, value)
 
 
 def _map_file_safe_output(tool_name: str, payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
