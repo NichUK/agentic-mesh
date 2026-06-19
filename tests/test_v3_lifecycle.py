@@ -639,6 +639,30 @@ def test_compose_reconciliation_marks_stale_failed_agent_hibernated() -> None:
     assert statuses[0].last_lifecycle_error is None
 
 
+def test_compose_reconciliation_clears_already_hibernated_stale_failure() -> None:
+    statuses = reconcile_agent_statuses_with_compose(
+        (
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.business-analyst.1",
+                container_state="hibernated",
+                heartbeat_at="2026-06-18T16:10:28+00:00",
+                current_work=None,
+                inbox_depth=0,
+                dead_letter_depth=0,
+                last_lifecycle_action="start",
+                last_lifecycle_exit_code=1,
+                last_lifecycle_error="port is already allocated",
+            ),
+        ),
+        running_services=(),
+    )
+
+    assert statuses[0].container_state == "hibernated"
+    assert statuses[0].last_lifecycle_action is None
+    assert statuses[0].last_lifecycle_exit_code is None
+    assert statuses[0].last_lifecycle_error is None
+
+
 def test_lifecycle_results_update_agent_status_projection(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

@@ -307,6 +307,16 @@ def reconcile_agent_statuses_with_compose(
         ):
             reconciled.append(_with_reconciled_lifecycle(status, container_state="hibernated"))
             continue
+        if (
+            service_name not in running_service_names
+            and status.last_lifecycle_exit_code is not None
+            and status.last_lifecycle_exit_code != 0
+            and not status.current_work
+            and status.inbox_depth == 0
+            and status.dead_letter_depth == 0
+        ):
+            reconciled.append(_with_reconciled_lifecycle(status))
+            continue
         reconciled.append(status)
     return tuple(reconciled)
 
