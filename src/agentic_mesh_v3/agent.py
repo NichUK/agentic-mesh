@@ -107,6 +107,11 @@ class WorkItemStateProvider(Protocol):
         """Load the current owner role for a work item, if available."""
 
 
+class MessageFreshnessProvider(Protocol):
+    def superseding_message_id(self, *, message_id: str, target_role: str, work_item_id: str) -> str | None:
+        """Return a newer message for this role/work item when the current message is superseded."""
+
+
 class AgentStatusReporter(Protocol):
     def report(self, status: AgentStatus) -> None:
         """Publish current agent status to the runtime read model."""
@@ -749,6 +754,12 @@ class NullWorkItemStateProvider:
         return None
 
 
+class NullMessageFreshnessProvider:
+    def superseding_message_id(self, *, message_id: str, target_role: str, work_item_id: str) -> str | None:
+        del message_id, target_role, work_item_id
+        return None
+
+
 class DatabaseWorkItemGovernanceContextProvider:
     def __init__(self, db: object) -> None:
         self.db = db
@@ -772,6 +783,40 @@ class DatabaseWorkItemStateProvider:
         return None if detail is None else detail.owner_role
 
 
+class DatabaseMessageFreshnessProvider:
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+    def superseding_message_id(self, *, message_id: str, target_role: str, work_item_id: str) -> str | None:
+        current = self.db.connection.execute(  # type: ignore[attr-defined]
+            """
+            SELECT created_at
+            FROM message_journal
+            WHERE message_id=? AND stage='published'
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+        if current is None:
+            return None
+        newer = self.db.connection.execute(  # type: ignore[attr-defined]
+            """
+            SELECT message_id
+            FROM message_journal
+            WHERE stage='published'
+              AND target_role=?
+              AND work_item_id=?
+              AND message_id<>?
+              AND created_at>?
+            ORDER BY created_at DESC, journal_id DESC
+            LIMIT 1
+            """,
+            (target_role, work_item_id, message_id, current["created_at"]),
+        ).fetchone()
+        return None if newer is None else str(newer["message_id"])
+
+
 class EchoWorker:
     """Tiny worker for contract tests; production uses Codex or other adapters."""
 
@@ -793,6 +838,7 @@ class RoleAgentService:
         default_factory=NullWorkItemGovernanceContextProvider
     )
     work_item_state_provider: WorkItemStateProvider = field(default_factory=NullWorkItemStateProvider)
+    message_freshness_provider: MessageFreshnessProvider = field(default_factory=NullMessageFreshnessProvider)
     governance_instructions: GovernanceInstructionSet = field(default_factory=GovernanceInstructionSet)
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
     terminal_tool_call_audit: TerminalToolCallAudit = field(default_factory=NullTerminalToolCallAudit)
@@ -852,6 +898,9 @@ class RoleAgentService:
         terminal_skip_result = self._skip_if_terminal_work_item(message, claimed.consumer)
         if terminal_skip_result is not None:
             return terminal_skip_result
+        superseded_skip_result = self._skip_if_superseded_work_message(message, claimed.consumer)
+        if superseded_skip_result is not None:
+            return superseded_skip_result
         inform_only_result = self._ack_if_inform_only_message(message, claimed.consumer)
         if inform_only_result is not None:
             return inform_only_result
@@ -1097,6 +1146,46 @@ class RoleAgentService:
         )
         self._report_status(container_state="running", current_work=None)
         return AgentRunResult(message_id=message.message_id, status="stale_terminal_work_skipped")
+
+    def _skip_if_superseded_work_message(self, message: BrokerMessage, consumer: str) -> AgentRunResult | None:
+        work_item_id = _message_work_item_id(message.payload)
+        if work_item_id is None:
+            return None
+        superseding_message_id = self.message_freshness_provider.superseding_message_id(
+            message_id=message.message_id,
+            target_role=self.config.role_id,
+            work_item_id=work_item_id,
+        )
+        if superseding_message_id is None:
+            return None
+        completed_at = datetime.now(timezone.utc).isoformat()
+        summary = (
+            f"Skipped superseded message for work item {work_item_id}; "
+            f"newer message {superseding_message_id} exists for {self.config.role_id}."
+        )
+        self.run_recorder.record(
+            run_id=f"run-{uuid4().hex}",
+            role_instance_id=self.config.role_instance_id,
+            message_id=message.message_id,
+            subject=message.subject,
+            status="superseded_work_message_skipped",
+            work_item_id=work_item_id,
+            tool_calls=(),
+            started_at=completed_at,
+            completed_at=completed_at,
+        )
+        self.broker.ack(self.config.inbox_stream, consumer, message.message_id)
+        self._journal_message(
+            message,
+            stage="acked",
+            direction="inbound",
+            status="superseded_work_message_skipped",
+            broker_consumer=consumer,
+            delivery_attempt=message.delivery_count + 1,
+            summary=summary,
+        )
+        self._report_status(container_state="running", current_work=None)
+        return AgentRunResult(message_id=message.message_id, status="superseded_work_message_skipped")
 
     def _ack_if_inform_only_message(self, message: BrokerMessage, consumer: str) -> AgentRunResult | None:
         if not _is_inform_only_message(message.payload):

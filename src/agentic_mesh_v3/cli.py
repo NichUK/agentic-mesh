@@ -16,6 +16,7 @@ from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
 from agentic_mesh_v3.agent import DatabaseAgentPromptRecorder
 from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseConversationContext
+from agentic_mesh_v3.agent import DatabaseMessageFreshnessProvider
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseOperationalContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
@@ -1810,6 +1811,7 @@ def _build_role_agent_service(
         ),
         work_item_governance_context=work_item_governance_context,
         work_item_state_provider=DatabaseWorkItemStateProvider(db),
+        message_freshness_provider=DatabaseMessageFreshnessProvider(db),
         max_delivery_attempts=args.max_delivery_attempts,
         **kwargs,
     )

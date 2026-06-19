@@ -5,6 +5,7 @@ from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
 from agentic_mesh_v3.agent import DatabaseAgentPromptRecorder
 from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseConversationContext
+from agentic_mesh_v3.agent import DatabaseMessageFreshnessProvider
 from agentic_mesh_v3.agent import DatabaseOperationalContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
@@ -1166,6 +1167,102 @@ def test_role_agent_acks_stale_message_for_terminal_work_item_without_worker_run
     assert journal["stage"] == "acked"
     assert journal["status"] == "stale_terminal_work_skipped"
     assert "terminal work item work-closed" in journal["summary"]
+
+
+def test_role_agent_acks_superseded_work_message_without_worker_run(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.release-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.release-manager",
+        {
+            "message_type": "handoff.require",
+            "message": "Older release handoff.",
+            "work_item_id": "work-123",
+        },
+        message_id="agent.release-manager:old",
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.record_message_journal(
+            message_id=published.message_id,
+            direction="broker",
+            stage="published",
+            status="published",
+            target_role="release-manager",
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            work_item_id="work-123",
+            broker_subject="agent.release-manager",
+            broker_consumer="release-manager.1",
+            summary="Older handoff.",
+        )
+        db.record_message_journal(
+            message_id="agent.release-manager:new",
+            direction="broker",
+            stage="published",
+            status="published",
+            target_role="release-manager",
+            role_instance_id="agentic-mesh-dev.platform-engineer.1",
+            work_item_id="work-123",
+            broker_subject="agent.release-manager",
+            broker_consumer="release-manager.1",
+            summary="Newer handoff supersedes the old one.",
+        )
+        with db.connection:
+            db.connection.execute(
+                "UPDATE message_journal SET created_at=? WHERE message_id=? AND stage='published'",
+                ("2026-01-01 00:00:00", published.message_id),
+            )
+            db.connection.execute(
+                "UPDATE message_journal SET created_at=? WHERE message_id=? AND stage='published'",
+                ("2026-01-01 00:01:00", "agent.release-manager:new"),
+            )
+        service = RoleAgentService(
+            config=RoleInstanceConfig(
+                project_id="agentic-mesh-dev",
+                role_id="release-manager",
+                instance_id="1",
+                role_prompt_path=tmp_path / "role.md",
+                memory_db_path=tmp_path / "memory.sqlite3",
+                inbox_stream="agent-inbox",
+                inbox_consumer="release-manager.1",
+            ),
+            broker=broker,
+            worker=FailingIfCalledWorker(),
+            memory=InMemoryRoleMemory(),
+            message_freshness_provider=DatabaseMessageFreshnessProvider(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+            message_journal=db,
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        runs = db.connection.execute(
+            "SELECT status, work_item_id FROM agent_runs WHERE message_id=?",
+            (published.message_id,),
+        ).fetchall()
+        journal = db.connection.execute(
+            """
+            SELECT stage, status, summary
+            FROM message_journal
+            WHERE message_id=? AND stage='acked'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (published.message_id,),
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "superseded_work_message_skipped"
+    assert broker.depth("agent-inbox").pending == 0
+    assert [dict(row) for row in runs] == [
+        {"status": "superseded_work_message_skipped", "work_item_id": "work-123"}
+    ]
+    assert journal["status"] == "superseded_work_message_skipped"
+    assert "newer message agent.release-manager:new" in journal["summary"]
 
 
 def test_role_agent_dead_letter_notifies_source_conversation(tmp_path: Path) -> None:
