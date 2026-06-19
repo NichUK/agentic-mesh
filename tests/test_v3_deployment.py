@@ -68,6 +68,8 @@ def test_deployment_targets_from_project_config_builds_targets(tmp_path: Path) -
 
     targets = deployment_targets_from_project_config(config)
 
+    assert isinstance(targets["local-smoke"], CommandDeploymentTarget)
+    assert targets["local-smoke"].env["AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE"] == "0"
     assert targets["local-smoke"].deploy().status == "deployed"
     assert targets["planning-only"].deploy().status == "no_deployment"
 

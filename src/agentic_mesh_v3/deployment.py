@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from typing import Protocol
 from typing import TYPE_CHECKING
@@ -30,10 +32,13 @@ class CommandDeploymentTarget:
     cwd: Path | None = None
     rollback_plan: str = "Re-run the previous known-good deployment target."
     timeout_seconds: int = 300
+    env: dict[str, str] = field(default_factory=dict)
 
     def deploy(self) -> DeploymentResult:
         if not self.command:
             raise ValueError("deployment command is required")
+        env = os.environ.copy()
+        env.update(self.env)
         try:
             completed = subprocess.run(
                 list(self.command),
@@ -42,6 +47,7 @@ class CommandDeploymentTarget:
                 text=True,
                 timeout=self.timeout_seconds,
                 check=False,
+                env=env,
             )
         except subprocess.TimeoutExpired as exc:
             output = _timeout_output(exc, timeout_seconds=self.timeout_seconds)
@@ -86,6 +92,7 @@ def deployment_targets_from_project_config(config: "V3ProjectConfig") -> dict[st
                 cwd=target.working_directory,
                 rollback_plan=target.rollback_plan,
                 timeout_seconds=target.timeout_seconds,
+                env={"AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE": "0"},
             )
             continue
         if target_type in {"no-deployment", "no-deployment-disposition"}:

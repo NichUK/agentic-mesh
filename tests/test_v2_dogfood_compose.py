@@ -238,6 +238,7 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
     assert "--agent-config-root /mesh/project/state/v3/agent-configs" in script
     assert "--profile v3 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile v3 stop $AGENTIC_MESH_ROLE_SERVICES" in script
+    assert '--profile v3 up -d --no-deps --no-recreate "$AGENTIC_MESH_SUPERVISOR_SERVICE"' in script
     assert "--profile v3 rm -f $AGENTIC_MESH_ROLE_SERVICES" in script
     assert script.index("--profile v3 stop $AGENTIC_MESH_ROLE_SERVICES") < script.index(
         "--profile v3 rm -f $AGENTIC_MESH_ROLE_SERVICES"
