@@ -581,6 +581,18 @@ def _is_non_blocking_delivery_failure(payload: dict[str, object]) -> bool:
     return _payload_text(payload, "message_type") in {"informed.update"}
 
 
+def _is_inform_only_message(payload: dict[str, object]) -> bool:
+    """Return true for messages that only notify a role and require no worker run.
+
+    Governance uses `informed.update` for RACI "I" notifications. If the
+    sender needs action, they must use `handoff.require`, `consult.request`, or
+    `agent.delegate`; treating pure informed updates as work creates noisy
+    failures and hides the useful queue signal.
+    """
+
+    return _payload_text(payload, "message_type") == "informed.update"
+
+
 class InMemoryRoleMemory:
     def __init__(self) -> None:
         self._memory: dict[str, list[str]] = {}
@@ -782,6 +794,9 @@ class RoleAgentService:
         terminal_skip_result = self._skip_if_terminal_work_item(message, claimed.consumer)
         if terminal_skip_result is not None:
             return terminal_skip_result
+        inform_only_result = self._ack_if_inform_only_message(message, claimed.consumer)
+        if inform_only_result is not None:
+            return inform_only_result
         agent_message = AgentMessage(
             message_id=message.message_id,
             subject=message.subject,
@@ -1017,6 +1032,42 @@ class RoleAgentService:
         )
         self._report_status(container_state="running", current_work=None)
         return AgentRunResult(message_id=message.message_id, status="stale_terminal_work_skipped")
+
+    def _ack_if_inform_only_message(self, message: BrokerMessage, consumer: str) -> AgentRunResult | None:
+        if not _is_inform_only_message(message.payload):
+            return None
+        work_item_id = _message_work_item_id(message.payload)
+        completed_at = datetime.now(timezone.utc).isoformat()
+        summary = _payload_text(message.payload, "message") or "Informed update received."
+        observation = f"Informed update for {work_item_id or 'unscoped work'}: {summary}"
+        self.memory.record_observation(
+            self.config.role_instance_id,
+            observation,
+            source_ref=message.message_id,
+        )
+        self.run_recorder.record(
+            run_id=f"run-{uuid4().hex}",
+            role_instance_id=self.config.role_instance_id,
+            message_id=message.message_id,
+            subject=message.subject,
+            status="inform_only_acknowledged",
+            work_item_id=work_item_id,
+            tool_calls=(),
+            started_at=completed_at,
+            completed_at=completed_at,
+        )
+        self.broker.ack(self.config.inbox_stream, consumer, message.message_id)
+        self._journal_message(
+            message,
+            stage="acked",
+            direction="inbound",
+            status="inform_only_acknowledged",
+            broker_consumer=consumer,
+            delivery_attempt=message.delivery_count + 1,
+            summary="Acknowledged informed.update without worker run.",
+        )
+        self._report_status(container_state="running", current_work=None)
+        return AgentRunResult(message_id=message.message_id, status="inform_only_acknowledged")
 
     def _fetch_next_message(self) -> ClaimedAgentMessage | None:
         for consumer, subject in self._consumer_subjects():

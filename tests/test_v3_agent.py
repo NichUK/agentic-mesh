@@ -1018,10 +1018,10 @@ def test_role_agent_blocks_linked_work_item_on_dead_letter(tmp_path: Path) -> No
     assert published.message_id in detail.next_action
 
 
-def test_role_agent_does_not_block_work_item_for_dead_lettered_informed_update(tmp_path: Path) -> None:
+def test_role_agent_acks_informed_update_without_worker_run_or_work_block(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
-    broker.publish(
+    published = broker.publish(
         "agent-inbox",
         "agent.product-manager",
         {
@@ -1033,6 +1033,7 @@ def test_role_agent_does_not_block_work_item_for_dead_lettered_informed_update(t
         },
     )
     db = V3Database(tmp_path / "v3.sqlite3")
+    memory = InMemoryRoleMemory()
     try:
         db.migrate()
         db.upsert_work_item(
@@ -1046,14 +1047,33 @@ def test_role_agent_does_not_block_work_item_for_dead_lettered_informed_update(t
         service = RoleAgentService(
             config=_config(tmp_path),
             broker=broker,
-            worker=NoToolWorker(),
-            memory=InMemoryRoleMemory(),
+            worker=FailingIfCalledWorker(),
+            memory=memory,
             failure_reporter=DatabaseAgentFailureReporter(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+            message_journal=db,
             max_delivery_attempts=1,
         )
 
         result = service.run_once()
         detail = db.work_item_detail("work-123")
+        runs = [
+            tuple(row)
+            for row in db.connection.execute(
+                "SELECT status, work_item_id FROM agent_runs WHERE message_id=?",
+                (published.message_id,),
+            ).fetchall()
+        ]
+        journal = db.connection.execute(
+            """
+            SELECT stage, status, summary
+            FROM message_journal
+            WHERE message_id=?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (published.message_id,),
+        ).fetchone()
         events = [
             dict(row)
             for row in db.connection.execute(
@@ -1070,13 +1090,19 @@ def test_role_agent_does_not_block_work_item_for_dead_lettered_informed_update(t
         db.close()
 
     assert result is not None
-    assert result.status == "dead_lettered"
+    assert result.status == "inform_only_acknowledged"
     assert detail is not None
     assert detail.state == "deploying"
     assert detail.owner_role == "release-manager"
     assert detail.next_action == "Deployment target is running."
-    assert events[-1]["event_type"] == "agent.delivery_failure_recorded"
-    assert '"blocking": false' in events[-1]["payload_json"]
+    assert runs == [("inform_only_acknowledged", "work-123")]
+    assert journal is not None
+    assert journal["stage"] == "acked"
+    assert journal["status"] == "inform_only_acknowledged"
+    assert "without worker run" in journal["summary"]
+    assert memory.load_summary("agentic-mesh-dev.product-manager.1").startswith("Informed update for work-123")
+    assert not any(event["event_type"] == "agent.delivery_failure_recorded" for event in events)
+    assert not broker.pending("agent-inbox", "pm-1")
 
 
 def test_role_agent_acks_stale_message_for_terminal_work_item_without_worker_run(tmp_path: Path) -> None:
