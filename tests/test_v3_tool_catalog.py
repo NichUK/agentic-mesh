@@ -1,6 +1,41 @@
 from agentic_mesh_v3.tool_catalog import tool_catalog_for_role
 
 
+STARTER_ROLE_IDS = (
+    "business-analyst",
+    "delivery-manager",
+    "engineering",
+    "enterprise-architect",
+    "platform-engineer",
+    "product-manager",
+    "project-manager",
+    "prompt-engineer",
+    "qa-engineer",
+    "release-manager",
+    "research-analyst",
+    "security-architect",
+    "solution-architect",
+    "technical-writer",
+    "ux-designer",
+)
+
+
+def _allowed_tool_names(role_id: str) -> set[str]:
+    return {entry.tool_name for entry in tool_catalog_for_role(role_id) if entry.allowed}
+
+
+def test_starter_roles_share_same_baseline_tools_except_release_manager_extras() -> None:
+    product_baseline = _allowed_tool_names("product-manager")
+    release_extras = {"release.close", "release.deploy", "release.record"}
+
+    for role_id in STARTER_ROLE_IDS:
+        allowed = _allowed_tool_names(role_id)
+        if role_id == "release-manager":
+            assert allowed == product_baseline | release_extras
+        else:
+            assert allowed == product_baseline
+
+
 def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None:
     product_tools = {entry.tool_name: entry for entry in tool_catalog_for_role("product-manager")}
 
