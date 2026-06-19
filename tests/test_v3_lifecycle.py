@@ -423,6 +423,7 @@ def test_compose_lifecycle_command_maps_wake_and_hibernate_to_compose(tmp_path: 
         compose_files=(tmp_path / "compose.yml", tmp_path / "override.yml"),
         working_directory=tmp_path,
         project_name="agentic-mesh",
+        profiles=("v3",),
     )
 
     wake = compose_lifecycle_command(
@@ -441,6 +442,8 @@ def test_compose_lifecycle_command_maps_wake_and_hibernate_to_compose(tmp_path: 
         "compose",
         "--project-name",
         "agentic-mesh",
+        "--profile",
+        "v3",
         "-f",
         str(tmp_path / "compose.yml"),
         "-f",

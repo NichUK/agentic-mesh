@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import yaml
 
@@ -61,6 +62,15 @@ def test_dogfood_compose_defines_v3_runtime_profile() -> None:
     assert "AGENTIC_MESH_PROJECT_TEAM_ID" in service["environment"]
     assert "AGENTIC_MESH_PROJECT_CHANNEL_ID" in service["environment"]
     assert "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID" in service["environment"]
+
+
+def test_dogfood_supervisor_uses_v3_compose_profile_for_lazy_role_wake() -> None:
+    compose = _load_dogfood_compose()
+    command = compose["services"]["v3-supervisor"]["command"]
+
+    assert "--compose-file /mesh/project/deploy/compose/docker-compose.yml" in command
+    assert "--compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml" in command
+    assert "--compose-profile v3" in command
 
 
 def test_dogfood_compose_defines_v3_nats_profile() -> None:
@@ -341,6 +351,28 @@ def test_linuxch_overlay_keeps_lazy_role_services_stopped_until_wake() -> None:
     for role_id in V3_LIVE_ROLE_IDS:
         service_name = f"agentic-mesh-dev-{role_id}-1"
         assert f"  {service_name}:\n    restart: \"no\"" in overlay
+
+
+def test_linuxch_overlay_is_valid_for_v3_profile() -> None:
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "--profile",
+            "v3",
+            "-f",
+            "examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml",
+            "-f",
+            "examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml",
+            "config",
+            "--quiet",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def _load_dogfood_compose() -> dict[str, object]:

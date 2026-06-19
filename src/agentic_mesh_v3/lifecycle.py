@@ -105,12 +105,15 @@ class ComposeLifecycleConfig:
     working_directory: Path | None = None
     timeout_seconds: int = 300
     project_name: str | None = None
+    profiles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.compose_files:
             raise ValueError("at least one compose file is required")
         if self.timeout_seconds < 1:
             raise ValueError("timeout_seconds must be positive")
+        if any(not profile.strip() for profile in self.profiles):
+            raise ValueError("compose profiles must be non-empty")
 
 
 @dataclass(frozen=True)
@@ -163,6 +166,7 @@ def compose_lifecycle_command(
         "docker",
         "compose",
         *(() if not config.project_name else ("--project-name", config.project_name)),
+        *[part for profile in config.profiles for part in ("--profile", profile)],
         *[
             part
             for compose_file in config.compose_files
@@ -298,6 +302,7 @@ def running_compose_services(
         "docker",
         "compose",
         *(() if not config.project_name else ("--project-name", config.project_name)),
+        *[part for profile in config.profiles for part in ("--profile", profile)],
         *[
             part
             for compose_file in config.compose_files

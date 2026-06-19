@@ -151,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     lifecycle_apply_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     lifecycle_apply_parser.add_argument("--compose-file", type=Path, action="append", required=True)
     lifecycle_apply_parser.add_argument("--compose-project-name")
+    lifecycle_apply_parser.add_argument("--compose-profile", action="append", default=())
     lifecycle_apply_parser.add_argument("--working-directory", type=Path)
     lifecycle_apply_parser.add_argument("--timeout-seconds", type=int, default=300)
     lifecycle_apply_parser.add_argument("--execute", action="store_true")
@@ -162,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_tick_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_tick_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_tick_parser.add_argument("--compose-project-name")
+    supervisor_tick_parser.add_argument("--compose-profile", action="append", default=())
     supervisor_tick_parser.add_argument("--working-directory", type=Path)
     supervisor_tick_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_tick_parser.add_argument("--execute", action="store_true")
@@ -176,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_loop_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_loop_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_loop_parser.add_argument("--compose-project-name")
+    supervisor_loop_parser.add_argument("--compose-profile", action="append", default=())
     supervisor_loop_parser.add_argument("--working-directory", type=Path)
     supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_loop_parser.add_argument("--execute", action="store_true")
@@ -192,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_service_parser.add_argument("--min-warm-instances-per-role", type=int, default=0)
     supervisor_service_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_service_parser.add_argument("--compose-project-name")
+    supervisor_service_parser.add_argument("--compose-profile", action="append", default=())
     supervisor_service_parser.add_argument("--working-directory", type=Path)
     supervisor_service_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_service_parser.add_argument("--execute", action="store_true")
@@ -299,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     tool_parser.add_argument("--document-library-root", type=Path)
     tool_parser.add_argument("--lifecycle-compose-file", type=Path, action="append")
     tool_parser.add_argument("--lifecycle-compose-project-name")
+    tool_parser.add_argument("--lifecycle-compose-profile", action="append")
     tool_parser.add_argument("--lifecycle-working-directory", type=Path)
     tool_parser.add_argument("--lifecycle-timeout-seconds", type=int, default=300)
     tool_parser.add_argument("--terminal", action="store_true")
@@ -497,6 +502,7 @@ def main(argv: list[str] | None = None) -> int:
                     working_directory=args.working_directory,
                     timeout_seconds=args.timeout_seconds,
                     project_name=args.compose_project_name,
+                    profiles=tuple(args.compose_profile or ()),
                 )
             ).apply(decisions, execute=args.execute)
             for result in results:
@@ -939,6 +945,7 @@ def _run_supervisor_lifecycle(
             working_directory=args.working_directory,
             timeout_seconds=args.timeout_seconds,
             project_name=args.compose_project_name,
+            profiles=tuple(args.compose_profile or ()),
         )
         try:
             running_services = running_compose_services(compose_config)
@@ -1305,6 +1312,7 @@ def _tool_lifecycle_config(args: argparse.Namespace) -> ComposeLifecycleConfig |
             or os.environ.get("AGENTIC_MESH_LIFECYCLE_COMPOSE_PROJECT_NAME")
             or os.environ.get("COMPOSE_PROJECT_NAME")
         ),
+        profiles=_tool_lifecycle_compose_profiles(args),
     )
 
 
@@ -1328,6 +1336,16 @@ def _tool_lifecycle_compose_files(args: argparse.Namespace) -> tuple[Path, ...]:
     if linuxch.exists():
         files.append(linuxch)
     return tuple(files)
+
+
+def _tool_lifecycle_compose_profiles(args: argparse.Namespace) -> tuple[str, ...]:
+    explicit = getattr(args, "lifecycle_compose_profile", None)
+    if explicit:
+        return tuple(str(profile) for profile in explicit)
+    env_value = os.environ.get("AGENTIC_MESH_LIFECYCLE_COMPOSE_PROFILES")
+    if env_value:
+        return tuple(profile.strip() for profile in env_value.split(",") if profile.strip())
+    return ()
 
 
 def _path_from_env(name: str) -> Path | None:
