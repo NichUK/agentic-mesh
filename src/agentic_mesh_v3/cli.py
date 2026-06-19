@@ -1731,7 +1731,10 @@ def _build_role_agent_service(
         kwargs["terminal_tool_call_audit"] = terminal_tool_call_audit
     kwargs["message_journal"] = db
     kwargs["session_recorder"] = db
-    kwargs["failure_reporter"] = DatabaseAgentFailureReporter(db)
+    kwargs["failure_reporter"] = DatabaseAgentFailureReporter(
+        db,
+        stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
+    )
     kwargs["run_recorder"] = DatabaseAgentRunRecorder(db)
     kwargs["prompt_recorder"] = DatabaseAgentPromptRecorder(db)
     return RoleAgentService(
