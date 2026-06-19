@@ -371,7 +371,8 @@ class V3ToolService:
             detail = self.db.work_item_detail(work_item_id)
             if detail is None:
                 raise ValueError(f"work item `{work_item_id}` was not found")
-            if detail.state != "released":
+            is_project_closure_wait = detail.state == "waiting_agent" and detail.current_phase == "project-closure"
+            if detail.state != "released" and not is_project_closure_wait:
                 self.db.update_work_item_state(
                     work_item_id=work_item_id,
                     state="released",

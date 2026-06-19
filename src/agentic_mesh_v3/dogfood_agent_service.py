@@ -569,6 +569,37 @@ class _ReleaseManagerWorker:
             [
                 self.tools.call(
                     role_instance_id=self.role_instance_id,
+                    tool_name="handoff.require",
+                    payload={
+                        "work_item_id": WORK_ITEM_ID,
+                        "target_role": "project-manager",
+                        "phase": "project-closure",
+                        "accountable_role": "project-manager",
+                        "summary": "Release deployed and closed; Project Manager owns final backlog and sponsor closure.",
+                        "required_next_action": "Update backlog closure, refresh the root work-item index, and notify the sponsor when configured.",
+                        "acceptance_criteria": [
+                            "Backlog item is closed and linked to the released work item.",
+                            "Root work-item index includes the released work item.",
+                            "Sponsor receives a closure notification, or a no-sponsor disposition is recorded.",
+                        ],
+                        "evidence_requirements": [
+                            "Closed backlog item linked to the released work item.",
+                            "Root work-item index updated.",
+                            "Sponsor closure notification delivered or no-sponsor disposition recorded.",
+                        ],
+                        "artifact_links": [
+                            f"work-items/{WORK_ITEM_ID}/index.md",
+                            "work-items/index.md",
+                        ],
+                        "open_decisions": [],
+                        "open_risks": ["Live Teams, OneDrive, and NATS credentials still require environment-specific validation."],
+                        "consulted_roles": [],
+                        "informed_roles": ["delivery-manager", "product-manager", "qa-engineer"],
+                        "stakeholder_follow_up": ["Notify sponsor of release closure when sponsor contact is configured."],
+                    },
+                ).call_id,
+                self.tools.call(
+                    role_instance_id=self.role_instance_id,
                     tool_name="release.close",
                     payload={
                         "work_item_id": WORK_ITEM_ID,
@@ -589,15 +620,6 @@ class _ReleaseManagerWorker:
                     decisions=["Release Manager completed deployment and release closure."],
                     risks=["Live Teams, OneDrive, and NATS credentials still require environment-specific validation."],
                 ),
-                self.tools.call(
-                    role_instance_id=self.role_instance_id,
-                    tool_name="informed.update",
-                    payload={
-                        "work_item_id": WORK_ITEM_ID,
-                        "target_role": "project-manager",
-                        "message": "Release deployed and closed; update backlog and notify sponsor.",
-                    },
-                ).call_id,
                 self.tools.call(
                     role_instance_id=self.role_instance_id,
                     tool_name="status.complete",
@@ -638,6 +660,15 @@ class _ProjectManagerWorker:
                 role_instance_id=self.role_instance_id,
                 tool_name="document.write_root_work_item_index",
                 payload={},
+            ).call_id,
+            self.tools.call(
+                role_instance_id=self.role_instance_id,
+                tool_name="informed.update",
+                payload={
+                    "work_item_id": WORK_ITEM_ID,
+                    "target_role": "delivery-manager",
+                    "message": "Project closure completed; backlog and work-item indexes are updated.",
+                },
             ).call_id,
         ]
         if self.sponsor_contact is not None:
@@ -707,7 +738,7 @@ def _run_role(
             result = service.run_once()
     if result is None:
         raise RuntimeError(f"{role_id} had no inbox message to process")
-    if result.status not in {"completed", "stale_terminal_work_skipped"}:
+    if result.status not in {"completed", "stale_terminal_work_skipped", "inform_only_acknowledged"}:
         raise RuntimeError(f"{role_id} failed dogfood run: {result.error or result.status}")
 
 

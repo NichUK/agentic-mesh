@@ -20,10 +20,12 @@ def test_state_machine_accepts_forward_transition() -> None:
     validate_transition(StateTransition("work-1", "shaping", "ready"))
     validate_transition(StateTransition("work-1", "waiting_human", "waiting_agent"))
     validate_transition(StateTransition("work-1", "waiting_agent", "deploying"))
+    validate_transition(StateTransition("work-1", "waiting_agent", "closed"))
     validate_transition(StateTransition("work-1", "blocked", "release_review"))
     validate_transition(StateTransition("work-1", "blocked", "deploying"))
     validate_transition(StateTransition("work-1", "release_review", "deploying"))
     validate_transition(StateTransition("work-1", "release_review", "recovering"))
+    validate_transition(StateTransition("work-1", "released", "waiting_agent"))
     validate_transition(StateTransition("work-1", "released", "closed"))
 
 
