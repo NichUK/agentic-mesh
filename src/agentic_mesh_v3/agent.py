@@ -853,6 +853,7 @@ class RoleAgentService:
         )
         reply_routing = _reply_routing_prompt_section(message.payload)
         relevance_guidance = _relevance_check_prompt_section(message)
+        delegation_guidance = _agent_delegation_prompt_section(message)
         lines = [
             "<agentic-mesh-v3-agent>",
             f"<role-instance>{self.config.role_instance_id}</role-instance>",
@@ -883,6 +884,7 @@ class RoleAgentService:
                 "</mesh-operational-context>",
                 reply_routing,
                 relevance_guidance,
+                delegation_guidance,
                 "<message-metadata>",
                 f"<message-id>{message.message_id}</message-id>",
                 f"<subject>{message.subject}</subject>",
@@ -1068,6 +1070,44 @@ def _relevance_check_prompt_section(message: AgentMessage) -> str:
             "</relevance-check>",
         ]
     )
+
+
+def _agent_delegation_prompt_section(message: AgentMessage) -> str:
+    if _optional_prompt_value(message.payload.get("message_type")) != "agent.delegate":
+        return "<agent-delegation>Not an agent-delegation assignment.</agent-delegation>"
+    source_role = _optional_prompt_value(message.payload.get("source_role")) or "unspecified"
+    source_role_instance_id = _optional_prompt_value(message.payload.get("source_role_instance_id")) or "unspecified"
+    task = _optional_prompt_value(message.payload.get("task")) or "unspecified"
+    reason = _optional_prompt_value(message.payload.get("reason")) or "unspecified"
+    expected_output = _optional_prompt_value(message.payload.get("expected_output")) or "unspecified"
+    work_item_id = _optional_prompt_value(message.payload.get("work_item_id"))
+    reply_target_ref = _optional_prompt_value(message.payload.get("reply_target_ref"))
+    return_target = (
+        "If a reply_target_ref is supplied, use status.reply to report the result to that route. "
+        "If no stakeholder reply route is supplied, use informed.update to report concise results back "
+        f"to `{source_role}` and handoff.require only when you must transfer formal lifecycle ownership."
+    )
+    lines = [
+        "<agent-delegation>",
+        "This is a focused role-to-role delegation, not automatic formal lifecycle ownership.",
+        f"<source-role>{source_role}</source-role>",
+        f"<source-role-instance>{source_role_instance_id}</source-role-instance>",
+        f"<task>{task}</task>",
+        f"<reason>{reason}</reason>",
+        f"<expected-output>{expected_output}</expected-output>",
+    ]
+    if work_item_id:
+        lines.append(f"<work-item-id>{work_item_id}</work-item-id>")
+    if reply_target_ref:
+        lines.append(f"<reply-target-ref>{reply_target_ref}</reply-target-ref>")
+    lines.extend(
+        [
+            return_target,
+            "Do the delegated task through safe-output tools first, then send the required reply/status.",
+            "</agent-delegation>",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _optional_prompt_value(value: object) -> str | None:
