@@ -9,6 +9,7 @@ from agentic_mesh_v3.agent import DatabaseAgentPromptRecorder
 from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseConversationContext
+from agentic_mesh_v3.agent import DatabaseMessageFreshnessProvider
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
 from agentic_mesh_v3.agent import DatabaseWorkItemStateProvider
@@ -716,6 +717,7 @@ def _run_role(
         conversation_context=DatabaseConversationContext(db),
         work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
         work_item_state_provider=DatabaseWorkItemStateProvider(db),
+        message_freshness_provider=DatabaseMessageFreshnessProvider(db),
         status_reporter=DatabaseAgentStatusReporter(db),
         terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
         run_recorder=DatabaseAgentRunRecorder(db),
