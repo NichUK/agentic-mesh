@@ -1092,11 +1092,21 @@ class V3ToolService:
         if target_role is None:
             return
         broker_subject = f"agent.{target_role}"
+        instance_id = str(payload.get("instance_id") or "1")
+        broker_consumer = role_consumer_name(target_role, instance_id)
+        self.broker.ensure_stream(self.broker_stream, [broker_subject])
+        self.broker.ensure_consumer(
+            self.broker_stream,
+            broker_consumer,
+            filter_subject=broker_subject,
+        )
         work_item_id = _required(payload, "work_item_id")
         message_payload = {
             "message_type": tool_name,
             "source_call_id": call_id,
             "source_role_instance_id": role_instance_id,
+            "source_role": role_from_instance(role_instance_id),
+            "target_role": target_role,
             "work_item_id": work_item_id,
             "summary": _summary(payload),
             "payload": payload,
@@ -1118,6 +1128,7 @@ class V3ToolService:
             work_item_id=work_item_id,
             queue_item_id=_optional(payload.get("queue_item_id")),
             broker_subject=broker_subject,
+            broker_consumer=broker_consumer,
             summary=f"Published {tool_name} to {target_role}: {_summary(payload)}",
             payload=message_payload,
         )
