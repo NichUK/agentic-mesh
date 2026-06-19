@@ -2742,6 +2742,42 @@ def test_v3_tool_service_status_reply_uses_source_reply_context(tmp_path: Path) 
     assert deliveries[0]["thread_ref"] == "root-message-1"
 
 
+def test_v3_tool_service_status_reply_falls_back_to_recorded_source_message_route(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    bridge = LocalTeamsBridge(broker)
+    try:
+        db.migrate()
+        db.record_conversation_message(
+            message_id="teams-msg-1",
+            connector="teams",
+            conversation_ref="dm:project-manager",
+            source_type="dm",
+            sender_ref="user-1",
+            text="Please check status.",
+            reply_target_ref="chat:dm-1",
+        )
+
+        result = V3ToolService(db, stakeholder_bridge=bridge).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="status.reply",
+            payload={
+                "source_message_id": "teams-msg-1",
+                "text_markdown": "Project Manager status reply.",
+            },
+        )
+        deliveries = db.list_outbound_deliveries()
+    finally:
+        db.close()
+
+    assert result.terminal is True
+    assert bridge.deliveries[0].target_ref == "chat:dm-1"
+    assert bridge.deliveries[0].text_markdown == "Project Manager status reply."
+    assert deliveries[0]["purpose"] == "status.reply"
+    assert deliveries[0]["connector"] == "teams"
+    assert deliveries[0]["target_ref"] == "chat:dm-1"
+
+
 def test_v3_tool_service_status_reply_without_target_remains_audit_only(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     broker = InMemoryBrokerAdapter()

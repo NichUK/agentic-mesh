@@ -63,6 +63,8 @@ class DatabaseConversationRecorder:
                 sender_ref=message.sender_ref,
                 text=message.text,
                 thread_ref=message.thread_ref,
+                reply_target_ref=message.reply_target_ref,
+                reply_thread_ref=message.reply_thread_ref,
                 mentioned_roles=message.mentioned_roles,
             )
             db.record_message_journal(
