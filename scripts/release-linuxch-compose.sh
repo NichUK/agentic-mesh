@@ -18,6 +18,9 @@ fi
 : "${AGENTIC_MESH_URL_ROOT:=http://linuxch:8100}"
 : "${AGENTIC_MESH_V3_STATUS_PORT:=8100}"
 : "${AGENTIC_MESH_NATS_STATE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/v3/nats}"
+: "${AGENTIC_MESH_LIFECYCLE_LOCK_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/v3/compose-lifecycle.lock}"
+: "${AGENTIC_MESH_LIFECYCLE_LOCK_TIMEOUT_SECONDS:=300}"
+: "${AGENTIC_MESH_LIFECYCLE_LOCK_STALE_SECONDS:=900}"
 : "${AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor otel-collector}"
 : "${AGENTIC_MESH_ROLE_SERVICES:=agentic-mesh-dev-business-analyst-1 agentic-mesh-dev-delivery-manager-1 agentic-mesh-dev-enterprise-architect-1 agentic-mesh-dev-platform-engineer-1 agentic-mesh-dev-product-manager-1 agentic-mesh-dev-prompt-engineer-1 agentic-mesh-dev-project-manager-1 agentic-mesh-dev-research-analyst-1 agentic-mesh-dev-security-architect-1 agentic-mesh-dev-solution-architect-1 agentic-mesh-dev-engineering-1 agentic-mesh-dev-qa-engineer-1 agentic-mesh-dev-release-manager-1 agentic-mesh-dev-technical-writer-1 agentic-mesh-dev-ux-designer-1}"
 : "${AGENTIC_MESH_SUPERVISOR_SERVICE:=v3-supervisor}"
@@ -34,6 +37,9 @@ export AGENTIC_MESH_URL_ROOT
 export AGENTIC_MESH_V3_STATUS_PORT
 export AGENTIC_MESH_FORCE_V3_STATUS_PORT="$AGENTIC_MESH_V3_STATUS_PORT"
 export AGENTIC_MESH_NATS_STATE_HOST_PATH
+export AGENTIC_MESH_LIFECYCLE_LOCK_PATH
+export AGENTIC_MESH_LIFECYCLE_LOCK_TIMEOUT_SECONDS
+export AGENTIC_MESH_LIFECYCLE_LOCK_STALE_SECONDS
 export AGENTIC_MESH_RELEASE_SERVICES
 export AGENTIC_MESH_ROLE_SERVICES
 export AGENTIC_MESH_SUPERVISOR_SERVICE
@@ -42,6 +48,27 @@ export AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS
 
 cd "$REPO_ROOT"
 mkdir -p "$AGENTIC_MESH_NATS_STATE_HOST_PATH"
+mkdir -p "$(dirname "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH")"
+
+lock_acquired=0
+lock_started_at=$(date +%s)
+while ! mkdir "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" 2>/dev/null; do
+  now=$(date +%s)
+  lock_age=$((now - $(stat -c %Y "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" 2>/dev/null || echo "$now")))
+  if [ "$lock_age" -ge "$AGENTIC_MESH_LIFECYCLE_LOCK_STALE_SECONDS" ]; then
+    rm -rf "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH"
+    continue
+  fi
+  if [ $((now - lock_started_at)) -ge "$AGENTIC_MESH_LIFECYCLE_LOCK_TIMEOUT_SECONDS" ]; then
+    echo "Timed out waiting for lifecycle lock: $AGENTIC_MESH_LIFECYCLE_LOCK_PATH" >&2
+    exit 1
+  fi
+  sleep 1
+done
+lock_acquired=1
+printf '%s\n' "$$" > "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH/owner"
+trap 'if [ "$lock_acquired" = "1" ]; then rm -rf "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH"; fi' EXIT INT TERM
+
 sh scripts/deploy-linuxch-compose.sh --profile v3 stop "$AGENTIC_MESH_SUPERVISOR_SERVICE" >/dev/null 2>&1 || true
 if [ "$AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS" = "1" ]; then
   legacy_v2_container_names="

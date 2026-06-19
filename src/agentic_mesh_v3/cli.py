@@ -152,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     lifecycle_apply_parser.add_argument("--compose-file", type=Path, action="append", required=True)
     lifecycle_apply_parser.add_argument("--compose-project-name")
     lifecycle_apply_parser.add_argument("--compose-profile", action="append")
+    lifecycle_apply_parser.add_argument("--lifecycle-lock-path", type=Path)
+    lifecycle_apply_parser.add_argument("--lifecycle-lock-timeout-seconds", type=int, default=300)
+    lifecycle_apply_parser.add_argument("--lifecycle-lock-stale-seconds", type=int, default=900)
     lifecycle_apply_parser.add_argument("--working-directory", type=Path)
     lifecycle_apply_parser.add_argument("--timeout-seconds", type=int, default=300)
     lifecycle_apply_parser.add_argument("--execute", action="store_true")
@@ -164,6 +167,9 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_tick_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_tick_parser.add_argument("--compose-project-name")
     supervisor_tick_parser.add_argument("--compose-profile", action="append")
+    supervisor_tick_parser.add_argument("--lifecycle-lock-path", type=Path)
+    supervisor_tick_parser.add_argument("--lifecycle-lock-timeout-seconds", type=int, default=300)
+    supervisor_tick_parser.add_argument("--lifecycle-lock-stale-seconds", type=int, default=900)
     supervisor_tick_parser.add_argument("--working-directory", type=Path)
     supervisor_tick_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_tick_parser.add_argument("--execute", action="store_true")
@@ -179,6 +185,9 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_loop_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_loop_parser.add_argument("--compose-project-name")
     supervisor_loop_parser.add_argument("--compose-profile", action="append")
+    supervisor_loop_parser.add_argument("--lifecycle-lock-path", type=Path)
+    supervisor_loop_parser.add_argument("--lifecycle-lock-timeout-seconds", type=int, default=300)
+    supervisor_loop_parser.add_argument("--lifecycle-lock-stale-seconds", type=int, default=900)
     supervisor_loop_parser.add_argument("--working-directory", type=Path)
     supervisor_loop_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_loop_parser.add_argument("--execute", action="store_true")
@@ -196,6 +205,9 @@ def main(argv: list[str] | None = None) -> int:
     supervisor_service_parser.add_argument("--compose-file", type=Path, action="append")
     supervisor_service_parser.add_argument("--compose-project-name")
     supervisor_service_parser.add_argument("--compose-profile", action="append")
+    supervisor_service_parser.add_argument("--lifecycle-lock-path", type=Path)
+    supervisor_service_parser.add_argument("--lifecycle-lock-timeout-seconds", type=int, default=300)
+    supervisor_service_parser.add_argument("--lifecycle-lock-stale-seconds", type=int, default=900)
     supervisor_service_parser.add_argument("--working-directory", type=Path)
     supervisor_service_parser.add_argument("--timeout-seconds", type=int, default=300)
     supervisor_service_parser.add_argument("--execute", action="store_true")
@@ -306,6 +318,9 @@ def main(argv: list[str] | None = None) -> int:
     tool_parser.add_argument("--lifecycle-compose-profile", action="append")
     tool_parser.add_argument("--lifecycle-working-directory", type=Path)
     tool_parser.add_argument("--lifecycle-timeout-seconds", type=int, default=300)
+    tool_parser.add_argument("--lifecycle-lock-path", type=Path)
+    tool_parser.add_argument("--lifecycle-lock-timeout-seconds", type=int, default=300)
+    tool_parser.add_argument("--lifecycle-lock-stale-seconds", type=int, default=900)
     tool_parser.add_argument("--terminal", action="store_true")
 
     catalog_parser = subparsers.add_parser("tool-catalog")
@@ -503,6 +518,9 @@ def main(argv: list[str] | None = None) -> int:
                     timeout_seconds=args.timeout_seconds,
                     project_name=args.compose_project_name,
                     profiles=tuple(args.compose_profile or ()),
+                    lock_path=args.lifecycle_lock_path,
+                    lock_timeout_seconds=args.lifecycle_lock_timeout_seconds,
+                    lock_stale_seconds=args.lifecycle_lock_stale_seconds,
                 )
             ).apply(decisions, execute=args.execute)
             for result in results:
@@ -900,6 +918,10 @@ def _validate_supervisor_args(args: argparse.Namespace) -> None:
         raise ValueError("--min-warm-instances-per-role must be non-negative")
     if args.timeout_seconds < 1:
         raise ValueError("--timeout-seconds must be positive")
+    if getattr(args, "lifecycle_lock_timeout_seconds", 1) < 1:
+        raise ValueError("--lifecycle-lock-timeout-seconds must be positive")
+    if getattr(args, "lifecycle_lock_stale_seconds", 1) < 1:
+        raise ValueError("--lifecycle-lock-stale-seconds must be positive")
 
 
 def _run_supervisor_lifecycle(
@@ -946,6 +968,9 @@ def _run_supervisor_lifecycle(
             timeout_seconds=args.timeout_seconds,
             project_name=args.compose_project_name,
             profiles=tuple(args.compose_profile or ()),
+            lock_path=args.lifecycle_lock_path,
+            lock_timeout_seconds=args.lifecycle_lock_timeout_seconds,
+            lock_stale_seconds=args.lifecycle_lock_stale_seconds,
         )
         try:
             running_services = running_compose_services(compose_config)
@@ -1313,6 +1338,20 @@ def _tool_lifecycle_config(args: argparse.Namespace) -> ComposeLifecycleConfig |
             or os.environ.get("COMPOSE_PROJECT_NAME")
         ),
         profiles=_tool_lifecycle_compose_profiles(args),
+        lock_path=(
+            getattr(args, "lifecycle_lock_path", None)
+            or _path_from_env("AGENTIC_MESH_LIFECYCLE_LOCK_PATH")
+        ),
+        lock_timeout_seconds=int(
+            getattr(args, "lifecycle_lock_timeout_seconds", 300)
+            or os.environ.get("AGENTIC_MESH_LIFECYCLE_LOCK_TIMEOUT_SECONDS")
+            or 300
+        ),
+        lock_stale_seconds=int(
+            getattr(args, "lifecycle_lock_stale_seconds", 900)
+            or os.environ.get("AGENTIC_MESH_LIFECYCLE_LOCK_STALE_SECONDS")
+            or 900
+        ),
     )
 
 

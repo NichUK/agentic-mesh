@@ -6,11 +6,16 @@ from dataclasses import replace
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from contextlib import contextmanager
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import time
 from typing import Iterable
+from typing import Iterator
 from typing import Protocol
+from uuid import uuid4
 
 from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.reporting import AgentStatus
@@ -106,6 +111,9 @@ class ComposeLifecycleConfig:
     timeout_seconds: int = 300
     project_name: str | None = None
     profiles: tuple[str, ...] = ()
+    lock_path: Path | None = None
+    lock_timeout_seconds: int = 300
+    lock_stale_seconds: int = 900
 
     def __post_init__(self) -> None:
         if not self.compose_files:
@@ -114,6 +122,10 @@ class ComposeLifecycleConfig:
             raise ValueError("timeout_seconds must be positive")
         if any(not profile.strip() for profile in self.profiles):
             raise ValueError("compose profiles must be non-empty")
+        if self.lock_timeout_seconds < 1:
+            raise ValueError("lock_timeout_seconds must be positive")
+        if self.lock_stale_seconds < 1:
+            raise ValueError("lock_stale_seconds must be positive")
 
 
 @dataclass(frozen=True)
@@ -233,36 +245,37 @@ class ComposeLifecycleExecutor:
         execute: bool = False,
     ) -> tuple[LifecycleCommandResult, ...]:
         results: list[LifecycleCommandResult] = []
-        for decision in decisions:
-            command = compose_lifecycle_command(decision, config=self.config)
-            if command is None:
-                continue
-            _validate_role_scoped_lifecycle_command(command)
-            if execute:
-                result = self._run_with_transient_retries(command)
-                results.append(
-                    LifecycleCommandResult(
-                        decision=decision,
-                        service_name=command.service_name,
-                        command=command.command,
-                        working_directory=command.working_directory,
-                        exit_code=result.exit_code,
-                        stdout=result.stdout,
-                        stderr=result.stderr,
-                        executed=True,
+        with compose_lifecycle_lock(self.config):
+            for decision in decisions:
+                command = compose_lifecycle_command(decision, config=self.config)
+                if command is None:
+                    continue
+                _validate_role_scoped_lifecycle_command(command)
+                if execute:
+                    result = self._run_with_transient_retries(command)
+                    results.append(
+                        LifecycleCommandResult(
+                            decision=decision,
+                            service_name=command.service_name,
+                            command=command.command,
+                            working_directory=command.working_directory,
+                            exit_code=result.exit_code,
+                            stdout=result.stdout,
+                            stderr=result.stderr,
+                            executed=True,
+                        )
                     )
-                )
-            else:
-                results.append(
-                    LifecycleCommandResult(
-                        decision=decision,
-                        service_name=command.service_name,
-                        command=command.command,
-                        working_directory=command.working_directory,
-                        exit_code=None,
-                        executed=False,
+                else:
+                    results.append(
+                        LifecycleCommandResult(
+                            decision=decision,
+                            service_name=command.service_name,
+                            command=command.command,
+                            working_directory=command.working_directory,
+                            exit_code=None,
+                            executed=False,
+                        )
                     )
-                )
         return tuple(results)
 
     def _run_with_transient_retries(self, command: LifecycleCommand) -> CommandExecutionResult:
@@ -313,11 +326,12 @@ def running_compose_services(
         "--filter",
         "status=running",
     ]
-    result = (runner or _run_lifecycle_command)(
-        command,
-        cwd=config.working_directory,
-        timeout_seconds=config.timeout_seconds,
-    )
+    with compose_lifecycle_lock(config):
+        result = (runner or _run_lifecycle_command)(
+            command,
+            cwd=config.working_directory,
+            timeout_seconds=config.timeout_seconds,
+        )
     if result.exit_code != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "docker compose ps failed")
     return frozenset(line.strip() for line in result.stdout.splitlines() if line.strip())
@@ -591,6 +605,62 @@ def _merge_retry_result(
         stdout="\n".join(stdout_parts),
         stderr="\n".join(stderr_parts),
     )
+
+
+@contextmanager
+def compose_lifecycle_lock(config: ComposeLifecycleConfig) -> Iterator[None]:
+    """Serialize Compose lifecycle operations with broader deployments.
+
+    The supervisor performs role-scoped `docker compose up/stop` while release
+    deployment may recreate runtime services. Without a shared lock, Docker can
+    surface transient name-conflict errors or stale service state in the status
+    page. The lock is optional so tests and non-Compose adapters can stay light.
+    """
+
+    if config.lock_path is None:
+        yield
+        return
+    lock_dir = Path(config.lock_path)
+    token = f"{os.getpid()}-{uuid4().hex}"
+    deadline = time.monotonic() + config.lock_timeout_seconds
+    while True:
+        try:
+            lock_dir.mkdir(parents=True)
+        except FileExistsError:
+            _remove_stale_lifecycle_lock(lock_dir, stale_seconds=config.lock_stale_seconds)
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out waiting for Compose lifecycle lock: {lock_dir}")
+            time.sleep(0.25)
+            continue
+        break
+    owner_path = lock_dir / "owner"
+    try:
+        owner_path.write_text(token, encoding="utf-8")
+        yield
+    finally:
+        try:
+            owner = owner_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            owner = ""
+        if owner == token:
+            try:
+                owner_path.unlink()
+            except FileNotFoundError:
+                pass
+            try:
+                lock_dir.rmdir()
+            except OSError:
+                pass
+
+
+def _remove_stale_lifecycle_lock(lock_dir: Path, *, stale_seconds: int) -> None:
+    try:
+        age_seconds = time.time() - lock_dir.stat().st_mtime
+    except OSError:
+        return
+    if age_seconds < stale_seconds:
+        return
+    shutil.rmtree(lock_dir, ignore_errors=True)
 
 
 def _role_and_instance(role_instance_id: str) -> tuple[str, str]:
