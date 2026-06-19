@@ -1152,6 +1152,47 @@ def test_role_agent_records_successful_run_to_database(tmp_path: Path) -> None:
     assert detail.agent_runs[0].work_item_id == "work-123"
 
 
+def test_role_agent_interrupts_stale_running_runs_for_same_role(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "status", "work_item_id": "work-123"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        db.record_agent_run(
+            run_id="run-stale",
+            role_instance_id=role_instance_id,
+            message_id="agent.product-manager:old",
+            subject="agent.product-manager",
+            status="running",
+            work_item_id="work-123",
+            started_at="2026-06-19T09:00:00+00:00",
+            completed_at="2026-06-19T09:00:00+00:00",
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingTerminalWorker(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        result = service.run_once()
+        runs = db.list_agent_runs(role_instance_id)
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    stale = next(run for run in runs if run["run_id"] == "run-stale")
+    current = next(run for run in runs if run["message_id"] == published.message_id)
+    assert stale["status"] == "interrupted"
+    assert "prior running record no longer owns this role instance" in (stale["error"] or "")
+    assert current["status"] == "completed"
+
+
 def test_role_agent_records_failed_run_to_database(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
