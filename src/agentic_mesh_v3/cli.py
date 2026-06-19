@@ -13,6 +13,7 @@ import yaml
 
 from agentic_mesh_v3.agent import AgentMemory
 from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
+from agentic_mesh_v3.agent import DatabaseAgentPromptRecorder
 from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
@@ -1723,6 +1724,7 @@ def _build_role_agent_service(
     kwargs["session_recorder"] = db
     kwargs["failure_reporter"] = DatabaseAgentFailureReporter(db)
     kwargs["run_recorder"] = DatabaseAgentRunRecorder(db)
+    kwargs["prompt_recorder"] = DatabaseAgentPromptRecorder(db)
     return RoleAgentService(
         config=service_config,
         broker=broker,
