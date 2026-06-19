@@ -295,6 +295,64 @@ def test_role_agent_prompt_marks_non_relevance_assignments(tmp_path: Path) -> No
     assert "<relevance-check>Not a relevance-check assignment.</relevance-check>" in worker.prompt
 
 
+def test_role_agent_prompt_explains_agent_delegation_assignments(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {
+            "message_type": "agent.delegate",
+            "source_role": "project-manager",
+            "source_role_instance_id": "agentic-mesh-dev.project-manager.1",
+            "task": "Inspect delivery-manager inbox health.",
+            "reason": "Project Manager is diagnosing a stalled sponsor request.",
+            "expected_output": "Concise finding and recommended next action.",
+            "work_item_id": "work-ops",
+        },
+    )
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "<agent-delegation>" in worker.prompt
+    assert "This is a focused role-to-role delegation" in worker.prompt
+    assert "<source-role>project-manager</source-role>" in worker.prompt
+    assert "<source-role-instance>agentic-mesh-dev.project-manager.1</source-role-instance>" in worker.prompt
+    assert "<task>Inspect delivery-manager inbox health.</task>" in worker.prompt
+    assert "<expected-output>Concise finding and recommended next action.</expected-output>" in worker.prompt
+    assert "<work-item-id>work-ops</work-item-id>" in worker.prompt
+    assert "use informed.update to report concise results back to `project-manager`" in worker.prompt
+    assert "handoff.require only when you must transfer formal lifecycle ownership" in worker.prompt
+
+
+def test_role_agent_prompt_marks_non_delegation_assignments(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "<agent-delegation>Not an agent-delegation assignment.</agent-delegation>" in worker.prompt
+
+
 def test_role_agent_prioritizes_direct_messages_over_relevance_checks(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager", "agent.product-manager.relevance"])
