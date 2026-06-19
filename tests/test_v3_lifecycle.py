@@ -589,6 +589,51 @@ def test_compose_reconciliation_marks_phantom_running_agent_hibernated() -> None
     assert decision.reason == "pending inbox messages"
 
 
+def test_compose_reconciliation_marks_recovered_failed_agent_running() -> None:
+    statuses = reconcile_agent_statuses_with_compose(
+        (
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                container_state="lifecycle_failed",
+                heartbeat_at="2026-06-18T22:45:59+00:00",
+                current_work="work-release",
+                inbox_depth=3,
+                dead_letter_depth=0,
+                last_lifecycle_action="wake",
+                last_lifecycle_exit_code=1,
+                last_lifecycle_error="container name conflict",
+            ),
+        ),
+        running_services=("agentic-mesh-dev-release-manager-1",),
+    )
+
+    assert statuses[0].container_state == "running"
+    assert statuses[0].current_work == "work-release"
+    assert statuses[0].inbox_depth == 3
+
+
+def test_compose_reconciliation_marks_stale_failed_agent_hibernated() -> None:
+    statuses = reconcile_agent_statuses_with_compose(
+        (
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.business-analyst.1",
+                container_state="lifecycle_failed",
+                heartbeat_at="2026-06-18T16:10:28+00:00",
+                current_work=None,
+                inbox_depth=0,
+                dead_letter_depth=0,
+                last_lifecycle_action="start",
+                last_lifecycle_exit_code=1,
+                last_lifecycle_error="port is already allocated",
+            ),
+        ),
+        running_services=(),
+    )
+
+    assert statuses[0].container_state == "hibernated"
+    assert statuses[0].current_work is None
+
+
 def test_lifecycle_results_update_agent_status_projection(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

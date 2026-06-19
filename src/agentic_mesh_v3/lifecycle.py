@@ -270,18 +270,25 @@ def reconcile_agent_statuses_with_compose(
     *,
     running_services: Iterable[str],
 ) -> tuple[AgentStatus, ...]:
-    """Mark phantom-running role projections as hibernated.
+    """Reconcile role projections with the actual Compose process state.
 
     `container_state=running` should mean there is a running role service. When
     Compose says the service is absent/stopped, keep the inbox/dead-letter
     depths but clear active work so lifecycle planning can wake the role again
     for pending messages.
+
+    Likewise, a previous lifecycle failure should not stay current forever once
+    Compose has recovered or there is no longer pending work to start. Those
+    stale failures are operational history, not the current desired state.
     """
 
     running_service_names = set(running_services)
     reconciled: list[AgentStatus] = []
     for status in statuses:
         service_name = service_name_for_role(status.role_instance_id)
+        if service_name in running_service_names and status.container_state != "running":
+            reconciled.append(replace(status, container_state="running"))
+            continue
         if status.container_state == "running" and service_name not in running_service_names:
             reconciled.append(
                 replace(
@@ -290,6 +297,15 @@ def reconcile_agent_statuses_with_compose(
                     current_work=None,
                 )
             )
+            continue
+        if (
+            status.container_state == "lifecycle_failed"
+            and service_name not in running_service_names
+            and not status.current_work
+            and status.inbox_depth == 0
+            and status.dead_letter_depth == 0
+        ):
+            reconciled.append(replace(status, container_state="hibernated"))
             continue
         reconciled.append(status)
     return tuple(reconciled)
