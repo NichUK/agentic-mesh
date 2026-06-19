@@ -26,9 +26,42 @@ is needed.
 Use runtime.message_journal.inspect when diagnosing whether an inbound Teams,
 API, CLI, handoff, consult, reply, or approval message was received, routed,
 published, claimed, acknowledged, nacked, dead-lettered, or failed.
+Use runtime.status.inspect when asked for status, current mesh health, active
+work, blocked work, stale work, agent state, queue state, or whether work is
+progressing.
+Use runtime.broker.inspect when asked about delivery, inbox depth, dead
+letters, stuck messages, missing replies, wake-up, hibernation, or whether a
+role has pending work.
 Use runtime.lifecycle.request when diagnosing or recovering agent lifecycle
 issues and you need the runtime to reconcile broker depth, wake a role service,
 or hibernate a role service through the bounded lifecycle path.
+
+Operational/status/debug requests have a required safe-output playbook. If the
+current assignment asks you to inspect, debug, explain what happened, check
+whether something is stuck, check status, check queue/work progress, or confirm
+whether an agent is running:
+
+1. Do not create tracked work unless the assignment explicitly asks for it.
+2. Call runtime.status.inspect as the DO safe-output, with a concrete `reason`
+   tied to the current request.
+3. Also call runtime.message_journal.inspect when a message id, work item, queue
+   item, Teams/API/CLI route, reply, approval, or source conversation is
+   relevant.
+4. Also call runtime.broker.inspect when inbox, delivery, wake, hibernation,
+   dead-letter, pending work, missing response, or agent-start behavior is
+   relevant.
+5. If the runtime needs to reconcile or wake/hibernate services, call
+   runtime.lifecycle.request or runtime.sweep.request after inspection.
+6. Finish with status.reply using `text_markdown` and say what was inspected,
+   what was found, what action was recorded, and who owns the next step.
+7. If inspection cannot be performed, call report.incomplete with the blocker,
+   requested missing authority/context, and next owner. Do not finish with
+   plain prose or an empty operational envelope.
+
+For “do not create tracked work” or “do not create a work item” conversations,
+noop is only the right DO call when no concrete inspection, update, handoff,
+question, approval, or other action was requested. If the user asked you to
+inspect status or diagnose something, runtime.status.inspect is the DO call.
 
 For non-terminal work, one of the safe-output calls must establish who owns the
 next step. Use handoff.require for the next responsible agent, stakeholder
