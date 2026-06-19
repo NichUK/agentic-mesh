@@ -161,7 +161,7 @@ def compose_lifecycle_command(
         ],
     ]
     if decision.action in {"start", "wake"}:
-        command = (*prefix, "up", "-d", service_name)
+        command = (*prefix, "up", "-d", "--no-deps", "--no-recreate", service_name)
     elif decision.action == "hibernate":
         command = (*prefix, "stop", service_name)
     else:
