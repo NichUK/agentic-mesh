@@ -1790,6 +1790,69 @@ def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) 
     assert "Published handoff.require to engineering" in journal_rows[0]["summary"]
 
 
+def test_v3_tool_service_delegates_lightweight_task_to_target_role_inbox(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    try:
+        db.migrate()
+        result = V3ToolService(db, broker=broker, broker_stream="agent-inbox").call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="agent.delegate",
+            payload={
+                "target_role": "platform-engineer",
+                "task": "Inspect why the deployment source checkout is not writable.",
+                "reason": "Project Manager is coordinating a runtime debugging request from the sponsor.",
+                "expected_output": "Reply with a short diagnosis and either a fix, a blocker, or the next role to involve.",
+                "work_item_id": "work-runtime-debug",
+                "correlation_id": "corr-delegate-1",
+                "context": "Runtime status inspection showed deployment recovery waiting on platform.",
+            },
+        )
+
+        pending = broker.pending("agent-inbox")
+        event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type='agent.delegated'
+            """
+        ).fetchone()
+        journal_rows = db.connection.execute(
+            """
+            SELECT correlation_id, direction, stage, status, target_role, role_instance_id,
+                   work_item_id, broker_subject, broker_consumer, summary
+            FROM message_journal
+            WHERE stage='published'
+            """
+        ).fetchall()
+    finally:
+        db.close()
+
+    assert result.tool_name == "agent.delegate"
+    assert result.output is not None
+    assert result.output["target_role"] == "platform-engineer"
+    assert len(pending) == 1
+    assert pending[0].subject == "agent.platform-engineer"
+    assert pending[0].payload["message_type"] == "agent.delegate"
+    assert pending[0].payload["task"] == "Inspect why the deployment source checkout is not writable."
+    assert pending[0].payload["expected_output"].startswith("Reply with a short diagnosis")
+    assert pending[0].payload["work_item_id"] == "work-runtime-debug"
+    assert event is not None
+    event_payload = json.loads(event["payload_json"])
+    assert event_payload["target_role"] == "platform-engineer"
+    assert event_payload["work_item_id"] == "work-runtime-debug"
+    assert len(journal_rows) == 1
+    assert journal_rows[0]["correlation_id"] == "corr-delegate-1"
+    assert journal_rows[0]["direction"] == "broker"
+    assert journal_rows[0]["status"] == "published"
+    assert journal_rows[0]["target_role"] == "platform-engineer"
+    assert journal_rows[0]["role_instance_id"] == "agentic-mesh-dev.project-manager.1"
+    assert journal_rows[0]["work_item_id"] == "work-runtime-debug"
+    assert journal_rows[0]["broker_subject"] == "agent.platform-engineer"
+    assert journal_rows[0]["broker_consumer"] == "platform-engineer.1"
+    assert "Delegated task to platform-engineer" in journal_rows[0]["summary"]
+
+
 def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     broker = InMemoryBrokerAdapter()

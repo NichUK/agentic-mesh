@@ -75,6 +75,7 @@ def test_authority_allows_all_roles_to_consult_and_handoff() -> None:
 def test_authority_gives_starter_roles_common_operational_tools() -> None:
     policy = ToolAuthorityPolicy.default()
     common_tools = {
+        "agent.delegate",
         "approval.request",
         "backlog.upsert",
         "blocker.raise",

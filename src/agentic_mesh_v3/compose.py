@@ -46,7 +46,7 @@ def render_role_services_compose(
             "environment": dict(sorted(spec.environment.items())),
             "volumes": _volume_list(spec),
             "networks": [network_name],
-            "restart": "unless-stopped",
+            "restart": "no",
         }
         if include_nats:
             service["depends_on"] = [nats_service_name]

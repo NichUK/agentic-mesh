@@ -158,6 +158,9 @@ class V3ToolService:
         if tool_name == "runtime.broker.inspect":
             if self.broker is None or self.broker_stream is None:
                 raise ValueError("broker is not configured")
+        if tool_name == "agent.delegate":
+            if self.broker is None or self.broker_stream is None:
+                raise ValueError("broker is not configured")
         if tool_name == "runtime.status.inspect":
             return
         if tool_name in {"document.write_artifact", "document.write_work_item_index", "document.write_root_work_item_index"}:
@@ -181,6 +184,8 @@ class V3ToolService:
                 created_by_role_instance=role_instance_id,
                 origin_message_id=_optional(payload.get("source_message_id") or payload.get("message_id")),
             )
+        elif tool_name == "agent.delegate":
+            return self._delegate_agent(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "work_item.upsert":
             owner_role = _required(payload, "owner_role")
             state = str(payload.get("state") or "queued")
@@ -382,6 +387,75 @@ class V3ToolService:
         else:
             raise ValueError(f"unknown V3 tool: {tool_name}")
         return None
+
+    def _delegate_agent(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.broker is None or self.broker_stream is None:
+            raise ValueError("broker is not configured")
+        target_role = _required(payload, "target_role")
+        subject = f"agent.{target_role}"
+        self.broker.ensure_stream(self.broker_stream, [subject])
+        instance_id = str(payload.get("instance_id") or "1")
+        consumer = role_consumer_name(target_role, instance_id)
+        self.broker.ensure_consumer(
+            self.broker_stream,
+            consumer,
+            filter_subject=subject,
+        )
+        message_payload: dict[str, object] = {
+            "message_type": "agent.delegate",
+            "source_call_id": call_id,
+            "source_role_instance_id": role_instance_id,
+            "source_role": role_from_instance(role_instance_id),
+            "target_role": target_role,
+            "task": _required(payload, "task"),
+            "reason": _required(payload, "reason"),
+            "expected_output": _required(payload, "expected_output"),
+            "priority": str(payload.get("priority") or "normal"),
+            "context": str(payload.get("context") or ""),
+            "correlation_id": str(payload.get("correlation_id") or f"corr-{call_id}"),
+        }
+        for optional_key in (
+            "work_item_id",
+            "queue_item_id",
+            "source_message_id",
+            "conversation_ref",
+            "reply_target_ref",
+            "reply_thread_ref",
+            "connector",
+        ):
+            value = _optional(payload.get(optional_key))
+            if value is not None:
+                message_payload[optional_key] = value
+        message = self.broker.publish(self.broker_stream, subject, message_payload)
+        event_payload = {
+            "call_id": call_id,
+            "target_role": target_role,
+            "message_id": message.message_id,
+            "broker_subject": subject,
+            "task": message_payload["task"],
+            "reason": message_payload["reason"],
+            "expected_output": message_payload["expected_output"],
+            "work_item_id": _optional(payload.get("work_item_id")),
+        }
+        with self.db.connection:
+            self.db.record_event("agent.delegated", "agent", role_instance_id, event_payload)
+        self.db.record_message_journal(
+            message_id=message.message_id,
+            correlation_id=str(message_payload["correlation_id"]),
+            direction="broker",
+            stage="published",
+            status="published",
+            source_ref=call_id,
+            target_role=target_role,
+            role_instance_id=role_instance_id,
+            work_item_id=_optional(payload.get("work_item_id")),
+            queue_item_id=_optional(payload.get("queue_item_id")),
+            broker_subject=subject,
+            broker_consumer=consumer,
+            summary=f"Delegated task to {target_role}: {_truncate_for_summary(message_payload['task'])}",
+            payload=message_payload,
+        )
+        return {"message_id": message.message_id, "target_role": target_role, "broker_subject": subject}
 
     def _inspect_broker(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if self.broker is None or self.broker_stream is None:
@@ -1148,6 +1222,13 @@ def _status_inspection_summary(inspection: dict[str, object]) -> str:
         f"{counts.get('blocked', 0)} blocked, "
         f"{counts.get('lifecycle_alerts', 0)} lifecycle alerts."
     )
+
+
+def _truncate_for_summary(value: object, limit: int = 140) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "..."
 
 
 def _is_attention_needed_state(state: str) -> bool:

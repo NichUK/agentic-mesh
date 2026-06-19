@@ -36,6 +36,7 @@ def test_render_role_services_compose_includes_role_service_command_and_mounts(t
         "ROLE_ID": "product-manager",
     }
     assert service["networks"] == ["mesh-test"]
+    assert service["restart"] == "no"
     assert compose["networks"]["mesh-test"]["name"] == "mesh-test"
 
 
