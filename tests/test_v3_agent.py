@@ -1531,6 +1531,114 @@ def test_role_agent_completes_when_worker_stdout_is_malformed_after_terminal_saf
     assert broker.depth("agent-inbox").pending == 0
 
 
+def test_role_agent_acknowledges_retry_with_prior_message_linked_safe_outputs(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {"request": "status", "correlation_id": "corr-prior-safe-output"},
+        message_id="agent.product-manager:retry-1",
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        tools = V3ToolService(db)
+        do_call = tools.call(
+            role_instance_id=role_instance_id,
+            tool_name="noop",
+            payload={
+                "reason": "Prior delivery attempt already completed the durable action.",
+                "source_message_id": published.message_id,
+                "correlation_id": "corr-prior-safe-output",
+            },
+        )
+        reply_call = tools.call(
+            role_instance_id=role_instance_id,
+            tool_name="status.reply",
+            payload={
+                "text_markdown": "Prior delivery attempt already replied.",
+                "source_message_id": published.message_id,
+                "correlation_id": "corr-prior-safe-output",
+            },
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=NoToolWorker(),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        result = service.run_once()
+        runs = db.list_agent_runs(role_instance_id)
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert set(result.tool_calls) == {do_call.call_id, reply_call.call_id}
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["error"] is None
+    assert broker.depth("agent-inbox").pending == 0
+
+
+def test_role_agent_does_not_acknowledge_retry_with_unrelated_prior_safe_outputs(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {"request": "status", "correlation_id": "corr-current"},
+        message_id="agent.product-manager:retry-2",
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        tools = V3ToolService(db)
+        tools.call(
+            role_instance_id=role_instance_id,
+            tool_name="noop",
+            payload={
+                "reason": "Prior unrelated delivery attempt completed.",
+                "source_message_id": "agent.product-manager:other",
+                "correlation_id": "corr-other",
+            },
+        )
+        tools.call(
+            role_instance_id=role_instance_id,
+            tool_name="status.reply",
+            payload={
+                "text_markdown": "Prior unrelated delivery attempt replied.",
+                "source_message_id": "agent.product-manager:other",
+                "correlation_id": "corr-other",
+            },
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=NoToolWorker(),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        result = service.run_once()
+        runs = db.list_agent_runs(role_instance_id)
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert result.tool_calls == ()
+    assert "agent did not call any tool" in (result.error or "")
+    assert runs[0]["status"] == "failed"
+    assert broker.depth("agent-inbox").pending == 1
+
+
 def test_role_agent_records_successful_run_to_database(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])

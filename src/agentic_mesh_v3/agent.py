@@ -119,6 +119,15 @@ class TerminalToolCallAudit(Protocol):
     def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> tuple[str, ...]:
         """Verify the run recorded terminal calls and return audited call ids/names."""
 
+    def verify_message_terminal_call(
+        self,
+        role_instance_id: str,
+        *,
+        message_id: str,
+        correlation_id: str | None = None,
+    ) -> tuple[str, ...]:
+        """Verify a prior attempt for this exact message already recorded terminal calls."""
+
 
 class SafeOutputImporter(Protocol):
     def import_safe_outputs(self, *, role_instance_id: str, before: object) -> None:
@@ -296,6 +305,16 @@ class NullTerminalToolCallAudit:
             raise ValueError("agent did not call a terminal safe-output tool")
         return tuple(tool_calls)
 
+    def verify_message_terminal_call(
+        self,
+        role_instance_id: str,
+        *,
+        message_id: str,
+        correlation_id: str | None = None,
+    ) -> tuple[str, ...]:
+        del role_instance_id, message_id, correlation_id
+        raise ValueError("agent did not record message-linked safe-output tool calls")
+
 
 class DatabaseTerminalToolCallAudit:
     def __init__(self, db: object, *, safe_output_importer: SafeOutputImporter | None = None) -> None:
@@ -311,15 +330,23 @@ class DatabaseTerminalToolCallAudit:
             self.safe_output_importer.import_safe_outputs(role_instance_id=role_instance_id, before=before)
         before_ids = set(before) if isinstance(before, (frozenset, set)) else set()
         new_calls = self._new_tool_calls(role_instance_id, before_ids)
-        if not new_calls:
-            raise ValueError("agent did not record any safe-output tool call")
-        if not any(str(row.get("tool_name")) in DO_TOOLS for row in new_calls):
-            raise ValueError("agent did not record a DO safe-output tool call")
-        if not any(str(row.get("tool_name")) in REPLY_TOOLS for row in new_calls):
-            raise ValueError("agent did not record a REPLY safe-output tool call")
-        if not any(bool(row.get("terminal")) for row in new_calls):
-            raise ValueError("agent did not record a terminal safe-output tool call")
+        self._verify_tool_call_set(new_calls, context="agent")
         return tuple(str(row["call_id"]) for row in new_calls)
+
+    def verify_message_terminal_call(
+        self,
+        role_instance_id: str,
+        *,
+        message_id: str,
+        correlation_id: str | None = None,
+    ) -> tuple[str, ...]:
+        message_calls = self._message_tool_calls(
+            role_instance_id,
+            message_id=message_id,
+            correlation_id=correlation_id,
+        )
+        self._verify_tool_call_set(message_calls, context=f"message {message_id}")
+        return tuple(str(row["call_id"]) for row in message_calls)
 
     def _tool_call_ids(self, role_instance_id: str) -> tuple[str, ...]:
         return tuple(
@@ -334,6 +361,37 @@ class DatabaseTerminalToolCallAudit:
             for row in self.db.list_tool_calls()  # type: ignore[attr-defined]
             if row.get("role_instance_id") == role_instance_id and str(row.get("call_id")) not in before_ids
         )
+
+    def _message_tool_calls(
+        self,
+        role_instance_id: str,
+        *,
+        message_id: str,
+        correlation_id: str | None = None,
+    ) -> tuple[dict[str, object], ...]:
+        correlation_candidates = {value for value in (correlation_id, f"corr-{message_id}") if value}
+        calls: list[dict[str, object]] = []
+        for row in self.db.list_tool_calls():  # type: ignore[attr-defined]
+            if row.get("role_instance_id") != role_instance_id:
+                continue
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                payload = _json_object(row.get("payload_json"))
+            source_message_id = payload.get("source_message_id") or payload.get("message_id")
+            call_correlation_id = payload.get("correlation_id")
+            if source_message_id == message_id or call_correlation_id in correlation_candidates:
+                calls.append(dict(row))
+        return tuple(calls)
+
+    def _verify_tool_call_set(self, calls: tuple[dict[str, object], ...], *, context: str) -> None:
+        if not calls:
+            raise ValueError(f"{context} did not record any safe-output tool call")
+        if not any(str(row.get("tool_name")) in DO_TOOLS for row in calls):
+            raise ValueError(f"{context} did not record a DO safe-output tool call")
+        if not any(str(row.get("tool_name")) in REPLY_TOOLS for row in calls):
+            raise ValueError(f"{context} did not record a REPLY safe-output tool call")
+        if not any(bool(row.get("terminal")) for row in calls):
+            raise ValueError(f"{context} did not record a terminal safe-output tool call")
 
 
 class DatabaseAgentStatusReporter:
@@ -904,7 +962,14 @@ class RoleAgentService:
                     [],
                 )
             except Exception:
-                audited_tool_calls = ()
+                try:
+                    audited_tool_calls = self.terminal_tool_call_audit.verify_message_terminal_call(
+                        self.config.role_instance_id,
+                        message_id=message.message_id,
+                        correlation_id=_message_correlation_id(agent_message.payload),
+                    )
+                except Exception:
+                    audited_tool_calls = ()
             if audited_tool_calls:
                 self.run_recorder.record(
                     run_id=run_id,
@@ -926,7 +991,7 @@ class RoleAgentService:
                     status="completed_after_worker_error",
                     broker_consumer=claimed.consumer,
                     delivery_attempt=message.delivery_count + 1,
-                    summary=f"Audited terminal tool calls after worker error: {exc}",
+                    summary=f"Audited terminal tool calls for message after worker error: {exc}",
                 )
                 self._report_status(container_state="running", current_work=None)
                 return AgentRunResult(message_id=message.message_id, status="completed", tool_calls=audited_tool_calls)
@@ -1347,6 +1412,18 @@ def _payload_text(payload: dict[str, object], key: str) -> str | None:
     if value is None or str(value).strip() == "":
         return None
     return str(value)
+
+
+def _json_object(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        loaded = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _message_correlation_id(payload: dict[str, object]) -> str | None:

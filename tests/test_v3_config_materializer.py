@@ -190,7 +190,7 @@ roles:
     assert "Required fields: queue_item_id, title, summary, owner_role." in product_tools
     assert "Required fields: work_item_id, target_role, question." in product_tools
     assert "`status.reply`: allowed terminal; categories: REPLY." in product_tools
-    assert "`blocker.raise`: allowed; categories: DO, REPLY." in product_tools
+    assert "`blocker.raise`: allowed terminal; categories: DO, REPLY." in product_tools
     assert "`release.deploy`: blocked" in product_tools
     assert "`release.deploy`: blocked; categories: DO." in product_tools
     assert "Document Framework Catalog" in product_tools
