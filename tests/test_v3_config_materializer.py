@@ -183,7 +183,7 @@ roles:
     assert "Use approved tools." in product_tools
     assert "Role-Scoped Safe-Output Tool Catalog" in product_tools
     assert "python -m agentic_mesh_v3.cli" in product_tools
-    assert "--role-instance-id \"<exact value from <role-instance>>\"" in product_tools
+    assert '--role-instance-id "${AGENTIC_MESH_ROLE_INSTANCE_ID}"' in product_tools
     assert "A valid run must record at least one allowed DO tool and at least one allowed REPLY tool" in product_tools
     assert "`backlog.upsert`: allowed" in product_tools
     assert "`backlog.upsert`: allowed; categories: DO." in product_tools

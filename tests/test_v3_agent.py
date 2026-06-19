@@ -45,9 +45,11 @@ class DoOnlySymbolicWorker:
 class CapturingWorker:
     def __init__(self) -> None:
         self.prompt = ""
+        self.message_payload = {}
 
     def run(self, prompt, message):  # type: ignore[no-untyped-def]
         self.prompt = prompt
+        self.message_payload = dict(message.payload)
         return [f"noop:{message.message_id}", f"status.reply:{message.message_id}"]
 
 
@@ -81,6 +83,12 @@ class RecordingTerminalThenFailWorker(RecordingTerminalWorker):
     def run(self, prompt, message):  # type: ignore[no-untyped-def]
         super().run(prompt, message)
         raise RuntimeError("worker failed after recording safe outputs")
+
+
+class RecordingTerminalThenMalformedStdoutWorker(RecordingTerminalWorker):
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        super().run(prompt, message)
+        raise ValueError("worker subprocess stdout must be JSON")
 
 
 class RecordingReplyOnlyWorker:
@@ -293,6 +301,27 @@ def test_role_agent_prompt_marks_non_relevance_assignments(tmp_path: Path) -> No
     assert result is not None
     assert result.status == "completed"
     assert "<relevance-check>Not a relevance-check assignment.</relevance-check>" in worker.prompt
+
+
+def test_role_agent_passes_role_identity_to_worker_message(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert worker.message_payload["project_id"] == "agentic-mesh-dev"
+    assert worker.message_payload["role_id"] == "product-manager"
+    assert worker.message_payload["role_instance_id"] == "agentic-mesh-dev.product-manager.1"
 
 
 def test_role_agent_prompt_explains_agent_delegation_assignments(tmp_path: Path) -> None:
@@ -1185,6 +1214,37 @@ def test_role_agent_completes_when_worker_fails_after_terminal_safe_outputs(tmp_
     assert runs[0]["error"] is None
     broker.ensure_consumer("agent-inbox", "pm-1", filter_subject="agent.product-manager")
     assert broker.fetch("agent-inbox", "pm-1") == []
+
+
+def test_role_agent_completes_when_worker_stdout_is_malformed_after_terminal_safe_outputs(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingTerminalThenMalformedStdoutWorker(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        result = service.run_once()
+        recorded_tool_calls = tuple(str(call["call_id"]) for call in db.list_tool_calls())
+        runs = db.list_agent_runs(role_instance_id)
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert result.tool_calls == recorded_tool_calls
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["error"] is None
+    assert broker.depth("agent-inbox").pending == 0
 
 
 def test_role_agent_records_successful_run_to_database(tmp_path: Path) -> None:
