@@ -18,6 +18,7 @@ from agentic_mesh_v3.governance import evaluate_governance_checklist
 from agentic_mesh_v3.memory import SQLiteRoleMemory
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
+from agentic_mesh_v3.reporting import agent_has_actionable_lifecycle_alert
 from agentic_mesh_v3.tool_contracts import DO_TOOLS
 from agentic_mesh_v3.tool_contracts import REPLY_TOOLS
 
@@ -945,7 +946,7 @@ def _operational_context_summary(
         lines.append("Agent health:")
         for agent in snapshot.agents[:max_agents]:
             lifecycle = ""
-            if agent.last_lifecycle_error:
+            if agent.last_lifecycle_error and agent_has_actionable_lifecycle_alert(agent):
                 lifecycle = (
                     f", lifecycle={agent.last_lifecycle_action or 'unknown'}"
                     f"/{agent.last_lifecycle_exit_code}: {_truncate(agent.last_lifecycle_error, 120)}"

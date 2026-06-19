@@ -568,6 +568,45 @@ def test_database_operational_context_summarises_agent_lifecycle_alerts(tmp_path
         db.close()
 
 
+def test_database_operational_context_suppresses_stale_lifecycle_alerts(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.business-analyst.1",
+                container_state="lifecycle_failed",
+                heartbeat_at=None,
+                inbox_depth=0,
+                dead_letter_depth=0,
+            )
+        )
+        db.record_agent_lifecycle_result(
+            role_instance_id="agentic-mesh-dev.business-analyst.1",
+            action="wake",
+            service_name="agentic-mesh-dev-business-analyst-1",
+            command=("docker", "compose", "up", "-d", "--no-deps", "--no-recreate", "agentic-mesh-dev-business-analyst-1"),
+            working_directory=None,
+            reason="old pending inbox messages",
+            exit_code=1,
+            stdout="",
+            stderr="Bind for 0.0.0.0:8100 failed: port is already allocated",
+            executed=True,
+        )
+
+        summary = DatabaseOperationalContext(db).load(
+            project_id="agentic-mesh-dev",
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            role_id="project-manager",
+        )
+
+        assert "agentic-mesh-dev.business-analyst.1 state=lifecycle_failed inbox=0 dead=0" in summary
+        assert "Bind for 0.0.0.0:8100 failed" not in summary
+        assert "lifecycle=wake/1" not in summary
+    finally:
+        db.close()
+
+
 def test_role_agent_prompt_loads_runtime_database_role_memory(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])

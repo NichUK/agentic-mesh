@@ -365,7 +365,7 @@ def _agent_lifecycle_cell(agent: AgentStatus) -> str:
         parts.append(f"<br><small>Executed: {str(agent.last_lifecycle_executed).lower()}</small>")
     if agent.last_lifecycle_exit_code is not None:
         parts.append(f"<br><small>Exit: {agent.last_lifecycle_exit_code}</small>")
-    if agent.last_lifecycle_error:
+    if agent.last_lifecycle_error and agent_has_actionable_lifecycle_alert(agent):
         parts.append(f"<br><small>{html.escape(agent.last_lifecycle_error)}</small>")
     if agent.last_lifecycle_reason:
         parts.append(f"<br><small>{html.escape(agent.last_lifecycle_reason)}</small>")
@@ -389,6 +389,26 @@ def _agent_session_cell(agent: AgentStatus) -> str:
 
 def _visible_governance_waits(agent: AgentStatus) -> tuple[str, ...]:
     return tuple(item for item in agent.governance_waits if not item.startswith("Lifecycle "))
+
+
+def agent_has_actionable_lifecycle_alert(agent: AgentStatus) -> bool:
+    legacy_lifecycle_waits = tuple(wait for wait in agent.governance_waits if wait.startswith("Lifecycle "))
+    has_failed_lifecycle = agent.container_state == "lifecycle_failed" or (
+        agent.last_lifecycle_exit_code is not None and agent.last_lifecycle_exit_code != 0
+    )
+    if not has_failed_lifecycle and not legacy_lifecycle_waits:
+        return False
+    if (
+        agent.last_lifecycle_action in {"start", "wake"}
+        and agent.last_lifecycle_exit_code is not None
+        and agent.last_lifecycle_exit_code != 0
+        and not agent.current_work
+        and agent.inbox_depth == 0
+        and agent.dead_letter_depth == 0
+        and not legacy_lifecycle_waits
+    ):
+        return False
+    return True
 
 
 def _list_cell(items: tuple[str, ...]) -> str:
@@ -491,12 +511,9 @@ def _governance_waits_table(items: tuple[AgentStatus, ...]) -> str:
 def _agent_lifecycle_alerts_table(items: tuple[AgentStatus, ...]) -> str:
     rows = ["<tr><th>Agent</th><th>Service</th><th>Action</th><th>Problem</th><th>Updated</th></tr>"]
     for item in items:
-        legacy_lifecycle_waits = tuple(wait for wait in item.governance_waits if wait.startswith("Lifecycle "))
-        has_failed_lifecycle = item.container_state == "lifecycle_failed" or (
-            item.last_lifecycle_exit_code is not None and item.last_lifecycle_exit_code != 0
-        )
-        if not has_failed_lifecycle and not legacy_lifecycle_waits:
+        if not agent_has_actionable_lifecycle_alert(item):
             continue
+        legacy_lifecycle_waits = tuple(wait for wait in item.governance_waits if wait.startswith("Lifecycle "))
         problem = item.last_lifecycle_error or "; ".join(legacy_lifecycle_waits) or "Lifecycle action failed."
         if item.last_lifecycle_exit_code is not None and not item.last_lifecycle_error:
             problem = f"{problem} Exit code: {item.last_lifecycle_exit_code}."
