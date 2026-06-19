@@ -1371,6 +1371,59 @@ roles:
     assert result == 0
 
 
+def test_cli_tool_call_lifecycle_request_uses_configured_compose_file(
+    tmp_path: Path, capsys
+) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+roles:
+  project-manager:
+    instances: 1
+  release-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(tmp_path / "v3.sqlite3"),
+            "--project-config",
+            str(project_config),
+            "tool-call",
+            "--role-instance-id",
+            "agentic-mesh-dev.project-manager.1",
+            "--tool-name",
+            "runtime.lifecycle.request",
+            "--payload-json",
+            '{"reason":"wake release manager for recovery","action":"wake","role_id":"release-manager","execute":false}',
+            "--lifecycle-compose-file",
+            str(compose_file),
+            "--lifecycle-compose-project-name",
+            "agentic-mesh",
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tool_name"] == "runtime.lifecycle.request"
+    assert payload["output"]["decision_count"] == 1
+    assert payload["output"]["result_count"] == 1
+    command = payload["output"]["results"][0]["command"]
+    assert command[-5:] == ["up", "-d", "--no-deps", "--no-recreate", "agentic-mesh-dev-release-manager-1"]
+
+
 def test_cli_tool_call_uses_project_config_deployment_targets(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     docs_root = tmp_path / "documents"

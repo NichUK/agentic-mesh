@@ -30,6 +30,7 @@ def test_v3_safe_output_prompt_names_current_tools() -> None:
         "decision.record",
         "risk.register",
         "blocker.raise",
+        "runtime.lifecycle.request",
         "status.reply",
     ):
         assert tool_name in prompt

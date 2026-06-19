@@ -23,6 +23,16 @@ from agentic_mesh_v3.documents import validate_framework_artifact_path
 from agentic_mesh_v3.documents import write_root_work_item_index
 from agentic_mesh_v3.documents import write_governance_register
 from agentic_mesh_v3.documents import write_work_item_index
+from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
+from agentic_mesh_v3.lifecycle import ComposeLifecycleExecutor
+from agentic_mesh_v3.lifecycle import HibernationPolicy
+from agentic_mesh_v3.lifecycle import LifecycleCommandResult
+from agentic_mesh_v3.lifecycle import LifecycleCommandRunner
+from agentic_mesh_v3.lifecycle import LifecycleDecision
+from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
+from agentic_mesh_v3.lifecycle import reconcile_agent_statuses_with_compose
+from agentic_mesh_v3.lifecycle import refresh_agent_statuses_from_broker
+from agentic_mesh_v3.lifecycle import running_compose_services
 from agentic_mesh_v3.observability import V3Telemetry
 from agentic_mesh_v3.observability import get_telemetry
 from agentic_mesh_v3.reporting import AgentStatus
@@ -57,6 +67,8 @@ class V3ToolService:
         authority_policy: ToolAuthorityPolicy | None = None,
         telemetry: V3Telemetry | None = None,
         configured_role_instance_ids: tuple[str, ...] = (),
+        lifecycle_config: ComposeLifecycleConfig | None = None,
+        lifecycle_runner: LifecycleCommandRunner | None = None,
     ) -> None:
         self.db = db
         self.document_library = document_library
@@ -67,6 +79,8 @@ class V3ToolService:
         self.authority_policy = authority_policy or ToolAuthorityPolicy.default()
         self.telemetry = telemetry or get_telemetry()
         self.configured_role_instance_ids = configured_role_instance_ids
+        self.lifecycle_config = lifecycle_config
+        self.lifecycle_runner = lifecycle_runner
 
     def call(
         self,
@@ -160,6 +174,9 @@ class V3ToolService:
         if tool_name == "runtime.broker.inspect":
             if self.broker is None or self.broker_stream is None:
                 raise ValueError("broker is not configured")
+        if tool_name == "runtime.lifecycle.request":
+            if self.lifecycle_config is None:
+                raise ValueError("lifecycle config is not configured")
         if tool_name == "agent.delegate":
             if self.broker is None or self.broker_stream is None:
                 raise ValueError("broker is not configured")
@@ -380,6 +397,8 @@ class V3ToolService:
             self._request_runtime_sweep(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.broker.inspect":
             return self._inspect_broker(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
+        elif tool_name == "runtime.lifecycle.request":
+            return self._request_runtime_lifecycle(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.message_journal.inspect":
             return self._inspect_message_journal(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.status.inspect":
@@ -704,6 +723,156 @@ class V3ToolService:
             ),
             payload=event_payload,
         )
+
+    def _request_runtime_lifecycle(
+        self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        if self.lifecycle_config is None:
+            raise ValueError("lifecycle config is not configured")
+        project_id = str(payload.get("project_id") or _project_from_instance(role_instance_id))
+        action = str(payload.get("action") or "reconcile")
+        if action not in {"reconcile", "wake", "hibernate"}:
+            raise ValueError("runtime.lifecycle.request action must be one of reconcile, wake, hibernate")
+        execute = _bool_payload(payload.get("execute"), default=True)
+        role_instance_filter = _optional(payload.get("role_instance_id"))
+        role_ids = _role_ids_from_payload(payload)
+        if action in {"wake", "hibernate"} and not role_instance_filter and not role_ids:
+            raise ValueError(f"runtime.lifecycle.request action {action} requires role_id or role_instance_id")
+
+        agents = self.db.status_snapshot(
+            project_id=project_id,
+            configured_role_instance_ids=self.configured_role_instance_ids,
+        ).agents
+        if self.broker is not None and self.broker_stream is not None:
+            agents = refresh_agent_statuses_from_broker(
+                agents,
+                role_instance_ids=self.configured_role_instance_ids,
+                broker=self.broker,
+                stream=self.broker_stream,
+            )
+            for status in agents:
+                self.db.upsert_agent_status(status)
+        if execute:
+            try:
+                running_services = running_compose_services(
+                    self.lifecycle_config,
+                    runner=self.lifecycle_runner,
+                )
+            except Exception as exc:
+                self.db.record_event(
+                    "runtime.lifecycle_compose_reconcile_failed",
+                    "agent",
+                    role_instance_id,
+                    {"call_id": call_id, "error": str(exc)},
+                )
+            else:
+                agents = reconcile_agent_statuses_with_compose(
+                    agents,
+                    running_services=running_services,
+                )
+                for status in agents:
+                    self.db.upsert_agent_status(status)
+
+        scoped_agents = _filter_lifecycle_agents(
+            agents,
+            role_instance_id=role_instance_filter,
+            role_ids=role_ids,
+        )
+        if action == "reconcile":
+            decisions = plan_lifecycle_actions(
+                scoped_agents,
+                policy=HibernationPolicy(
+                    idle_after_seconds=int(payload.get("idle_after_seconds") or 1800),
+                    min_warm_instances_per_role=int(payload.get("min_warm_instances_per_role") or 0),
+                ),
+            )
+        else:
+            decisions = tuple(
+                LifecycleDecision(action, status.role_instance_id, _required(payload, "reason"))
+                for status in scoped_agents
+            )
+        for decision in decisions:
+            if decision.action in {"start", "wake"}:
+                self.db.record_message_journal(
+                    message_id=f"lifecycle-{decision.role_instance_id}",
+                    correlation_id=str(payload.get("correlation_id") or f"corr-{call_id}"),
+                    direction="lifecycle",
+                    stage="agent_wake_requested",
+                    status="requested",
+                    target_role=decision.role_instance_id.split(".")[-2],
+                    role_instance_id=decision.role_instance_id,
+                    summary=decision.reason,
+                    payload={"call_id": call_id, "reason": _required(payload, "reason")},
+                )
+        results = ComposeLifecycleExecutor(
+            self.lifecycle_config,
+            runner=self.lifecycle_runner,
+        ).apply(decisions, execute=execute)
+        for result in results:
+            self.db.record_agent_lifecycle_result(
+                role_instance_id=result.decision.role_instance_id,
+                action=result.decision.action,
+                reason=result.decision.reason,
+                service_name=result.service_name,
+                command=result.command,
+                working_directory=str(result.working_directory) if result.working_directory else None,
+                exit_code=result.exit_code,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                executed=result.executed,
+            )
+            stage = _lifecycle_result_stage(result.decision.action, result.exit_code)
+            self.db.record_message_journal(
+                message_id=f"lifecycle-{result.decision.role_instance_id}",
+                correlation_id=str(payload.get("correlation_id") or f"corr-{call_id}"),
+                direction="lifecycle",
+                stage=stage,
+                status="completed" if result.exit_code in {None, 0} else "failed",
+                target_role=result.decision.role_instance_id.split(".")[-2],
+                role_instance_id=result.decision.role_instance_id,
+                summary=_lifecycle_result_summary(result),
+                payload={
+                    "call_id": call_id,
+                    "service_name": result.service_name,
+                    "command": list(result.command),
+                    "exit_code": result.exit_code,
+                    "executed": result.executed,
+                },
+            )
+        event_payload = {
+            "call_id": call_id,
+            "reason": _required(payload, "reason"),
+            "action": action,
+            "execute": execute,
+            "project_id": project_id,
+            "role_instance_id": role_instance_filter,
+            "role_ids": list(role_ids),
+            "decision_count": len(decisions),
+            "result_count": len(results),
+            "decisions": [decision.__dict__ for decision in decisions],
+            "results": [_lifecycle_result_payload(result) for result in results],
+        }
+        with self.db.connection:
+            self.db.record_event("runtime.lifecycle_requested", "agent", role_instance_id, event_payload)
+        self.db.record_message_journal(
+            message_id=f"runtime-lifecycle-{call_id}",
+            correlation_id=str(payload.get("correlation_id") or f"corr-{call_id}"),
+            direction="runtime",
+            stage="tool_call_recorded",
+            status="completed",
+            target_role=role_from_instance(role_instance_id),
+            role_instance_id=role_instance_id,
+            summary=f"Runtime lifecycle requested: {len(decisions)} decisions, {len(results)} results.",
+            payload=event_payload,
+        )
+        return {
+            "action": action,
+            "execute": execute,
+            "decision_count": len(decisions),
+            "result_count": len(results),
+            "decisions": event_payload["decisions"],
+            "results": event_payload["results"],
+        }
 
     def _send_message(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         if self.stakeholder_bridge is None:
@@ -1268,6 +1437,71 @@ def _role_ids_from_payload(payload: dict[str, Any]) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(part).strip() for part in value if str(part).strip())
     raise ValueError("role_ids must be a list or comma-separated string")
+
+
+def _filter_lifecycle_agents(
+    agents: tuple[AgentStatus, ...],
+    *,
+    role_instance_id: str | None,
+    role_ids: tuple[str, ...],
+) -> tuple[AgentStatus, ...]:
+    if role_instance_id is not None:
+        matched = tuple(status for status in agents if status.role_instance_id == role_instance_id)
+        if not matched:
+            raise ValueError(f"configured role instance not found: {role_instance_id}")
+        return matched
+    if role_ids:
+        requested = set(role_ids)
+        matched = tuple(status for status in agents if role_from_instance(status.role_instance_id) in requested)
+        missing = sorted(requested - {role_from_instance(status.role_instance_id) for status in matched})
+        if missing:
+            raise ValueError(f"configured role ids not found: {', '.join(missing)}")
+        return matched
+    return agents
+
+
+def _bool_payload(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().casefold()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"invalid boolean value: {value}")
+
+
+def _lifecycle_result_stage(action: str, exit_code: int | None) -> str:
+    if action in {"start", "wake"}:
+        return "agent_started" if exit_code in {None, 0} else "failed"
+    if action == "hibernate":
+        return "agent_hibernated" if exit_code in {None, 0} else "failed"
+    return "tool_call_recorded"
+
+
+def _lifecycle_result_summary(result: LifecycleCommandResult) -> str:
+    if result.exit_code not in {None, 0}:
+        return (
+            f"Lifecycle {result.decision.action} failed for {result.service_name}: "
+            f"{_truncate_for_summary(result.stderr or result.stdout or 'no detail')}"
+        )
+    disposition = "planned" if not result.executed else "completed"
+    return f"Lifecycle {result.decision.action} {disposition} for {result.service_name}."
+
+
+def _lifecycle_result_payload(result: LifecycleCommandResult) -> dict[str, object]:
+    return {
+        "action": result.decision.action,
+        "role_instance_id": result.decision.role_instance_id,
+        "reason": result.decision.reason,
+        "service_name": result.service_name,
+        "command": list(result.command),
+        "working_directory": str(result.working_directory) if result.working_directory else None,
+        "exit_code": result.exit_code,
+        "executed": result.executed,
+    }
 
 
 def _project_from_instance(role_instance_id: str) -> str:

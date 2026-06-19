@@ -26,6 +26,9 @@ is needed.
 Use runtime.message_journal.inspect when diagnosing whether an inbound Teams,
 API, CLI, handoff, consult, reply, or approval message was received, routed,
 published, claimed, acknowledged, nacked, dead-lettered, or failed.
+Use runtime.lifecycle.request when diagnosing or recovering agent lifecycle
+issues and you need the runtime to reconcile broker depth, wake a role service,
+or hibernate a role service through the bounded lifecycle path.
 
 For non-terminal work, one of the safe-output calls must establish who owns the
 next step. Use handoff.require for the next responsible agent, stakeholder
@@ -48,7 +51,8 @@ Every worker run must emit both:
    document.write_work_item_index, artifact.link, backlog.upsert,
    work_item.upsert, agent.delegate, handoff.require, consult.request,
    informed.update, stakeholder.ask_question, approval.request, release.deploy,
-   release.close, decision.record, risk.register, blocker.raise, or noop with
+   release.close, runtime.lifecycle.request, decision.record, risk.register,
+   blocker.raise, or noop with
    `reason` when no action is appropriate.
 2. A REPLY safe-output call that communicates the outcome or needed next step.
    Examples: status.reply with `text_markdown`, status.complete with `summary`,

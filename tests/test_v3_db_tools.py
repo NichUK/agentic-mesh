@@ -10,6 +10,8 @@ from agentic_mesh_v3.deployment import DeploymentResult
 from agentic_mesh_v3.deployment import NoDeploymentDisposition
 from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.lifecycle import CommandExecutionResult
+from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.tools import V3ToolService
 
@@ -2048,6 +2050,107 @@ def test_v3_tool_service_runtime_broker_inspect_returns_role_depths(tmp_path: Pa
     event_payload = json.loads(event["payload_json"])
     assert event_payload["reason"] == "Project Manager is checking stuck work routing."
     assert any(row["message_id"].startswith("runtime-broker-inspect-") for row in journal)
+
+
+def test_v3_tool_service_runtime_lifecycle_request_wakes_scoped_role(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_runner(command, *, cwd, timeout_seconds):  # type: ignore[no-untyped-def]
+        del cwd, timeout_seconds
+        commands.append(list(command))
+        if "ps" in command:
+            return CommandExecutionResult(exit_code=0, stdout="")
+        return CommandExecutionResult(exit_code=0, stdout="started")
+
+    try:
+        db.migrate()
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                container_state="hibernated",
+                heartbeat_at="2026-06-19T12:00:00+00:00",
+                inbox_depth=1,
+            )
+        )
+        result = V3ToolService(
+            db,
+            configured_role_instance_ids=("agentic-mesh-dev.release-manager.1",),
+            lifecycle_config=ComposeLifecycleConfig(
+                compose_files=(compose_file,),
+                working_directory=tmp_path,
+                project_name="agentic-mesh",
+            ),
+            lifecycle_runner=fake_runner,
+        ).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="runtime.lifecycle.request",
+            payload={
+                "reason": "Project Manager is recovering a stuck release-manager inbox.",
+                "action": "wake",
+                "role_id": "release-manager",
+                "correlation_id": "corr-lifecycle-tool",
+            },
+        )
+        event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type='runtime.lifecycle_requested'
+            """
+        ).fetchone()
+        journals = db.connection.execute(
+            """
+            SELECT correlation_id, direction, stage, status, target_role,
+                   role_instance_id, summary
+            FROM message_journal
+            WHERE correlation_id='corr-lifecycle-tool'
+            ORDER BY created_at, journal_id
+            """
+        ).fetchall()
+    finally:
+        db.close()
+
+    assert result.tool_name == "runtime.lifecycle.request"
+    assert result.output is not None
+    assert result.output["action"] == "wake"
+    assert result.output["decision_count"] == 1
+    assert result.output["result_count"] == 1
+    assert commands[0][-2:] == ["--filter", "status=running"]
+    assert commands[1][-5:] == ["up", "-d", "--no-deps", "--no-recreate", "agentic-mesh-dev-release-manager-1"]
+    assert event is not None
+    event_payload = json.loads(event["payload_json"])
+    assert event_payload["reason"] == "Project Manager is recovering a stuck release-manager inbox."
+    assert event_payload["results"][0]["service_name"] == "agentic-mesh-dev-release-manager-1"
+    stages = [row["stage"] for row in journals]
+    assert "agent_wake_requested" in stages
+    assert "agent_started" in stages
+    assert "tool_call_recorded" in stages
+    assert all(row["correlation_id"] == "corr-lifecycle-tool" for row in journals)
+
+
+def test_v3_tool_service_runtime_lifecycle_request_requires_lifecycle_config(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        try:
+            V3ToolService(db).call(
+                role_instance_id="agentic-mesh-dev.project-manager.1",
+                tool_name="runtime.lifecycle.request",
+                payload={
+                    "reason": "Project Manager is trying to recover a lifecycle issue.",
+                    "action": "wake",
+                    "role_id": "release-manager",
+                },
+            )
+        except ValueError as exc:
+            assert "lifecycle config is not configured" in str(exc)
+        else:
+            raise AssertionError("runtime.lifecycle.request should require lifecycle config")
+    finally:
+        db.close()
 
 
 def test_v3_tool_service_runtime_status_inspect_returns_mesh_status(tmp_path: Path) -> None:
