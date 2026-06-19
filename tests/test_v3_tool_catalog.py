@@ -40,6 +40,9 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
     assert product_tools["decision.record"].required_fields == ("work_item_id", "summary")
     assert product_tools["risk.register"].allowed is True
     assert product_tools["risk.register"].required_fields == ("work_item_id", "summary")
+    assert product_tools["runtime.sweep.request"].allowed is True
+    assert product_tools["runtime.sweep.request"].do_tool is True
+    assert product_tools["runtime.sweep.request"].required_fields == ("reason",)
     assert "required_fields" in product_tools["consult.request"].to_dict()
     assert product_tools["handoff.require"].required_fields == (
         "work_item_id",

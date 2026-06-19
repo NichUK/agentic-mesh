@@ -1803,6 +1803,49 @@ def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) 
     assert pending[0].payload["summary"] == "Please review the acceptance criteria."
 
 
+def test_v3_tool_service_runtime_sweep_request_publishes_findings(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.project-manager"])
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-blocked",
+            title="Blocked work",
+            description="Needs project management follow-up.",
+            state="blocked",
+            owner_role="engineering",
+            next_action="Resolve the blocker.",
+        )
+
+        result = V3ToolService(db, broker=broker, broker_stream="agent-inbox").call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="runtime.sweep.request",
+            payload={"reason": "Sponsor asked Project Manager to check the mesh health."},
+        )
+
+        pending = broker.pending("agent-inbox")
+        event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type='runtime.sweep_requested'
+            """
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert result.tool_name == "runtime.sweep.request"
+    assert len(pending) == 1
+    assert pending[0].subject == "agent.project-manager"
+    assert pending[0].payload["message_type"] == "project_sweep.finding"
+    assert pending[0].payload["work_item_id"] == "work-blocked"
+    assert event is not None
+    payload = json.loads(event["payload_json"])
+    assert payload["finding_count"] == 1
+    assert payload["published_message_count"] == 1
+
+
 def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
