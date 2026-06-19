@@ -169,7 +169,7 @@ def _config(tmp_path: Path) -> RoleInstanceConfig:
     )
 
 
-def test_role_agent_processes_inbox_and_records_memory(tmp_path: Path) -> None:
+def test_role_agent_processes_inbox_without_polluting_role_memory(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
     published = broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
@@ -190,7 +190,7 @@ def test_role_agent_processes_inbox_and_records_memory(tmp_path: Path) -> None:
     assert result is not None
     assert result.status == "completed"
     assert result.tool_calls
-    assert "processed" in memory.load_summary("agentic-mesh-dev.product-manager.1")
+    assert memory.load_summary("agentic-mesh-dev.product-manager.1") == ""
 
 
 def test_role_agent_reports_current_work_and_idle_status(tmp_path: Path) -> None:
@@ -470,7 +470,7 @@ def test_database_status_reporter_updates_agent_read_model(tmp_path: Path) -> No
         db.close()
 
 
-def test_role_agent_can_use_configured_sqlite_memory(tmp_path: Path) -> None:
+def test_role_agent_can_use_configured_sqlite_memory_without_auto_run_logs(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
     broker.publish("agent-inbox", "agent.product-manager", {"request": "status", "work_item_id": "work-123"})
@@ -488,11 +488,10 @@ def test_role_agent_can_use_configured_sqlite_memory(tmp_path: Path) -> None:
     assert result is not None
     assert result.status == "completed"
     summary = memory.load_summary("agentic-mesh-dev.product-manager.1")
-    assert "processed" in summary
-    assert "source: work-item:work-123" in summary
+    assert summary == ""
 
 
-def test_role_agent_records_run_memory_with_conversation_source(tmp_path: Path) -> None:
+def test_role_agent_does_not_copy_conversation_run_logs_into_role_memory(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
     broker.publish(
@@ -515,16 +514,15 @@ def test_role_agent_records_run_memory_with_conversation_source(tmp_path: Path) 
 
         assert result is not None
         assert result.status == "completed"
-        assert len(records) == 1
-        assert records[0]["source_ref"] == "conversation:dm:product-manager"
+        assert records == []
     finally:
         db.close()
 
 
-def test_role_agent_records_run_memory_with_broker_source_when_payload_has_no_context(tmp_path: Path) -> None:
+def test_role_agent_does_not_copy_broker_run_logs_into_role_memory(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
-    published = broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
         db.migrate()
@@ -540,8 +538,7 @@ def test_role_agent_records_run_memory_with_broker_source_when_payload_has_no_co
 
         assert result is not None
         assert result.status == "completed"
-        assert len(records) == 1
-        assert records[0]["source_ref"] == f"broker-message:{published.message_id}"
+        assert records == []
     finally:
         db.close()
 

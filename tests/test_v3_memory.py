@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.memory import DatabaseRoleMemory
+from agentic_mesh_v3.memory import MAX_PROMPT_MEMORY_ENTRIES
 from agentic_mesh_v3.memory import RoleMemoryRecord
 from agentic_mesh_v3.memory import SQLiteRoleMemory
 from agentic_mesh_v3.tools import V3ToolService
@@ -40,6 +41,28 @@ def test_sqlite_role_memory_deduplicates_exact_source_linked_record(tmp_path: Pa
         memory.record(record)
 
         assert memory.load_summary("agentic-mesh-dev.product-manager.1").count("Sponsor prefers") == 1
+    finally:
+        memory.close()
+
+
+def test_sqlite_role_memory_load_summary_caps_prompt_entries(tmp_path: Path) -> None:
+    memory = SQLiteRoleMemory(tmp_path / "product-manager-memory.sqlite3")
+    try:
+        for index in range(MAX_PROMPT_MEMORY_ENTRIES + 3):
+            memory.record(
+                RoleMemoryRecord(
+                    role_instance_id="agentic-mesh-dev.product-manager.1",
+                    summary=f"Important memory {index}",
+                    source_ref=f"work-{index}/index.md",
+                )
+            )
+
+        summary = memory.load_summary("agentic-mesh-dev.product-manager.1")
+
+        assert "3 older role-memory entries omitted" in summary
+        assert "Important memory 0" not in summary
+        assert "Important memory 3" in summary
+        assert "Important memory 26" in summary
     finally:
         memory.close()
 
@@ -122,5 +145,26 @@ def test_database_role_memory_records_observation_source_ref(tmp_path: Path) -> 
         )
 
         assert "source: work-item:work-123" in memory.load_summary("agentic-mesh-dev.product-manager.1")
+    finally:
+        db.close()
+
+
+def test_database_role_memory_load_summary_caps_and_truncates_prompt_entries(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        memory = DatabaseRoleMemory(db)
+        for index in range(MAX_PROMPT_MEMORY_ENTRIES + 1):
+            memory.record_observation(
+                "agentic-mesh-dev.delivery-manager.1",
+                f"Memory {index} " + ("x" * 800),
+                source_ref=f"work-item:work-{index}",
+            )
+
+        summary = memory.load_summary("agentic-mesh-dev.delivery-manager.1")
+
+        assert "1 older role-memory entries omitted" in summary
+        assert summary.count("(source: work-item:work-") == MAX_PROMPT_MEMORY_ENTRIES
+        assert "x" * 700 not in summary
     finally:
         db.close()

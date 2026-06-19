@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+MAX_PROMPT_MEMORY_ENTRIES = 24
+MAX_PROMPT_MEMORY_LINE_CHARS = 500
+
 
 @dataclass(frozen=True)
 class RoleMemoryRecord:
@@ -53,8 +56,8 @@ class SQLiteRoleMemory:
             ORDER BY created_at ASC, summary ASC
             """,
             (role_instance_id,),
-        )
-        return "\n".join(f"- {row['summary']} (source: {row['source_ref']})" for row in rows)
+        ).fetchall()
+        return _format_prompt_memory(rows)
 
     def record_observation(self, role_instance_id: str, observation: str, *, source_ref: str = "agent-run") -> None:
         self.record(
@@ -88,7 +91,7 @@ class DatabaseRoleMemory:
 
     def load_summary(self, role_instance_id: str) -> str:
         rows = self.db.list_role_memory(role_instance_id)
-        return "\n".join(f"- {row['summary']} (source: {row['source_ref']})" for row in rows)
+        return _format_prompt_memory(rows)
 
     def record_observation(self, role_instance_id: str, observation: str, *, source_ref: str = "agent-run") -> None:
         self.record(
@@ -115,3 +118,27 @@ class DatabaseRoleMemory:
 def _stable_memory_id(record: RoleMemoryRecord) -> str:
     payload = "\n".join((record.role_instance_id, record.summary, record.source_ref))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _format_prompt_memory(rows: list[Any]) -> str:
+    total = len(rows)
+    omitted = max(0, total - MAX_PROMPT_MEMORY_ENTRIES)
+    recent_rows = rows[-MAX_PROMPT_MEMORY_ENTRIES:]
+    lines: list[str] = []
+    if omitted:
+        lines.append(
+            f"- {omitted} older role-memory entries omitted from this prompt; "
+            "consult the memory store or document library if older provenance is needed."
+        )
+    for row in recent_rows:
+        summary = _truncate_memory_value(row["summary"])
+        source_ref = _truncate_memory_value(row["source_ref"], limit=200)
+        lines.append(f"- {summary} (source: {source_ref})")
+    return "\n".join(lines)
+
+
+def _truncate_memory_value(value: object, *, limit: int = MAX_PROMPT_MEMORY_LINE_CHARS) -> str:
+    text = " ".join(str(value).split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}..."
