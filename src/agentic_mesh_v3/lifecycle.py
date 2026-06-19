@@ -287,11 +287,11 @@ def reconcile_agent_statuses_with_compose(
     for status in statuses:
         service_name = service_name_for_role(status.role_instance_id)
         if service_name in running_service_names and status.container_state != "running":
-            reconciled.append(replace(status, container_state="running"))
+            reconciled.append(_with_reconciled_lifecycle(status, container_state="running"))
             continue
         if status.container_state == "running" and service_name not in running_service_names:
             reconciled.append(
-                replace(
+                _with_reconciled_lifecycle(
                     status,
                     container_state="hibernated",
                     current_work=None,
@@ -305,10 +305,34 @@ def reconcile_agent_statuses_with_compose(
             and status.inbox_depth == 0
             and status.dead_letter_depth == 0
         ):
-            reconciled.append(replace(status, container_state="hibernated"))
+            reconciled.append(_with_reconciled_lifecycle(status, container_state="hibernated"))
             continue
         reconciled.append(status)
     return tuple(reconciled)
+
+
+def _with_reconciled_lifecycle(status: AgentStatus, **changes: object) -> AgentStatus:
+    """Return status after Compose has proven a lifecycle failure is stale.
+
+    Historical lifecycle failures remain in the event log. The read-model row
+    should describe the current state, so once Compose reconciliation proves the
+    service recovered or no longer needs action, the active failure fields must
+    not keep rendering as fresh dashboard alerts.
+    """
+
+    lifecycle_cleanup: dict[str, object] = {}
+    if status.container_state == "lifecycle_failed" or (
+        status.last_lifecycle_exit_code is not None and status.last_lifecycle_exit_code != 0
+    ):
+        lifecycle_cleanup = {
+            "last_lifecycle_action": None,
+            "last_lifecycle_reason": None,
+            "last_lifecycle_service": None,
+            "last_lifecycle_exit_code": None,
+            "last_lifecycle_executed": None,
+            "last_lifecycle_error": None,
+        }
+    return replace(status, **lifecycle_cleanup, **changes)
 
 
 def plan_lifecycle_action(
