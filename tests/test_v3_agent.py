@@ -4,6 +4,7 @@ from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
 from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseConversationContext
+from agentic_mesh_v3.agent import DatabaseOperationalContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
 from agentic_mesh_v3.agent import EchoWorker
@@ -17,6 +18,7 @@ from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import evaluate_governance_checklist
 from agentic_mesh_v3.memory import DatabaseRoleMemory
+from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.tools import V3ToolService
 
 
@@ -117,6 +119,16 @@ class FakeStatusReporter:
 
     def report(self, status):  # type: ignore[no-untyped-def]
         self.statuses.append(status)
+
+
+class FakeOperationalContext:
+    def load(self, *, project_id: str, role_instance_id: str, role_id: str) -> str:
+        return (
+            f"Project: {project_id}\n"
+            f"Current role: {role_id} ({role_instance_id})\n"
+            "Open work:\n"
+            "- work-ops [waiting_agent] owner=delivery-manager: proceed with implementation."
+        )
 
 
 def _config(tmp_path: Path) -> RoleInstanceConfig:
@@ -493,6 +505,67 @@ def test_role_agent_prompt_marks_missing_reply_route(tmp_path: Path) -> None:
     assert result is not None
     assert result.status == "completed"
     assert "<reply-routing>No source reply route was provided.</reply-routing>" in worker.prompt
+
+
+def test_role_agent_prompt_includes_mesh_operational_context(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "what is happening?"})
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+        operational_context=FakeOperationalContext(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "<mesh-operational-context>" in worker.prompt
+    assert "work-ops [waiting_agent] owner=delivery-manager" in worker.prompt
+    assert "Current role: product-manager (agentic-mesh-dev.product-manager.1)" in worker.prompt
+
+
+def test_database_operational_context_summarises_agent_lifecycle_alerts(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                container_state="lifecycle_failed",
+                heartbeat_at=None,
+                inbox_depth=3,
+                dead_letter_depth=1,
+            )
+        )
+        db.record_agent_lifecycle_result(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            action="wake",
+            service_name="agentic-mesh-dev-release-manager-1",
+            command=("docker", "compose", "up", "-d", "--no-deps", "--no-recreate", "agentic-mesh-dev-release-manager-1"),
+            working_directory=None,
+            reason="pending inbox messages",
+            exit_code=1,
+            stdout="",
+            stderr='Error response from daemon: Conflict. The container name "/runtime" is already in use.',
+            executed=True,
+        )
+
+        summary = DatabaseOperationalContext(db).load(
+            project_id="agentic-mesh-dev",
+            role_instance_id="agentic-mesh-dev.product-manager.1",
+            role_id="product-manager",
+        )
+
+        assert "Agent health:" in summary
+        assert "agentic-mesh-dev.release-manager.1 state=lifecycle_failed inbox=3 dead=1" in summary
+        assert "lifecycle=wake/1: Error response from daemon: Conflict" in summary
+    finally:
+        db.close()
 
 
 def test_role_agent_prompt_loads_runtime_database_role_memory(tmp_path: Path) -> None:

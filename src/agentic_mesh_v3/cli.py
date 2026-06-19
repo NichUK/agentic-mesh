@@ -12,6 +12,7 @@ from agentic_mesh_v3.agent import AgentMemory
 from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
+from agentic_mesh_v3.agent import DatabaseOperationalContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
 from agentic_mesh_v3.agent import EchoWorker
@@ -1536,6 +1537,10 @@ def _build_role_agent_service(
         worker=_worker_from_args(args, project_config=project_config),
         memory=memory,
         conversation_context=conversation_context,
+        operational_context=DatabaseOperationalContext(
+            db,
+            configured_role_instance_ids=_configured_role_instance_ids(project_config),
+        ),
         work_item_governance_context=work_item_governance_context,
         max_delivery_attempts=args.max_delivery_attempts,
         **kwargs,
