@@ -1011,6 +1011,67 @@ def test_role_agent_blocks_linked_work_item_on_dead_letter(tmp_path: Path) -> No
     assert published.message_id in detail.next_action
 
 
+def test_role_agent_does_not_block_work_item_for_dead_lettered_informed_update(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {
+            "message_type": "informed.update",
+            "message": "Engineering sent FYI evidence to Product Manager.",
+            "work_item_id": "work-123",
+            "correlation_id": "corr-123",
+            "source_message_id": "agent.engineering:1073",
+        },
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-123",
+            title="Shape product",
+            description="Shape the product scope.",
+            state="deploying",
+            owner_role="release-manager",
+            next_action="Deployment target is running.",
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=NoToolWorker(),
+            memory=InMemoryRoleMemory(),
+            failure_reporter=DatabaseAgentFailureReporter(db),
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        detail = db.work_item_detail("work-123")
+        events = [
+            dict(row)
+            for row in db.connection.execute(
+                """
+                SELECT event_type, payload_json
+                FROM events
+                WHERE aggregate_id=?
+                ORDER BY event_id
+                """,
+                ("work-123",),
+            ).fetchall()
+        ]
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "dead_lettered"
+    assert detail is not None
+    assert detail.state == "deploying"
+    assert detail.owner_role == "release-manager"
+    assert detail.next_action == "Deployment target is running."
+    assert events[-1]["event_type"] == "agent.delivery_failure_recorded"
+    assert '"blocking": false' in events[-1]["payload_json"]
+
+
 def test_role_agent_dead_letter_notifies_source_conversation(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.project-manager"])
