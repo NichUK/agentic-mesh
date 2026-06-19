@@ -128,6 +128,17 @@ class V3Database:
                   completed_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS agent_prompts (
+                  prompt_id TEXT PRIMARY KEY,
+                  run_id TEXT NOT NULL,
+                  role_id TEXT NOT NULL,
+                  role_instance_id TEXT NOT NULL,
+                  assignment_id TEXT,
+                  prompt_text TEXT NOT NULL,
+                  component_manifest_json TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS agent_sessions (
                   session_id TEXT PRIMARY KEY,
                   role_instance_id TEXT NOT NULL,
@@ -956,6 +967,57 @@ class V3Database:
                     "error": error,
                     "started_at": started_at,
                     "completed_at": completed_at,
+                },
+            )
+
+    def record_agent_prompt(
+        self,
+        *,
+        prompt_id: str,
+        run_id: str,
+        role_id: str,
+        role_instance_id: str,
+        assignment_id: str | None,
+        prompt_text: str,
+        component_manifest: dict[str, Any],
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO agent_prompts(
+                  prompt_id, run_id, role_id, role_instance_id, assignment_id,
+                  prompt_text, component_manifest_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(prompt_id) DO UPDATE SET
+                  run_id=excluded.run_id,
+                  role_id=excluded.role_id,
+                  role_instance_id=excluded.role_instance_id,
+                  assignment_id=excluded.assignment_id,
+                  prompt_text=excluded.prompt_text,
+                  component_manifest_json=excluded.component_manifest_json
+                """,
+                (
+                    prompt_id,
+                    run_id,
+                    role_id,
+                    role_instance_id,
+                    assignment_id,
+                    prompt_text,
+                    json.dumps(component_manifest, sort_keys=True),
+                ),
+            )
+            self.record_event(
+                "agent.prompt_recorded",
+                "agent",
+                role_instance_id,
+                {
+                    "prompt_id": prompt_id,
+                    "run_id": run_id,
+                    "role_id": role_id,
+                    "assignment_id": assignment_id,
+                    "prompt_sha256": hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
+                    "prompt_length": len(prompt_text),
                 },
             )
 

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
+from agentic_mesh_v3.agent import DatabaseAgentPromptRecorder
 from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseOperationalContext
@@ -1396,10 +1397,17 @@ def test_role_agent_records_failed_run_to_database(tmp_path: Path) -> None:
             memory=InMemoryRoleMemory(),
             status_reporter=DatabaseAgentStatusReporter(db),
             run_recorder=DatabaseAgentRunRecorder(db),
+            prompt_recorder=DatabaseAgentPromptRecorder(db),
         )
 
         result = service.run_once()
         runs = db.list_agent_runs(role_instance_id)
+        prompts = tuple(
+            dict(row)
+            for row in db.connection.execute(
+                "SELECT run_id, role_id, role_instance_id, assignment_id, prompt_text, component_manifest_json FROM agent_prompts"
+            )
+        )
         snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
     finally:
         db.close()
@@ -1411,6 +1419,14 @@ def test_role_agent_records_failed_run_to_database(tmp_path: Path) -> None:
     assert runs[0]["status"] == "failed"
     assert runs[0]["tool_calls"] == ()
     assert "did not call any tool" in runs[0]["error"]
+    assert len(prompts) == 1
+    assert prompts[0]["run_id"] == runs[0]["run_id"]
+    assert prompts[0]["role_id"] == "product-manager"
+    assert prompts[0]["role_instance_id"] == role_instance_id
+    assert prompts[0]["assignment_id"] == published.message_id
+    assert "<agentic-mesh-v3-agent>" in prompts[0]["prompt_text"]
+    assert "You are Product Manager." in prompts[0]["prompt_text"]
+    assert '"prompt_version": "v3"' in prompts[0]["component_manifest_json"]
     assert snapshot.agents[0].last_run_status == "failed"
     assert "did not call any tool" in (snapshot.agents[0].last_run_error or "")
 

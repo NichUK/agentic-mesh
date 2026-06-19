@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from agentic_mesh_v3.agent import AgentMessage
+from agentic_mesh_v3.agent import DatabaseAgentPromptRecorder
 from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseConversationContext
@@ -685,6 +686,7 @@ def _run_role(
         status_reporter=DatabaseAgentStatusReporter(db),
         terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
         run_recorder=DatabaseAgentRunRecorder(db),
+        prompt_recorder=DatabaseAgentPromptRecorder(db),
         max_delivery_attempts=1,
     )
     result = service.run_once()

@@ -134,6 +134,21 @@ class AgentRunRecorder(Protocol):
         """Record the durable outcome of one role-agent message run."""
 
 
+class AgentPromptRecorder(Protocol):
+    def record(
+        self,
+        *,
+        prompt_id: str,
+        run_id: str,
+        role_id: str,
+        role_instance_id: str,
+        assignment_id: str | None,
+        prompt_text: str,
+        component_manifest: dict[str, object],
+    ) -> None:
+        """Record the full generated prompt for audit and failed-run debugging."""
+
+
 class MessageJournalRecorder(Protocol):
     def record_message_journal(
         self,
@@ -236,6 +251,22 @@ class NullAgentRunRecorder:
         return
 
 
+class NullAgentPromptRecorder:
+    def record(
+        self,
+        *,
+        prompt_id: str,
+        run_id: str,
+        role_id: str,
+        role_instance_id: str,
+        assignment_id: str | None,
+        prompt_text: str,
+        component_manifest: dict[str, object],
+    ) -> None:
+        del prompt_id, run_id, role_id, role_instance_id, assignment_id, prompt_text, component_manifest
+        return
+
+
 class NullTerminalToolCallAudit:
     def snapshot(self, role_instance_id: str) -> object:
         del role_instance_id
@@ -333,6 +364,32 @@ class DatabaseAgentRunRecorder:
             error=error,
             started_at=started_at,
             completed_at=completed_at,
+        )
+
+
+class DatabaseAgentPromptRecorder:
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+    def record(
+        self,
+        *,
+        prompt_id: str,
+        run_id: str,
+        role_id: str,
+        role_instance_id: str,
+        assignment_id: str | None,
+        prompt_text: str,
+        component_manifest: dict[str, object],
+    ) -> None:
+        self.db.record_agent_prompt(  # type: ignore[attr-defined]
+            prompt_id=prompt_id,
+            run_id=run_id,
+            role_id=role_id,
+            role_instance_id=role_instance_id,
+            assignment_id=assignment_id,
+            prompt_text=prompt_text,
+            component_manifest=component_manifest,
         )
 
 
@@ -492,6 +549,7 @@ class RoleAgentService:
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
     terminal_tool_call_audit: TerminalToolCallAudit = field(default_factory=NullTerminalToolCallAudit)
     run_recorder: AgentRunRecorder = field(default_factory=NullAgentRunRecorder)
+    prompt_recorder: AgentPromptRecorder = field(default_factory=NullAgentPromptRecorder)
     message_journal: MessageJournalRecorder = field(default_factory=NullMessageJournalRecorder)
     session_recorder: AgentSessionRecorder = field(default_factory=NullAgentSessionRecorder)
     failure_reporter: AgentFailureReporter = field(default_factory=NullAgentFailureReporter)
@@ -558,13 +616,13 @@ class RoleAgentService:
             governance_context=governance_context,
             governance_checklist=governance_checklist,
         )
+        run_id = f"run-{uuid4().hex}"
         prompt = self._build_prompt(
             agent_message,
             governance_context=prompt_governance_context,
             governance_checklist=prompt_governance_checklist,
         )
         self._record_session(status="active")
-        run_id = f"run-{uuid4().hex}"
         run_started_at = datetime.now(timezone.utc).isoformat()
         self.run_recorder.interrupt_running(
             role_instance_id=self.config.role_instance_id,
@@ -580,6 +638,25 @@ class RoleAgentService:
             work_item_id=_message_work_item_id(message.payload),
             started_at=run_started_at,
             completed_at=run_started_at,
+        )
+        self.prompt_recorder.record(
+            prompt_id=f"prompt-{run_id}",
+            run_id=run_id,
+            role_id=self.config.role_id,
+            role_instance_id=self.config.role_instance_id,
+            assignment_id=message.message_id,
+            prompt_text=prompt,
+            component_manifest={
+                "project_id": self.config.project_id,
+                "role_id": self.config.role_id,
+                "role_instance_id": self.config.role_instance_id,
+                "message_id": message.message_id,
+                "subject": message.subject,
+                "work_item_id": _message_work_item_id(message.payload),
+                "has_governance_context": prompt_governance_context is not None,
+                "has_conversation_context": bool(_payload_text(message.payload, "conversation_ref")),
+                "prompt_version": "v3",
+            },
         )
         try:
             self._journal_message(
