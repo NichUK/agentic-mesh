@@ -9,7 +9,7 @@ from agentic_mesh_v3.connectors import StakeholderMessage
 
 def test_local_teams_bridge_routes_dm_to_role_inbox() -> None:
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager", "project.context"])
+    broker.ensure_stream("agent-inbox", ["agent.product-manager.priority", "project.context"])
     bridge = LocalTeamsBridge(broker)
 
     subjects = bridge.route_inbound(
@@ -23,9 +23,9 @@ def test_local_teams_bridge_routes_dm_to_role_inbox() -> None:
         )
     )
 
-    assert subjects == ["agent.product-manager"]
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    assert broker.fetch("agent-inbox", "pm")[0].payload["text"] == "Give me a status update."
+    assert subjects == ["agent.product-manager.priority"]
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    assert broker.fetch("agent-inbox", "pm-priority")[0].payload["text"] == "Give me a status update."
 
 
 def test_local_teams_bridge_ensures_inbound_subject_before_publish() -> None:
@@ -43,9 +43,9 @@ def test_local_teams_bridge_ensures_inbound_subject_before_publish() -> None:
         )
     )
 
-    assert subjects == ["agent.product-manager"]
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    assert broker.fetch("agent-inbox", "pm")[0].payload["text"] == "Are you there?"
+    assert subjects == ["agent.product-manager.priority"]
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    assert broker.fetch("agent-inbox", "pm-priority")[0].payload["text"] == "Are you there?"
 
 
 def test_local_teams_bridge_routes_unmentioned_channel_to_project_context() -> None:
@@ -245,7 +245,7 @@ def test_bot_framework_teams_bridge_requires_sender_role_when_multiple_bots() ->
 
 def test_bot_framework_teams_bridge_routes_inbound_through_broker() -> None:
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_stream("agent-inbox", ["agent.product-manager.priority"])
     bridge = BotFrameworkTeamsBridge(
         role_identities={
             "product-manager": BotFrameworkRoleIdentity(
@@ -271,7 +271,7 @@ def test_bot_framework_teams_bridge_routes_inbound_through_broker() -> None:
         )
     )
 
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["agent.product-manager.priority"]
 
 
 def test_graph_teams_bridge_posts_threaded_markdown_reply() -> None:
@@ -370,7 +370,7 @@ def test_graph_teams_bridge_user_target_requires_sender_user_ref() -> None:
 
 def test_graph_teams_bridge_routes_inbound_through_configured_bridge() -> None:
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_stream("agent-inbox", ["agent.product-manager.priority"])
     inbound_bridge = LocalTeamsBridge(broker)
     bridge = GraphTeamsBridge(
         transport=FakeGraphTeamsTransport(),
@@ -389,9 +389,9 @@ def test_graph_teams_bridge_routes_inbound_through_configured_bridge() -> None:
         )
     )
 
-    assert subjects == ["agent.product-manager"]
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    assert broker.fetch("agent-inbox", "pm")[0].payload["text"] == "Please respond."
+    assert subjects == ["agent.product-manager.priority"]
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    assert broker.fetch("agent-inbox", "pm-priority")[0].payload["text"] == "Please respond."
 
 
 def test_graph_teams_bridge_can_create_broker_backed_inbound_bridge() -> None:

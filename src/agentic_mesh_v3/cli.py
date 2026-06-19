@@ -1776,6 +1776,7 @@ def _list_from_legacy_value(value: object, *, separators: tuple[str, ...]) -> li
 def _ensure_agent_stream(broker: BrokerAdapter, *, stream: str, role_ids: tuple[str, ...]) -> None:
     subjects = ["project.context"]
     for role_id in role_ids:
+        subjects.append(f"agent.{role_id}.priority")
         subjects.append(f"agent.{role_id}")
         subjects.append(f"agent.{role_id}.relevance")
     broker.ensure_stream(stream, subjects)

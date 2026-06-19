@@ -191,10 +191,11 @@ class DatabaseApprovalResponseRecorder:
             db.close()
         if approval is not None and self.broker is not None:
             requested_by_role = str(approval["requested_by_role"])
-            self.broker.ensure_stream(self.stream, [f"agent.{requested_by_role}"])
+            priority_subject = f"agent.{requested_by_role}.priority"
+            self.broker.ensure_stream(self.stream, [priority_subject])
             self.broker.publish(
                 self.stream,
-                f"agent.{requested_by_role}",
+                priority_subject,
                 {
                     "message_type": "approval.response_recorded",
                     "approval_id": str(approval["approval_id"]),
@@ -244,10 +245,11 @@ class DatabaseStakeholderQuestionResponseRecorder:
             db.close()
         if self.broker is not None:
             target_role = role_from_instance(str(response["role_instance_id"]))
-            self.broker.ensure_stream(self.stream, [f"agent.{target_role}"])
+            priority_subject = f"agent.{target_role}.priority"
+            self.broker.ensure_stream(self.stream, [priority_subject])
             self.broker.publish(
                 self.stream,
-                f"agent.{target_role}",
+                priority_subject,
                 {
                     "message_type": "stakeholder.question_answered",
                     "question_id": str(response["record_id"]),

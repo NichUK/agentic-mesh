@@ -82,7 +82,7 @@ class LocalTeamsBridge:
         if message.source_type == "dm":
             role = _role_from_conversation_ref(message.conversation_ref)
             if role is not None:
-                _append_unique(subjects, f"agent.{role}")
+                _append_unique(subjects, f"agent.{role}.priority")
         elif message.source_type == "channel":
             _append_unique(subjects, "project.context")
             if message.mentioned_roles:

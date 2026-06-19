@@ -63,6 +63,7 @@ def run_agent_service_e2e_dogfood_slice(
         broker_stream,
         [
             "project.context",
+            *(f"agent.{role_id}.priority" for role_id in role_ids),
             *(f"agent.{role_id}" for role_id in role_ids),
             *(f"agent.{role_id}.relevance" for role_id in role_ids),
         ],

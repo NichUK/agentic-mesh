@@ -384,6 +384,8 @@ def test_lifecycle_refreshes_stopped_agent_inbox_depth_from_broker() -> None:
 
         def pending(self, stream: str, consumer: str | None = None, *, limit: int = 20):  # type: ignore[no-untyped-def]
             del stream, limit
+            if consumer == "product-manager.1.priority":
+                return [object()]
             return [object(), object()] if consumer == "product-manager.1" else []
 
         def dead_letters(self, stream: str, *, limit: int = 20):  # type: ignore[no-untyped-def]
@@ -405,7 +407,8 @@ def test_lifecycle_refreshes_stopped_agent_inbox_depth_from_broker() -> None:
         stream="agent-inbox",
     )
 
-    assert statuses[0].inbox_depth == 2
+    assert statuses[0].inbox_depth == 3
+    assert ("agent-inbox", "product-manager.1.priority", "agent.product-manager.priority") in broker.consumers
     assert ("agent-inbox", "product-manager.1", "agent.product-manager") in broker.consumers
     decision = plan_lifecycle_action(status=statuses[0], policy=HibernationPolicy())
     assert decision.action == "wake"
