@@ -134,6 +134,65 @@ def test_lifecycle_failures_are_not_rendered_as_governance_waits() -> None:
     assert "Lifecycle hibernate failed" not in agents_html
 
 
+def test_stale_failed_wake_without_pending_work_is_not_rendered_as_current_alert() -> None:
+    snapshot = ReportingSnapshot(
+        project_id="agentic-mesh-dev",
+        agents=(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.business-analyst.1",
+                container_state="lifecycle_failed",
+                heartbeat_at="2026-06-18T16:10:28Z",
+                inbox_depth=0,
+                dead_letter_depth=0,
+                current_work=None,
+                last_lifecycle_action="wake",
+                last_lifecycle_reason="old pending inbox messages",
+                last_lifecycle_service="agentic-mesh-dev-business-analyst-1",
+                last_lifecycle_exit_code=1,
+                last_lifecycle_executed=True,
+                last_lifecycle_at="2026-06-18 16:10:28",
+                last_lifecycle_error="Bind for 0.0.0.0:8100 failed: port is already allocated",
+            ),
+        ),
+    )
+
+    html = render_status_page(snapshot)
+    agents_html = render_agents_page(snapshot)
+
+    assert "No agent lifecycle alerts recorded." in html
+    assert "Bind for 0.0.0.0:8100 failed" not in html
+    assert "Bind for 0.0.0.0:8100 failed" not in agents_html
+    assert "old pending inbox messages" in agents_html
+
+
+def test_failed_wake_with_pending_work_is_rendered_as_current_alert() -> None:
+    snapshot = ReportingSnapshot(
+        project_id="agentic-mesh-dev",
+        agents=(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.business-analyst.1",
+                container_state="lifecycle_failed",
+                heartbeat_at="2026-06-18T16:10:28Z",
+                inbox_depth=2,
+                dead_letter_depth=0,
+                current_work=None,
+                last_lifecycle_action="wake",
+                last_lifecycle_reason="pending inbox messages",
+                last_lifecycle_service="agentic-mesh-dev-business-analyst-1",
+                last_lifecycle_exit_code=1,
+                last_lifecycle_executed=True,
+                last_lifecycle_at="2026-06-18 16:10:28",
+                last_lifecycle_error="compose failed",
+            ),
+        ),
+    )
+
+    html = render_status_page(snapshot)
+
+    assert "agentic-mesh-dev-business-analyst-1" in html
+    assert "compose failed" in html
+
+
 def test_artifact_viewer_path_is_work_item_scoped() -> None:
     assert artifact_viewer_path("work-1", "020-product-definition.md") == "work-items/work-1/020-product-definition.md"
 
