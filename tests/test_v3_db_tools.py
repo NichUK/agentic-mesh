@@ -2118,6 +2118,84 @@ def test_v3_tool_service_runtime_status_inspect_returns_mesh_status(tmp_path: Pa
     assert any("Runtime status inspected" in row["summary"] for row in journal)
 
 
+def test_v3_tool_service_runtime_message_journal_inspect_filters_message_path(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.record_message_journal(
+            message_id="msg-1",
+            correlation_id="corr-1",
+            direction="inbound",
+            stage="received",
+            status="recorded",
+            connector="teams",
+            conversation_ref="dm:project-manager",
+            source_ref="user:sponsor",
+            target_role="project-manager",
+            work_item_id="work-debug",
+            summary="Sponsor DM received.",
+            payload={"text": "What happened?"},
+        )
+        db.record_message_journal(
+            message_id="msg-1",
+            correlation_id="corr-1",
+            direction="broker",
+            stage="published",
+            status="published",
+            target_role="project-manager",
+            broker_subject="agent.project-manager.priority",
+            broker_consumer="project-manager.1.priority",
+            work_item_id="work-debug",
+            summary="Sponsor DM published to Project Manager.",
+        )
+        db.record_message_journal(
+            message_id="msg-other",
+            direction="inbound",
+            stage="received",
+            status="recorded",
+            target_role="delivery-manager",
+            summary="Unrelated message.",
+        )
+
+        result = V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="runtime.message_journal.inspect",
+            payload={
+                "reason": "Sponsor asked whether the Project Manager DM was routed.",
+                "work_item_id": "work-debug",
+                "target_role": "project-manager",
+            },
+        )
+        event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type='runtime.message_journal_inspected'
+            """
+        ).fetchone()
+        audit_rows = db.connection.execute(
+            """
+            SELECT message_id, summary
+            FROM message_journal
+            WHERE message_id LIKE 'runtime-message-journal-inspect-%'
+            """
+        ).fetchall()
+    finally:
+        db.close()
+
+    assert result.tool_name == "runtime.message_journal.inspect"
+    assert result.output is not None
+    inspection = result.output["inspection"]
+    assert inspection["filters"] == {"target_role": "project-manager", "work_item_id": "work-debug"}
+    assert inspection["count"] == 2
+    assert {entry["stage"] for entry in inspection["entries"]} == {"received", "published"}
+    assert all(entry["target_role"] == "project-manager" for entry in inspection["entries"])
+    assert event is not None
+    event_payload = json.loads(event["payload_json"])
+    assert event_payload["reason"] == "Sponsor asked whether the Project Manager DM was routed."
+    assert any("Message journal inspected: 2 entries" in row["summary"] for row in audit_rows)
+
+
 def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

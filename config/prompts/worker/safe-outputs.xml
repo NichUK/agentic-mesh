@@ -14,6 +14,9 @@ need a governed handoff, especially operational diagnostics or specialist
 follow-up. Use
 stakeholder.ask_question or approval.request when a human answer or decision
 is needed.
+Use runtime.message_journal.inspect when diagnosing whether an inbound Teams,
+API, CLI, handoff, consult, reply, or approval message was received, routed,
+published, claimed, acknowledged, nacked, dead-lettered, or failed.
 
 For non-terminal work, one of the safe-output calls must establish who owns the
 next step. Use handoff.require for the next responsible agent, stakeholder

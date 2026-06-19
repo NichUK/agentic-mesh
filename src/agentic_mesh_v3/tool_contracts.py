@@ -30,6 +30,7 @@ DO_TOOLS = {
     "release.record",
     "risk.register",
     "runtime.broker.inspect",
+    "runtime.message_journal.inspect",
     "runtime.status.inspect",
     "runtime.sweep.request",
     "stakeholder.ask_question",
@@ -92,6 +93,11 @@ TOOL_DESCRIPTIONS = {
     "runtime.broker.inspect": (
         "Inspect broker inbox pressure, role consumer pending counts, and dead letters so an agent can diagnose "
         "routing or stuck-work issues without privileged shell access."
+    ),
+    "runtime.message_journal.inspect": (
+        "Inspect durable message journal entries by message, conversation, work item, role, stage, or status. "
+        "Use this to diagnose whether Teams/API/CLI input was received, routed, published, claimed, replied, "
+        "acked, nacked, dead-lettered, or failed without privileged database access."
     ),
     "runtime.status.inspect": (
         "Inspect the current runtime status read model: queue/backlog, active or waiting work, recent completions, "
@@ -157,6 +163,7 @@ TOOL_REQUIRED_FIELDS = {
     "report.incomplete": ("reason",),
     "risk.register": ("work_item_id", "summary"),
     "runtime.broker.inspect": ("reason",),
+    "runtime.message_journal.inspect": ("reason",),
     "runtime.status.inspect": ("reason",),
     "runtime.sweep.request": ("reason",),
     "stakeholder.ask_question": ("work_item_id", "question"),

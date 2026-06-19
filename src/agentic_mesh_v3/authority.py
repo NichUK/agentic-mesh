@@ -26,6 +26,7 @@ BASE_TOOLS = {
     "report.incomplete",
     "risk.register",
     "runtime.broker.inspect",
+    "runtime.message_journal.inspect",
     "runtime.status.inspect",
     "runtime.sweep.request",
     "stakeholder.ask_question",

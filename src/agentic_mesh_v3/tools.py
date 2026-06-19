@@ -378,6 +378,8 @@ class V3ToolService:
             self._request_runtime_sweep(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.broker.inspect":
             return self._inspect_broker(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
+        elif tool_name == "runtime.message_journal.inspect":
+            return self._inspect_message_journal(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.status.inspect":
             return self._inspect_status(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "status.update":
@@ -593,6 +595,71 @@ class V3ToolService:
             target_role=role_from_instance(role_instance_id),
             role_instance_id=role_instance_id,
             summary=_status_inspection_summary(inspection),
+            payload=event_payload,
+        )
+        return {"inspection": inspection}
+
+    def _inspect_message_journal(
+        self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        limit = int(payload.get("limit") or 20)
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+        filters = {
+            "message_id": _optional(payload.get("message_id")),
+            "correlation_id": _optional(payload.get("correlation_id")),
+            "conversation_ref": _optional(payload.get("conversation_ref")),
+            "work_item_id": _optional(payload.get("work_item_id")),
+            "queue_item_id": _optional(payload.get("queue_item_id")),
+            "target_role": _optional(payload.get("target_role") or payload.get("role_id")),
+            "role_instance_id": _optional(payload.get("role_instance_id")),
+            "stage": _optional(payload.get("stage")),
+            "status": _optional(payload.get("status")),
+        }
+        where = []
+        params: list[object] = []
+        for column, value in filters.items():
+            if value is None:
+                continue
+            where.append(f"{column} = ?")
+            params.append(value)
+        where_sql = " WHERE " + " AND ".join(where) if where else ""
+        params.append(limit)
+        rows = self.db.connection.execute(
+            f"""
+            SELECT message_id, correlation_id, direction, stage, connector,
+                   conversation_ref, thread_ref, source_ref, target_role,
+                   role_instance_id, work_item_id, queue_item_id, broker_subject,
+                   broker_consumer, delivery_attempt, status, summary, created_at
+            FROM message_journal
+            {where_sql}
+            ORDER BY created_at DESC, journal_id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        entries = [dict(row) for row in rows]
+        inspection = {
+            "filters": {key: value for key, value in filters.items() if value is not None},
+            "count": len(entries),
+            "entries": entries,
+        }
+        event_payload = {
+            "call_id": call_id,
+            "reason": _required(payload, "reason"),
+            "inspection": inspection,
+        }
+        with self.db.connection:
+            self.db.record_event("runtime.message_journal_inspected", "agent", role_instance_id, event_payload)
+        self.db.record_message_journal(
+            message_id=f"runtime-message-journal-inspect-{call_id}",
+            correlation_id=str(payload.get("correlation_id") or f"corr-{call_id}"),
+            direction="runtime",
+            stage="tool_call_recorded",
+            status="completed",
+            target_role=role_from_instance(role_instance_id),
+            role_instance_id=role_instance_id,
+            summary=_message_journal_inspection_summary(inspection),
             payload=event_payload,
         )
         return {"inspection": inspection}
@@ -1238,6 +1305,15 @@ def _status_inspection_summary(inspection: dict[str, object]) -> str:
         f"{counts.get('blocked', 0)} blocked, "
         f"{counts.get('lifecycle_alerts', 0)} lifecycle alerts."
     )
+
+
+def _message_journal_inspection_summary(inspection: dict[str, object]) -> str:
+    count = inspection.get("count", 0)
+    filters = inspection.get("filters")
+    if isinstance(filters, dict) and filters:
+        filter_text = ", ".join(f"{key}={value}" for key, value in sorted(filters.items()))
+        return f"Message journal inspected: {count} entries matched {filter_text}."
+    return f"Message journal inspected: {count} recent entries sampled."
 
 
 def _truncate_for_summary(value: object, limit: int = 140) -> str:
