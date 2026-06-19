@@ -106,7 +106,14 @@ handoff_targets:
   - delivery-manager
   - product-manager
   - business-analyst
+  - research-analyst
+  - enterprise-architect
   - solution-architect
+  - security-architect
+  - ux-designer
   - engineering
   - qa-engineer
+  - platform-engineer
   - release-manager
+  - technical-writer
+  - prompt-engineer
