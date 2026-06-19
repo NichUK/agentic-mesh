@@ -376,6 +376,8 @@ def test_compose_lifecycle_command_maps_wake_and_hibernate_to_compose(tmp_path: 
         str(tmp_path / "override.yml"),
         "up",
         "-d",
+        "--no-deps",
+        "--no-recreate",
         "agentic-mesh-dev-product-manager-1",
     )
     assert wake.working_directory == tmp_path
@@ -398,7 +400,7 @@ def test_compose_lifecycle_executor_dry_runs_only_actionable_decisions(tmp_path:
     assert len(results) == 1
     assert results[0].executed is False
     assert results[0].exit_code is None
-    assert results[0].command[-2:] == ("-d", "agentic-mesh-dev-engineering-1")
+    assert results[0].command[-3:] == ("--no-deps", "--no-recreate", "agentic-mesh-dev-engineering-1")
 
 
 def test_compose_lifecycle_executor_executes_with_injected_runner(tmp_path: Path) -> None:
@@ -431,7 +433,17 @@ def test_compose_lifecycle_executor_executes_with_injected_runner(tmp_path: Path
     assert results[0].stdout == "started"
     assert calls == [
         (
-            ("docker", "compose", "-f", str(tmp_path / "compose.yml"), "up", "-d", "agentic-mesh-dev-engineering-1"),
+            (
+                "docker",
+                "compose",
+                "-f",
+                str(tmp_path / "compose.yml"),
+                "up",
+                "-d",
+                "--no-deps",
+                "--no-recreate",
+                "agentic-mesh-dev-engineering-1",
+            ),
             tmp_path,
             7,
         )
