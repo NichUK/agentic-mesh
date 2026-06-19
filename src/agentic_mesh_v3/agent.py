@@ -21,6 +21,7 @@ from agentic_mesh_v3.memory import SQLiteRoleMemory
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import agent_has_actionable_lifecycle_alert
+from agentic_mesh_v3.state_machine import TERMINAL_STATES
 from agentic_mesh_v3.tool_contracts import DO_TOOLS
 from agentic_mesh_v3.tool_contracts import REPLY_TOOLS
 from agentic_mesh_v3.tool_contracts import TERMINAL_TOOLS
@@ -96,6 +97,14 @@ class OperationalContext(Protocol):
 class WorkItemGovernanceContextProvider(Protocol):
     def load_for_work_item(self, work_item_id: str) -> tuple[GovernanceContext | None, GovernanceChecklist | None]:
         """Load governance context/checklist for a work item."""
+
+
+class WorkItemStateProvider(Protocol):
+    def state_for_work_item(self, work_item_id: str) -> str | None:
+        """Load the current state for a work item, if available."""
+
+    def owner_for_work_item(self, work_item_id: str) -> str | None:
+        """Load the current owner role for a work item, if available."""
 
 
 class AgentStatusReporter(Protocol):
@@ -660,6 +669,16 @@ class NullWorkItemGovernanceContextProvider:
         return None, None
 
 
+class NullWorkItemStateProvider:
+    def state_for_work_item(self, work_item_id: str) -> str | None:
+        del work_item_id
+        return None
+
+    def owner_for_work_item(self, work_item_id: str) -> str | None:
+        del work_item_id
+        return None
+
+
 class DatabaseWorkItemGovernanceContextProvider:
     def __init__(self, db: object) -> None:
         self.db = db
@@ -668,6 +687,19 @@ class DatabaseWorkItemGovernanceContextProvider:
         context = self.db.work_item_governance_context(work_item_id)  # type: ignore[attr-defined]
         checklist = self.db.work_item_governance_checklist(work_item_id)  # type: ignore[attr-defined]
         return context, checklist
+
+
+class DatabaseWorkItemStateProvider:
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+    def state_for_work_item(self, work_item_id: str) -> str | None:
+        detail = self.db.work_item_detail(work_item_id)  # type: ignore[attr-defined]
+        return None if detail is None else detail.state
+
+    def owner_for_work_item(self, work_item_id: str) -> str | None:
+        detail = self.db.work_item_detail(work_item_id)  # type: ignore[attr-defined]
+        return None if detail is None else detail.owner_role
 
 
 class EchoWorker:
@@ -690,6 +722,7 @@ class RoleAgentService:
     work_item_governance_context: WorkItemGovernanceContextProvider = field(
         default_factory=NullWorkItemGovernanceContextProvider
     )
+    work_item_state_provider: WorkItemStateProvider = field(default_factory=NullWorkItemStateProvider)
     governance_instructions: GovernanceInstructionSet = field(default_factory=GovernanceInstructionSet)
     status_reporter: AgentStatusReporter = field(default_factory=NullAgentStatusReporter)
     terminal_tool_call_audit: TerminalToolCallAudit = field(default_factory=NullTerminalToolCallAudit)
@@ -746,6 +779,9 @@ class RoleAgentService:
             summary=f"Claimed by {self.config.role_instance_id}",
         )
         self._report_status(container_state="running", current_work=_message_work_ref(message.payload))
+        terminal_skip_result = self._skip_if_terminal_work_item(message, claimed.consumer)
+        if terminal_skip_result is not None:
+            return terminal_skip_result
         agent_message = AgentMessage(
             message_id=message.message_id,
             subject=message.subject,
@@ -945,6 +981,42 @@ class RoleAgentService:
                 )
             self._report_status(container_state="running", current_work=None, governance_waits=(str(exc),))
             return AgentRunResult(message_id=message.message_id, status=status, error=str(exc))
+
+    def _skip_if_terminal_work_item(self, message: BrokerMessage, consumer: str) -> AgentRunResult | None:
+        work_item_id = _message_work_item_id(message.payload)
+        if work_item_id is None:
+            return None
+        state = self.work_item_state_provider.state_for_work_item(work_item_id)
+        if state not in TERMINAL_STATES:
+            return None
+        owner_role = self.work_item_state_provider.owner_for_work_item(work_item_id)
+        if owner_role == self.config.role_id:
+            return None
+        completed_at = datetime.now(timezone.utc).isoformat()
+        summary = f"Skipped stale message for terminal work item {work_item_id} in state {state}."
+        self.run_recorder.record(
+            run_id=f"run-{uuid4().hex}",
+            role_instance_id=self.config.role_instance_id,
+            message_id=message.message_id,
+            subject=message.subject,
+            status="stale_terminal_work_skipped",
+            work_item_id=work_item_id,
+            tool_calls=(),
+            started_at=completed_at,
+            completed_at=completed_at,
+        )
+        self.broker.ack(self.config.inbox_stream, consumer, message.message_id)
+        self._journal_message(
+            message,
+            stage="acked",
+            direction="inbound",
+            status="stale_terminal_work_skipped",
+            broker_consumer=consumer,
+            delivery_attempt=message.delivery_count + 1,
+            summary=summary,
+        )
+        self._report_status(container_state="running", current_work=None)
+        return AgentRunResult(message_id=message.message_id, status="stale_terminal_work_skipped")
 
     def _fetch_next_message(self) -> ClaimedAgentMessage | None:
         for consumer, subject in self._consumer_subjects():

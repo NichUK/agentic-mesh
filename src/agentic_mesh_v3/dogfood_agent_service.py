@@ -11,6 +11,7 @@ from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
+from agentic_mesh_v3.agent import DatabaseWorkItemStateProvider
 from agentic_mesh_v3.agent import RoleAgentService
 from agentic_mesh_v3.agent import RoleInstanceConfig
 from agentic_mesh_v3.broker import BrokerAdapter
@@ -683,6 +684,7 @@ def _run_role(
         memory=DatabaseRoleMemory(db),
         conversation_context=DatabaseConversationContext(db),
         work_item_governance_context=DatabaseWorkItemGovernanceContextProvider(db),
+        work_item_state_provider=DatabaseWorkItemStateProvider(db),
         status_reporter=DatabaseAgentStatusReporter(db),
         terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
         run_recorder=DatabaseAgentRunRecorder(db),
@@ -705,7 +707,7 @@ def _run_role(
             result = service.run_once()
     if result is None:
         raise RuntimeError(f"{role_id} had no inbox message to process")
-    if result.status != "completed":
+    if result.status not in {"completed", "stale_terminal_work_skipped"}:
         raise RuntimeError(f"{role_id} failed dogfood run: {result.error or result.status}")
 
 

@@ -20,6 +20,7 @@ from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseOperationalContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
+from agentic_mesh_v3.agent import DatabaseWorkItemStateProvider
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import RoleAgentService
 from agentic_mesh_v3.agent import AgentStatusReporter
@@ -1751,6 +1752,7 @@ def _build_role_agent_service(
             configured_role_instance_ids=_configured_role_instance_ids(project_config),
         ),
         work_item_governance_context=work_item_governance_context,
+        work_item_state_provider=DatabaseWorkItemStateProvider(db),
         max_delivery_attempts=args.max_delivery_attempts,
         **kwargs,
     )
