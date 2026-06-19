@@ -610,6 +610,8 @@ def test_compose_reconciliation_marks_recovered_failed_agent_running() -> None:
     assert statuses[0].container_state == "running"
     assert statuses[0].current_work == "work-release"
     assert statuses[0].inbox_depth == 3
+    assert statuses[0].last_lifecycle_exit_code is None
+    assert statuses[0].last_lifecycle_error is None
 
 
 def test_compose_reconciliation_marks_stale_failed_agent_hibernated() -> None:
@@ -632,6 +634,9 @@ def test_compose_reconciliation_marks_stale_failed_agent_hibernated() -> None:
 
     assert statuses[0].container_state == "hibernated"
     assert statuses[0].current_work is None
+    assert statuses[0].last_lifecycle_action is None
+    assert statuses[0].last_lifecycle_exit_code is None
+    assert statuses[0].last_lifecycle_error is None
 
 
 def test_lifecycle_results_update_agent_status_projection(tmp_path: Path) -> None:
