@@ -2104,6 +2104,7 @@ def test_v3_tool_service_runtime_status_inspect_returns_mesh_status(tmp_path: Pa
     assert result.tool_name == "runtime.status.inspect"
     assert result.output is not None
     inspection = result.output["inspection"]
+    assert inspection["project_id"] == "agentic-mesh-dev"
     assert inspection["counts"]["backlog"] == 1
     assert inspection["counts"]["current_work"] == 1
     assert inspection["counts"]["agents"] == 1
