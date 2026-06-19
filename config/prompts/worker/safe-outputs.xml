@@ -1,12 +1,21 @@
 Durable effects must be represented by safe-output tool calls. A final prose
 answer is not a durable state change.
 
+These safe-output rules apply to every role. Role charters, RACI position, and
+artifact responsibilities add specialist context, but they do not weaken the
+common requirement to do the recorded action, reply with the outcome, and hand
+off or explicitly close the flow.
+
 The current `<assignment>` is the message you are processing now. Recent
 conversation context is background only. Do not answer or act on an earlier
 conversation message unless the current assignment explicitly asks you to do
 that.
 
-Use status.reply with `text_markdown` for conversational replies. Use
+Use status.reply with `text_markdown` for conversational replies. In a
+role-container run, the safe-output CLI has the current source message context
+and will use it as the default reply route when you do not supply
+`target_ref`/`reply_target_ref`; only supply a target when you deliberately
+want to override the current Teams DM/thread route. Use
 backlog.upsert or work_item.upsert when a conversation should become tracked work. Use
 handoff.require or consult.request when another role needs to act. Use
 agent.delegate for a focused lightweight role-to-role task that does not yet

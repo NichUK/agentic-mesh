@@ -31,6 +31,38 @@ def test_safe_output_subprocess_worker_returns_tool_call_status(tmp_path: Path) 
     assert calls == ["call-1", "terminal:status.reply"]
 
 
+def test_worker_subprocess_receives_message_reply_route_environment(tmp_path: Path) -> None:
+    worker_script = tmp_path / "worker.py"
+    worker_script.write_text(
+        "import json, os\n"
+        "assert os.environ['AGENTIC_MESH_MESSAGE_ID'] == 'msg-1'\n"
+        "assert os.environ['AGENTIC_MESH_CORRELATION_ID'] == 'corr-msg-1'\n"
+        "assert os.environ['AGENTIC_MESH_CONNECTOR'] == 'teams'\n"
+        "assert os.environ['AGENTIC_MESH_CONVERSATION_REF'] == 'dm:project-manager'\n"
+        "assert os.environ['AGENTIC_MESH_REPLY_TARGET_REF'] == 'chat:conversation-1'\n"
+        "assert os.environ['AGENTIC_MESH_REPLY_THREAD_REF'] == 'thread-1'\n"
+        "print(json.dumps({'tool_calls':[{'tool_name':'status.reply','call_id':'call-1','terminal':True}]}))\n",
+        encoding="utf-8",
+    )
+    worker = SafeOutputSubprocessWorker(command=(sys.executable, str(worker_script)), timeout_seconds=5)
+
+    calls = worker.run(
+        "prompt",
+        AgentMessage(
+            message_id="msg-1",
+            subject="agent.project-manager.priority",
+            payload={
+                "connector": "teams",
+                "conversation_ref": "dm:project-manager",
+                "reply_target_ref": "chat:conversation-1",
+                "reply_thread_ref": "thread-1",
+            },
+        ),
+    )
+
+    assert calls == ["terminal:status.reply"]
+
+
 def test_safe_output_subprocess_worker_reports_failure(tmp_path: Path) -> None:
     worker_script = tmp_path / "worker.py"
     worker_script.write_text("import sys\nprint('boom', file=sys.stderr)\nsys.exit(2)\n", encoding="utf-8")
