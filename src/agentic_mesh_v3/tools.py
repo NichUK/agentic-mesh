@@ -864,17 +864,35 @@ class V3ToolService:
         target_role = _optional(payload.get("target_role"))
         if target_role is None:
             return
-        self.broker.publish(
+        broker_subject = f"agent.{target_role}"
+        work_item_id = _required(payload, "work_item_id")
+        message_payload = {
+            "message_type": tool_name,
+            "source_call_id": call_id,
+            "source_role_instance_id": role_instance_id,
+            "work_item_id": work_item_id,
+            "summary": _summary(payload),
+            "payload": payload,
+        }
+        message = self.broker.publish(
             self.broker_stream,
-            f"agent.{target_role}",
-            {
-                "message_type": tool_name,
-                "source_call_id": call_id,
-                "source_role_instance_id": role_instance_id,
-                "work_item_id": _required(payload, "work_item_id"),
-                "summary": _summary(payload),
-                "payload": payload,
-            },
+            broker_subject,
+            message_payload,
+        )
+        self.db.record_message_journal(
+            message_id=message.message_id,
+            correlation_id=_optional(payload.get("correlation_id")),
+            direction="broker",
+            stage="published",
+            status="published",
+            source_ref=call_id,
+            target_role=target_role,
+            role_instance_id=role_instance_id,
+            work_item_id=work_item_id,
+            queue_item_id=_optional(payload.get("queue_item_id")),
+            broker_subject=broker_subject,
+            summary=f"Published {tool_name} to {target_role}: {_summary(payload)}",
+            payload=message_payload,
         )
 
     def _refresh_governance_register(self, tool_name: str) -> None:

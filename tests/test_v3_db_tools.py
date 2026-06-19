@@ -1739,6 +1739,7 @@ def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) 
             tool_name="handoff.require",
             payload={
                 "work_item_id": "work-1",
+                "correlation_id": "corr-handoff-1",
                 "target_role": "engineering",
                 "phase": "development",
                 "accountable_role": "engineering",
@@ -1756,6 +1757,14 @@ def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) 
 
         pending = broker.pending("agent-inbox")
         detail = db.work_item_detail("work-1")
+        journal_rows = db.connection.execute(
+            """
+            SELECT correlation_id, direction, stage, status, source_ref, target_role,
+                   role_instance_id, work_item_id, broker_subject, summary
+            FROM message_journal
+            WHERE stage='published'
+            """
+        ).fetchall()
     finally:
         db.close()
 
@@ -1768,6 +1777,16 @@ def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) 
     assert pending[0].payload["work_item_id"] == "work-1"
     assert pending[0].payload["summary"] == "Implement the signed-off product slice."
     assert pending[0].payload["payload"]["target_role"] == "engineering"
+    assert len(journal_rows) == 1
+    assert journal_rows[0]["correlation_id"] == "corr-handoff-1"
+    assert journal_rows[0]["direction"] == "broker"
+    assert journal_rows[0]["status"] == "published"
+    assert journal_rows[0]["source_ref"].startswith("call-")
+    assert journal_rows[0]["target_role"] == "engineering"
+    assert journal_rows[0]["role_instance_id"] == "agentic-mesh-dev.product-manager.1"
+    assert journal_rows[0]["work_item_id"] == "work-1"
+    assert journal_rows[0]["broker_subject"] == "agent.engineering"
+    assert "Published handoff.require to engineering" in journal_rows[0]["summary"]
 
 
 def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) -> None:
@@ -1794,6 +1813,14 @@ def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) 
         )
 
         pending = broker.pending("agent-inbox")
+        journal_rows = db.connection.execute(
+            """
+            SELECT direction, stage, status, target_role, role_instance_id,
+                   work_item_id, broker_subject, summary
+            FROM message_journal
+            WHERE stage='published'
+            """
+        ).fetchall()
     finally:
         db.close()
 
@@ -1801,6 +1828,14 @@ def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) 
     assert pending[0].subject == "agent.qa-engineer"
     assert pending[0].payload["message_type"] == "consult.request"
     assert pending[0].payload["summary"] == "Please review the acceptance criteria."
+    assert len(journal_rows) == 1
+    assert journal_rows[0]["direction"] == "broker"
+    assert journal_rows[0]["status"] == "published"
+    assert journal_rows[0]["target_role"] == "qa-engineer"
+    assert journal_rows[0]["role_instance_id"] == "agentic-mesh-dev.engineering.1"
+    assert journal_rows[0]["work_item_id"] == "work-1"
+    assert journal_rows[0]["broker_subject"] == "agent.qa-engineer"
+    assert "Published consult.request to qa-engineer" in journal_rows[0]["summary"]
 
 
 def test_v3_tool_service_runtime_sweep_request_publishes_findings(tmp_path: Path) -> None:
