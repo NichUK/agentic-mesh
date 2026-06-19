@@ -261,3 +261,84 @@ def test_project_sweep_publishes_findings_to_project_manager_inbox(tmp_path: Pat
     assert messages[0].payload["required_action"] == (
         "Review the finding and use normal tools to chase, unblock, rescope, or close the work."
     )
+
+
+def test_project_sweep_does_not_republish_unchanged_findings(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-blocked",
+            title="Blocked work",
+            description="Blocked.",
+            state="blocked",
+            owner_role="engineering",
+            next_action="Chase blocker.",
+        )
+        service = ProjectSweepService(db)
+        findings = service.sweep(now=datetime(2026, 6, 15, tzinfo=timezone.utc))
+
+        first_message_ids = service.publish_findings(
+            broker,
+            stream="agent-inbox",
+            findings=findings,
+            project_manager_role_id="project-manager",
+        )
+        second_message_ids = service.publish_findings(
+            broker,
+            stream="agent-inbox",
+            findings=findings,
+            project_manager_role_id="project-manager",
+        )
+        event_count = db.connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='project_sweep.finding_published'"
+        ).fetchone()[0]
+    finally:
+        db.close()
+
+    assert len(first_message_ids) == 1
+    assert second_message_ids == ()
+    assert event_count == 1
+
+
+def test_project_sweep_republishes_when_finding_changes(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-blocked",
+            title="Blocked work",
+            description="Blocked.",
+            state="blocked",
+            owner_role="engineering",
+            next_action="Chase blocker.",
+        )
+        service = ProjectSweepService(db)
+        first_findings = service.sweep(now=datetime(2026, 6, 15, tzinfo=timezone.utc))
+        first_message_ids = service.publish_findings(
+            broker,
+            stream="agent-inbox",
+            findings=first_findings,
+            project_manager_role_id="project-manager",
+        )
+
+        db.update_work_item_state(
+            work_item_id="work-blocked",
+            state="blocked",
+            next_action="Escalate blocker to sponsor.",
+        )
+        second_findings = service.sweep(now=datetime(2026, 6, 15, tzinfo=timezone.utc))
+        second_message_ids = service.publish_findings(
+            broker,
+            stream="agent-inbox",
+            findings=second_findings,
+            project_manager_role_id="project-manager",
+        )
+    finally:
+        db.close()
+
+    assert len(first_message_ids) == 1
+    assert len(second_message_ids) == 1
+    assert second_message_ids != first_message_ids
