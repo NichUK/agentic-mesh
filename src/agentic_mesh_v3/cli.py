@@ -295,6 +295,10 @@ def main(argv: list[str] | None = None) -> int:
     tool_parser.add_argument("--tool-name", required=True)
     tool_parser.add_argument("--payload-json", required=True)
     tool_parser.add_argument("--document-library-root", type=Path)
+    tool_parser.add_argument("--lifecycle-compose-file", type=Path, action="append")
+    tool_parser.add_argument("--lifecycle-compose-project-name")
+    tool_parser.add_argument("--lifecycle-working-directory", type=Path)
+    tool_parser.add_argument("--lifecycle-timeout-seconds", type=int, default=300)
     tool_parser.add_argument("--terminal", action="store_true")
 
     catalog_parser = subparsers.add_parser("tool-catalog")
@@ -601,6 +605,9 @@ def main(argv: list[str] | None = None) -> int:
                 broker=broker,
                 broker_stream=broker_stream,
                 configured_role_instance_ids=configured_role_instance_ids,
+                lifecycle_config=_tool_lifecycle_config(args)
+                if _tool_needs_lifecycle_config(args.tool_name)
+                else None,
             ).call(
                 role_instance_id=args.role_instance_id,
                 tool_name=args.tool_name,
@@ -637,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
                 broker=broker,
                 broker_stream=broker_stream,
                 configured_role_instance_ids=configured_role_instance_ids,
+                lifecycle_config=_tool_lifecycle_config(args),
             )
             run_v3_mcp_stdio(db, service=service)
         finally:
@@ -1162,9 +1170,13 @@ def _tool_needs_deployment_targets(tool_name: str) -> bool:
 
 
 def _tool_needs_broker(tool_name: str, payload: dict[str, object]) -> bool:
-    if tool_name in {"agent.delegate", "runtime.broker.inspect", "runtime.sweep.request"}:
+    if tool_name in {"agent.delegate", "runtime.broker.inspect", "runtime.lifecycle.request", "runtime.sweep.request"}:
         return True
     return _tool_needs_stakeholder_bridge(tool_name, payload)
+
+
+def _tool_needs_lifecycle_config(tool_name: str) -> bool:
+    return tool_name == "runtime.lifecycle.request"
 
 
 def _tool_needs_stakeholder_bridge(tool_name: str, payload: dict[str, object]) -> bool:
@@ -1259,6 +1271,54 @@ def _tool_broker(args: argparse.Namespace) -> tuple[BrokerAdapter | None, str | 
     stream = getattr(args, "broker_stream", None) or broker_config["stream"]
     _ensure_agent_stream(broker, stream=stream, role_ids=tuple(broker_config["role_ids"]))
     return broker, stream
+
+
+def _tool_lifecycle_config(args: argparse.Namespace) -> ComposeLifecycleConfig | None:
+    compose_files = _tool_lifecycle_compose_files(args)
+    if not compose_files:
+        return None
+    working_directory = (
+        getattr(args, "lifecycle_working_directory", None)
+        or _path_from_env("AGENTIC_MESH_LIFECYCLE_WORKING_DIRECTORY")
+        or compose_files[0].parent
+    )
+    return ComposeLifecycleConfig(
+        compose_files=compose_files,
+        working_directory=working_directory,
+        timeout_seconds=int(getattr(args, "lifecycle_timeout_seconds", 300) or 300),
+        project_name=(
+            getattr(args, "lifecycle_compose_project_name", None)
+            or os.environ.get("AGENTIC_MESH_LIFECYCLE_COMPOSE_PROJECT_NAME")
+            or os.environ.get("COMPOSE_PROJECT_NAME")
+        ),
+    )
+
+
+def _tool_lifecycle_compose_files(args: argparse.Namespace) -> tuple[Path, ...]:
+    explicit = getattr(args, "lifecycle_compose_file", None)
+    if explicit:
+        return tuple(explicit)
+    env_value = os.environ.get("AGENTIC_MESH_LIFECYCLE_COMPOSE_FILES")
+    if env_value:
+        return tuple(Path(part) for part in env_value.split(os.pathsep) if part)
+    project_config_path = getattr(args, "project_config", None)
+    if project_config_path is None:
+        return ()
+    project_root = Path(project_config_path).resolve().parent.parent
+    compose_dir = project_root / "deploy" / "compose"
+    base = compose_dir / "docker-compose.yml"
+    if not base.exists():
+        return ()
+    files = [base]
+    linuxch = compose_dir / "docker-compose.linuxch.yml"
+    if linuxch.exists():
+        files.append(linuxch)
+    return tuple(files)
+
+
+def _path_from_env(name: str) -> Path | None:
+    value = os.environ.get(name)
+    return Path(value) if value else None
 
 
 def _tool_broker_config(project_config_path: Path) -> dict[str, object]:

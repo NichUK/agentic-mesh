@@ -30,6 +30,7 @@ DO_TOOLS = {
     "release.record",
     "risk.register",
     "runtime.broker.inspect",
+    "runtime.lifecycle.request",
     "runtime.message_journal.inspect",
     "runtime.status.inspect",
     "runtime.sweep.request",
@@ -93,6 +94,11 @@ TOOL_DESCRIPTIONS = {
     "runtime.broker.inspect": (
         "Inspect broker inbox pressure, role consumer pending counts, and dead letters so an agent can diagnose "
         "routing or stuck-work issues without privileged shell access."
+    ),
+    "runtime.lifecycle.request": (
+        "Ask the runtime lifecycle controller to reconcile, wake, or hibernate role services through the bounded "
+        "Compose lifecycle path. This is not arbitrary shell access: wake/start commands must target one role "
+        "service with --no-deps and --no-recreate, and hibernate commands must stop one role service."
     ),
     "runtime.message_journal.inspect": (
         "Inspect durable message journal entries by message, conversation, work item, role, stage, or status. "
@@ -163,6 +169,7 @@ TOOL_REQUIRED_FIELDS = {
     "report.incomplete": ("reason",),
     "risk.register": ("work_item_id", "summary"),
     "runtime.broker.inspect": ("reason",),
+    "runtime.lifecycle.request": ("reason",),
     "runtime.message_journal.inspect": ("reason",),
     "runtime.status.inspect": ("reason",),
     "runtime.sweep.request": ("reason",),
