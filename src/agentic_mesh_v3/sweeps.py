@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -91,6 +93,9 @@ class ProjectSweepService:
         broker.ensure_stream(stream, [f"agent.{project_manager_role_id}"])
         message_ids: list[str] = []
         for finding in findings:
+            signature = _finding_signature(finding)
+            if self._already_published(finding.work_item_id, signature=signature):
+                continue
             message = broker.publish(
                 stream,
                 f"agent.{project_manager_role_id}",
@@ -108,8 +113,42 @@ class ProjectSweepService:
                     "required_action": "Review the finding and use normal tools to chase, unblock, rescope, or close the work.",
                 },
             )
+            self._record_published_finding(finding, message_id=message.message_id, signature=signature)
             message_ids.append(message.message_id)
         return tuple(message_ids)
+
+    def _already_published(self, work_item_id: str, *, signature: str) -> bool:
+        row = self.db.connection.execute(
+            """
+            SELECT 1
+            FROM events
+            WHERE event_type='project_sweep.finding_published'
+              AND aggregate_type='work_item'
+              AND aggregate_id=?
+              AND json_extract(payload_json, '$.signature')=?
+            LIMIT 1
+            """,
+            (work_item_id, signature),
+        ).fetchone()
+        return row is not None
+
+    def _record_published_finding(self, finding: SweepFinding, *, message_id: str, signature: str) -> None:
+        with self.db.connection:
+            self.db.record_event(
+                "project_sweep.finding_published",
+                "work_item",
+                finding.work_item_id,
+                {
+                    "message_id": message_id,
+                    "signature": signature,
+                    "state": finding.state,
+                    "owner_role": finding.owner_role,
+                    "reason": finding.reason,
+                    "next_action": finding.next_action,
+                    "updated_at": finding.updated_at,
+                    "artifact_count": finding.artifact_count,
+                },
+            )
 
 
 def _reason_for(
@@ -131,6 +170,19 @@ def _reason_for(
     if age >= timedelta(seconds=stale_after_seconds):
         return f"work item has not changed for {int(age.total_seconds())} seconds"
     return None
+
+
+def _finding_signature(finding: SweepFinding) -> str:
+    payload = {
+        "work_item_id": finding.work_item_id,
+        "state": finding.state,
+        "owner_role": finding.owner_role,
+        "reason": finding.reason,
+        "next_action": finding.next_action,
+        "updated_at": finding.updated_at,
+        "artifact_count": finding.artifact_count,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def _parse_sqlite_timestamp(value: str) -> datetime | None:
