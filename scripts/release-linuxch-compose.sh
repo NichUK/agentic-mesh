@@ -20,6 +20,7 @@ fi
 : "${AGENTIC_MESH_NATS_STATE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/v3/nats}"
 : "${AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor otel-collector}"
 : "${AGENTIC_MESH_ROLE_SERVICES:=agentic-mesh-dev-business-analyst-1 agentic-mesh-dev-delivery-manager-1 agentic-mesh-dev-enterprise-architect-1 agentic-mesh-dev-platform-engineer-1 agentic-mesh-dev-product-manager-1 agentic-mesh-dev-prompt-engineer-1 agentic-mesh-dev-project-manager-1 agentic-mesh-dev-research-analyst-1 agentic-mesh-dev-security-architect-1 agentic-mesh-dev-solution-architect-1 agentic-mesh-dev-engineering-1 agentic-mesh-dev-qa-engineer-1 agentic-mesh-dev-release-manager-1 agentic-mesh-dev-technical-writer-1 agentic-mesh-dev-ux-designer-1}"
+: "${AGENTIC_MESH_SUPERVISOR_SERVICE:=v3-supervisor}"
 : "${AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE:=1}"
 : "${AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS:=1}"
 
@@ -35,11 +36,13 @@ export AGENTIC_MESH_FORCE_V3_STATUS_PORT="$AGENTIC_MESH_V3_STATUS_PORT"
 export AGENTIC_MESH_NATS_STATE_HOST_PATH
 export AGENTIC_MESH_RELEASE_SERVICES
 export AGENTIC_MESH_ROLE_SERVICES
+export AGENTIC_MESH_SUPERVISOR_SERVICE
 export AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE
 export AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS
 
 cd "$REPO_ROOT"
 mkdir -p "$AGENTIC_MESH_NATS_STATE_HOST_PATH"
+sh scripts/deploy-linuxch-compose.sh --profile v3 stop "$AGENTIC_MESH_SUPERVISOR_SERVICE" >/dev/null 2>&1 || true
 if [ "$AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS" = "1" ]; then
   legacy_v2_container_names="
 agentic-mesh-v2-runtime-1

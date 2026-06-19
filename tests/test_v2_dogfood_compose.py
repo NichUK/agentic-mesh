@@ -221,6 +221,7 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
     assert 'export AGENTIC_MESH_FORCE_V3_STATUS_PORT="$AGENTIC_MESH_V3_STATUS_PORT"' in script
     assert "AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor otel-collector" in script
     assert "AGENTIC_MESH_ROLE_SERVICES:=" in script
+    assert "AGENTIC_MESH_SUPERVISOR_SERVICE:=v3-supervisor" in script
     for role_id in V3_LIVE_ROLE_IDS:
         assert f"agentic-mesh-dev-{role_id}-1" in script
     assert "AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE:=1" in script
@@ -237,6 +238,10 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
     assert "--agent-config-root /mesh/project/state/v3/agent-configs" in script
     assert "--profile v3 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile v3 stop $AGENTIC_MESH_ROLE_SERVICES" in script
+    assert '--profile v3 stop "$AGENTIC_MESH_SUPERVISOR_SERVICE"' in script
+    assert script.index('--profile v3 stop "$AGENTIC_MESH_SUPERVISOR_SERVICE"') < script.index(
+        "--profile v3 up -d v3-nats"
+    )
 
 
 def test_v3_dogfood_project_config_uses_compose_nats_service_name() -> None:
