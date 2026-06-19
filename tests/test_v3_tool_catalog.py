@@ -40,6 +40,9 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
     assert product_tools["decision.record"].required_fields == ("work_item_id", "summary")
     assert product_tools["risk.register"].allowed is True
     assert product_tools["risk.register"].required_fields == ("work_item_id", "summary")
+    assert product_tools["runtime.broker.inspect"].allowed is True
+    assert product_tools["runtime.broker.inspect"].do_tool is True
+    assert product_tools["runtime.broker.inspect"].required_fields == ("reason",)
     assert product_tools["runtime.sweep.request"].allowed is True
     assert product_tools["runtime.sweep.request"].do_tool is True
     assert product_tools["runtime.sweep.request"].required_fields == ("reason",)

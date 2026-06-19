@@ -23,7 +23,9 @@ from agentic_mesh_v3.agent import TerminalToolCallAudit
 from agentic_mesh_v3.agent import WorkItemGovernanceContextProvider
 from agentic_mesh_v3.broker import build_broker_adapter
 from agentic_mesh_v3.broker import BrokerAdapter
-from agentic_mesh_v3.broker import BrokerMessage
+from agentic_mesh_v3.broker_diagnostics import broker_inspection_payload
+from agentic_mesh_v3.broker_diagnostics import role_consumer_depth
+from agentic_mesh_v3.broker_diagnostics import role_consumer_name
 from agentic_mesh_v3.config_materializer import build_role_instance_config
 from agentic_mesh_v3.config_materializer import materialize_project_agent_configs
 from agentic_mesh_v3.compose import render_role_services_compose
@@ -762,16 +764,6 @@ def main(argv: list[str] | None = None) -> int:
     raise AssertionError(f"unhandled command: {args.command}")
 
 
-def _broker_message_dict(message: BrokerMessage) -> dict[str, object]:
-    return {
-        "message_id": message.message_id,
-        "subject": message.subject,
-        "payload": message.payload,
-        "created_at": message.created_at,
-        "delivery_count": message.delivery_count,
-    }
-
-
 def _lifecycle_result_dict(result) -> dict[str, object]:  # type: ignore[no-untyped-def]
     return {
         "action": result.decision.action,
@@ -1039,32 +1031,18 @@ def _broker_inspection_payload(
     role_ids: tuple[str, ...] = (),
     instance_id: str = "1",
 ) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "stream": stream,
-        "consumer": consumer,
-        "pending": [_broker_message_dict(message) for message in broker.pending(stream, consumer, limit=limit)],
-        "dead_letters": [_broker_message_dict(message) for message in broker.dead_letters(stream, limit=limit)],
-    }
-    if role_ids:
-        payload["role_consumers"] = [
-            {
-                "role_id": role_id,
-                "consumer": _role_consumer_name(role_id, instance_id),
-                **_role_consumer_depth(broker, stream=stream, role_id=role_id, instance_id=instance_id, limit=limit),
-            }
-            for role_id in role_ids
-        ]
-    return payload
+    return broker_inspection_payload(
+        broker,
+        stream=stream,
+        consumer=consumer,
+        limit=limit,
+        role_ids=role_ids,
+        instance_id=instance_id,
+    )
 
 
 def _role_consumer_name(role_id: str, instance_id: str) -> str:
-    role_id = role_id.strip()
-    instance_id = instance_id.strip()
-    if not role_id:
-        raise ValueError("role id is required")
-    if not instance_id:
-        raise ValueError("instance id is required")
-    return f"{role_id}.{instance_id}"
+    return role_consumer_name(role_id, instance_id)
 
 
 def _role_consumer_depth(
@@ -1075,13 +1053,13 @@ def _role_consumer_depth(
     instance_id: str,
     limit: int,
 ) -> dict[str, object]:
-    consumer = _role_consumer_name(role_id, instance_id)
-    try:
-        broker.ensure_consumer(stream, consumer, filter_subject=f"agent.{role_id}")
-        pending = broker.pending(stream, consumer, limit=max(limit, 10_000))
-    except Exception as exc:  # pragma: no cover - exercised by live adapters.
-        return {"pending_count": None, "error": str(exc)}
-    return {"pending_count": len(pending)}
+    return role_consumer_depth(
+        broker,
+        stream=stream,
+        role_id=role_id,
+        instance_id=instance_id,
+        limit=limit,
+    )
 
 
 def _publish_approval_response(args: argparse.Namespace, *, db: V3Database, approval: dict[str, object] | None) -> str | None:

@@ -173,6 +173,8 @@ def _handle_tool_call(
         "call_id": receipt.call_id,
         "terminal": receipt.terminal,
     }
+    if receipt.output is not None:
+        structured["output"] = receipt.output
     return _success_response(
         request_id,
         {
