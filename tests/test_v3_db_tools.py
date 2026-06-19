@@ -858,6 +858,100 @@ def test_v3_release_deploy_success_moves_work_to_released(tmp_path: Path) -> Non
     assert state_events == ["deploying", "released"]
 
 
+def test_v3_release_deploy_persists_release_and_deployment_run_with_fk_schema(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("AGENTIC_MESH_PROJECT_ID", raising=False)
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-artifact-viewer-link-rewrite",
+            title="Artifact Viewer Link Rewrite Safe-Output Slice",
+            description="Needs dogfood deployment evidence.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+        tools = V3ToolService(
+            db,
+            deployment_targets={
+                "dogfood-compose": CommandDeploymentTarget(
+                    target_id="dogfood-compose",
+                    command=(sys.executable, "-c", "print('dogfood deployment ok')"),
+                    rollback_plan="Rebuild and activate the previous reviewed image.",
+                )
+            },
+        )
+
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="release.deploy",
+            payload={
+                "release_id": "release-work-artifact-viewer-link-rewrite",
+                "deployment_run_id": "deployment-work-artifact-viewer-link-rewrite",
+                "work_item_id": "work-artifact-viewer-link-rewrite",
+                "target_id": "dogfood-compose",
+                "scope": "Deploy dogfood Compose target for artifact-viewer link rewrite validation.",
+                "version_ref": "/mesh/system develop@e8b93ca",
+                "approval_ref": "Project Manager handoff call-23006324b83843e0aaed1f8ee5c24bab",
+                "smoke_evidence": "encoded artifact-viewer links return 200; unsafe links unavailable",
+            },
+        )
+        release = dict(
+            db.connection.execute(
+                """
+                SELECT release_id, work_item_id, status, version_ref, approval_ref
+                FROM releases
+                WHERE work_item_id=?
+                """,
+                ("work-artifact-viewer-link-rewrite",),
+            ).fetchone()
+        )
+        deployment_run = dict(
+            db.connection.execute(
+                """
+                SELECT run_id, target_id, work_item_id, release_id, status, smoke_result
+                FROM deployment_runs
+                WHERE work_item_id=?
+                """,
+                ("work-artifact-viewer-link-rewrite",),
+            ).fetchone()
+        )
+        target = dict(
+            db.connection.execute(
+                "SELECT target_id, project_id, target_type, service_name, status FROM deployment_targets WHERE target_id=?",
+                ("dogfood-compose",),
+            ).fetchone()
+        )
+        fk_violations = [dict(row) for row in db.connection.execute("PRAGMA foreign_key_check").fetchall()]
+    finally:
+        db.close()
+
+    assert release == {
+        "release_id": "release-work-artifact-viewer-link-rewrite",
+        "work_item_id": "work-artifact-viewer-link-rewrite",
+        "status": "deployed",
+        "version_ref": "/mesh/system develop@e8b93ca",
+        "approval_ref": "Project Manager handoff call-23006324b83843e0aaed1f8ee5c24bab",
+    }
+    assert deployment_run == {
+        "run_id": "deployment-work-artifact-viewer-link-rewrite",
+        "target_id": "dogfood-compose",
+        "work_item_id": "work-artifact-viewer-link-rewrite",
+        "release_id": "release-work-artifact-viewer-link-rewrite",
+        "status": "succeeded",
+        "smoke_result": "encoded artifact-viewer links return 200; unsafe links unavailable",
+    }
+    assert target == {
+        "target_id": "dogfood-compose",
+        "project_id": "default",
+        "target_type": "command",
+        "service_name": "dogfood-compose",
+        "status": "configured",
+    }
+    assert fk_violations == []
+
+
 def test_v3_release_deploy_can_start_from_release_waiting_agent(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

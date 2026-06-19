@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
@@ -308,6 +309,26 @@ class V3ToolService:
             smoke_evidence = str(payload.get("smoke_evidence") or result.output or "not-recorded")
             deployment_run_status = "succeeded" if result.status in {"deployed", "no_deployment"} else "failed"
             command = list(getattr(target, "command", ()) or ())
+            self.db.record_deployment_target_reference(
+                target_id=target_id,
+                project_id=str(payload.get("project_id") or os.environ.get("AGENTIC_MESH_PROJECT_ID") or "default"),
+                target_type=_deployment_target_type(target),
+                service_name=target_id,
+                metadata={"source": "release.deploy"},
+            )
+            self.db.record_release(
+                release_id=release_id,
+                work_item_id=work_item_id,
+                status=result.status,
+                scope=str(payload.get("scope") or f"Deployment target {target_id}"),
+                deployment_result=result.output,
+                rollback_plan=result.rollback_plan,
+                residual_risks=str(payload.get("residual_risks") or "None recorded"),
+                version_ref=_required(payload, "version_ref"),
+                approval_ref=_required(payload, "approval_ref"),
+                smoke_evidence=smoke_evidence,
+                closure_state="release_disposition_recorded",
+            )
             self.db.record_deployment_run(
                 run_id=str(payload.get("deployment_run_id") or f"deployment-{uuid4().hex}"),
                 target_id=target_id,
@@ -323,19 +344,6 @@ class V3ToolService:
                     "approval_ref": str(payload.get("approval_ref") or ""),
                     "version_ref": str(payload.get("version_ref") or ""),
                 },
-            )
-            self.db.record_release(
-                release_id=release_id,
-                work_item_id=work_item_id,
-                status=result.status,
-                scope=str(payload.get("scope") or f"Deployment target {target_id}"),
-                deployment_result=result.output,
-                rollback_plan=result.rollback_plan,
-                residual_risks=str(payload.get("residual_risks") or "None recorded"),
-                version_ref=_required(payload, "version_ref"),
-                approval_ref=_required(payload, "approval_ref"),
-                smoke_evidence=smoke_evidence,
-                closure_state="release_disposition_recorded",
             )
             if result.status == "failed":
                 self.db.update_work_item_state(
@@ -1776,6 +1784,14 @@ def _governance_record_scope(payload: dict[str, Any]) -> str:
     if source_message_id is not None:
         return f"message:{source_message_id}"
     return _required(payload, "work_item_id")
+
+
+def _deployment_target_type(target: DeploymentTarget) -> str:
+    if hasattr(target, "command"):
+        return "command"
+    if target.__class__.__name__ == "NoDeploymentDisposition":
+        return "no-deployment"
+    return target.__class__.__name__
 
 
 def _default_governance_status(tool_name: str) -> str:

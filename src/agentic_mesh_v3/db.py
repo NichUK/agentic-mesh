@@ -239,11 +239,26 @@ class V3Database:
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS deployment_targets (
+                  target_id TEXT PRIMARY KEY,
+                  connector_id TEXT,
+                  project_id TEXT NOT NULL,
+                  target_type TEXT NOT NULL,
+                  service_name TEXT NOT NULL,
+                  compose_files_json TEXT NOT NULL DEFAULT '[]',
+                  external_base_url TEXT,
+                  status TEXT NOT NULL,
+                  disable_reason TEXT,
+                  metadata_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS deployment_runs (
                   run_id TEXT PRIMARY KEY,
-                  target_id TEXT NOT NULL,
-                  work_item_id TEXT NOT NULL,
-                  release_id TEXT NOT NULL,
+                  target_id TEXT NOT NULL REFERENCES deployment_targets(target_id),
+                  work_item_id TEXT NOT NULL REFERENCES work_items(work_item_id),
+                  release_id TEXT NOT NULL REFERENCES releases(release_id),
                   status TEXT NOT NULL,
                   command_json TEXT NOT NULL DEFAULT '[]',
                   smoke_result TEXT NOT NULL,
@@ -1411,6 +1426,43 @@ class V3Database:
                 {"release_id": release_id, "status": status, "deployment_result": deployment_result},
             )
 
+    def record_deployment_target_reference(
+        self,
+        *,
+        target_id: str,
+        project_id: str,
+        target_type: str,
+        service_name: str,
+        status: str = "configured",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not self._table_exists("deployment_targets"):
+            return
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO deployment_targets(
+                  target_id, project_id, target_type, service_name, status, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(target_id) DO UPDATE SET
+                  project_id=excluded.project_id,
+                  target_type=excluded.target_type,
+                  service_name=excluded.service_name,
+                  status=excluded.status,
+                  metadata_json=excluded.metadata_json,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    target_id,
+                    project_id,
+                    target_type,
+                    service_name,
+                    status,
+                    json.dumps(metadata or {}, sort_keys=True),
+                ),
+            )
+
     def record_deployment_run(
         self,
         *,
@@ -1458,6 +1510,17 @@ class V3Database:
                 work_item_id,
                 {"run_id": run_id, "target_id": target_id, "status": status},
             )
+
+    def _table_exists(self, table_name: str) -> bool:
+        row = self.connection.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type='table' AND name=?
+            """,
+            (table_name,),
+        ).fetchone()
+        return row is not None
 
     def update_release_closure_state(self, *, work_item_id: str, closure_state: str) -> None:
         with self.connection:
