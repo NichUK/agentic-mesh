@@ -90,3 +90,4 @@ if [ "$AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE" = "1" ] && [ "${AGENTIC_MESH_
   sh scripts/deploy-linuxch-compose.sh --profile v3 stop $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
   sh scripts/deploy-linuxch-compose.sh --profile v3 rm -f $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
 fi
+sh scripts/deploy-linuxch-compose.sh --profile v3 up -d --no-deps --no-recreate "$AGENTIC_MESH_SUPERVISOR_SERVICE"
