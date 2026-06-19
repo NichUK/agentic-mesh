@@ -49,7 +49,7 @@ services:
   agentic-mesh-dev-project-manager-1:
     restart: "no"
     volumes:
-      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
+      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
@@ -73,7 +73,7 @@ services:
   agentic-mesh-dev-release-manager-1:
     restart: "no"
     volumes:
-      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
+      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
