@@ -10,6 +10,7 @@ from typing import Any
 
 from agentic_mesh_v3.agent import AgentMemory
 from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
+from agentic_mesh_v3.agent import DatabaseAgentRunRecorder
 from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseAgentStatusReporter
 from agentic_mesh_v3.agent import DatabaseOperationalContext
@@ -1531,6 +1532,7 @@ def _build_role_agent_service(
     kwargs["message_journal"] = db
     kwargs["session_recorder"] = db
     kwargs["failure_reporter"] = DatabaseAgentFailureReporter(db)
+    kwargs["run_recorder"] = DatabaseAgentRunRecorder(db)
     return RoleAgentService(
         config=service_config,
         broker=broker,
