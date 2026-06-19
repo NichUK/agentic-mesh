@@ -56,6 +56,7 @@ class V3ToolService:
         broker_stream: str | None = None,
         authority_policy: ToolAuthorityPolicy | None = None,
         telemetry: V3Telemetry | None = None,
+        configured_role_instance_ids: tuple[str, ...] = (),
     ) -> None:
         self.db = db
         self.document_library = document_library
@@ -65,6 +66,7 @@ class V3ToolService:
         self.broker_stream = broker_stream
         self.authority_policy = authority_policy or ToolAuthorityPolicy.default()
         self.telemetry = telemetry or get_telemetry()
+        self.configured_role_instance_ids = configured_role_instance_ids
 
     def call(
         self,
@@ -513,7 +515,10 @@ class V3ToolService:
         include_recent = int(payload.get("include_recent") or 5)
         if include_recent < 0:
             raise ValueError("include_recent must be zero or positive")
-        snapshot = self.db.status_snapshot(project_id=project_id)
+        snapshot = self.db.status_snapshot(
+            project_id=project_id,
+            configured_role_instance_ids=self.configured_role_instance_ids,
+        )
         inspection = {
             "project_id": snapshot.project_id,
             "counts": {

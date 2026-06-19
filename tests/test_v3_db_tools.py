@@ -2118,6 +2118,32 @@ def test_v3_tool_service_runtime_status_inspect_returns_mesh_status(tmp_path: Pa
     assert any("Runtime status inspected" in row["summary"] for row in journal)
 
 
+def test_v3_tool_service_runtime_status_inspect_includes_configured_missing_agents(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        result = V3ToolService(
+            db,
+            configured_role_instance_ids=(
+                "agentic-mesh-dev.project-manager.1",
+                "agentic-mesh-dev.solution-architect.1",
+            ),
+        ).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="runtime.status.inspect",
+            payload={"reason": "Sponsor asked whether the whole SDLC team is visible."},
+        )
+    finally:
+        db.close()
+
+    assert result.output is not None
+    inspection = result.output["inspection"]
+    agents = {item["role_instance_id"]: item for item in inspection["agents"]}
+    assert inspection["counts"]["agents"] == 2
+    assert agents["agentic-mesh-dev.project-manager.1"]["container_state"] == "missing"
+    assert agents["agentic-mesh-dev.solution-architect.1"]["container_state"] == "missing"
+
+
 def test_v3_tool_service_runtime_message_journal_inspect_filters_message_path(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

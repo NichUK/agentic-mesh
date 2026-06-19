@@ -586,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
             db.migrate()
             payload = json.loads(args.payload_json)
             _enrich_tool_call_payload_from_env(args.tool_name, payload)
+            configured_role_instance_ids = _configured_role_instance_ids_from_file(args.project_config)
             adapter = _document_library_adapter(args) if _tool_needs_document_library(args.tool_name) else None
             broker, broker_stream = (
                 _tool_broker(args) if _tool_needs_broker(args.tool_name, payload) else (None, None)
@@ -599,6 +600,7 @@ def main(argv: list[str] | None = None) -> int:
                 else None,
                 broker=broker,
                 broker_stream=broker_stream,
+                configured_role_instance_ids=configured_role_instance_ids,
             ).call(
                 role_instance_id=args.role_instance_id,
                 tool_name=args.tool_name,
@@ -626,6 +628,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             db.migrate()
             broker, broker_stream = _tool_broker(args)
+            configured_role_instance_ids = _configured_role_instance_ids_from_file(args.project_config)
             service = V3ToolService(
                 db,
                 _document_library_adapter(args),
@@ -633,6 +636,7 @@ def main(argv: list[str] | None = None) -> int:
                 stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
                 broker=broker,
                 broker_stream=broker_stream,
+                configured_role_instance_ids=configured_role_instance_ids,
             )
             run_v3_mcp_stdio(db, service=service)
         finally:
@@ -1905,6 +1909,23 @@ def _configured_role_instance_ids(project_config: V3ProjectConfig | None) -> tup
         for role in project_config.roles
         for instance_index in range(1, role.instances + 1)
     )
+
+
+def _configured_role_instance_ids_from_file(project_config_path: Path | None) -> tuple[str, ...]:
+    if project_config_path is None:
+        return ()
+    raw = yaml.safe_load(project_config_path.read_text(encoding="utf-8")) or {}
+    project_id = str(raw.get("project_id") or "")
+    roles_raw = raw.get("roles") if isinstance(raw.get("roles"), dict) else {}
+    if not project_id or not roles_raw:
+        return ()
+    role_instance_ids: list[str] = []
+    for role_id, role_raw in sorted(roles_raw.items()):
+        role_mapping = role_raw if isinstance(role_raw, dict) else {}
+        instances = int(role_mapping.get("instances") or 1)
+        for instance_index in range(1, instances + 1):
+            role_instance_ids.append(f"{project_id}.{role_id}.{instance_index}")
+    return tuple(role_instance_ids)
 
 
 def _worker_from_args(args: argparse.Namespace, *, project_config: V3ProjectConfig | None = None):
