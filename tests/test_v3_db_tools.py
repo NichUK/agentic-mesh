@@ -1725,7 +1725,6 @@ def test_v3_tool_service_records_handoff_requirements_payload(tmp_path: Path) ->
 def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.engineering"])
     try:
         db.migrate()
         db.upsert_work_item(
@@ -1761,7 +1760,7 @@ def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) 
         journal_rows = db.connection.execute(
             """
             SELECT correlation_id, direction, stage, status, source_ref, target_role,
-                   role_instance_id, work_item_id, broker_subject, summary
+                   role_instance_id, work_item_id, broker_subject, broker_consumer, summary
             FROM message_journal
             WHERE stage='published'
             """
@@ -1787,6 +1786,7 @@ def test_v3_tool_service_publishes_handoff_to_target_role_inbox(tmp_path: Path) 
     assert journal_rows[0]["role_instance_id"] == "agentic-mesh-dev.product-manager.1"
     assert journal_rows[0]["work_item_id"] == "work-1"
     assert journal_rows[0]["broker_subject"] == "agent.engineering"
+    assert journal_rows[0]["broker_consumer"] == "engineering.1"
     assert "Published handoff.require to engineering" in journal_rows[0]["summary"]
 
 
@@ -1856,7 +1856,6 @@ def test_v3_tool_service_delegates_lightweight_task_to_target_role_inbox(tmp_pat
 def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.qa-engineer"])
     try:
         db.migrate()
         db.upsert_work_item(
@@ -1880,7 +1879,7 @@ def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) 
         journal_rows = db.connection.execute(
             """
             SELECT direction, stage, status, target_role, role_instance_id,
-                   work_item_id, broker_subject, summary
+                   work_item_id, broker_subject, broker_consumer, summary
             FROM message_journal
             WHERE stage='published'
             """
@@ -1899,7 +1898,62 @@ def test_v3_tool_service_publishes_consult_to_target_role_inbox(tmp_path: Path) 
     assert journal_rows[0]["role_instance_id"] == "agentic-mesh-dev.engineering.1"
     assert journal_rows[0]["work_item_id"] == "work-1"
     assert journal_rows[0]["broker_subject"] == "agent.qa-engineer"
+    assert journal_rows[0]["broker_consumer"] == "qa-engineer.1"
     assert "Published consult.request to qa-engineer" in journal_rows[0]["summary"]
+
+
+def test_v3_tool_service_publishes_informed_update_to_target_role_inbox(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Delegated finding",
+            description="Needs Project Manager visibility.",
+            state="waiting_agent",
+            owner_role="platform-engineer",
+        )
+        V3ToolService(db, broker=broker, broker_stream="agent-inbox").call(
+            role_instance_id="agentic-mesh-dev.platform-engineer.1",
+            tool_name="informed.update",
+            payload={
+                "work_item_id": "work-1",
+                "target_role": "project-manager",
+                "message": "Deployment target is missing from project configuration.",
+                "correlation_id": "corr-informed-1",
+            },
+        )
+
+        pending = broker.pending("agent-inbox")
+        journal_rows = db.connection.execute(
+            """
+            SELECT correlation_id, direction, stage, status, target_role, role_instance_id,
+                   work_item_id, broker_subject, broker_consumer, summary
+            FROM message_journal
+            WHERE stage='published'
+            """
+        ).fetchall()
+    finally:
+        db.close()
+
+    assert len(pending) == 1
+    assert pending[0].subject == "agent.project-manager"
+    assert pending[0].payload["message_type"] == "informed.update"
+    assert pending[0].payload["source_role"] == "platform-engineer"
+    assert pending[0].payload["target_role"] == "project-manager"
+    assert pending[0].payload["work_item_id"] == "work-1"
+    assert pending[0].payload["summary"] == "Deployment target is missing from project configuration."
+    assert len(journal_rows) == 1
+    assert journal_rows[0]["correlation_id"] == "corr-informed-1"
+    assert journal_rows[0]["direction"] == "broker"
+    assert journal_rows[0]["status"] == "published"
+    assert journal_rows[0]["target_role"] == "project-manager"
+    assert journal_rows[0]["role_instance_id"] == "agentic-mesh-dev.platform-engineer.1"
+    assert journal_rows[0]["work_item_id"] == "work-1"
+    assert journal_rows[0]["broker_subject"] == "agent.project-manager"
+    assert journal_rows[0]["broker_consumer"] == "project-manager.1"
+    assert "Published informed.update to project-manager" in journal_rows[0]["summary"]
 
 
 def test_v3_tool_service_runtime_sweep_request_publishes_findings(tmp_path: Path) -> None:
