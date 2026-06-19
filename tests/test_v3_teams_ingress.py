@@ -255,6 +255,8 @@ def test_teams_activity_router_records_conversation_context(tmp_path) -> None:
     assert messages[0]["message_id"] == "msg-3"
     assert messages[0]["text"] == "AM-Product Manager please review this."
     assert messages[0]["sender_ref"] == "user-1"
+    assert messages[0]["reply_target_ref"] == "team:team-1/channel:channel-1"
+    assert messages[0]["reply_thread_ref"] == "msg-3"
     assert messages[0]["mentioned_roles"] == ("product-manager",)
     assert route_event is not None
     assert '"status": "routed"' in route_event["payload_json"]

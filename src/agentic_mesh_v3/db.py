@@ -242,6 +242,8 @@ class V3Database:
                   connector TEXT NOT NULL,
                   conversation_ref TEXT NOT NULL,
                   thread_ref TEXT,
+                  reply_target_ref TEXT,
+                  reply_thread_ref TEXT,
                   source_type TEXT NOT NULL,
                   sender_ref TEXT NOT NULL,
                   mentioned_roles_json TEXT NOT NULL DEFAULT '[]',
@@ -284,6 +286,8 @@ class V3Database:
             )
             _ensure_column(self.connection, "conversations", "text_sha256", "TEXT")
             _ensure_column(self.connection, "conversations", "raw_expired_at", "TEXT")
+            _ensure_column(self.connection, "conversations", "reply_target_ref", "TEXT")
+            _ensure_column(self.connection, "conversations", "reply_thread_ref", "TEXT")
             _ensure_column(self.connection, "agent_runs", "work_item_id", "TEXT")
             _ensure_column(self.connection, "releases", "version_ref", "TEXT NOT NULL DEFAULT 'not-recorded'")
             _ensure_column(self.connection, "releases", "approval_ref", "TEXT NOT NULL DEFAULT 'not-recorded'")
@@ -1551,22 +1555,26 @@ class V3Database:
         sender_ref: str,
         text: str,
         thread_ref: str | None = None,
+        reply_target_ref: str | None = None,
+        reply_thread_ref: str | None = None,
         mentioned_roles: tuple[str, ...] = (),
     ) -> None:
         with self.connection:
             self.connection.execute(
                 """
                 INSERT OR IGNORE INTO conversations(
-                  message_id, connector, conversation_ref, thread_ref, source_type, sender_ref,
-                  mentioned_roles_json, text, text_sha256
+                  message_id, connector, conversation_ref, thread_ref, reply_target_ref,
+                  reply_thread_ref, source_type, sender_ref, mentioned_roles_json, text, text_sha256
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message_id,
                     connector,
                     conversation_ref,
                     thread_ref,
+                    reply_target_ref,
+                    reply_thread_ref,
                     source_type,
                     sender_ref,
                     json.dumps(list(mentioned_roles), sort_keys=True),
@@ -1584,17 +1592,31 @@ class V3Database:
                     "source_type": source_type,
                     "sender_ref": sender_ref,
                     "thread_ref": thread_ref,
+                    "reply_target_ref": reply_target_ref,
+                    "reply_thread_ref": reply_thread_ref,
                     "mentioned_roles": list(mentioned_roles),
                 },
             )
+
+    def conversation_reply_route(self, message_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """
+            SELECT connector, conversation_ref, thread_ref, reply_target_ref, reply_thread_ref
+            FROM conversations
+            WHERE message_id=?
+            """,
+            (message_id,),
+        ).fetchone()
+        return dict(row) if row is not None else None
 
     def list_conversation_messages(self, conversation_ref: str, *, limit: int = 10) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError("limit must be positive")
         rows = self.connection.execute(
             """
-            SELECT message_id, connector, conversation_ref, thread_ref, source_type, sender_ref,
-                   mentioned_roles_json, text, text_sha256, raw_expired_at, created_at
+            SELECT message_id, connector, conversation_ref, thread_ref, reply_target_ref,
+                   reply_thread_ref, source_type, sender_ref, mentioned_roles_json, text,
+                   text_sha256, raw_expired_at, created_at
             FROM conversations
             WHERE conversation_ref=?
             ORDER BY created_at DESC, message_id DESC

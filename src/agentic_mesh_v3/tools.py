@@ -899,6 +899,13 @@ class V3ToolService:
     def _send_optional_reply(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> None:
         target_ref = _optional(payload.get("target_ref")) or _optional(payload.get("reply_target_ref"))
         if target_ref is None:
+            route = self._reply_route_from_source_message(payload)
+            if route is not None:
+                target_ref = _optional(route.get("reply_target_ref"))
+                payload.setdefault("connector", route.get("connector"))
+                payload.setdefault("conversation_ref", route.get("conversation_ref"))
+                payload.setdefault("reply_thread_ref", route.get("reply_thread_ref") or route.get("thread_ref"))
+        if target_ref is None:
             return
         if self.stakeholder_bridge is None:
             raise ValueError("stakeholder bridge is not configured")
@@ -952,6 +959,17 @@ class V3ToolService:
                 purpose="status.reply",
                 payload=payload,
             )
+
+    def _reply_route_from_source_message(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        source_message_id = _optional(payload.get("source_message_id") or payload.get("message_id"))
+        if source_message_id is None:
+            return None
+        route = self.db.conversation_reply_route(source_message_id)
+        if route is None:
+            return None
+        if _optional(route.get("reply_target_ref")) is None:
+            return None
+        return route
 
     def _update_status(self, payload: dict[str, Any]) -> None:
         work_item_id = _optional(payload.get("work_item_id"))
