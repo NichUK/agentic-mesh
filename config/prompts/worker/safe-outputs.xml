@@ -55,8 +55,9 @@ whether an agent is running:
 6. Finish with status.reply using `text_markdown` and say what was inspected,
    what was found, what action was recorded, and who owns the next step.
 7. If inspection cannot be performed, call report.incomplete with the blocker,
-   requested missing authority/context, and next owner. Do not finish with
-   plain prose or an empty operational envelope.
+   requested missing authority/context, and next owner. `report.incomplete`
+   is both the recorded DO outcome and the REPLY for an incomplete run. Do not
+   finish with plain prose or an empty operational envelope.
 
 For “do not create tracked work” or “do not create a work item” conversations,
 noop is only the right DO call when no concrete inspection, update, handoff,
@@ -89,12 +90,18 @@ Every worker run must emit both:
    `reason` when no action is appropriate.
 2. A REPLY safe-output call that communicates the outcome or needed next step.
    Examples: status.reply with `text_markdown`, status.complete with `summary`,
-   stakeholder.ask_question, approval.request, blocker.raise, or
-   report.incomplete with `reason`.
+   stakeholder.ask_question, approval.request, blocker.raise,
+   messaging.send, or report.incomplete with `reason`.
 
 Do the work first, then confirm what was done. Do not only reply that something
 was done unless the relevant DO safe-output call has already recorded it. At
-least one safe-output call must be terminal before the run finishes.
+least one safe-output call must be terminal before the run finishes. REPLY
+tools that wait for or notify a human, such as status.reply, status.complete,
+stakeholder.ask_question, approval.request, blocker.raise, messaging.send, and
+report.incomplete, are terminal for the current run. Agent-to-agent tools such
+as handoff.require, agent.delegate, consult.request, and informed.update are
+not terminal by themselves; pair them with status.reply or status.complete so
+the sender knows what happened.
 
 When using the CLI safe-output front door from a role container, use this
 command shape:

@@ -122,6 +122,21 @@ class RecordingDoOnlyWorker:
         return [result.call_id]
 
 
+class RecordingIncompleteOnlyWorker:
+    def __init__(self, tools: V3ToolService, role_instance_id: str) -> None:
+        self.tools = tools
+        self.role_instance_id = role_instance_id
+
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        del prompt
+        result = self.tools.call(
+            role_instance_id=self.role_instance_id,
+            tool_name="report.incomplete",
+            payload={"reason": f"Cannot complete {message.message_id} without missing context."},
+        )
+        return [result.call_id]
+
+
 class FakeStatusReporter:
     def __init__(self) -> None:
         self.statuses = []
@@ -998,7 +1013,7 @@ def test_role_agent_requeues_if_worker_calls_no_terminal_tool(tmp_path: Path) ->
 
     assert result is not None
     assert result.status == "failed"
-    assert "terminal safe-output tool" in (result.error or "")
+    assert "REPLY safe-output tool" in (result.error or "")
     assert broker.depth("agent-inbox").pending == 1
 
 
@@ -1061,7 +1076,7 @@ def test_role_agent_requeues_if_terminal_call_was_not_recorded_in_audit(tmp_path
 
     assert result is not None
     assert result.status == "failed"
-    assert "did not record a terminal safe-output tool call" in (result.error or "")
+    assert "did not record any safe-output tool call" in (result.error or "")
     assert broker.depth("agent-inbox").pending == 1
 
 
@@ -1145,6 +1160,36 @@ def test_role_agent_accepts_terminal_call_recorded_through_tool_service(tmp_path
     assert set(calls_by_name) == {"noop", "status.reply"}
     assert calls_by_name["noop"]["terminal"] is True
     assert calls_by_name["status.reply"]["terminal"] is True
+    assert broker.depth("agent-inbox").pending == 0
+
+
+def test_role_agent_accepts_report_incomplete_as_do_reply_terminal(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.publish("agent-inbox", "agent.product-manager", {"request": "status"})
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=RecordingIncompleteOnlyWorker(V3ToolService(db), role_instance_id),
+            memory=InMemoryRoleMemory(),
+            terminal_tool_call_audit=DatabaseTerminalToolCallAudit(db),
+        )
+
+        result = service.run_once()
+        tool_calls = db.list_tool_calls()
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["tool_name"] == "report.incomplete"
+    assert tool_calls[0]["terminal"] is True
+    assert result.tool_calls == (tool_calls[0]["call_id"],)
     assert broker.depth("agent-inbox").pending == 0
 
 

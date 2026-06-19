@@ -3,7 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 
-TERMINAL_TOOLS = {"status.reply", "status.complete", "noop", "report.incomplete"}
+TERMINAL_TOOLS = {
+    "approval.request",
+    "blocker.raise",
+    "messaging.send",
+    "noop",
+    "report.incomplete",
+    "stakeholder.ask_question",
+    "status.complete",
+    "status.reply",
+}
 
 DO_TOOLS = {
     "agent.heartbeat",
@@ -28,6 +37,7 @@ DO_TOOLS = {
     "release.close",
     "release.deploy",
     "release.record",
+    "report.incomplete",
     "risk.register",
     "runtime.broker.inspect",
     "runtime.lifecycle.request",
@@ -89,7 +99,10 @@ TOOL_DESCRIPTIONS = {
     "release.close": "Close release work after deployment or no-deployment evidence exists.",
     "release.deploy": "Execute a configured deployment target or no-deployment disposition.",
     "release.record": "Record release evidence without executing a deployment target.",
-    "report.incomplete": "End the run with an explicit incomplete result. Requires `reason`.",
+    "report.incomplete": (
+        "Record and communicate an explicit incomplete result when the role cannot complete the assignment. "
+        "Requires `reason`."
+    ),
     "risk.register": "Register a work-item risk with impact or mitigation context.",
     "runtime.broker.inspect": (
         "Inspect broker inbox pressure, role consumer pending counts, and dead letters so an agent can diagnose "

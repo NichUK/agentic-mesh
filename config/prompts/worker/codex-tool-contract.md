@@ -29,8 +29,12 @@ the next responsible agent, stakeholder.ask_question or approval.request for hum
 agent.delegate for a focused lightweight task to another role, or informed.update to Project
 Manager/Delivery Manager for governance or delivery follow-up. A reply alone is not enough for non-terminal work.
 
-At least one successful call must be a terminal safe-output tool: status.reply, status.complete,
-noop, or report.incomplete.
+At least one successful call must be a terminal safe-output tool. Human-facing REPLY tools are
+terminal for the current run: status.reply, status.complete, stakeholder.ask_question,
+approval.request, blocker.raise, messaging.send, and report.incomplete. noop is also terminal
+when no durable action is appropriate. Agent-to-agent routing tools such as handoff.require,
+agent.delegate, consult.request, and informed.update are not terminal by themselves; pair them
+with status.reply or status.complete so the sender knows what happened.
 
 After the safe-output tool calls have succeeded, write only this operational JSON envelope to
 stdout, including each tool_name and whether it was terminal:
