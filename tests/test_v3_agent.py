@@ -8,6 +8,7 @@ from agentic_mesh_v3.agent import DatabaseConversationContext
 from agentic_mesh_v3.agent import DatabaseOperationalContext
 from agentic_mesh_v3.agent import DatabaseTerminalToolCallAudit
 from agentic_mesh_v3.agent import DatabaseWorkItemGovernanceContextProvider
+from agentic_mesh_v3.agent import DatabaseWorkItemStateProvider
 from agentic_mesh_v3.agent import EchoWorker
 from agentic_mesh_v3.agent import InMemoryRoleMemory
 from agentic_mesh_v3.agent import RoleAgentService
@@ -54,6 +55,12 @@ class CapturingWorker:
         self.prompt = prompt
         self.message_payload = dict(message.payload)
         return [f"noop:{message.message_id}", f"status.reply:{message.message_id}"]
+
+
+class FailingIfCalledWorker:
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        del prompt, message
+        raise AssertionError("worker should not be called")
 
 
 class FakeStakeholderBridge:
@@ -1070,6 +1077,69 @@ def test_role_agent_does_not_block_work_item_for_dead_lettered_informed_update(t
     assert detail.next_action == "Deployment target is running."
     assert events[-1]["event_type"] == "agent.delivery_failure_recorded"
     assert '"blocking": false' in events[-1]["payload_json"]
+
+
+def test_role_agent_acks_stale_message_for_terminal_work_item_without_worker_run(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.product-manager",
+        {
+            "message_type": "handoff.request",
+            "message": "Continue old work.",
+            "work_item_id": "work-closed",
+        },
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-closed",
+            title="Closed work",
+            description="Already closed.",
+            state="closed",
+            owner_role="project-manager",
+            next_action="Already closed.",
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=FailingIfCalledWorker(),
+            memory=InMemoryRoleMemory(),
+            work_item_state_provider=DatabaseWorkItemStateProvider(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+            message_journal=db,
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        runs = db.connection.execute(
+            "SELECT status, work_item_id FROM agent_runs WHERE message_id=?",
+            (published.message_id,),
+        ).fetchall()
+        journal = db.connection.execute(
+            """
+            SELECT stage, status, summary
+            FROM message_journal
+            WHERE message_id=?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (published.message_id,),
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "stale_terminal_work_skipped"
+    assert broker.depth("agent-inbox").pending == 0
+    assert [dict(row) for row in runs] == [
+        {"status": "stale_terminal_work_skipped", "work_item_id": "work-closed"}
+    ]
+    assert journal["stage"] == "acked"
+    assert journal["status"] == "stale_terminal_work_skipped"
+    assert "terminal work item work-closed" in journal["summary"]
 
 
 def test_role_agent_dead_letter_notifies_source_conversation(tmp_path: Path) -> None:
