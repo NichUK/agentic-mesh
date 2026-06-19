@@ -318,7 +318,13 @@ def test_dogfood_compose_runs_v3_live_role_services() -> None:
         command = service["command"]
 
         assert service["image"] == runtime_service["image"]
-        assert service["environment"] == runtime_service["environment"]
+        assert runtime_service["environment"].items() <= service["environment"].items()
+        assert service["environment"]["AGENTIC_MESH_ROLE_ID"] == role_id
+        assert service["environment"]["AGENTIC_MESH_ROLE_INSTANCE_ID"] == f"agentic-mesh-dev.{role_id}.1"
+        assert (
+            service["environment"]["AGENTIC_MESH_AGENT_CONFIG_DIR"]
+            == f"/mesh/project/state/v3/agent-configs/{role_id}/1"
+        )
         assert service["volumes"] == expected_role_volumes
         assert service["working_dir"] == runtime_service["working_dir"]
         assert service["depends_on"] == ["v3-nats"]
