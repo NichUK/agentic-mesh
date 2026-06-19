@@ -1023,6 +1023,7 @@ def _run_supervisor_sweep(
     project_config: V3ProjectConfig,
 ) -> dict[str, object]:
     service = ProjectSweepService(db)
+    recoveries = service.recover_stale_agent_blockers()
     findings = service.sweep(stale_after_seconds=args.stale_after_seconds)
     published_message_ids: tuple[str, ...] = ()
     if args.publish_sweep_to_project_manager:
@@ -1037,6 +1038,8 @@ def _run_supervisor_sweep(
             project_manager_role_id=args.project_manager_role_id,
         )
     return {
+        "recoveries": [recovery.to_dict() for recovery in recoveries],
+        "recovered_stale_agent_blocker_count": len(recoveries),
         "findings": [finding.to_dict() for finding in findings],
         "published_message_ids": list(published_message_ids),
         "finding_count": len(findings),
