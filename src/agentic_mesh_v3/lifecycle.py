@@ -484,6 +484,7 @@ def refresh_agent_statuses_from_broker(
         role_id, instance_id = _role_and_instance(role_instance_id)
         inbox_depth = 0
         for consumer, subject in (
+            (f"{_inbox_consumer_name(role_id, instance_id)}.priority", f"agent.{role_id}.priority"),
             (_inbox_consumer_name(role_id, instance_id), f"agent.{role_id}"),
             (f"{_inbox_consumer_name(role_id, instance_id)}.relevance", f"agent.{role_id}.relevance"),
         ):

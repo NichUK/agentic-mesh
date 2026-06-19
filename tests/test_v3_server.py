@@ -286,7 +286,7 @@ def test_focused_reporting_json_endpoints_return_agents_and_work(tmp_path: Path)
 
 def test_teams_activity_response_routes_to_agent_inbox() -> None:
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_stream("agent-inbox", ["agent.product-manager.priority"])
     router = TeamsActivityRouter(
         LocalTeamsBridge(broker),
         role_identities=(TeamsRoleIdentity("product-manager", "AM-Product Manager", bot_id="bot-product"),),
@@ -303,9 +303,9 @@ def test_teams_activity_response_routes_to_agent_inbox() -> None:
         router,
     )
 
-    assert response == {"status": "routed", "subjects": ["agent.product-manager"]}
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    assert broker.fetch("agent-inbox", "pm")[0].payload["text"] == "Please respond."
+    assert response == {"status": "routed", "subjects": ["agent.product-manager.priority"]}
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    assert broker.fetch("agent-inbox", "pm-priority")[0].payload["text"] == "Please respond."
 
 
 def test_artifact_viewer_reads_local_document_library(tmp_path: Path) -> None:

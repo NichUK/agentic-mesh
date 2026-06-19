@@ -169,7 +169,7 @@ def test_normalized_channel_message_routes_through_local_bridge() -> None:
 
 def test_teams_activity_router_normalizes_and_routes_to_agent_inbox() -> None:
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_stream("agent-inbox", ["agent.product-manager.priority"])
     bridge = LocalTeamsBridge(broker)
     router = TeamsActivityRouter(
         bridge,
@@ -188,9 +188,9 @@ def test_teams_activity_router_normalizes_and_routes_to_agent_inbox() -> None:
         }
     )
 
-    assert subjects == ["agent.product-manager"]
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    payload = broker.fetch("agent-inbox", "pm")[0].payload
+    assert subjects == ["agent.product-manager.priority"]
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    payload = broker.fetch("agent-inbox", "pm-priority")[0].payload
     assert payload["route_type"] == "role_dm"
     assert payload["conversation_ref"] == "dm:product-manager"
     assert payload["reply_target_ref"] == "chat:dm-1"
@@ -321,7 +321,7 @@ def test_teams_activity_router_routes_even_when_sidecar_recorder_fails(tmp_path)
             raise RuntimeError("approval database unavailable")
 
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_stream("agent-inbox", ["agent.product-manager.priority"])
     db_path = tmp_path / "v3.sqlite3"
     router = TeamsActivityRouter(
         LocalTeamsBridge(broker),
@@ -342,8 +342,8 @@ def test_teams_activity_router_routes_even_when_sidecar_recorder_fails(tmp_path)
         }
     )
 
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    message = broker.fetch("agent-inbox", "pm")[0]
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    message = broker.fetch("agent-inbox", "pm-priority")[0]
     db = V3Database(db_path)
     try:
         db.migrate()
@@ -357,7 +357,7 @@ def test_teams_activity_router_routes_even_when_sidecar_recorder_fails(tmp_path)
     finally:
         db.close()
 
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["agent.product-manager.priority"]
     assert message.payload["text"] == "Please respond."
     assert route_event is not None
     assert '"status": "routed"' in route_event["payload_json"]
@@ -366,7 +366,7 @@ def test_teams_activity_router_routes_even_when_sidecar_recorder_fails(tmp_path)
 
 def test_teams_activity_router_records_approval_response_and_notifies_requesting_role(tmp_path) -> None:
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_stream("agent-inbox", ["agent.product-manager.priority"])
     db_path = tmp_path / "v3.sqlite3"
     db = V3Database(db_path)
     try:
@@ -413,15 +413,15 @@ def test_teams_activity_router_records_approval_response_and_notifies_requesting
     finally:
         db.close()
 
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["agent.product-manager.priority"]
     assert detail is not None
     assert detail.state == "waiting_agent"
     assert detail.owner_role == "product-manager"
     assert approval is not None
     assert approval["status"] == "approved"
     assert approval["response"] == "approval-1 approved"
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    messages = broker.fetch("agent-inbox", "pm", batch=10)
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    messages = broker.fetch("agent-inbox", "pm-priority", batch=10)
     assert [message.payload["message_type"] for message in messages] == [
         "approval.response_recorded",
         "stakeholder.message",
@@ -433,7 +433,7 @@ def test_teams_activity_router_records_approval_response_and_notifies_requesting
 
 def test_teams_activity_router_records_stakeholder_question_response_and_notifies_asking_role(tmp_path) -> None:
     broker = InMemoryBrokerAdapter()
-    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    broker.ensure_stream("agent-inbox", ["agent.product-manager.priority"])
     db_path = tmp_path / "v3.sqlite3"
     db = V3Database(db_path)
     try:
@@ -484,13 +484,13 @@ def test_teams_activity_router_records_stakeholder_question_response_and_notifie
     finally:
         db.close()
 
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["agent.product-manager.priority"]
     assert detail is not None
     assert detail.state == "waiting_agent"
     assert detail.owner_role == "product-manager"
     assert detail.governance_records[0].status == "answered"
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    messages = broker.fetch("agent-inbox", "pm", batch=10)
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    messages = broker.fetch("agent-inbox", "pm-priority", batch=10)
     assert [message.payload["message_type"] for message in messages] == [
         "stakeholder.question_answered",
         "stakeholder.message",

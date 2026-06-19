@@ -375,6 +375,32 @@ def test_role_agent_prioritizes_direct_messages_over_relevance_checks(tmp_path: 
     assert broker.depth("agent-inbox").pending == 0
 
 
+def test_role_agent_prioritizes_stakeholder_dm_over_normal_inbox_work(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager", "agent.product-manager.priority"])
+    normal = broker.publish("agent-inbox", "agent.product-manager", {"work_item_id": "work-1"})
+    priority = broker.publish(
+        "agent-inbox",
+        "agent.product-manager.priority",
+        {"source_type": "dm", "text": "Give me a status update."},
+    )
+    service = RoleAgentService(
+        config=_config(tmp_path),
+        broker=broker,
+        worker=EchoWorker(),
+        memory=InMemoryRoleMemory(),
+    )
+
+    first = service.run_once()
+    second = service.run_once()
+
+    assert first is not None
+    assert first.message_id == priority.message_id
+    assert second is not None
+    assert second.message_id == normal.message_id
+    assert broker.depth("agent-inbox").pending == 0
+
+
 def test_database_status_reporter_updates_agent_read_model(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])

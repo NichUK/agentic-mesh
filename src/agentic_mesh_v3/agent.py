@@ -797,6 +797,7 @@ class RoleAgentService:
 
     def _consumer_subjects(self) -> tuple[tuple[str, str], ...]:
         return (
+            (f"{self.config.inbox_consumer}.priority", f"agent.{self.config.role_id}.priority"),
             (self.config.inbox_consumer, f"agent.{self.config.role_id}"),
             (f"{self.config.inbox_consumer}.relevance", f"agent.{self.config.role_id}.relevance"),
         )

@@ -1416,9 +1416,9 @@ roles:
     )
 
     assert isinstance(bridge, BotFrameworkTeamsBridge)
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["agent.product-manager.priority"]
     pending = broker.pending("agent-inbox")
-    assert [message.subject for message in pending] == ["agent.product-manager"]
+    assert [message.subject for message in pending] == ["agent.product-manager.priority"]
 
 
 def test_cli_stakeholder_bridge_honors_broker_stream_override(tmp_path: Path) -> None:
@@ -1458,8 +1458,8 @@ roles:
         )
     )
 
-    assert subjects == ["agent.product-manager"]
-    assert broker.pending("agent-inbox-proof")[0].subject == "agent.product-manager"
+    assert subjects == ["agent.product-manager.priority"]
+    assert broker.pending("agent-inbox-proof")[0].subject == "agent.product-manager.priority"
     try:
         broker.pending("agent-inbox")
     except ValueError as exc:
@@ -1995,7 +1995,7 @@ connectors:
             "recipient": {"id": "bot-product", "name": "AM-Product Manager"},
         }
     )
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["agent.product-manager.priority"]
 
 
 def test_cli_run_agent_once_uses_project_config_and_mounted_paths(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -2934,7 +2934,7 @@ connectors:
         db.close()
     pending = broker.pending("agent-inbox")
 
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["agent.product-manager.priority"]
     assert approval is not None
     assert approval["status"] == "approved"
     assert pending[0].payload["message_type"] == "approval.response_recorded"
@@ -3018,7 +3018,7 @@ connectors:
         db.close()
     pending = broker.pending("agent-inbox")
 
-    assert subjects == ["agent.product-manager"]
+    assert subjects == ["agent.product-manager.priority"]
     assert detail is not None
     assert detail.state == "waiting_agent"
     assert detail.owner_role == "product-manager"

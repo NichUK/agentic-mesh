@@ -51,6 +51,13 @@ def run_local_e2e_dogfood_slice(
     broker.ensure_stream(
         broker_stream,
         [
+            "agent.delivery-manager.priority",
+            "agent.engineering.priority",
+            "agent.product-manager.priority",
+            "agent.project-manager.priority",
+            "agent.qa-engineer.priority",
+            "agent.release-manager.priority",
+            "agent.solution-architect.priority",
             "agent.delivery-manager",
             "agent.engineering",
             "agent.product-manager",

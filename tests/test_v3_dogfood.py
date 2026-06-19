@@ -76,8 +76,8 @@ def test_local_e2e_dogfood_delivers_and_records_sponsor_approval_path(tmp_path: 
     assert detail is not None
     assert detail.state == "closed"
 
-    broker.ensure_consumer("agent-inbox", "pm", filter_subject="agent.product-manager")
-    messages = broker.fetch("agent-inbox", "pm", batch=10)
+    broker.ensure_consumer("agent-inbox", "pm-priority", filter_subject="agent.product-manager.priority")
+    messages = broker.fetch("agent-inbox", "pm-priority", batch=10)
     message_types = [message.payload["message_type"] for message in messages]
     assert "approval.response_recorded" in message_types
     assert message_types.count("stakeholder.message") >= 2

@@ -307,6 +307,7 @@ def _broker_live_check(project_config: V3ProjectConfig) -> PreflightCheck:
         broker = build_broker_adapter(adapter=project_config.broker.adapter, servers=project_config.broker.servers)
         subjects = ["project.context"]
         for role in project_config.roles:
+            subjects.append(f"agent.{role.role_id}.priority")
             subjects.append(f"agent.{role.role_id}")
             subjects.append(f"agent.{role.role_id}.relevance")
         broker.ensure_stream(project_config.broker.stream, subjects)
