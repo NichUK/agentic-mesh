@@ -86,6 +86,7 @@ def test_authority_gives_starter_roles_common_operational_tools() -> None:
         "memory.propose_update",
         "messaging.send",
         "risk.register",
+        "runtime.status.inspect",
         "stakeholder.ask_question",
         "status.reply",
         "work_item.reopen",

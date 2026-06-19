@@ -10,6 +10,7 @@ from agentic_mesh_v3.deployment import DeploymentResult
 from agentic_mesh_v3.deployment import NoDeploymentDisposition
 from agentic_mesh_v3.documents import DocumentRef
 from agentic_mesh_v3.documents import LocalDocumentLibraryAdapter
+from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.tools import V3ToolService
 
 
@@ -1930,6 +1931,73 @@ def test_v3_tool_service_runtime_broker_inspect_returns_role_depths(tmp_path: Pa
     event_payload = json.loads(event["payload_json"])
     assert event_payload["reason"] == "Project Manager is checking stuck work routing."
     assert any(row["message_id"].startswith("runtime-broker-inspect-") for row in journal)
+
+
+def test_v3_tool_service_runtime_status_inspect_returns_mesh_status(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_backlog_item(
+            queue_item_id="queue-status",
+            title="Inspect runtime",
+            summary="Project Manager needs a read-only status view.",
+            status="queued",
+            owner_role="project-manager",
+        )
+        db.upsert_work_item(
+            work_item_id="work-status",
+            title="Runtime status inspection",
+            description="Expose runtime status to agents.",
+            state="waiting_agent",
+            owner_role="delivery-manager",
+            next_action="Delivery Manager needs to coordinate the next step.",
+        )
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.project-manager.1",
+                container_state="running",
+                heartbeat_at=None,
+                inbox_depth=2,
+                current_work="work-status",
+            )
+        )
+
+        result = V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="runtime.status.inspect",
+            payload={"reason": "Sponsor asked Project Manager what is happening."},
+        )
+        event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type='runtime.status_inspected'
+            """
+        ).fetchone()
+        journal = db.connection.execute(
+            """
+            SELECT message_id, summary
+            FROM message_journal
+            WHERE stage='tool_call_recorded'
+            """
+        ).fetchall()
+    finally:
+        db.close()
+
+    assert result.tool_name == "runtime.status.inspect"
+    assert result.output is not None
+    inspection = result.output["inspection"]
+    assert inspection["counts"]["backlog"] == 1
+    assert inspection["counts"]["current_work"] == 1
+    assert inspection["counts"]["agents"] == 1
+    assert inspection["work_items"][0]["work_item_id"] == "work-status"
+    assert inspection["agents"][0]["role_instance_id"] == "agentic-mesh-dev.project-manager.1"
+    assert inspection["agents"][0]["inbox_depth"] == 2
+    assert event is not None
+    event_payload = json.loads(event["payload_json"])
+    assert event_payload["reason"] == "Sponsor asked Project Manager what is happening."
+    assert any(row["message_id"].startswith("runtime-status-inspect-") for row in journal)
+    assert any("Runtime status inspected" in row["summary"] for row in journal)
 
 
 def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path) -> None:

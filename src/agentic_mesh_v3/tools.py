@@ -158,6 +158,8 @@ class V3ToolService:
         if tool_name == "runtime.broker.inspect":
             if self.broker is None or self.broker_stream is None:
                 raise ValueError("broker is not configured")
+        if tool_name == "runtime.status.inspect":
+            return
         if tool_name in {"document.write_artifact", "document.write_work_item_index", "document.write_root_work_item_index"}:
             if self.document_library is None:
                 raise ValueError("document library is not configured")
@@ -371,6 +373,8 @@ class V3ToolService:
             self._request_runtime_sweep(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.broker.inspect":
             return self._inspect_broker(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
+        elif tool_name == "runtime.status.inspect":
+            return self._inspect_status(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "status.update":
             self._update_status(payload)
         elif tool_name in TERMINAL_TOOLS:
@@ -424,6 +428,97 @@ class V3ToolService:
             target_role=role_from_instance(role_instance_id),
             role_instance_id=role_instance_id,
             summary=_broker_inspection_summary(inspection),
+            payload=event_payload,
+        )
+        return {"inspection": inspection}
+
+    def _inspect_status(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        project_id = str(payload.get("project_id") or "project")
+        include_recent = int(payload.get("include_recent") or 5)
+        if include_recent < 0:
+            raise ValueError("include_recent must be zero or positive")
+        snapshot = self.db.status_snapshot(project_id=project_id)
+        inspection = {
+            "project_id": snapshot.project_id,
+            "counts": {
+                "backlog": len(snapshot.backlog),
+                "current_work": len(snapshot.work_items),
+                "recent_completions": len(snapshot.recent_completions),
+                "agents": len(snapshot.agents),
+                "attention_needed": sum(1 for item in snapshot.work_items if _is_attention_needed_state(item.state)),
+                "blocked": sum(1 for item in snapshot.work_items if item.state == "blocked"),
+                "governance_waits": sum(len(agent.governance_waits) for agent in snapshot.agents),
+                "lifecycle_alerts": sum(1 for agent in snapshot.agents if _has_lifecycle_alert(agent)),
+            },
+            "backlog": [
+                {
+                    "queue_item_id": item.queue_item_id,
+                    "title": item.title,
+                    "status": item.status,
+                    "owner_role": item.owner_role,
+                    "linked_work_item_id": item.linked_work_item_id,
+                }
+                for item in snapshot.backlog
+            ],
+            "work_items": [
+                {
+                    "work_item_id": item.work_item_id,
+                    "title": item.title,
+                    "state": item.state,
+                    "owner_role": item.owner_role,
+                    "next_action": item.next_action,
+                    "attention_reason": item.attention_reason,
+                    "updated_at": item.updated_at,
+                }
+                for item in snapshot.work_items
+            ],
+            "agents": [
+                {
+                    "role_instance_id": agent.role_instance_id,
+                    "container_state": agent.container_state,
+                    "current_work": agent.current_work,
+                    "inbox_depth": agent.inbox_depth,
+                    "dead_letter_depth": agent.dead_letter_depth,
+                    "governance_waits": list(agent.governance_waits),
+                    "last_activity_at": agent.last_activity_at,
+                    "last_run_status": agent.last_run_status,
+                    "last_lifecycle_action": agent.last_lifecycle_action,
+                    "last_lifecycle_exit_code": agent.last_lifecycle_exit_code,
+                    "last_lifecycle_error": agent.last_lifecycle_error,
+                    "session_status": agent.session_status,
+                    "session_mode": agent.session_mode,
+                }
+                for agent in snapshot.agents
+            ],
+            "recent_completions": [
+                {
+                    "work_item_id": item.work_item_id,
+                    "title": item.title,
+                    "state": item.state,
+                    "owner_role": item.owner_role,
+                    "next_action": item.next_action,
+                    "updated_at": item.updated_at,
+                }
+                for item in snapshot.recent_completions[:include_recent]
+            ],
+        }
+        event_payload = {
+            "call_id": call_id,
+            "reason": _required(payload, "reason"),
+            "project_id": project_id,
+            "inspection": inspection,
+        }
+        with self.db.connection:
+            self.db.record_event("runtime.status_inspected", "agent", role_instance_id, event_payload)
+        self.db.record_message_journal(
+            message_id=f"runtime-status-inspect-{call_id}",
+            correlation_id=str(payload.get("correlation_id") or f"corr-{call_id}"),
+            direction="runtime",
+            stage="tool_call_recorded",
+            status="completed",
+            target_role=role_from_instance(role_instance_id),
+            role_instance_id=role_instance_id,
+            summary=_status_inspection_summary(inspection),
             payload=event_payload,
         )
         return {"inspection": inspection}
@@ -1039,6 +1134,39 @@ def _broker_inspection_summary(inspection: dict[str, object]) -> str:
     dead_letters = inspection.get("dead_letters")
     dead_letter_count = len(dead_letters) if isinstance(dead_letters, list) else 0
     return f"Broker inspected: {pending_count} pending sampled, {dead_letter_count} dead letters sampled."
+
+
+def _status_inspection_summary(inspection: dict[str, object]) -> str:
+    counts = inspection.get("counts")
+    if not isinstance(counts, dict):
+        return "Runtime status inspected."
+    return (
+        "Runtime status inspected: "
+        f"{counts.get('current_work', 0)} current work, "
+        f"{counts.get('backlog', 0)} backlog, "
+        f"{counts.get('attention_needed', 0)} attention needed, "
+        f"{counts.get('blocked', 0)} blocked, "
+        f"{counts.get('lifecycle_alerts', 0)} lifecycle alerts."
+    )
+
+
+def _is_attention_needed_state(state: str) -> bool:
+    return state in {
+        "waiting_human",
+        "waiting_agent",
+        "waiting_external",
+        "blocked",
+        "recovering",
+        "failed_terminal",
+    }
+
+
+def _has_lifecycle_alert(agent: AgentStatus) -> bool:
+    return (
+        agent.container_state == "lifecycle_failed"
+        or agent.last_lifecycle_error is not None
+        or (agent.last_lifecycle_exit_code not in (None, 0))
+    )
 
 
 def _decision_summary(payload: dict[str, Any]) -> str:

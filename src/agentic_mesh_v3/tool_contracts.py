@@ -29,6 +29,7 @@ DO_TOOLS = {
     "release.record",
     "risk.register",
     "runtime.broker.inspect",
+    "runtime.status.inspect",
     "runtime.sweep.request",
     "stakeholder.ask_question",
     "status.update",
@@ -85,6 +86,11 @@ TOOL_DESCRIPTIONS = {
     "runtime.broker.inspect": (
         "Inspect broker inbox pressure, role consumer pending counts, and dead letters so an agent can diagnose "
         "routing or stuck-work issues without privileged shell access."
+    ),
+    "runtime.status.inspect": (
+        "Inspect the current runtime status read model: queue/backlog, active or waiting work, recent completions, "
+        "agent state, lifecycle alerts, and governance waits. This is read-only and intended for Project Manager "
+        "style operational triage without shell access."
     ),
     "runtime.sweep.request": (
         "Ask the runtime to perform an immediate project-health sweep and publish actionable findings "
@@ -144,6 +150,7 @@ TOOL_REQUIRED_FIELDS = {
     "report.incomplete": ("reason",),
     "risk.register": ("work_item_id", "summary"),
     "runtime.broker.inspect": ("reason",),
+    "runtime.status.inspect": ("reason",),
     "runtime.sweep.request": ("reason",),
     "stakeholder.ask_question": ("work_item_id", "question"),
     "status.complete": ("summary",),
