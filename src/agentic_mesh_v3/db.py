@@ -2130,6 +2130,7 @@ class V3Database:
 
     def _latest_agent_runs(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
+        latest_running: dict[str, dict[str, Any]] = {}
         for row in self.connection.execute(
             """
             SELECT run_id, role_instance_id, message_id, work_item_id, subject, status,
@@ -2138,7 +2139,11 @@ class V3Database:
             ORDER BY completed_at ASC, run_id ASC
             """
         ):
-            latest[row["role_instance_id"]] = _agent_run_row(row)
+            run = _agent_run_row(row)
+            latest[row["role_instance_id"]] = run
+            if row["status"] == "running":
+                latest_running[row["role_instance_id"]] = run
+        latest.update(latest_running)
         return latest
 
     def _latest_agent_lifecycle_actions(self) -> dict[str, dict[str, Any]]:
