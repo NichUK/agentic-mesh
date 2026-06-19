@@ -80,6 +80,7 @@ def test_starter_role_outputs_use_document_library_paths() -> None:
 def test_project_manager_role_has_operator_diagnostics_guidance() -> None:
     template = load_role_template(Path("config/roles/project-manager.yaml"), expected_role_id="project-manager")
     prompt = template.as_prompt_text()
+    handoff_targets = set(template.raw.get("handoff_targets") or ())
 
     assert "diagnose-and-route-mesh-operation" in prompt
     assert "runtime.broker.inspect" in prompt
@@ -89,6 +90,22 @@ def test_project_manager_role_has_operator_diagnostics_guidance() -> None:
     assert "release-manager" in prompt
     assert "delivery-manager" in prompt
     assert "After every debug or operator-style request" in prompt
+    assert handoff_targets == {
+        "business-analyst",
+        "delivery-manager",
+        "engineering",
+        "enterprise-architect",
+        "platform-engineer",
+        "product-manager",
+        "prompt-engineer",
+        "qa-engineer",
+        "release-manager",
+        "research-analyst",
+        "security-architect",
+        "solution-architect",
+        "technical-writer",
+        "ux-designer",
+    }
 
 
 def test_local_documentation_paths_ignores_work_item_templates(tmp_path: Path) -> None:
