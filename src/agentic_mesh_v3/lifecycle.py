@@ -175,6 +175,31 @@ def compose_lifecycle_command(
     )
 
 
+def _validate_role_scoped_lifecycle_command(command: LifecycleCommand) -> None:
+    """Guard role lifecycle execution from becoming a broad Compose deploy.
+
+    A wake/start may only start the exact role service and must never recreate
+    dependencies such as the broker or runtime. A hibernate may only stop the
+    exact role service.
+    """
+
+    parts = command.command
+    action = command.decision.action
+    if action in {"start", "wake"}:
+        if parts[-1:] != (command.service_name,):
+            raise ValueError("role lifecycle wake/start command must target exactly one role service")
+        if "--no-deps" not in parts or "--no-recreate" not in parts:
+            raise ValueError("role lifecycle wake/start command must use --no-deps and --no-recreate")
+        if "up" not in parts:
+            raise ValueError("role lifecycle wake/start command must use docker compose up")
+        return
+    if action == "hibernate":
+        if parts[-1:] != (command.service_name,):
+            raise ValueError("role lifecycle hibernate command must target exactly one role service")
+        if "stop" not in parts:
+            raise ValueError("role lifecycle hibernate command must use docker compose stop")
+
+
 class ComposeLifecycleExecutor:
     def __init__(
         self,
@@ -196,6 +221,7 @@ class ComposeLifecycleExecutor:
             command = compose_lifecycle_command(decision, config=self.config)
             if command is None:
                 continue
+            _validate_role_scoped_lifecycle_command(command)
             if execute:
                 result = self.runner(
                     list(command.command),

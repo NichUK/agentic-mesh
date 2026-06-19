@@ -2,13 +2,17 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
+import pytest
+
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.lifecycle import HibernationPolicy
 from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
 from agentic_mesh_v3.lifecycle import ComposeLifecycleExecutor
 from agentic_mesh_v3.lifecycle import CommandExecutionResult
+from agentic_mesh_v3.lifecycle import LifecycleCommand
 from agentic_mesh_v3.lifecycle import LifecycleDecision
 from agentic_mesh_v3.lifecycle import RoleContainerSpec
+from agentic_mesh_v3.lifecycle import _validate_role_scoped_lifecycle_command
 from agentic_mesh_v3.lifecycle import compose_lifecycle_command
 from agentic_mesh_v3.lifecycle import plan_lifecycle_action
 from agentic_mesh_v3.lifecycle import plan_lifecycle_actions
@@ -450,6 +454,27 @@ def test_compose_lifecycle_command_maps_wake_and_hibernate_to_compose(tmp_path: 
     assert wake.working_directory == tmp_path
     assert hibernate is not None
     assert hibernate.command[-2:] == ("stop", "agentic-mesh-dev-product-manager-1")
+
+
+def test_lifecycle_command_guard_rejects_broad_compose_wake(tmp_path: Path) -> None:
+    command = LifecycleCommand(
+        decision=LifecycleDecision("wake", "agentic-mesh-dev.release-manager.1", "pending inbox"),
+        service_name="agentic-mesh-dev-release-manager-1",
+        command=(
+            "docker",
+            "compose",
+            "--project-name",
+            "agentic-mesh-v3",
+            "-f",
+            str(tmp_path / "compose.yml"),
+            "up",
+            "-d",
+        ),
+        working_directory=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="target exactly one role service"):
+        _validate_role_scoped_lifecycle_command(command)
 
 
 def test_compose_lifecycle_executor_dry_runs_only_actionable_decisions(tmp_path: Path) -> None:
