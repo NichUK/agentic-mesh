@@ -72,14 +72,19 @@ python -m agentic_mesh_v3.cli \
   --project-id "${AGENTIC_MESH_PROJECT_ID:-agentic-mesh-dev}" \
   --project-config "${AGENTIC_MESH_PROJECT_CONFIG:-/mesh/project/agentic-mesh/project-v3.yaml}" \
   tool-call \
-  --role-instance-id "<exact value from <role-instance>>" \
+  --role-instance-id "${AGENTIC_MESH_ROLE_INSTANCE_ID}" \
   --tool-name "<allowed.tool_name>" \
   --payload-json '<valid JSON object>'
 ```
 
+`AGENTIC_MESH_ROLE_INSTANCE_ID` is provided by the runtime for the current role
+container. Do not leave it blank, substitute another role, or invent a role
+instance id.
+
 The CLI returns JSON containing `call_id`, `tool_name`, and `terminal`. Keep
-those call IDs. After all required safe-output calls succeed, write only the
-small operational envelope to stdout, for example:
+those call IDs. If your final answer is going to be prose, stop and use
+`status.reply` first. After all required safe-output calls succeed, write only
+the small operational envelope to stdout, for example:
 
 ```json
 {"tool_calls":[{"tool_name":"handoff.require","call_id":"call-...","terminal":false},{"tool_name":"status.reply","call_id":"call-...","terminal":true}]}

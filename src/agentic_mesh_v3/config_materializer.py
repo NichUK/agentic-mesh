@@ -288,11 +288,12 @@ def _role_tool_instructions(role_id: str, base_instructions: str, *, document_fr
                 '  --project-id "${AGENTIC_MESH_PROJECT_ID:-agentic-mesh-dev}" \\',
                 '  --project-config "${AGENTIC_MESH_PROJECT_CONFIG:-/mesh/project/agentic-mesh/project.yaml}" \\',
                 "  tool-call \\",
-                '  --role-instance-id "<exact value from <role-instance>>" \\',
+                '  --role-instance-id "${AGENTIC_MESH_ROLE_INSTANCE_ID}" \\',
                 '  --tool-name "<allowed.tool_name>" \\',
                 "  --payload-json '<valid JSON object>'",
                 "```",
                 "",
+                "`AGENTIC_MESH_ROLE_INSTANCE_ID` is provided by the runtime for the current role container.",
                 "Use the returned `call_id` values in the operational completion envelope. Do not invent call IDs.",
                 "",
             ]

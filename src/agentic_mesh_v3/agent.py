@@ -546,7 +546,12 @@ class RoleAgentService:
         agent_message = AgentMessage(
             message_id=message.message_id,
             subject=message.subject,
-            payload=message.payload,
+            payload={
+                **message.payload,
+                "role_instance_id": self.config.role_instance_id,
+                "role_id": self.config.role_id,
+                "project_id": self.config.project_id,
+            },
         )
         prompt_governance_context, prompt_governance_checklist = self._governance_for_message(
             agent_message,

@@ -331,6 +331,9 @@ def _message_context_environment(message: AgentMessage) -> dict[str, str]:
         "AGENTIC_MESH_CORRELATION_ID": str(message.payload.get("correlation_id") or f"corr-{message.message_id}"),
     }
     for payload_key, env_key in (
+        ("project_id", "AGENTIC_MESH_PROJECT_ID"),
+        ("role_id", "AGENTIC_MESH_ROLE_ID"),
+        ("role_instance_id", "AGENTIC_MESH_ROLE_INSTANCE_ID"),
         ("connector", "AGENTIC_MESH_CONNECTOR"),
         ("conversation_ref", "AGENTIC_MESH_CONVERSATION_REF"),
         ("reply_target_ref", "AGENTIC_MESH_REPLY_TARGET_REF"),

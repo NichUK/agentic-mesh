@@ -41,6 +41,9 @@ def test_worker_subprocess_receives_message_reply_route_environment(tmp_path: Pa
         "import json, os\n"
         "assert os.environ['AGENTIC_MESH_MESSAGE_ID'] == 'msg-1'\n"
         "assert os.environ['AGENTIC_MESH_CORRELATION_ID'] == 'corr-msg-1'\n"
+        "assert os.environ['AGENTIC_MESH_PROJECT_ID'] == 'agentic-mesh-dev'\n"
+        "assert os.environ['AGENTIC_MESH_ROLE_ID'] == 'project-manager'\n"
+        "assert os.environ['AGENTIC_MESH_ROLE_INSTANCE_ID'] == 'agentic-mesh-dev.project-manager.1'\n"
         "assert os.environ['AGENTIC_MESH_CONNECTOR'] == 'teams'\n"
         "assert os.environ['AGENTIC_MESH_CONVERSATION_REF'] == 'dm:project-manager'\n"
         "assert os.environ['AGENTIC_MESH_REPLY_TARGET_REF'] == 'chat:conversation-1'\n"
@@ -56,6 +59,9 @@ def test_worker_subprocess_receives_message_reply_route_environment(tmp_path: Pa
             message_id="msg-1",
             subject="agent.project-manager.priority",
             payload={
+                "project_id": "agentic-mesh-dev",
+                "role_id": "project-manager",
+                "role_instance_id": "agentic-mesh-dev.project-manager.1",
                 "connector": "teams",
                 "conversation_ref": "dm:project-manager",
                 "reply_target_ref": "chat:conversation-1",
