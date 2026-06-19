@@ -1173,6 +1173,15 @@ def _tool_needs_deployment_targets(tool_name: str) -> bool:
 def _tool_needs_broker(tool_name: str, payload: dict[str, object]) -> bool:
     if tool_name in {"agent.delegate", "runtime.broker.inspect", "runtime.lifecycle.request", "runtime.sweep.request"}:
         return True
+    if tool_name in {
+        "handoff.require",
+        "consult.request",
+        "informed.update",
+        "governance.record_exception",
+        "decision.record",
+        "risk.register",
+    }:
+        return _payload_has_any(payload, "target_role")
     return _tool_needs_stakeholder_bridge(tool_name, payload)
 
 
