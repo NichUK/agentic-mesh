@@ -11,6 +11,8 @@ from typing import Protocol
 from uuid import uuid4
 
 from agentic_mesh_v3.broker import BrokerAdapter
+from agentic_mesh_v3.connectors import OutboundMessage
+from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.governance import GovernanceChecklist
 from agentic_mesh_v3.governance import GovernanceContext
 from agentic_mesh_v3.governance import GovernanceInstructionSet
@@ -399,8 +401,9 @@ class DatabaseAgentPromptRecorder:
 
 
 class DatabaseAgentFailureReporter:
-    def __init__(self, db: object) -> None:
+    def __init__(self, db: object, stakeholder_bridge: StakeholderBridge | None = None) -> None:
         self.db = db
+        self.stakeholder_bridge = stakeholder_bridge
 
     def report_dead_letter(
         self,
@@ -412,6 +415,14 @@ class DatabaseAgentFailureReporter:
         error: str,
         payload: dict[str, object],
     ) -> None:
+        self._notify_source_conversation(
+            role_instance_id=role_instance_id,
+            role_id=role_id,
+            message_id=message_id,
+            work_item_id=work_item_id,
+            error=error,
+            payload=payload,
+        )
         if not work_item_id:
             return
         next_action = (
@@ -430,6 +441,114 @@ class DatabaseAgentFailureReporter:
             created_by_role_instance=role_instance_id,
             origin_message_id=_payload_text(payload, "source_message_id") or message_id,
         )
+
+    def _notify_source_conversation(
+        self,
+        *,
+        role_instance_id: str,
+        role_id: str,
+        message_id: str,
+        work_item_id: str | None,
+        error: str,
+        payload: dict[str, object],
+    ) -> None:
+        if self.stakeholder_bridge is None:
+            return
+        route = self._reply_route(message_id=message_id, payload=payload)
+        target_ref = _payload_text(route, "reply_target_ref")
+        connector = _payload_text(route, "connector")
+        if target_ref is None or connector is None:
+            return
+        thread_ref = _payload_text(route, "reply_thread_ref") or _payload_text(route, "thread_ref")
+        call_id = f"agent-failure-{message_id}"
+        text = _agent_failure_reply_text(
+            role_id=role_id,
+            work_item_id=work_item_id,
+            message_id=message_id,
+            error=error,
+        )
+        try:
+            receipt = self.stakeholder_bridge.send(
+                OutboundMessage(
+                    connector=connector,
+                    target_ref=target_ref,
+                    text_markdown=text,
+                    thread_ref=thread_ref,
+                    importance="high",
+                    sender_role=role_id,
+                )
+            )
+        except Exception as exc:
+            self.db.record_outbound_delivery(  # type: ignore[attr-defined]
+                delivery_id=f"delivery-failed-{call_id}",
+                call_id=call_id,
+                role_instance_id=role_instance_id,
+                work_item_id=work_item_id,
+                purpose="agent.failure",
+                connector=connector,
+                target_ref=f"{target_ref} ({type(exc).__name__}: {exc})",
+                thread_ref=thread_ref,
+                status="failed",
+            )
+            self.db.record_message_journal(  # type: ignore[attr-defined]
+                message_id=message_id,
+                correlation_id=_message_correlation_id(payload),
+                direction="outbound",
+                stage="failed",
+                status="failed",
+                connector=connector,
+                conversation_ref=_payload_text(route, "conversation_ref"),
+                thread_ref=thread_ref,
+                source_ref=call_id,
+                role_instance_id=role_instance_id,
+                work_item_id=work_item_id,
+                summary=f"agent.failure delivery failed: {type(exc).__name__}: {exc}",
+            )
+            return
+        self.db.record_outbound_delivery(  # type: ignore[attr-defined]
+            delivery_id=receipt.delivery_id,
+            call_id=call_id,
+            role_instance_id=role_instance_id,
+            work_item_id=work_item_id,
+            purpose="agent.failure",
+            connector=receipt.connector,
+            target_ref=receipt.target_ref,
+            thread_ref=receipt.thread_ref,
+            status="sent",
+        )
+        self.db.record_message_journal(  # type: ignore[attr-defined]
+            message_id=message_id,
+            correlation_id=_message_correlation_id(payload),
+            direction="outbound",
+            stage="reply_delivered",
+            status="sent",
+            connector=receipt.connector,
+            conversation_ref=_payload_text(route, "conversation_ref"),
+            thread_ref=receipt.thread_ref,
+            source_ref=call_id,
+            role_instance_id=role_instance_id,
+            work_item_id=work_item_id,
+            summary=f"agent.failure delivered to {receipt.target_ref}",
+        )
+
+    def _reply_route(self, *, message_id: str, payload: dict[str, object]) -> dict[str, object]:
+        direct_route = {
+            "connector": payload.get("connector"),
+            "conversation_ref": payload.get("conversation_ref"),
+            "thread_ref": payload.get("thread_ref"),
+            "reply_target_ref": payload.get("reply_target_ref") or payload.get("target_ref"),
+            "reply_thread_ref": payload.get("reply_thread_ref"),
+        }
+        if _payload_text(direct_route, "reply_target_ref") is not None:
+            return direct_route
+        source_message_id = _payload_text(payload, "source_message_id") or message_id
+        try:
+            route = self.db.conversation_reply_route(source_message_id)  # type: ignore[attr-defined]
+        except Exception:
+            return direct_route
+        if route is None:
+            return direct_route
+        return dict(route)
 
 
 class InMemoryRoleMemory:
@@ -1088,6 +1207,18 @@ def _payload_text(payload: dict[str, object], key: str) -> str | None:
 
 def _message_correlation_id(payload: dict[str, object]) -> str | None:
     return _payload_text(payload, "correlation_id") or _payload_text(payload, "source_message_id")
+
+
+def _agent_failure_reply_text(*, role_id: str, work_item_id: str | None, message_id: str, error: str) -> str:
+    work_line = f"\n\nWork item: `{work_item_id}`" if work_item_id else ""
+    return (
+        f"**{role_id} could not complete the requested action.**"
+        f"{work_line}\n\n"
+        f"Message: `{message_id}`\n\n"
+        f"Problem: {error}\n\n"
+        "The runtime recorded this as an agent-delivery failure. "
+        "Retry after the worker/tool wiring issue is corrected, or route the item to Project Manager for recovery."
+    )
 
 
 def _message_memory_version(memory_summary: str) -> str:

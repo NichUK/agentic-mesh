@@ -14,6 +14,8 @@ from agentic_mesh_v3.agent import RoleAgentService
 from agentic_mesh_v3.agent import RoleInstanceConfig
 from agentic_mesh_v3.agent import build_role_memory
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
+from agentic_mesh_v3.connectors import DeliveryReceipt
+from agentic_mesh_v3.connectors import OutboundMessage
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.governance import DEFAULT_SDLC_RACI
 from agentic_mesh_v3.governance import GovernanceContext
@@ -52,6 +54,20 @@ class CapturingWorker:
         self.prompt = prompt
         self.message_payload = dict(message.payload)
         return [f"noop:{message.message_id}", f"status.reply:{message.message_id}"]
+
+
+class FakeStakeholderBridge:
+    def __init__(self) -> None:
+        self.messages: list[OutboundMessage] = []
+
+    def send(self, message: OutboundMessage) -> DeliveryReceipt:
+        self.messages.append(message)
+        return DeliveryReceipt(
+            delivery_id=f"delivery-{len(self.messages)}",
+            connector=message.connector,
+            target_ref=message.target_ref,
+            thread_ref=message.thread_ref,
+        )
 
 
 class RecordingTerminalWorker:
@@ -993,6 +1009,74 @@ def test_role_agent_blocks_linked_work_item_on_dead_letter(tmp_path: Path) -> No
     assert detail.owner_role == "product-manager"
     assert "Agent delivery dead-lettered" in detail.next_action
     assert published.message_id in detail.next_action
+
+
+def test_role_agent_dead_letter_notifies_source_conversation(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.project-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.project-manager",
+        {
+            "request": "status",
+            "connector": "teams",
+            "conversation_ref": "dm:project-manager",
+            "reply_target_ref": "conversation:pm-dm",
+            "reply_thread_ref": "thread-1",
+            "work_item_id": "work-123",
+        },
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    bridge = FakeStakeholderBridge()
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-123",
+            title="Recover runtime",
+            description="Recover the runtime.",
+            state="waiting_agent",
+            owner_role="project-manager",
+        )
+        service = RoleAgentService(
+            config=RoleInstanceConfig(
+                project_id="agentic-mesh-dev",
+                role_id="project-manager",
+                instance_id="1",
+                role_prompt_path=_config(tmp_path).role_prompt_path,
+                memory_db_path=tmp_path / "memory.sqlite3",
+                inbox_stream="agent-inbox",
+                inbox_consumer="project-manager-1",
+            ),
+            broker=broker,
+            worker=NoToolWorker(),
+            memory=InMemoryRoleMemory(),
+            failure_reporter=DatabaseAgentFailureReporter(db, stakeholder_bridge=bridge),
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        deliveries = db.list_outbound_deliveries("work-123")
+        journal_rows = [
+            dict(row)
+            for row in db.connection.execute(
+                "SELECT stage, status, summary FROM message_journal WHERE message_id=? ORDER BY created_at",
+                (published.message_id,),
+            ).fetchall()
+        ]
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "dead_lettered"
+    assert len(bridge.messages) == 1
+    assert bridge.messages[0].connector == "teams"
+    assert bridge.messages[0].target_ref == "conversation:pm-dm"
+    assert bridge.messages[0].thread_ref == "thread-1"
+    assert "project-manager could not complete" in bridge.messages[0].text_markdown
+    assert "agent did not call any tool" in bridge.messages[0].text_markdown
+    assert deliveries[-1]["purpose"] == "agent.failure"
+    assert deliveries[-1]["status"] == "sent"
+    assert any(row["stage"] == "reply_delivered" and row["status"] == "sent" for row in journal_rows)
 
 
 def test_role_agent_requeues_if_worker_calls_no_terminal_tool(tmp_path: Path) -> None:
