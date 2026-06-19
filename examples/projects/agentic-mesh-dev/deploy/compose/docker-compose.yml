@@ -21,7 +21,7 @@ x-agentic-mesh-env: &agentic-mesh-env
   AGENTIC_MESH_BUILD_REF: ${AGENTIC_MESH_BUILD_REF:-}
   AGENTIC_MESH_BUILD_TIME: ${AGENTIC_MESH_BUILD_TIME:-}
   AGENTIC_MESH_ENVIRONMENT: ${AGENTIC_MESH_ENVIRONMENT:-dogfood}
-  AGENTIC_MESH_LIFECYCLE_LOCK_PATH: ${AGENTIC_MESH_LIFECYCLE_LOCK_PATH:-/mesh/project/state/v3/compose-lifecycle.lock}
+  AGENTIC_MESH_LIFECYCLE_LOCK_PATH: ${AGENTIC_MESH_LIFECYCLE_LOCK_PATH:-/mesh/project/state/compose-lifecycle.lock}
   CODEX_HOME: /mesh/worker-auth/codex
   OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
   OTEL_EXPORTER_OTLP_INSECURE: "true"
@@ -149,7 +149,7 @@ services:
 
   v3-supervisor:
     <<: *agentic-mesh-v3-service
-    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-project-supervisor-service --continuous --poll-seconds ${AGENTIC_MESH_SUPERVISOR_POLL_SECONDS:-5} --idle-after-seconds ${AGENTIC_MESH_AGENT_IDLE_SECONDS:-1800} --min-warm-instances-per-role ${AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES:-0} --refresh-inbox-from-broker --compose-file /mesh/project/deploy/compose/docker-compose.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-profile v3 --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --lifecycle-lock-path ${AGENTIC_MESH_LIFECYCLE_LOCK_PATH:-/mesh/project/state/v3/compose-lifecycle.lock} --working-directory /mesh/project/deploy/compose --execute
+    command: python -m agentic_mesh_v3.cli --db /mesh/project/state/v3/agentic-mesh-v3.sqlite3 --project-id agentic-mesh-dev --project-config /mesh/project/agentic-mesh/project-v3.yaml run-project-supervisor-service --continuous --poll-seconds ${AGENTIC_MESH_SUPERVISOR_POLL_SECONDS:-5} --idle-after-seconds ${AGENTIC_MESH_AGENT_IDLE_SECONDS:-1800} --min-warm-instances-per-role ${AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES:-0} --refresh-inbox-from-broker --compose-file /mesh/project/deploy/compose/docker-compose.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-profile v3 --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --lifecycle-lock-path ${AGENTIC_MESH_LIFECYCLE_LOCK_PATH:-/mesh/project/state/compose-lifecycle.lock} --working-directory /mesh/project/deploy/compose --execute
     depends_on:
       - v3-nats
       - v3-runtime

@@ -18,7 +18,7 @@ fi
 : "${AGENTIC_MESH_URL_ROOT:=http://linuxch:8100}"
 : "${AGENTIC_MESH_V3_STATUS_PORT:=8100}"
 : "${AGENTIC_MESH_NATS_STATE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/v3/nats}"
-: "${AGENTIC_MESH_LIFECYCLE_LOCK_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/v3/compose-lifecycle.lock}"
+: "${AGENTIC_MESH_LIFECYCLE_LOCK_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/compose-lifecycle.lock}"
 : "${AGENTIC_MESH_LIFECYCLE_LOCK_TIMEOUT_SECONDS:=300}"
 : "${AGENTIC_MESH_LIFECYCLE_LOCK_STALE_SECONDS:=900}"
 : "${AGENTIC_MESH_RELEASE_SERVICES:=v3-nats v3-runtime v3-supervisor otel-collector}"
@@ -54,7 +54,12 @@ mkdir -p "$(dirname "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH")"
 
 lock_acquired=0
 lock_started_at=$(date +%s)
-while ! mkdir "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" 2>/dev/null; do
+while ! mkdir "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" 2>/tmp/agentic-mesh-lifecycle-lock.err; do
+  if [ ! -e "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" ]; then
+    echo "Unable to create lifecycle lock at $AGENTIC_MESH_LIFECYCLE_LOCK_PATH:" >&2
+    cat /tmp/agentic-mesh-lifecycle-lock.err >&2
+    exit 1
+  fi
   now=$(date +%s)
   lock_age=$((now - $(stat -c %Y "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" 2>/dev/null || echo "$now")))
   if [ "$lock_age" -ge "$AGENTIC_MESH_LIFECYCLE_LOCK_STALE_SECONDS" ]; then
