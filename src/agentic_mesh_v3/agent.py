@@ -17,6 +17,7 @@ from agentic_mesh_v3.governance import GovernanceInstructionSet
 from agentic_mesh_v3.governance import evaluate_governance_checklist
 from agentic_mesh_v3.memory import SQLiteRoleMemory
 from agentic_mesh_v3.reporting import AgentStatus
+from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.tool_contracts import DO_TOOLS
 from agentic_mesh_v3.tool_contracts import REPLY_TOOLS
 
@@ -81,6 +82,11 @@ class AgentMemory(Protocol):
 class ConversationContext(Protocol):
     def load_recent(self, conversation_ref: str) -> str:
         """Load recent conversation context for a connector conversation."""
+
+
+class OperationalContext(Protocol):
+    def load(self, *, project_id: str, role_instance_id: str, role_id: str) -> str:
+        """Load compact read-only mesh status context for this role run."""
 
 
 class WorkItemGovernanceContextProvider(Protocol):
@@ -395,6 +401,43 @@ class DatabaseConversationContext:
         return "\n".join(parts)
 
 
+class NullOperationalContext:
+    def load(self, *, project_id: str, role_instance_id: str, role_id: str) -> str:
+        del project_id, role_instance_id, role_id
+        return ""
+
+
+class DatabaseOperationalContext:
+    def __init__(
+        self,
+        db: object,
+        *,
+        configured_role_instance_ids: tuple[str, ...] = (),
+        max_work_items: int = 8,
+        max_agents: int = 16,
+        max_recent_completions: int = 5,
+    ) -> None:
+        self.db = db
+        self.configured_role_instance_ids = configured_role_instance_ids
+        self.max_work_items = max_work_items
+        self.max_agents = max_agents
+        self.max_recent_completions = max_recent_completions
+
+    def load(self, *, project_id: str, role_instance_id: str, role_id: str) -> str:
+        snapshot = self.db.status_snapshot(  # type: ignore[attr-defined]
+            project_id=project_id,
+            configured_role_instance_ids=self.configured_role_instance_ids,
+        )
+        return _operational_context_summary(
+            snapshot,
+            role_instance_id=role_instance_id,
+            role_id=role_id,
+            max_work_items=self.max_work_items,
+            max_agents=self.max_agents,
+            max_recent_completions=self.max_recent_completions,
+        )
+
+
 class NullWorkItemGovernanceContextProvider:
     def load_for_work_item(self, work_item_id: str) -> tuple[GovernanceContext | None, GovernanceChecklist | None]:
         del work_item_id
@@ -427,6 +470,7 @@ class RoleAgentService:
     worker: AgentWorker
     memory: AgentMemory
     conversation_context: ConversationContext = field(default_factory=NullConversationContext)
+    operational_context: OperationalContext = field(default_factory=NullOperationalContext)
     work_item_governance_context: WorkItemGovernanceContextProvider = field(
         default_factory=NullWorkItemGovernanceContextProvider
     )
@@ -783,6 +827,11 @@ class RoleAgentService:
         tools_prompt = _read_optional(self.config.tools_prompt_path)
         memory_summary = self.memory.load_summary(self.config.role_instance_id)
         conversation_summary = self._conversation_summary(message)
+        operational_summary = self.operational_context.load(
+            project_id=self.config.project_id,
+            role_instance_id=self.config.role_instance_id,
+            role_id=self.config.role_id,
+        )
         reply_routing = _reply_routing_prompt_section(message.payload)
         relevance_guidance = _relevance_check_prompt_section(message)
         lines = [
@@ -810,6 +859,9 @@ class RoleAgentService:
                 "<conversation-context>",
                 conversation_summary or "No recent conversation context recorded.",
                 "</conversation-context>",
+                "<mesh-operational-context>",
+                operational_summary or "No live mesh operational context available.",
+                "</mesh-operational-context>",
                 reply_routing,
                 relevance_guidance,
                 "<message-metadata>",
@@ -843,6 +895,80 @@ class RoleAgentService:
         if conversation_ref is None or str(conversation_ref) == "":
             return ""
         return self.conversation_context.load_recent(str(conversation_ref))
+
+
+def _operational_context_summary(
+    snapshot: ReportingSnapshot,
+    *,
+    role_instance_id: str,
+    role_id: str,
+    max_work_items: int,
+    max_agents: int,
+    max_recent_completions: int,
+) -> str:
+    lines = [
+        f"Project: {snapshot.project_id}",
+        f"Current role: {role_id} ({role_instance_id})",
+        (
+            "Use this section as read-only operational evidence. "
+            "If action is needed, call safe-output tools rather than claiming state changed."
+        ),
+    ]
+    lines.append(
+        "Counts: "
+        f"backlog={len(snapshot.backlog)}, active_work={len(snapshot.work_items)}, "
+        f"agents={len(snapshot.agents)}, recent_completions={len(snapshot.recent_completions)}"
+    )
+    if snapshot.backlog:
+        lines.append("Backlog / queue:")
+        for item in snapshot.backlog[:max_work_items]:
+            linked = f", linked_work={item.linked_work_item_id}" if item.linked_work_item_id else ""
+            lines.append(
+                "- "
+                f"{item.queue_item_id} [{item.status}] owner={item.owner_role}{linked}: "
+                f"{_truncate(item.title, 140)}"
+            )
+    else:
+        lines.append("Backlog / queue: no open items.")
+    if snapshot.work_items:
+        lines.append("Open work:")
+        for item in snapshot.work_items[:max_work_items]:
+            attention = f", attention={_truncate(item.attention_reason, 100)}" if item.attention_reason else ""
+            lines.append(
+                "- "
+                f"{item.work_item_id} [{item.state}] owner={item.owner_role}{attention}: "
+                f"{_truncate(item.title, 120)}; next={_truncate(item.next_action, 180)}"
+            )
+    else:
+        lines.append("Open work: no active work items.")
+    if snapshot.agents:
+        lines.append("Agent health:")
+        for agent in snapshot.agents[:max_agents]:
+            lifecycle = ""
+            if agent.last_lifecycle_error:
+                lifecycle = (
+                    f", lifecycle={agent.last_lifecycle_action or 'unknown'}"
+                    f"/{agent.last_lifecycle_exit_code}: {_truncate(agent.last_lifecycle_error, 120)}"
+                )
+            waits = f", waits={_truncate('; '.join(agent.governance_waits), 120)}" if agent.governance_waits else ""
+            session = f", session={agent.session_mode}" if agent.session_mode else ""
+            lines.append(
+                "- "
+                f"{agent.role_instance_id} state={agent.container_state} inbox={agent.inbox_depth} "
+                f"dead={agent.dead_letter_depth} current={agent.current_work or 'none'}"
+                f"{session}{waits}{lifecycle}"
+            )
+    else:
+        lines.append("Agent health: no agent status rows recorded.")
+    if snapshot.recent_completions:
+        lines.append("Recent completions:")
+        for item in snapshot.recent_completions[:max_recent_completions]:
+            lines.append(
+                "- "
+                f"{item.work_item_id} [{item.state}] owner={item.owner_role}: "
+                f"{_truncate(item.title, 120)}"
+            )
+    return "\n".join(lines)
 
 
 def _message_work_ref(payload: dict[str, object]) -> str | None:
@@ -929,6 +1055,13 @@ def _optional_prompt_value(value: object) -> str | None:
     if value is None or str(value).strip() == "":
         return None
     return str(value)
+
+
+def _truncate(value: object, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
 
 def _has_terminal_tool_call(tool_calls: list[str]) -> bool:
