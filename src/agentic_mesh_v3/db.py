@@ -2176,6 +2176,7 @@ class V3Database:
         latest_lifecycle_action: dict[str, Any] | None,
         latest_session: dict[str, Any] | None,
     ) -> AgentStatus:
+        effective_lifecycle_action = _current_lifecycle_action_for_status(row, latest_lifecycle_action)
         return AgentStatus(
             role_instance_id=row["role_instance_id"],
             container_state=row["container_state"],
@@ -2191,28 +2192,34 @@ class V3Database:
             last_run_at=str(latest_run["completed_at"]) if latest_run else None,
             last_run_error=str(latest_run["error"]) if latest_run and latest_run.get("error") else None,
             last_lifecycle_action=(
-                str(latest_lifecycle_action["action"]) if latest_lifecycle_action and latest_lifecycle_action.get("action") else None
-            ),
-            last_lifecycle_reason=(
-                str(latest_lifecycle_action["reason"]) if latest_lifecycle_action and latest_lifecycle_action.get("reason") else None
-            ),
-            last_lifecycle_service=(
-                str(latest_lifecycle_action["service_name"])
-                if latest_lifecycle_action and latest_lifecycle_action.get("service_name")
+                str(effective_lifecycle_action["action"])
+                if effective_lifecycle_action and effective_lifecycle_action.get("action")
                 else None
             ),
-            last_lifecycle_exit_code=_optional_int(latest_lifecycle_action.get("exit_code") if latest_lifecycle_action else None),
+            last_lifecycle_reason=(
+                str(effective_lifecycle_action["reason"])
+                if effective_lifecycle_action and effective_lifecycle_action.get("reason")
+                else None
+            ),
+            last_lifecycle_service=(
+                str(effective_lifecycle_action["service_name"])
+                if effective_lifecycle_action and effective_lifecycle_action.get("service_name")
+                else None
+            ),
+            last_lifecycle_exit_code=_optional_int(
+                effective_lifecycle_action.get("exit_code") if effective_lifecycle_action else None
+            ),
             last_lifecycle_executed=(
-                bool(latest_lifecycle_action["executed"])
-                if latest_lifecycle_action and "executed" in latest_lifecycle_action
+                bool(effective_lifecycle_action["executed"])
+                if effective_lifecycle_action and "executed" in effective_lifecycle_action
                 else None
             ),
             last_lifecycle_at=(
-                str(latest_lifecycle_action["created_at"])
-                if latest_lifecycle_action and latest_lifecycle_action.get("created_at")
+                str(effective_lifecycle_action["created_at"])
+                if effective_lifecycle_action and effective_lifecycle_action.get("created_at")
                 else None
             ),
-            last_lifecycle_error=_lifecycle_error(latest_lifecycle_action),
+            last_lifecycle_error=_lifecycle_error(effective_lifecycle_action),
             session_status=str(latest_session["status"]) if latest_session else None,
             session_provider=str(latest_session["provider"]) if latest_session else None,
             session_mode=str(latest_session["mode"]) if latest_session else None,
@@ -2245,6 +2252,20 @@ def _optional_int(value: object) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _current_lifecycle_action_for_status(
+    row: sqlite3.Row,
+    latest_lifecycle_action: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not latest_lifecycle_action:
+        return None
+    exit_code = _optional_int(latest_lifecycle_action.get("exit_code"))
+    if exit_code in (None, 0):
+        return latest_lifecycle_action
+    if row["container_state"] != "lifecycle_failed":
+        return None
+    return latest_lifecycle_action
 
 
 def _lifecycle_error(latest_lifecycle_action: dict[str, Any] | None) -> str | None:

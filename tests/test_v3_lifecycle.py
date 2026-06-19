@@ -720,6 +720,45 @@ def test_lifecycle_results_update_agent_status_projection(tmp_path: Path) -> Non
     assert events["count"] == 2
 
 
+def test_status_snapshot_suppresses_stale_failed_lifecycle_event_after_recovery(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.record_agent_lifecycle_result(
+            role_instance_id="agentic-mesh-dev.business-analyst.1",
+            action="start",
+            reason="role instance is missing",
+            service_name="agentic-mesh-dev-business-analyst-1",
+            command=("docker", "compose", "up", "-d", "agentic-mesh-dev-business-analyst-1"),
+            working_directory=None,
+            exit_code=1,
+            stderr="Bind for 0.0.0.0:8100 failed: port is already allocated",
+            executed=True,
+        )
+        failed_snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.business-analyst.1",
+                container_state="hibernated",
+                heartbeat_at=None,
+                inbox_depth=0,
+                dead_letter_depth=0,
+            )
+        )
+        recovered_snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    assert failed_snapshot.agents[0].container_state == "lifecycle_failed"
+    assert failed_snapshot.agents[0].last_lifecycle_exit_code == 1
+    assert "port is already allocated" in str(failed_snapshot.agents[0].last_lifecycle_error)
+    assert recovered_snapshot.agents[0].container_state == "hibernated"
+    assert recovered_snapshot.agents[0].last_lifecycle_action is None
+    assert recovered_snapshot.agents[0].last_lifecycle_exit_code is None
+    assert recovered_snapshot.agents[0].last_lifecycle_error is None
+
+
 def test_wake_lifecycle_result_preserves_active_current_work(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
