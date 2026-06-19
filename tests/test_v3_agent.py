@@ -1193,6 +1193,50 @@ def test_role_agent_interrupts_stale_running_runs_for_same_role(tmp_path: Path) 
     assert current["status"] == "completed"
 
 
+def test_status_snapshot_prefers_active_running_run_over_same_timestamp_interruption(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.release-manager.1"
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id=role_instance_id,
+                container_state="running",
+                heartbeat_at="2026-06-19T13:08:15+00:00",
+                current_work="work-release",
+                inbox_depth=12,
+            )
+        )
+        db.record_agent_run(
+            run_id="run-active",
+            role_instance_id=role_instance_id,
+            message_id="agent.release-manager:314",
+            subject="agent.release-manager",
+            status="running",
+            work_item_id="work-release",
+            started_at="2026-06-19T13:08:15+00:00",
+            completed_at="2026-06-19T13:08:15+00:00",
+        )
+        db.record_agent_run(
+            run_id="run-stale-interrupted",
+            role_instance_id=role_instance_id,
+            message_id="agent.release-manager:318",
+            subject="agent.release-manager",
+            status="interrupted",
+            work_item_id="work-release",
+            error="Role service claimed agent.release-manager:314; prior running record no longer owns this role instance.",
+            started_at="2026-06-19T13:05:23+00:00",
+            completed_at="2026-06-19T13:08:15+00:00",
+        )
+
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    assert snapshot.agents[0].last_run_status == "running"
+    assert snapshot.agents[0].last_run_error is None
+
+
 def test_role_agent_records_failed_run_to_database(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
