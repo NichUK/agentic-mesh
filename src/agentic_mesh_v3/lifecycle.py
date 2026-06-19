@@ -81,6 +81,7 @@ class HibernationPolicy:
     idle_after_seconds: int = 1800
     min_warm_instances_per_role: int = 1
     pending_inbox_stale_after_seconds: int = 120
+    active_work_stale_after_seconds: int = 14400
 
 
 @dataclass(frozen=True)
@@ -255,9 +256,9 @@ def plan_lifecycle_action(
     if status.current_work:
         heartbeat = _parse_datetime(status.heartbeat_at)
         if heartbeat is None:
-            return LifecycleDecision("wake", status.role_instance_id, "active work and missing heartbeat")
+            return LifecycleDecision("none", status.role_instance_id, "agent has active work")
         stale_for = current_time - heartbeat
-        if stale_for >= timedelta(seconds=policy.pending_inbox_stale_after_seconds):
+        if stale_for >= timedelta(seconds=policy.active_work_stale_after_seconds):
             return LifecycleDecision(
                 "wake",
                 status.role_instance_id,

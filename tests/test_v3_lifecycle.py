@@ -253,6 +253,29 @@ def test_lifecycle_keeps_running_agent_with_fresh_heartbeat_and_pending_inbox() 
 
 
 def test_lifecycle_wakes_agent_with_active_work_and_stale_heartbeat() -> None:
+    now = datetime(2026, 6, 18, 17, 0, tzinfo=timezone.utc)
+
+    decision = plan_lifecycle_action(
+        status=AgentStatus(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            container_state="running",
+            heartbeat_at="2026-06-18T12:00:00+00:00",
+            current_work="work-active",
+            inbox_depth=0,
+        ),
+        policy=HibernationPolicy(
+            min_warm_instances_per_role=0,
+            pending_inbox_stale_after_seconds=120,
+            active_work_stale_after_seconds=14400,
+        ),
+        now=now,
+    )
+
+    assert decision.action == "wake"
+    assert decision.reason == "active work and stale heartbeat for 18000 seconds"
+
+
+def test_lifecycle_keeps_agent_with_active_work_before_stale_threshold() -> None:
     now = datetime(2026, 6, 18, 12, 5, tzinfo=timezone.utc)
 
     decision = plan_lifecycle_action(
@@ -266,30 +289,25 @@ def test_lifecycle_wakes_agent_with_active_work_and_stale_heartbeat() -> None:
         policy=HibernationPolicy(
             min_warm_instances_per_role=0,
             pending_inbox_stale_after_seconds=120,
+            active_work_stale_after_seconds=14400,
         ),
         now=now,
     )
 
-    assert decision.action == "wake"
-    assert decision.reason == "active work and stale heartbeat for 300 seconds"
+    assert decision.action == "none"
+    assert decision.reason == "agent has active work"
 
 
-def test_lifecycle_keeps_agent_with_active_work_and_fresh_heartbeat() -> None:
-    now = datetime(2026, 6, 18, 12, 0, 30, tzinfo=timezone.utc)
-
+def test_lifecycle_keeps_agent_with_active_work_and_missing_heartbeat() -> None:
     decision = plan_lifecycle_action(
         status=AgentStatus(
             role_instance_id="agentic-mesh-dev.project-manager.1",
             container_state="running",
-            heartbeat_at="2026-06-18T12:00:00+00:00",
+            heartbeat_at=None,
             current_work="work-active",
             inbox_depth=0,
         ),
-        policy=HibernationPolicy(
-            min_warm_instances_per_role=0,
-            pending_inbox_stale_after_seconds=120,
-        ),
-        now=now,
+        policy=HibernationPolicy(min_warm_instances_per_role=0),
     )
 
     assert decision.action == "none"
