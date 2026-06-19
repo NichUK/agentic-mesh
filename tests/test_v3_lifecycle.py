@@ -542,6 +542,44 @@ def test_compose_lifecycle_executor_executes_with_injected_runner(tmp_path: Path
     ]
 
 
+def test_compose_lifecycle_executor_retries_transient_docker_removal_race(tmp_path: Path) -> None:
+    calls = []
+    results = [
+        CommandExecutionResult(
+            exit_code=1,
+            stderr="Error response from daemon: container is marked for removal and cannot be started",
+        ),
+        CommandExecutionResult(exit_code=0, stderr="Container agentic-mesh-dev-delivery-manager-1 Started"),
+    ]
+
+    def runner(command, *, cwd, timeout_seconds):  # type: ignore[no-untyped-def]
+        calls.append((tuple(command), cwd, timeout_seconds))
+        return results.pop(0)
+
+    executor = ComposeLifecycleExecutor(
+        ComposeLifecycleConfig(
+            compose_files=(tmp_path / "compose.yml",),
+            working_directory=tmp_path,
+            timeout_seconds=7,
+        ),
+        runner=runner,
+        transient_retry_delay_seconds=0,
+    )
+
+    lifecycle_results = executor.apply(
+        [LifecycleDecision("wake", "agentic-mesh-dev.delivery-manager.1", "pending inbox")],
+        execute=True,
+    )
+
+    assert len(lifecycle_results) == 1
+    assert lifecycle_results[0].exit_code == 0
+    assert "transient Docker lifecycle retry 1" in lifecycle_results[0].stderr
+    assert "marked for removal" in lifecycle_results[0].stderr
+    assert "Started" in lifecycle_results[0].stderr
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+
+
 def test_running_compose_services_lists_only_running_service_names(tmp_path: Path) -> None:
     calls = []
 

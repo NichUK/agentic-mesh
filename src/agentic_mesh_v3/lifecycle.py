@@ -8,11 +8,19 @@ from datetime import timedelta
 from datetime import timezone
 from pathlib import Path
 import subprocess
+import time
 from typing import Iterable
 from typing import Protocol
 
 from agentic_mesh_v3.broker import BrokerAdapter
 from agentic_mesh_v3.reporting import AgentStatus
+
+
+_TRANSIENT_DOCKER_LIFECYCLE_ERRORS = (
+    "container is marked for removal",
+    "container name",
+    "already in use",
+)
 
 
 @dataclass(frozen=True)
@@ -206,9 +214,13 @@ class ComposeLifecycleExecutor:
         config: ComposeLifecycleConfig,
         *,
         runner: LifecycleCommandRunner | None = None,
+        transient_retries: int = 2,
+        transient_retry_delay_seconds: float = 1.0,
     ) -> None:
         self.config = config
         self.runner = runner or _run_lifecycle_command
+        self.transient_retries = transient_retries
+        self.transient_retry_delay_seconds = transient_retry_delay_seconds
 
     def apply(
         self,
@@ -223,11 +235,7 @@ class ComposeLifecycleExecutor:
                 continue
             _validate_role_scoped_lifecycle_command(command)
             if execute:
-                result = self.runner(
-                    list(command.command),
-                    cwd=command.working_directory,
-                    timeout_seconds=self.config.timeout_seconds,
-                )
+                result = self._run_with_transient_retries(command)
                 results.append(
                     LifecycleCommandResult(
                         decision=decision,
@@ -252,6 +260,25 @@ class ComposeLifecycleExecutor:
                     )
                 )
         return tuple(results)
+
+    def _run_with_transient_retries(self, command: LifecycleCommand) -> CommandExecutionResult:
+        result = self.runner(
+            list(command.command),
+            cwd=command.working_directory,
+            timeout_seconds=self.config.timeout_seconds,
+        )
+        attempts = 0
+        while attempts < self.transient_retries and _is_transient_docker_lifecycle_error(result):
+            attempts += 1
+            if self.transient_retry_delay_seconds > 0:
+                time.sleep(self.transient_retry_delay_seconds)
+            retry_result = self.runner(
+                list(command.command),
+                cwd=command.working_directory,
+                timeout_seconds=self.config.timeout_seconds,
+            )
+            result = _merge_retry_result(result, retry_result, attempt=attempts)
+        return result
 
 
 def running_compose_services(
@@ -536,6 +563,29 @@ def _parse_datetime(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _is_transient_docker_lifecycle_error(result: CommandExecutionResult) -> bool:
+    if result.exit_code == 0:
+        return False
+    text = f"{result.stderr}\n{result.stdout}".lower()
+    return any(fragment in text for fragment in _TRANSIENT_DOCKER_LIFECYCLE_ERRORS)
+
+
+def _merge_retry_result(
+    previous: CommandExecutionResult,
+    current: CommandExecutionResult,
+    *,
+    attempt: int,
+) -> CommandExecutionResult:
+    retry_note = f"[agentic-mesh] transient Docker lifecycle retry {attempt}"
+    stdout_parts = [part for part in (previous.stdout, retry_note, current.stdout) if part]
+    stderr_parts = [part for part in (previous.stderr, retry_note, current.stderr) if part]
+    return CommandExecutionResult(
+        exit_code=current.exit_code,
+        stdout="\n".join(stdout_parts),
+        stderr="\n".join(stderr_parts),
+    )
 
 
 def _role_and_instance(role_instance_id: str) -> tuple[str, str]:
