@@ -1607,6 +1607,37 @@ def test_cli_broker_inspection_payload_summarises_role_consumers() -> None:
     ]
 
 
+def test_cli_broker_inspection_role_counts_are_not_limited_by_pending_sample_size() -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.>"])
+    for index in range(3):
+        broker.publish("agent-inbox", "agent.delivery-manager", {"text": f"item {index}"})
+
+    payload = _broker_inspection_payload(
+        broker,
+        stream="agent-inbox",
+        limit=1,
+        role_ids=("delivery-manager",),
+    )
+
+    assert payload["pending"] == [
+        {
+            "message_id": payload["pending"][0]["message_id"],
+            "subject": "agent.delivery-manager",
+            "payload": {"text": "item 0"},
+            "created_at": payload["pending"][0]["created_at"],
+            "delivery_count": 0,
+        }
+    ]
+    assert payload["role_consumers"] == [
+        {
+            "role_id": "delivery-manager",
+            "consumer": "delivery-manager.1",
+            "pending_count": 3,
+        },
+    ]
+
+
 def test_cli_broker_inspection_payload_lists_role_specific_pending_messages() -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.>"])

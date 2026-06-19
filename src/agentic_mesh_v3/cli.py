@@ -1060,7 +1060,7 @@ def _role_consumer_depth(
     consumer = _role_consumer_name(role_id, instance_id)
     try:
         broker.ensure_consumer(stream, consumer, filter_subject=f"agent.{role_id}")
-        pending = broker.pending(stream, consumer, limit=limit)
+        pending = broker.pending(stream, consumer, limit=max(limit, 10_000))
     except Exception as exc:  # pragma: no cover - exercised by live adapters.
         return {"pending_count": None, "error": str(exc)}
     return {"pending_count": len(pending)}
