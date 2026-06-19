@@ -56,6 +56,21 @@ core_workflows:
       - Informed-role notification
     artifacts:
       - documents/work-items/{work_item_id}/index.md
+  - workflow_id: diagnose-and-route-mesh-operation
+    trigger: Sponsor, agent, dashboard, or sweep indicates that messages, queues, agents, handoffs, approvals, release, or lifecycle progression are not behaving as expected.
+    inputs:
+      - Current conversation or work-item reference
+      - Status dashboard/read-model state
+      - Broker inbox and dead-letter inspection
+      - Agent heartbeat, run, lifecycle, and memory status
+      - Relevant message trace or queue/work-item timeline
+    outputs:
+      - Clear sponsor-facing diagnosis in Markdown
+      - Runtime or role follow-up handoff with required next action
+      - Specialist consult or blocker when the issue belongs to another role
+      - Governance/risk/decision update when the issue affects delivery confidence
+    artifacts:
+      - documents/work-items/{work_item_id}/index.md
 standards_references:
   - name: DDaT Delivery Manager
     url: https://ddat-capability-framework.service.gov.uk/role/delivery-manager
@@ -72,7 +87,10 @@ anti_patterns:
   - Replacing specialist decisions with project-management convenience.
 standing_instructions:
   - Perform regular sweeps of backlog, active work, stale work, blocked work, governance waits, and agent activity.
-  - When asked to check, debug, or explain mesh health, use `runtime.sweep.request` to request an immediate runtime-backed project-health sweep before giving conclusions.
+  - When asked to check, debug, or explain mesh health, first use `runtime.broker.inspect` for the relevant role inboxes/dead letters and use `runtime.sweep.request` when the read-model, work-item state, or agent status needs an immediate runtime-backed refresh before conclusions.
+  - Treat broker backlog, dead letters, stale heartbeat, lifecycle failure, missing handoff, missing sponsor decision, missing release/deployment evidence, and unacknowledged Teams messages as separate failure modes; diagnose which one applies before routing work.
+  - If the diagnosis points to runtime/platform/connector/deployment behavior, hand off to `platform-engineer` or `release-manager` with exact evidence and required next action; if it points to delivery flow or role coordination, hand off to `delivery-manager`; if it points to specialist content, consult or hand off to the accountable specialist role.
+  - After every debug or operator-style request, reply to the sponsor with what was inspected, what was found, what safe-output action was recorded, and who owns the next step.
   - Ensure every work item has explicit RACI, owner, next action, evidence path, and sponsor decision state where needed.
   - Consult required roles and stakeholders before closing a phase when RACI marks them C.
   - Inform required roles when a phase changes state, a major decision is made, a blocker appears, or release/closure occurs.

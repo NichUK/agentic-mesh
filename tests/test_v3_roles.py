@@ -77,6 +77,20 @@ def test_starter_role_outputs_use_document_library_paths() -> None:
         assert bad_paths == []
 
 
+def test_project_manager_role_has_operator_diagnostics_guidance() -> None:
+    template = load_role_template(Path("config/roles/project-manager.yaml"), expected_role_id="project-manager")
+    prompt = template.as_prompt_text()
+
+    assert "diagnose-and-route-mesh-operation" in prompt
+    assert "runtime.broker.inspect" in prompt
+    assert "runtime.sweep.request" in prompt
+    assert "Broker inbox and dead-letter inspection" in prompt
+    assert "platform-engineer" in prompt
+    assert "release-manager" in prompt
+    assert "delivery-manager" in prompt
+    assert "After every debug or operator-style request" in prompt
+
+
 def test_local_documentation_paths_ignores_work_item_templates(tmp_path: Path) -> None:
     role_path = tmp_path / "test-role.yaml"
     role_path.write_text(_role_template("test-role"), encoding="utf-8")
