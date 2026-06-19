@@ -200,6 +200,50 @@ roles:
     assert "`artifact`: Generic artifact; path: flexible supporting artifact." in product_tools
 
 
+def test_materialized_project_manager_prompt_includes_operator_guidance(tmp_path: Path) -> None:
+    project_file = tmp_path / "project.yaml"
+    project_file.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: documents
+  root_path: /documents
+  structure_policy: togaf-sdlc-v1
+roles:
+  project-manager:
+    template: project-manager
+    instances: 1
+""",
+        encoding="utf-8",
+    )
+
+    materialize_project_agent_configs(
+        project_config=load_project_config(project_file),
+        image="agentic-mesh-v3:local",
+        source_repo=tmp_path / "source",
+        organisation_config_repo=tmp_path / "org",
+        project_config_repo=tmp_path / "project",
+        agent_config_root=tmp_path / "agents",
+        runtime_state_dir=tmp_path / "state",
+        document_library_root=tmp_path / "documents",
+        role_templates_dir=Path("config/roles"),
+        system_instructions="System rules.",
+        organisation_instructions="Org rules.",
+        raci=DEFAULT_SDLC_RACI,
+        tool_instructions="Use approved tools.",
+    )
+
+    role_prompt = (tmp_path / "agents" / "project-manager" / "1" / "role.md").read_text(encoding="utf-8")
+
+    assert "diagnose-and-route-mesh-operation" in role_prompt
+    assert "runtime.broker.inspect" in role_prompt
+    assert "runtime.sweep.request" in role_prompt
+    assert "After every debug or operator-style request" in role_prompt
+
+
 def _role_template(role_id: str) -> str:
     return f"""
 role_id: {role_id}
