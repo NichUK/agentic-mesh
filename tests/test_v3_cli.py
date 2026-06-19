@@ -1189,6 +1189,89 @@ roles:
         raise AssertionError("OneDrive project document libraries should require an access token")
 
 
+def test_cli_tool_call_does_not_require_document_library_config_for_status_inspect(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_DRIVE_ID", raising=False)
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+document_library:
+  adapter: onedrive
+  drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}
+  root_path: /documents
+roles:
+  project-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(tmp_path / "v3.sqlite3"),
+            "--project-config",
+            str(project_config),
+            "tool-call",
+            "--role-instance-id",
+            "agentic-mesh-dev.project-manager.1",
+            "--tool-name",
+            "runtime.status.inspect",
+            "--payload-json",
+            '{"reason":"check project status from a debug conversation"}',
+        ]
+    )
+
+    assert result == 0
+
+
+def test_cli_tool_call_does_not_require_document_library_config_for_broker_inspect(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_DRIVE_ID", raising=False)
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: onedrive
+  drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}
+  root_path: /documents
+roles:
+  delivery-manager:
+    instances: 1
+  project-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = main(
+        [
+            "--db",
+            str(tmp_path / "v3.sqlite3"),
+            "--project-config",
+            str(project_config),
+            "tool-call",
+            "--role-instance-id",
+            "agentic-mesh-dev.project-manager.1",
+            "--tool-name",
+            "runtime.broker.inspect",
+            "--payload-json",
+            '{"reason":"check role inboxes","role_ids":["project-manager","delivery-manager"]}',
+        ]
+    )
+
+    assert result == 0
+
+
 def test_cli_tool_call_uses_project_config_deployment_targets(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     docs_root = tmp_path / "documents"

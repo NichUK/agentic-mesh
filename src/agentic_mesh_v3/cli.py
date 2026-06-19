@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from agentic_mesh_v3.agent import AgentMemory
 from agentic_mesh_v3.agent import DatabaseAgentFailureReporter
@@ -581,19 +584,24 @@ def main(argv: list[str] | None = None) -> int:
         db = V3Database(args.db)
         try:
             db.migrate()
-            adapter = _document_library_adapter(args)
-            broker, broker_stream = _tool_broker(args)
+            payload = json.loads(args.payload_json)
+            adapter = _document_library_adapter(args) if _tool_needs_document_library(args.tool_name) else None
+            broker, broker_stream = (
+                _tool_broker(args) if _tool_needs_broker(args.tool_name, payload) else (None, None)
+            )
             result = V3ToolService(
                 db,
                 adapter,
-                deployment_targets=_deployment_targets(args),
-                stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
+                deployment_targets=_deployment_targets(args) if _tool_needs_deployment_targets(args.tool_name) else {},
+                stakeholder_bridge=_stakeholder_bridge(args, broker=broker)
+                if _tool_needs_stakeholder_bridge(args.tool_name, payload)
+                else None,
                 broker=broker,
                 broker_stream=broker_stream,
             ).call(
                 role_instance_id=args.role_instance_id,
                 tool_name=args.tool_name,
-                payload=json.loads(args.payload_json),
+                payload=payload,
                 terminal=args.terminal,
             )
             print(json.dumps(result.__dict__, indent=2))
@@ -1136,6 +1144,40 @@ def _document_library_adapter(args: argparse.Namespace, *, required: bool = Fals
     return None
 
 
+def _tool_needs_document_library(tool_name: str) -> bool:
+    return tool_name in {
+        "document.write_artifact",
+        "document.write_root_work_item_index",
+        "document.write_work_item_index",
+    }
+
+
+def _tool_needs_deployment_targets(tool_name: str) -> bool:
+    return tool_name == "release.deploy"
+
+
+def _tool_needs_broker(tool_name: str, payload: dict[str, object]) -> bool:
+    if tool_name in {"agent.delegate", "runtime.broker.inspect", "runtime.sweep.request"}:
+        return True
+    return _tool_needs_stakeholder_bridge(tool_name, payload)
+
+
+def _tool_needs_stakeholder_bridge(tool_name: str, payload: dict[str, object]) -> bool:
+    if tool_name == "messaging.send":
+        return True
+    if tool_name == "status.reply":
+        return _payload_has_any(payload, "target_ref", "reply_target_ref")
+    if tool_name == "stakeholder.ask_question":
+        return _payload_has_any(payload, "target_ref", "stakeholder_ref")
+    if tool_name == "approval.request":
+        return _payload_has_any(payload, "target_ref")
+    return False
+
+
+def _payload_has_any(payload: dict[str, object], *field_names: str) -> bool:
+    return any(payload.get(field_name) is not None and str(payload.get(field_name)) != "" for field_name in field_names)
+
+
 def _graph_refresh_token_provider() -> RefreshTokenGraphAccessTokenProvider | None:
     client_id = os.environ.get("AGENTIC_MESH_GRAPH_CLIENT_ID")
     tenant_id = os.environ.get("AGENTIC_MESH_GRAPH_TENANT_ID") or os.environ.get("AGENTIC_MESH_TENANT_ID")
@@ -1207,11 +1249,49 @@ def _tool_broker(args: argparse.Namespace) -> tuple[BrokerAdapter | None, str | 
     project_config = getattr(args, "project_config", None)
     if project_config is None:
         return None, None
-    config = load_project_config(project_config)
-    broker = build_broker_adapter(adapter=config.broker.adapter, servers=config.broker.servers)
-    stream = getattr(args, "broker_stream", None) or config.broker.stream
-    _ensure_agent_stream(broker, stream=stream, role_ids=tuple(role.role_id for role in config.roles))
+    broker_config = _tool_broker_config(project_config)
+    broker = build_broker_adapter(adapter=broker_config["adapter"], servers=broker_config.get("servers"))
+    stream = getattr(args, "broker_stream", None) or broker_config["stream"]
+    _ensure_agent_stream(broker, stream=stream, role_ids=tuple(broker_config["role_ids"]))
     return broker, stream
+
+
+def _tool_broker_config(project_config_path: Path) -> dict[str, object]:
+    """Load only broker setup needed for operational safe-output tools.
+
+    Read-only and broker tools should not require unrelated document-library,
+    Teams, or deployment configuration to be valid on the operator's machine.
+    Full project validation is still used by paths that need those adapters.
+    """
+
+    raw = yaml.safe_load(project_config_path.read_text(encoding="utf-8")) or {}
+    broker_raw = raw.get("broker") if isinstance(raw.get("broker"), dict) else {}
+    roles_raw = raw.get("roles") if isinstance(raw.get("roles"), dict) else {}
+    return {
+        "adapter": str(broker_raw.get("adapter") or "nats-jetstream"),
+        "stream": str(broker_raw.get("stream") or "agent-inbox"),
+        "servers": _expand_optional_tool_env(broker_raw.get("servers")),
+        "role_ids": tuple(sorted(str(role_id) for role_id in roles_raw)),
+    }
+
+
+_TOOL_ENV_REF_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)\}")
+
+
+def _expand_optional_tool_env(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        env_value = os.environ.get(name)
+        if env_value is None:
+            raise ValueError(f"Config references environment variable ${{{name}}} which is not set")
+        return env_value
+
+    expanded = _TOOL_ENV_REF_RE.sub(replace, text)
+    return expanded or None
 
 
 def _stakeholder_bridge(
