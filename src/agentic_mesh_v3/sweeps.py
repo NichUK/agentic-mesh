@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,6 +17,10 @@ from agentic_mesh_v3.reporting import work_item_url
 
 WATCH_STATES = {"blocked", "waiting_human", "waiting_agent", "waiting_external", "recovering"}
 TERMINAL_STATES = {"closed", "canceled", "superseded", "failed_terminal"}
+_ROLE_INSTANCE_RE = re.compile(
+    r"\b(?P<project>[A-Za-z0-9_-]+)\.(?P<role>[a-z0-9-]+)\.(?P<instance>[0-9]+)\b"
+)
+_AGENT_RECOVERY_RE = re.compile(r"\b(restore|wake|start|restart|hydrate)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -34,8 +39,21 @@ class SweepFinding:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class StaleAgentBlockerRecovery:
+    work_item_id: str
+    role_instance_id: str
+    owner_role: str
+    previous_next_action: str
+    recovered_state: str
+    next_action: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class ProjectSweepService:
-    """Read-only project health sweep for Project Manager agents."""
+    """Project health sweep and narrow stale-runtime-blocker recovery."""
 
     def __init__(self, db: V3Database) -> None:
         self.db = db
@@ -81,6 +99,63 @@ class ProjectSweepService:
                 )
             )
         return tuple(findings)
+
+    def recover_stale_agent_blockers(self) -> tuple[StaleAgentBlockerRecovery, ...]:
+        recoveries: list[StaleAgentBlockerRecovery] = []
+        for row in self.db.connection.execute(
+            """
+            SELECT work_item_id, current_phase, next_action
+            FROM work_items
+            WHERE state='blocked'
+            ORDER BY updated_at ASC, work_item_id ASC
+            """
+        ):
+            next_action = str(row["next_action"] or "")
+            role_instance_id = _recoverable_role_instance_id(next_action)
+            if role_instance_id is None:
+                continue
+            agent = self.db.connection.execute(
+                """
+                SELECT role_id, container_state, heartbeat_at
+                FROM agents
+                WHERE role_instance_id=?
+                """,
+                (role_instance_id,),
+            ).fetchone()
+            if agent is None:
+                continue
+            if agent["container_state"] != "running" or not agent["heartbeat_at"]:
+                continue
+            owner_role = str(agent["role_id"])
+            recovered_next_action = (
+                f"Recovered stale agent wake blocker: {role_instance_id} is running with a heartbeat. "
+                f"Continue the prior required action: {next_action}"
+            )
+            self.db.update_work_item_state(
+                work_item_id=row["work_item_id"],
+                state="waiting_agent",
+                owner_role=owner_role,
+                current_phase=row["current_phase"],
+                next_action=recovered_next_action,
+                source_ref="project_supervisor.stale_agent_blocker_recovery",
+            )
+            recovery = StaleAgentBlockerRecovery(
+                work_item_id=row["work_item_id"],
+                role_instance_id=role_instance_id,
+                owner_role=owner_role,
+                previous_next_action=next_action,
+                recovered_state="waiting_agent",
+                next_action=recovered_next_action,
+            )
+            with self.db.connection:
+                self.db.record_event(
+                    "work_item.stale_agent_blocker_recovered",
+                    "work_item",
+                    row["work_item_id"],
+                    recovery.to_dict(),
+                )
+            recoveries.append(recovery)
+        return tuple(recoveries)
 
     def publish_findings(
         self,
@@ -196,6 +271,15 @@ def _parse_sqlite_timestamp(value: str) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _recoverable_role_instance_id(next_action: str) -> str | None:
+    if not _AGENT_RECOVERY_RE.search(next_action):
+        return None
+    match = _ROLE_INSTANCE_RE.search(next_action)
+    if match is None:
+        return None
+    return match.group(0)
 
 
 def _governance_reason(db: V3Database, *, work_item_id: str) -> str | None:

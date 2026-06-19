@@ -7,6 +7,7 @@ from pathlib import Path
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.cli import main
 from agentic_mesh_v3.db import V3Database
+from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.sweeps import ProjectSweepService
 
 
@@ -342,3 +343,107 @@ def test_project_sweep_republishes_when_finding_changes(tmp_path: Path) -> None:
     assert len(first_message_ids) == 1
     assert len(second_message_ids) == 1
     assert second_message_ids != first_message_ids
+
+
+def test_project_sweep_recovers_stale_agent_wake_blocker_when_agent_is_running(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-stale-agent-blocker",
+            title="Stale agent blocker",
+            description="Blocked because a role looked unavailable.",
+            state="blocked",
+            owner_role="delivery-manager",
+            current_phase="delivery_planning",
+            next_action=(
+                "Platform/runtime owner must restore or wake "
+                "agentic-mesh-dev.platform-engineer.1, then complete Compose ps."
+            ),
+        )
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.platform-engineer.1",
+                container_state="running",
+                heartbeat_at="2026-06-19T20:49:01+00:00",
+                current_work="work-stale-agent-blocker",
+            )
+        )
+
+        recoveries = ProjectSweepService(db).recover_stale_agent_blockers()
+        row = db.connection.execute(
+            """
+            SELECT state, owner_role, current_phase, next_action
+            FROM work_items
+            WHERE work_item_id='work-stale-agent-blocker'
+            """
+        ).fetchone()
+        event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type='work_item.stale_agent_blocker_recovered'
+              AND aggregate_id='work-stale-agent-blocker'
+            """
+        ).fetchone()
+    finally:
+        db.close()
+
+    assert len(recoveries) == 1
+    assert recoveries[0].role_instance_id == "agentic-mesh-dev.platform-engineer.1"
+    assert recoveries[0].owner_role == "platform-engineer"
+    assert row["state"] == "waiting_agent"
+    assert row["owner_role"] == "platform-engineer"
+    assert row["current_phase"] == "delivery_planning"
+    assert "Recovered stale agent wake blocker" in row["next_action"]
+    assert event is not None
+
+
+def test_project_sweep_does_not_recover_normal_or_unhealthy_agent_blockers(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-normal-blocker",
+            title="Normal blocker",
+            description="Blocked for a real reason.",
+            state="blocked",
+            owner_role="delivery-manager",
+            next_action="Ask agentic-mesh-dev.platform-engineer.1 to review deployment risk.",
+        )
+        db.upsert_work_item(
+            work_item_id="work-hibernated-agent-blocker",
+            title="Hibernated blocker",
+            description="Blocked because a role looked unavailable.",
+            state="blocked",
+            owner_role="delivery-manager",
+            next_action="Wake agentic-mesh-dev.solution-architect.1 and continue design review.",
+        )
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.platform-engineer.1",
+                container_state="running",
+                heartbeat_at="2026-06-19T20:49:01+00:00",
+            )
+        )
+        db.upsert_agent_status(
+            AgentStatus(
+                role_instance_id="agentic-mesh-dev.solution-architect.1",
+                container_state="hibernated",
+                heartbeat_at=None,
+            )
+        )
+
+        recoveries = ProjectSweepService(db).recover_stale_agent_blockers()
+        states = {
+            row["work_item_id"]: row["state"]
+            for row in db.connection.execute("SELECT work_item_id, state FROM work_items")
+        }
+    finally:
+        db.close()
+
+    assert recoveries == ()
+    assert states == {
+        "work-hibernated-agent-blocker": "blocked",
+        "work-normal-blocker": "blocked",
+    }
