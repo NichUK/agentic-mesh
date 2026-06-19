@@ -189,6 +189,14 @@ def _codex_command_with_options(
         result.extend(["--model", model])
     if sandbox_mode:
         result.extend(["--sandbox", sandbox_mode])
+    result.extend(
+        [
+            "--config",
+            'approval_policy="never"',
+            "--config",
+            'shell_environment_policy.inherit="all"',
+        ]
+    )
     if reasoning_effort:
         result.extend(["--config", f'model_reasoning_effort="{reasoning_effort}"'])
     return result
@@ -205,6 +213,14 @@ def _codex_resume_command_with_options(
     result = [command[0], command[1], "resume", "--last"]
     if model:
         result.extend(["--model", model])
+    result.extend(
+        [
+            "--config",
+            'approval_policy="never"',
+            "--config",
+            'shell_environment_policy.inherit="all"',
+        ]
+    )
     if reasoning_effort:
         result.extend(["--config", f'model_reasoning_effort="{reasoning_effort}"'])
     result.append("-")

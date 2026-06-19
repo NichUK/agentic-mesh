@@ -189,6 +189,10 @@ def test_codex_cli_command_builder_adds_exec_options() -> None:
         "--sandbox",
         "workspace-write",
         "--config",
+        'approval_policy="never"',
+        "--config",
+        'shell_environment_policy.inherit="all"',
+        "--config",
         'model_reasoning_effort="high"',
     ]
 
@@ -207,6 +211,10 @@ def test_codex_resume_command_builder_adds_resume_options() -> None:
         "--last",
         "--model",
         "gpt-5.5",
+        "--config",
+        'approval_policy="never"',
+        "--config",
+        'shell_environment_policy.inherit="all"',
         "--config",
         'model_reasoning_effort="high"',
         "-",
@@ -238,8 +246,25 @@ def test_persistent_session_worker_resumes_after_first_success(monkeypatch) -> N
     worker.run("prompt-one", AgentMessage(message_id="msg-1", subject="agent.project-manager", payload={}))
     worker.run("prompt-two", AgentMessage(message_id="msg-2", subject="agent.project-manager", payload={}))
 
-    assert commands[0] == ["codex", "exec"]
-    assert commands[1] == ["codex", "exec", "resume", "--last", "-"]
+    assert commands[0] == [
+        "codex",
+        "exec",
+        "--config",
+        'approval_policy="never"',
+        "--config",
+        'shell_environment_policy.inherit="all"',
+    ]
+    assert commands[1] == [
+        "codex",
+        "exec",
+        "resume",
+        "--last",
+        "--config",
+        'approval_policy="never"',
+        "--config",
+        'shell_environment_policy.inherit="all"',
+        "-",
+    ]
     assert worker.session_mode == "codex-exec-resume"
     assert worker.session_status == "active"
 
