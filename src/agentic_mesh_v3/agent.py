@@ -114,6 +114,9 @@ class SafeOutputImporter(Protocol):
 
 
 class AgentRunRecorder(Protocol):
+    def interrupt_running(self, *, role_instance_id: str, reason: str, completed_at: str) -> None:
+        """Mark older running records for this role instance as interrupted."""
+
     def record(
         self,
         *,
@@ -212,6 +215,9 @@ class NullAgentStatusReporter:
 
 
 class NullAgentRunRecorder:
+    def interrupt_running(self, *, role_instance_id: str, reason: str, completed_at: str) -> None:
+        del role_instance_id, reason, completed_at
+
     def record(
         self,
         *,
@@ -294,6 +300,13 @@ class DatabaseAgentStatusReporter:
 class DatabaseAgentRunRecorder:
     def __init__(self, db: object) -> None:
         self.db = db
+
+    def interrupt_running(self, *, role_instance_id: str, reason: str, completed_at: str) -> None:
+        self.db.interrupt_running_agent_runs(  # type: ignore[attr-defined]
+            role_instance_id=role_instance_id,
+            reason=reason,
+            completed_at=completed_at,
+        )
 
     def record(
         self,
@@ -548,6 +561,11 @@ class RoleAgentService:
         self._record_session(status="active")
         run_id = f"run-{uuid4().hex}"
         run_started_at = datetime.now(timezone.utc).isoformat()
+        self.run_recorder.interrupt_running(
+            role_instance_id=self.config.role_instance_id,
+            reason=f"Role service claimed {message.message_id}; prior running record no longer owns this role instance.",
+            completed_at=run_started_at,
+        )
         self.run_recorder.record(
             run_id=run_id,
             role_instance_id=self.config.role_instance_id,

@@ -955,6 +955,50 @@ class V3Database:
                 },
             )
 
+    def interrupt_running_agent_runs(
+        self,
+        *,
+        role_instance_id: str,
+        reason: str,
+        completed_at: str,
+    ) -> None:
+        rows = tuple(
+            self.connection.execute(
+                """
+                SELECT run_id, message_id, work_item_id, subject, started_at
+                FROM agent_runs
+                WHERE role_instance_id=? AND status='running'
+                """,
+                (role_instance_id,),
+            )
+        )
+        if not rows:
+            return
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE agent_runs
+                SET status='interrupted', error=?, completed_at=?
+                WHERE role_instance_id=? AND status='running'
+                """,
+                (reason, completed_at, role_instance_id),
+            )
+            for row in rows:
+                self.record_event(
+                    "agent.run_interrupted",
+                    "agent",
+                    role_instance_id,
+                    {
+                        "run_id": row["run_id"],
+                        "message_id": row["message_id"],
+                        "work_item_id": row["work_item_id"],
+                        "subject": row["subject"],
+                        "reason": reason,
+                        "started_at": row["started_at"],
+                        "completed_at": completed_at,
+                    },
+                )
+
     def record_tool_call(
         self,
         *,
