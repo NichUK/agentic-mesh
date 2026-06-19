@@ -76,6 +76,9 @@ def test_v3_safe_output_prompt_has_operational_debug_playbook() -> None:
     assert "Finish with status.reply using `text_markdown`" in normalized_safe_outputs
     assert "Operational/status/debug requests still require tools" in contract
     assert "Non-JSON stdout is invalid" in contract
+    assert "report.incomplete` is both the recorded DO outcome and the REPLY" in normalized_safe_outputs
+    assert "Human-facing REPLY tools are terminal" in normalized_contract
+    assert "Agent-to-agent tools" in normalized_safe_outputs
 
 
 def test_v3_system_prompt_restricts_broad_filesystem_searches() -> None:

@@ -21,9 +21,10 @@ from agentic_mesh_v3.reporting import ReportingSnapshot
 from agentic_mesh_v3.reporting import agent_has_actionable_lifecycle_alert
 from agentic_mesh_v3.tool_contracts import DO_TOOLS
 from agentic_mesh_v3.tool_contracts import REPLY_TOOLS
+from agentic_mesh_v3.tool_contracts import TERMINAL_TOOLS
 
 
-TERMINAL_TOOL_NAMES = {"status.reply", "status.complete", "noop", "report.incomplete"}
+TERMINAL_TOOL_NAMES = TERMINAL_TOOLS
 
 
 @dataclass(frozen=True)
@@ -274,12 +275,14 @@ class NullTerminalToolCallAudit:
 
     def verify_terminal_call(self, role_instance_id: str, before: object, tool_calls: list[str]) -> tuple[str, ...]:
         del role_instance_id, before
-        if not _has_terminal_tool_call(tool_calls):
-            raise ValueError("agent did not call a terminal safe-output tool")
+        if not tool_calls:
+            raise ValueError("agent did not call any safe-output tool")
         if not any(_tool_call_name(call) in DO_TOOLS for call in tool_calls):
             raise ValueError("agent did not call a DO safe-output tool")
         if not any(_tool_call_name(call) in REPLY_TOOLS for call in tool_calls):
             raise ValueError("agent did not call a REPLY safe-output tool")
+        if not _has_terminal_tool_call(tool_calls):
+            raise ValueError("agent did not call a terminal safe-output tool")
         return tuple(tool_calls)
 
 
@@ -297,12 +300,14 @@ class DatabaseTerminalToolCallAudit:
             self.safe_output_importer.import_safe_outputs(role_instance_id=role_instance_id, before=before)
         before_ids = set(before) if isinstance(before, (frozenset, set)) else set()
         new_calls = self._new_tool_calls(role_instance_id, before_ids)
-        if not any(bool(row.get("terminal")) for row in new_calls):
-            raise ValueError("agent did not record a terminal safe-output tool call")
+        if not new_calls:
+            raise ValueError("agent did not record any safe-output tool call")
         if not any(str(row.get("tool_name")) in DO_TOOLS for row in new_calls):
             raise ValueError("agent did not record a DO safe-output tool call")
         if not any(str(row.get("tool_name")) in REPLY_TOOLS for row in new_calls):
             raise ValueError("agent did not record a REPLY safe-output tool call")
+        if not any(bool(row.get("terminal")) for row in new_calls):
+            raise ValueError("agent did not record a terminal safe-output tool call")
         return tuple(str(row["call_id"]) for row in new_calls)
 
     def _tool_call_ids(self, role_instance_id: str) -> tuple[str, ...]:

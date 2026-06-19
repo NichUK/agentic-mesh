@@ -55,13 +55,18 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
     assert product_tools["agent.delegate"].allowed is True
     assert product_tools["agent.delegate"].do_tool is True
     assert product_tools["agent.delegate"].required_fields == ("target_role", "task", "reason", "expected_output")
+    assert product_tools["approval.request"].terminal is True
+    assert product_tools["approval.request"].do_tool is True
+    assert product_tools["approval.request"].reply_tool is True
     assert product_tools["report.incomplete"].terminal is True
+    assert product_tools["report.incomplete"].do_tool is True
     assert product_tools["report.incomplete"].reply_tool is True
     assert product_tools["report.incomplete"].required_fields == ("reason",)
     assert product_tools["artifact.link"].allowed is True
     assert product_tools["artifact.link"].do_tool is True
     assert product_tools["artifact.link"].description
     assert product_tools["blocker.raise"].allowed is True
+    assert product_tools["blocker.raise"].terminal is True
     assert product_tools["blocker.raise"].do_tool is True
     assert product_tools["blocker.raise"].reply_tool is True
     assert product_tools["blocker.raise"].required_fields == ("work_item_id", "summary", "next_action")
