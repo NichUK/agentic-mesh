@@ -1,3 +1,5 @@
+import os
+import time
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -581,6 +583,63 @@ def test_compose_lifecycle_executor_retries_transient_docker_removal_race(tmp_pa
     assert "Started" in lifecycle_results[0].stderr
     assert len(calls) == 2
     assert calls[0] == calls[1]
+
+
+def test_compose_lifecycle_executor_uses_optional_lock(tmp_path: Path) -> None:
+    calls = []
+    lock_path = tmp_path / "compose.lock"
+
+    def runner(command, *, cwd, timeout_seconds):  # type: ignore[no-untyped-def]
+        calls.append(lock_path.exists())
+        return CommandExecutionResult(exit_code=0, stdout="started")
+
+    executor = ComposeLifecycleExecutor(
+        ComposeLifecycleConfig(
+            compose_files=(tmp_path / "compose.yml",),
+            working_directory=tmp_path,
+            lock_path=lock_path,
+            lock_timeout_seconds=1,
+        ),
+        runner=runner,
+    )
+
+    results = executor.apply(
+        [LifecycleDecision("wake", "agentic-mesh-dev.project-manager.1", "pending inbox")],
+        execute=True,
+    )
+
+    assert results[0].exit_code == 0
+    assert calls == [True]
+    assert not lock_path.exists()
+
+
+def test_compose_lifecycle_executor_removes_stale_lock(tmp_path: Path) -> None:
+    lock_path = tmp_path / "compose.lock"
+    lock_path.mkdir()
+    old_time = time.time() - 30
+    os.utime(lock_path, (old_time, old_time))
+
+    def runner(command, *, cwd, timeout_seconds):  # type: ignore[no-untyped-def]
+        return CommandExecutionResult(exit_code=0, stdout="started")
+
+    executor = ComposeLifecycleExecutor(
+        ComposeLifecycleConfig(
+            compose_files=(tmp_path / "compose.yml",),
+            working_directory=tmp_path,
+            lock_path=lock_path,
+            lock_timeout_seconds=1,
+            lock_stale_seconds=1,
+        ),
+        runner=runner,
+    )
+
+    results = executor.apply(
+        [LifecycleDecision("wake", "agentic-mesh-dev.release-manager.1", "pending inbox")],
+        execute=True,
+    )
+
+    assert results[0].exit_code == 0
+    assert not lock_path.exists()
 
 
 def test_running_compose_services_lists_only_running_service_names(tmp_path: Path) -> None:
