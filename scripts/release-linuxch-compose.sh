@@ -88,4 +88,5 @@ sh scripts/deploy-linuxch-compose.sh --profile v3 run --rm --no-deps v3-runtime 
 sh scripts/deploy-linuxch-compose.sh --profile v3 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES
 if [ "$AGENTIC_MESH_STOP_ROLE_SERVICES_ON_RELEASE" = "1" ] && [ "${AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES:-0}" = "0" ]; then
   sh scripts/deploy-linuxch-compose.sh --profile v3 stop $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
+  sh scripts/deploy-linuxch-compose.sh --profile v3 rm -f $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
 fi
