@@ -239,6 +239,7 @@ roles:
     role_prompt = (tmp_path / "agents" / "project-manager" / "1" / "role.md").read_text(encoding="utf-8")
 
     assert "diagnose-and-route-mesh-operation" in role_prompt
+    assert "agent.delegate" in role_prompt
     assert "runtime.broker.inspect" in role_prompt
     assert "runtime.sweep.request" in role_prompt
     assert "After every debug or operator-style request" in role_prompt

@@ -109,8 +109,7 @@ x-agentic-mesh-v3-role-service: &agentic-mesh-v3-role-service
   <<: *agentic-mesh-v3-service
   depends_on:
     - v3-nats
-    - v3-runtime
-  restart: unless-stopped
+  restart: "no"
   profiles:
     - v3
 

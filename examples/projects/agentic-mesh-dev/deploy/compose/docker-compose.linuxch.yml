@@ -29,43 +29,43 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-product-manager-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-business-analyst-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-delivery-manager-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-enterprise-architect-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-platform-engineer-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-prompt-engineer-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-project-manager-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-research-analyst-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-security-architect-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-solution-architect-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-engineering-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-qa-engineer-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-release-manager-1:
-    restart: unless-stopped
+    restart: "no"
     volumes:
       - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
@@ -74,10 +74,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-technical-writer-1:
-    restart: unless-stopped
+    restart: "no"
 
   agentic-mesh-dev-ux-designer-1:
-    restart: unless-stopped
+    restart: "no"
 
   otel-collector:
     ports: !reset []

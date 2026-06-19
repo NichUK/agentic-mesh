@@ -21,6 +21,7 @@ def test_v3_safe_output_prompt_names_current_tools() -> None:
     for tool_name in (
         "backlog.upsert",
         "work_item.upsert",
+        "agent.delegate",
         "handoff.require",
         "stakeholder.ask_question",
         "approval.request",
@@ -50,6 +51,7 @@ def test_v3_worker_instructions_require_forward_route_or_terminal_closure() -> N
     assert "create the next handoff through safe-output tools before finishing" in instructions
     assert "Project Manager for governance/progression" in normalized_instructions
     assert "Delivery Manager for delivery coordination" in normalized_instructions
+    assert "agent.delegate" in normalized_instructions
     assert "A reply alone is not enough for non-terminal work" in normalized_instructions
     assert "one of the safe-output calls must establish who owns the next step" in normalized_safe_outputs
 

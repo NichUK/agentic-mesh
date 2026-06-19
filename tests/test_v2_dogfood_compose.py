@@ -301,9 +301,9 @@ def test_dogfood_compose_runs_v3_live_role_services() -> None:
         assert service["environment"] == runtime_service["environment"]
         assert service["volumes"] == runtime_service["volumes"]
         assert service["working_dir"] == runtime_service["working_dir"]
-        assert service["depends_on"] == ["v3-nats", "v3-runtime"]
+        assert service["depends_on"] == ["v3-nats"]
         assert service["profiles"] == ["v3"]
-        assert service["restart"] == "unless-stopped"
+        assert service["restart"] == "no"
         assert "python -m agentic_mesh_v3.cli" in command
         assert "run-agent-service" in command
         assert "--project-config /mesh/project/agentic-mesh/project-v3.yaml" in command
@@ -311,12 +311,12 @@ def test_dogfood_compose_runs_v3_live_role_services() -> None:
         assert f"--agent-config-dir /mesh/project/state/v3/agent-configs/{role_id}/1" in command
 
 
-def test_linuxch_overlay_restarts_every_role_service() -> None:
+def test_linuxch_overlay_keeps_lazy_role_services_stopped_until_wake() -> None:
     overlay = _linuxch_overlay_text()
 
     for role_id in V3_LIVE_ROLE_IDS:
         service_name = f"agentic-mesh-dev-{role_id}-1"
-        assert f"  {service_name}:\n    restart: unless-stopped" in overlay
+        assert f"  {service_name}:\n    restart: \"no\"" in overlay
 
 
 def _load_dogfood_compose() -> dict[str, object]:

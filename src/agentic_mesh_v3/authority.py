@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 BASE_TOOLS = {
     "agent.heartbeat",
+    "agent.delegate",
     "approval.request",
     "artifact.link",
     "backlog.upsert",

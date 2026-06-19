@@ -7,6 +7,7 @@ TERMINAL_TOOLS = {"status.reply", "status.complete", "noop", "report.incomplete"
 
 DO_TOOLS = {
     "agent.heartbeat",
+    "agent.delegate",
     "approval.request",
     "artifact.link",
     "backlog.upsert",
@@ -51,6 +52,11 @@ REPLY_TOOLS = {
 
 TOOL_DESCRIPTIONS = {
     "agent.heartbeat": "Report role-instance heartbeat, inbox depth, and current work.",
+    "agent.delegate": (
+        "Send a focused agent-to-agent task to another role inbox. Use this for operational diagnostics, "
+        "specialist follow-up, or lightweight role assistance that does not yet need a full governed handoff. "
+        "Include work_item_id when the task relates to tracked work."
+    ),
     "approval.request": "Ask a sponsor or stakeholder for approval and optionally deliver the request.",
     "artifact.link": "Link an existing work-item artifact or document-library path into the work-item evidence list.",
     "backlog.upsert": "Create or update a backlog or queue item.",
@@ -108,6 +114,7 @@ TOOL_DESCRIPTIONS = {
 
 TOOL_REQUIRED_FIELDS = {
     "approval.request": ("work_item_id", "question"),
+    "agent.delegate": ("target_role", "task", "reason", "expected_output"),
     "artifact.link": ("work_item_id", "relative_path"),
     "backlog.upsert": ("queue_item_id", "title", "summary", "owner_role"),
     "blocker.raise": ("work_item_id", "summary", "next_action"),

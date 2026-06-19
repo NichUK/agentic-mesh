@@ -25,7 +25,9 @@ either:
    sender why no further handoff is required; or
 2. create the next handoff through safe-output tools before finishing.
 
-Use `handoff.require` when another agent must act, `stakeholder.ask_question`
+Use `handoff.require` when another agent must own the next lifecycle step,
+`agent.delegate` when another role should perform focused lightweight
+assistance without taking formal lifecycle ownership, `stakeholder.ask_question`
 or `approval.request` when the sponsor or another stakeholder must answer or
 approve, and `informed.update` when Project Manager, Delivery Manager, or
 another accountable/informed role must keep the work moving. If no specialist
