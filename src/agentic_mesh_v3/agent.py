@@ -425,6 +425,21 @@ class DatabaseAgentFailureReporter:
         )
         if not work_item_id:
             return
+        if _is_non_blocking_delivery_failure(payload):
+            self.db.record_event(  # type: ignore[attr-defined]
+                "agent.delivery_failure_recorded",
+                "work_item",
+                work_item_id,
+                {
+                    "role_instance_id": role_instance_id,
+                    "role_id": role_id,
+                    "message_id": message_id,
+                    "message_type": _payload_text(payload, "message_type"),
+                    "error": error,
+                    "blocking": False,
+                },
+            )
+            return
         next_action = (
             f"Agent delivery dead-lettered for {role_instance_id} on message {message_id}: {error}. "
             "Review the agent/tool wiring or retry the role after correcting the failure."
@@ -549,6 +564,12 @@ class DatabaseAgentFailureReporter:
         if route is None:
             return direct_route
         return dict(route)
+
+
+def _is_non_blocking_delivery_failure(payload: dict[str, object]) -> bool:
+    """Return true for FYI-style deliveries that should not seize work ownership."""
+
+    return _payload_text(payload, "message_type") in {"informed.update"}
 
 
 class InMemoryRoleMemory:
