@@ -865,12 +865,13 @@ class V3Database:
         status_state = _container_state_for_lifecycle_result(action=action, exit_code=exit_code)
         existing = self.connection.execute(
             """
-            SELECT inbox_depth, dead_letter_depth, governance_waits_json
+            SELECT current_work, inbox_depth, dead_letter_depth, governance_waits_json
             FROM agents
             WHERE role_instance_id=?
             """,
             (role_instance_id,),
         ).fetchone()
+        existing_current_work = str(existing["current_work"]) if existing and existing["current_work"] else None
         inbox_depth = int(existing["inbox_depth"]) if existing else 0
         dead_letter_depth = int(existing["dead_letter_depth"]) if existing else 0
         governance_waits: tuple[str, ...] = ()
@@ -884,7 +885,7 @@ class V3Database:
                 role_instance_id=role_instance_id,
                 container_state=status_state,
                 heartbeat_at=datetime.now(timezone.utc).isoformat(),
-                current_work=None,
+                current_work=None if action in {"hibernate", "stop"} else existing_current_work,
                 inbox_depth=inbox_depth,
                 dead_letter_depth=dead_letter_depth,
                 governance_waits=governance_waits,
