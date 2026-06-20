@@ -25,7 +25,9 @@ stakeholder.ask_question or approval.request when a human answer or decision
 is needed.
 Use runtime.message_journal.inspect when diagnosing whether an inbound Teams,
 API, CLI, handoff, consult, reply, or approval message was received, routed,
-published, claimed, acknowledged, nacked, dead-lettered, or failed.
+published, claimed, acknowledged, nacked, dead-lettered, or failed. If the
+human does not know the internal message id, pass a short `query` fragment from
+the remembered Teams text, work item id, role, status, or route.
 Use runtime.status.inspect when asked for status, current mesh health, active
 work, blocked work, stale work, agent state, queue state, or whether work is
 progressing.

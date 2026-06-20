@@ -2640,6 +2640,59 @@ def test_v3_tool_service_runtime_message_journal_inspect_filters_message_path(tm
     assert any("Message journal inspected: 2 entries" in row["summary"] for row in audit_rows)
 
 
+def test_v3_tool_service_runtime_message_journal_inspect_searches_text_payloads(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.record_message_journal(
+            message_id="msg-pm-dm-1",
+            correlation_id="corr-msg-pm-dm-1",
+            direction="inbound",
+            stage="received",
+            status="persisted",
+            connector="teams",
+            conversation_ref="dm:project-manager",
+            source_ref="user:sponsor",
+            target_role="project-manager",
+            summary="I sent the Project Manager a note about artifact viewer links and nothing happened.",
+            payload={
+                "text": "I sent the Project Manager a note about artifact viewer links and nothing happened.",
+            },
+        )
+        db.record_message_journal(
+            message_id="msg-other",
+            correlation_id="corr-other",
+            direction="inbound",
+            stage="received",
+            status="persisted",
+            connector="teams",
+            conversation_ref="dm:product-manager",
+            source_ref="user:sponsor",
+            target_role="product-manager",
+            summary="Sponsor DM received.",
+            payload={"text": "Unrelated product question."},
+        )
+
+        result = V3ToolService(db).call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="runtime.message_journal.inspect",
+            payload={
+                "reason": "Sponsor only remembers part of the Teams message text.",
+                "query": "artifact viewer links",
+            },
+        )
+    finally:
+        db.close()
+
+    assert result.tool_name == "runtime.message_journal.inspect"
+    assert result.output is not None
+    inspection = result.output["inspection"]
+    assert inspection["filters"] == {"query": "artifact viewer links"}
+    assert inspection["count"] == 1
+    assert inspection["entries"][0]["message_id"] == "msg-pm-dm-1"
+    assert inspection["entries"][0]["target_role"] == "project-manager"
+
+
 def test_v3_tool_service_rejects_incomplete_handoff_requirements(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
