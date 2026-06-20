@@ -152,7 +152,7 @@ class CodexAppServerClient:
         if cwd:
             params["cwd"] = cwd
         if sandbox_mode:
-            params["sandbox"] = {"mode": sandbox_mode}
+            params["sandbox"] = sandbox_mode
         response = self._request("thread/start", params)
         thread = response.get("thread")
         if not isinstance(thread, dict) or not thread.get("id"):

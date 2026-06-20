@@ -62,6 +62,7 @@ def test_v4_codex_protocol_uses_remote_control_thread_and_turn_methods() -> None
         "thread/start",
         "turn/start",
     ]
+    assert transport.sent[2]["params"]["sandbox"] == "danger-full-access"
     assert client.receive_event()["method"] == "thread/status"
     assert client.receive_event()["method"] == "turn/status"
     assert client.receive_event()["method"] == "item/agentMessage/delta"
