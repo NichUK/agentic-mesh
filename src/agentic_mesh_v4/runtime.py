@@ -104,7 +104,7 @@ class V4Runtime:
             )
             self.db.mark_message_state(message.message_id, state="completed", summary=f"Completed delivery to {role_instance_id}")
             return DispatchResult(message_id=message.message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
-        except (CodexProtocolError, RuntimeError, ValueError, OSError) as exc:
+        except Exception as exc:
             if _looks_like_agent_unavailable(exc):
                 self.db.mark_message_state(
                     message.message_id,

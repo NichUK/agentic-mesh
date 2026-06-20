@@ -4,6 +4,7 @@ import argparse
 import json
 import secrets
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -197,7 +198,22 @@ def _dispatch_available_messages(
         if not db.has_queued_messages(role_id=role.role_id):
             continue
         if lifecycle is not None:
-            lifecycle.wake_service(role.service_name)
+            try:
+                lifecycle.wake_service(role.service_name)
+            except subprocess.CalledProcessError as exc:
+                print(
+                    json.dumps(
+                        {
+                            "role_id": role.role_id,
+                            "service_name": role.service_name,
+                            "state": "wake_failed",
+                            "error": exc.stderr or exc.stdout or str(exc),
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                continue
         result = runtime.dispatch_once(role_id=role.role_id)
         if result is not None:
             processed += 1
