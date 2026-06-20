@@ -511,7 +511,7 @@ class DatabaseAgentFailureReporter:
         )
         if not work_item_id:
             return
-        if _is_non_blocking_delivery_failure(payload):
+        if self._is_non_blocking_delivery_failure(payload=payload, role_id=role_id, work_item_id=work_item_id):
             self.db.record_event(  # type: ignore[attr-defined]
                 "agent.delivery_failure_recorded",
                 "work_item",
@@ -678,6 +678,31 @@ class DatabaseAgentFailureReporter:
             return self.delivery_manager_role_id
         return self.project_manager_role_id
 
+    def _is_non_blocking_delivery_failure(
+        self,
+        *,
+        payload: dict[str, object],
+        role_id: str,
+        work_item_id: str,
+    ) -> bool:
+        """Return true for FYI-style deliveries that should not seize work ownership.
+
+        `informed.update` is usually informational. Once it is delivered to the
+        role that currently owns the work item, though, it becomes actionable:
+        a failed owner-targeted update must go through normal recovery instead
+        of being hidden as a harmless FYI failure.
+        """
+
+        if _payload_text(payload, "message_type") != "informed.update":
+            return False
+        try:
+            detail = self.db.work_item_detail(work_item_id)  # type: ignore[attr-defined]
+        except Exception:
+            return False
+        if detail is None:
+            return False
+        return getattr(detail, "owner_role", None) != role_id
+
     def _publish_operator_recovery(
         self,
         *,
@@ -745,12 +770,6 @@ class DatabaseAgentFailureReporter:
 
 def _role_display_name(role_id: str) -> str:
     return " ".join(part.capitalize() for part in role_id.split("-"))
-
-
-def _is_non_blocking_delivery_failure(payload: dict[str, object]) -> bool:
-    """Return true for FYI-style deliveries that should not seize work ownership."""
-
-    return _payload_text(payload, "message_type") in {"informed.update"}
 
 
 def _is_operator_recovery_failure(error: str) -> bool:
