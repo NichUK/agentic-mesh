@@ -189,6 +189,7 @@ def _codex_command_with_options(
         result.extend(["--model", model])
     if sandbox_mode:
         result.extend(["--sandbox", sandbox_mode])
+    result.extend(["--output-schema", str(_codex_output_schema_path())])
     result.extend(
         [
             "--config",
@@ -213,6 +214,7 @@ def _codex_resume_command_with_options(
     result = [command[0], command[1], "resume", "--last"]
     if model:
         result.extend(["--model", model])
+    result.extend(["--output-schema", str(_codex_output_schema_path())])
     result.extend(
         [
             "--config",
@@ -234,6 +236,25 @@ def _is_codex_exec_command(command: tuple[str, ...]) -> bool:
 def _is_missing_resume_session_error(detail: str) -> bool:
     normalized = detail.casefold()
     return "no session" in normalized or "no previous session" in normalized or "not found" in normalized
+
+
+def _codex_output_schema_path() -> Path:
+    prompt_root = os.environ.get("AGENTIC_MESH_PROMPT_CONFIG_ROOT")
+    candidates = []
+    if prompt_root:
+        candidates.append(Path(prompt_root) / "worker" / "tool-envelope.schema.json")
+    candidates.extend(
+        [
+            Path.cwd() / "config" / "prompts" / "worker" / "tool-envelope.schema.json",
+            Path("/mesh/system/config/prompts/worker/tool-envelope.schema.json"),
+            Path(__file__).resolve().parents[2] / "config" / "prompts" / "worker" / "tool-envelope.schema.json",
+        ]
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    searched = ", ".join(str(candidate) for candidate in candidates)
+    raise FileNotFoundError(f"missing Codex safe-output envelope schema; searched: {searched}")
 
 
 def _codex_prompt_text(prompt: str, message: AgentMessage) -> str:
