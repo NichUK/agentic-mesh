@@ -750,16 +750,30 @@ def _is_operator_recovery_failure(error: str) -> bool:
     )
 
 
-def _is_inform_only_message(payload: dict[str, object]) -> bool:
+def _is_inform_only_message(
+    payload: dict[str, object],
+    *,
+    role_id: str,
+    work_item_state_provider: WorkItemStateProvider,
+) -> bool:
     """Return true for messages that only notify a role and require no worker run.
 
     Governance uses `informed.update` for RACI "I" notifications. If the
     sender needs action, they must use `handoff.require`, `consult.request`, or
     `agent.delegate`; treating pure informed updates as work creates noisy
     failures and hides the useful queue signal.
+
+    However, an informed update addressed to the current owner of the referenced
+    work item is not merely informational. The owner is accountable for deciding
+    whether the new evidence changes the next step, so it must reach the worker.
     """
 
-    return _payload_text(payload, "message_type") == "informed.update"
+    if _payload_text(payload, "message_type") != "informed.update":
+        return False
+    work_item_id = _message_work_item_id(payload)
+    if work_item_id is None:
+        return True
+    return work_item_state_provider.owner_for_work_item(work_item_id) != role_id
 
 
 class InMemoryRoleMemory:
@@ -1294,7 +1308,11 @@ class RoleAgentService:
         return AgentRunResult(message_id=message.message_id, status="superseded_work_message_skipped")
 
     def _ack_if_inform_only_message(self, message: BrokerMessage, consumer: str) -> AgentRunResult | None:
-        if not _is_inform_only_message(message.payload):
+        if not _is_inform_only_message(
+            message.payload,
+            role_id=self.config.role_id,
+            work_item_state_provider=self.work_item_state_provider,
+        ):
             return None
         work_item_id = _message_work_item_id(message.payload)
         completed_at = datetime.now(timezone.utc).isoformat()

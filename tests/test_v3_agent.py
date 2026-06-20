@@ -179,17 +179,18 @@ class FakeOperationalContext:
         )
 
 
-def _config(tmp_path: Path) -> RoleInstanceConfig:
+def _config(tmp_path: Path, *, role_id: str = "product-manager") -> RoleInstanceConfig:
     role_prompt = tmp_path / "role.md"
-    role_prompt.write_text("You are Product Manager.", encoding="utf-8")
+    role_prompt_text = "You are Product Manager." if role_id == "product-manager" else f"You are {role_id}."
+    role_prompt.write_text(role_prompt_text, encoding="utf-8")
     return RoleInstanceConfig(
         project_id="agentic-mesh-dev",
-        role_id="product-manager",
+        role_id=role_id,
         instance_id="1",
         role_prompt_path=role_prompt,
         memory_db_path=tmp_path / "memory.sqlite3",
         inbox_stream="agent-inbox",
-        inbox_consumer="pm-1",
+        inbox_consumer="pm-1" if role_id == "product-manager" else f"{role_id}.1",
     )
 
 
@@ -1135,6 +1136,75 @@ def test_role_agent_acks_informed_update_without_worker_run_or_work_block(tmp_pa
     assert memory.load_summary("agentic-mesh-dev.product-manager.1").startswith("Informed update for work-123")
     assert not any(event["event_type"] == "agent.delivery_failure_recorded" for event in events)
     assert not broker.pending("agent-inbox", "pm-1")
+
+
+def test_role_agent_runs_worker_for_owner_targeted_informed_update(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.release-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.release-manager",
+        {
+            "message_type": "informed.update",
+            "message": "QA evidence is ready for Release Manager action.",
+            "work_item_id": "work-123",
+            "correlation_id": "corr-123",
+            "source_message_id": "agent.qa-engineer:1073",
+        },
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    worker = CapturingWorker()
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-123",
+            title="Release product",
+            description="Release the product.",
+            state="blocked",
+            owner_role="release-manager",
+            next_action="Release Manager must review QA evidence.",
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path, role_id="release-manager"),
+            broker=broker,
+            worker=worker,
+            memory=InMemoryRoleMemory(),
+            work_item_state_provider=DatabaseWorkItemStateProvider(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+            message_journal=db,
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        runs = [
+            tuple(row)
+            for row in db.connection.execute(
+                "SELECT status, work_item_id FROM agent_runs WHERE message_id=?",
+                (published.message_id,),
+            ).fetchall()
+        ]
+        journal = [
+            dict(row)
+            for row in db.connection.execute(
+                """
+                SELECT stage, status, summary
+                FROM message_journal
+                WHERE message_id=?
+                ORDER BY created_at DESC
+                """,
+                (published.message_id,),
+            ).fetchall()
+        ]
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert worker.message_payload["message_type"] == "informed.update"
+    assert worker.message_payload["role_id"] == "release-manager"
+    assert runs == [("completed", "work-123")]
+    assert any(row["stage"] == "worker_started" and row["status"] == "running" for row in journal)
+    assert any(row["stage"] == "acked" and row["status"] == "completed" for row in journal)
 
 
 def test_role_agent_acks_stale_message_for_terminal_work_item_without_worker_run(tmp_path: Path) -> None:
