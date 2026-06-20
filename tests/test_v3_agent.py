@@ -2046,6 +2046,46 @@ def test_role_agent_interrupts_stale_running_runs_for_same_role(tmp_path: Path) 
     assert current["status"] == "completed"
 
 
+def test_role_agent_reconcile_startup_interrupts_stale_running_runs(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.product-manager"])
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        role_instance_id = "agentic-mesh-dev.product-manager.1"
+        db.record_agent_run(
+            run_id="run-before-restart",
+            role_instance_id=role_instance_id,
+            message_id="agent.product-manager:old",
+            subject="agent.product-manager",
+            status="running",
+            work_item_id="work-123",
+            started_at="2026-06-19T09:00:00+00:00",
+            completed_at="2026-06-19T09:00:00+00:00",
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path),
+            broker=broker,
+            worker=FailingIfCalledWorker(),
+            memory=InMemoryRoleMemory(),
+            status_reporter=DatabaseAgentStatusReporter(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+        )
+
+        service.reconcile_startup()
+        runs = db.list_agent_runs(role_instance_id)
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+    finally:
+        db.close()
+
+    stale = next(run for run in runs if run["run_id"] == "run-before-restart")
+    assert stale["status"] == "interrupted"
+    assert "started or restarted" in (stale["error"] or "")
+    assert snapshot.agents[0].container_state == "running"
+    assert snapshot.agents[0].current_work is None
+    assert snapshot.agents[0].last_run_status == "interrupted"
+
+
 def test_status_snapshot_prefers_active_running_run_over_same_timestamp_interruption(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

@@ -1005,6 +1005,20 @@ class RoleAgentService:
         if self.max_delivery_attempts < 1:
             raise ValueError("max_delivery_attempts must be positive")
 
+    def reconcile_startup(self) -> None:
+        """Mark stale running records as interrupted when a role service starts."""
+
+        started_at = datetime.now(timezone.utc).isoformat()
+        self.run_recorder.interrupt_running(
+            role_instance_id=self.config.role_instance_id,
+            reason=(
+                "Role service started or restarted; any prior running record for this role "
+                "instance no longer has an active worker process."
+            ),
+            completed_at=started_at,
+        )
+        self._report_status(container_state="running", current_work=None)
+
     def run_until_idle(
         self,
         *,

@@ -1752,6 +1752,7 @@ def _run_agent_service(args: argparse.Namespace):
             status_reporter=DatabaseAgentStatusReporter(db),
             terminal_tool_call_audit=_terminal_tool_call_audit(args, db=db, project_config=config, broker=broker),
         )
+        service.reconcile_startup()
         idle_since: float | None = None
         ticks = 0
         while True:
