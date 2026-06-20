@@ -288,7 +288,10 @@ class NatsJetStreamAdapter:
     def dead_letters(self, stream: str, *, limit: int = 20) -> list[BrokerMessage]:
         if limit < 1:
             raise ValueError("limit must be positive")
-        return list(self._dead_letters[stream])[:limit]
+        try:
+            return self._run(self._dead_letters_from_stream(stream, limit=limit))
+        except Exception:
+            return list(self._dead_letters[stream])[:limit]
 
     def depth(self, stream: str) -> BrokerDepth:
         return self._run(self._depth(stream))
@@ -415,12 +418,23 @@ class NatsJetStreamAdapter:
         import json
 
         message = _nats_entry_message(entry)
+        record = _nats_broker_message_record(message_id=message_id, message=message)
         nc = await self._connect()
         try:
             js = nc.jetstream()
             await js.publish(
                 f"deadletter.{stream}.{_nats_consumer_name(consumer)}",
-                json.dumps({"message_id": message_id, "reason": reason}).encode("utf-8"),
+                json.dumps(
+                    {
+                        "message_id": message_id,
+                        "subject": record.subject,
+                        "payload": record.payload,
+                        "reason": reason,
+                        "delivery_count": record.delivery_count,
+                        "created_at": record.created_at,
+                    },
+                    sort_keys=True,
+                ).encode("utf-8"),
             )
             await message.ack()  # type: ignore[attr-defined]
         finally:
@@ -461,6 +475,40 @@ class NatsJetStreamAdapter:
                 subject=subject,
                 consumer=consumer,
             )
+        finally:
+            await nc.close()
+
+    async def _dead_letters_from_stream(self, stream: str, *, limit: int) -> list[BrokerMessage]:
+        import json
+
+        nc = await self._connect()
+        try:
+            js = nc.jetstream()
+            info = await js.stream_info(stream)
+            state = getattr(info, "state", None)
+            last_seq = int(getattr(state, "last_seq", 0) or 0)
+            deadletter_prefix = f"deadletter.{stream}."
+            messages: list[BrokerMessage] = []
+            lower_bound = max(0, last_seq - max(limit * 50, 1000))
+            for sequence in range(last_seq, lower_bound, -1):
+                try:
+                    raw = await js.get_msg(stream, seq=sequence)
+                except Exception:
+                    continue
+                subject = str(getattr(raw, "subject", "") or "")
+                if not subject.startswith(deadletter_prefix):
+                    continue
+                payload: object = {}
+                data = getattr(raw, "data", b"")
+                if data:
+                    try:
+                        payload = json.loads(data.decode("utf-8"))
+                    except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+                        payload = {"raw": repr(data)}
+                messages.append(_nats_dead_letter_payload_record(subject=subject, payload=payload))
+                if len(messages) >= limit:
+                    break
+            return messages
         finally:
             await nc.close()
 
@@ -506,6 +554,24 @@ def _nats_dead_letter_record(*, message_id: str, message: object, reason: str) -
         payload={**record.payload, "dead_letter_reason": reason},
         created_at=record.created_at,
         delivery_count=record.delivery_count,
+    )
+
+
+def _nats_dead_letter_payload_record(*, subject: str, payload: object) -> BrokerMessage:
+    if not isinstance(payload, dict):
+        payload = {"value": payload}
+    original_payload = payload.get("payload")
+    if not isinstance(original_payload, dict):
+        original_payload = {}
+    reason = payload.get("reason")
+    message_id = str(payload.get("message_id") or f"{subject}:unknown")
+    original_subject = str(payload.get("subject") or subject)
+    return BrokerMessage(
+        message_id=message_id,
+        subject=original_subject,
+        payload={**original_payload, "dead_letter_reason": str(reason or "")},
+        created_at=str(payload.get("created_at") or datetime.now(timezone.utc).isoformat()),
+        delivery_count=int(payload.get("delivery_count") or 0),
     )
 
 

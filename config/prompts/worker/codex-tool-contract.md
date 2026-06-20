@@ -19,7 +19,9 @@ inspect current work, explain what happened, debug routing, check whether an age
 look at queue/work progress, or confirm whether something is stuck, call runtime.status.inspect
 first. Also call runtime.message_journal.inspect for message/work/queue/reply/approval routing
 questions, and runtime.broker.inspect for inbox, pending, dead-letter, wake, hibernate, or
-delivery questions. If you cannot inspect, call report.incomplete with the blocker and next owner.
+delivery questions. If a dead-lettered message is ready to retry after inspection or correction,
+call runtime.broker.retry_dead_letter with the original message id and a concrete retry reason.
+If you cannot inspect or retry, call report.incomplete with the blocker and next owner.
 If the user says not to create tracked work, do not create tracked work; inspection tools are still
 valid DO calls. Finish with status.reply in Markdown explaining what you inspected, found, recorded,
 and who owns the next step.

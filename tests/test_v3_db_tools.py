@@ -2367,6 +2367,77 @@ def test_v3_tool_service_runtime_broker_inspect_returns_role_depths(tmp_path: Pa
     assert any(row["message_id"].startswith("runtime-broker-inspect-") for row in journal)
 
 
+def test_v3_tool_service_runtime_broker_retry_dead_letter_republishes_to_role(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.release-manager"])
+    broker.ensure_consumer("agent-inbox", "release-manager.1", filter_subject="agent.release-manager")
+    published = broker.publish(
+        "agent-inbox",
+        "agent.release-manager",
+        {
+            "message_type": "agent.delegate",
+            "work_item_id": "work-release",
+            "correlation_id": "corr-release",
+            "task": "Close the release.",
+        },
+        message_id="agent.release-manager:1497",
+    )
+    fetched = broker.fetch("agent-inbox", "release-manager.1")
+    assert fetched[0].message_id == published.message_id
+    broker.dead_letter(
+        "agent-inbox",
+        "release-manager.1",
+        published.message_id,
+        reason="worker subprocess stdout must be JSON",
+    )
+    try:
+        db.migrate()
+        result = V3ToolService(db, broker=broker, broker_stream="agent-inbox").call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="runtime.broker.retry_dead_letter",
+            payload={
+                "message_id": published.message_id,
+                "target_role": "release-manager",
+                "reason": "Release Manager prompt/tool contract has been inspected; retry closure.",
+            },
+        )
+        pending = broker.pending("agent-inbox", "release-manager.1")
+        event = db.connection.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type='runtime.dead_letter_retried'
+            """
+        ).fetchone()
+        journals = db.connection.execute(
+            """
+            SELECT message_id, stage, status, target_role, work_item_id, broker_subject
+            FROM message_journal
+            WHERE correlation_id='corr-release'
+            ORDER BY created_at, journal_id
+            """
+        ).fetchall()
+    finally:
+        db.close()
+
+    assert result.tool_name == "runtime.broker.retry_dead_letter"
+    assert result.output is not None
+    assert result.output["original_message_id"] == published.message_id
+    assert result.output["target_role"] == "release-manager"
+    assert len(pending) == 1
+    assert pending[0].subject == "agent.release-manager"
+    assert pending[0].payload["retried_from_message_id"] == published.message_id
+    assert pending[0].payload["retry_requested_by"] == "agentic-mesh-dev.project-manager.1"
+    assert "dead_letter_reason" not in pending[0].payload
+    assert event is not None
+    event_payload = json.loads(event["payload_json"])
+    assert event_payload["original_message_id"] == published.message_id
+    assert {row["stage"] for row in journals} == {"dead_letter_requeued", "published"}
+    assert {row["target_role"] for row in journals} == {"release-manager"}
+    assert {row["work_item_id"] for row in journals} == {"work-release"}
+
+
 def test_v3_tool_service_runtime_lifecycle_request_wakes_scoped_role(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     compose_file = tmp_path / "docker-compose.yml"

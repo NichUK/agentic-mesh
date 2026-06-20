@@ -32,6 +32,7 @@ def test_v3_safe_output_prompt_names_current_tools() -> None:
         "blocker.raise",
         "runtime.status.inspect",
         "runtime.broker.inspect",
+        "runtime.broker.retry_dead_letter",
         "runtime.message_journal.inspect",
         "runtime.lifecycle.request",
         "status.reply",
@@ -71,6 +72,8 @@ def test_v3_safe_output_prompt_has_operational_debug_playbook() -> None:
     assert "runtime.status.inspect as the DO safe-output" in normalized_safe_outputs
     assert "runtime.message_journal.inspect when a message id" in normalized_safe_outputs
     assert "runtime.broker.inspect when inbox" in normalized_safe_outputs
+    assert "runtime.broker.retry_dead_letter" in normalized_safe_outputs
+    assert "concrete retry reason" in normalized_safe_outputs
     assert "do not create tracked work" in normalized_safe_outputs
     assert "If inspection cannot be performed, call report.incomplete" in normalized_safe_outputs
     assert "Finish with status.reply using `text_markdown`" in normalized_safe_outputs

@@ -40,6 +40,7 @@ DO_TOOLS = {
     "report.incomplete",
     "risk.register",
     "runtime.broker.inspect",
+    "runtime.broker.retry_dead_letter",
     "runtime.lifecycle.request",
     "runtime.message_journal.inspect",
     "runtime.status.inspect",
@@ -107,6 +108,10 @@ TOOL_DESCRIPTIONS = {
     "runtime.broker.inspect": (
         "Inspect broker inbox pressure, role consumer pending counts, and dead letters so an agent can diagnose "
         "routing or stuck-work issues without privileged shell access."
+    ),
+    "runtime.broker.retry_dead_letter": (
+        "Re-publish a broker dead-letter message back to a role inbox after the cause has been inspected and "
+        "a concrete retry reason is recorded. This is a recovery action, not a status-only acknowledgement."
     ),
     "runtime.lifecycle.request": (
         "Ask the runtime lifecycle controller to reconcile, wake, or hibernate role services through the bounded "
@@ -182,6 +187,7 @@ TOOL_REQUIRED_FIELDS = {
     "report.incomplete": ("reason",),
     "risk.register": ("work_item_id", "summary"),
     "runtime.broker.inspect": ("reason",),
+    "runtime.broker.retry_dead_letter": ("message_id", "reason"),
     "runtime.lifecycle.request": ("reason",),
     "runtime.message_journal.inspect": ("reason",),
     "runtime.status.inspect": ("reason",),
