@@ -75,6 +75,7 @@ done
 lock_acquired=1
 printf '%s\n' "$$" > "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH/owner"
 trap 'if [ "$lock_acquired" = "1" ]; then rm -rf "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH"; fi' EXIT INT TERM
+export AGENTIC_MESH_LIFECYCLE_LOCK_HELD=1
 
 if [ "$AGENTIC_MESH_REMOVE_LEGACY_V2_CONTAINERS" = "1" ]; then
   legacy_v2_container_names="

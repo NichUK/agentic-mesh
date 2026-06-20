@@ -155,6 +155,20 @@ def test_linuxch_deploy_script_preserves_v3_live_environment() -> None:
     assert "AGENTIC_MESH_FORCE_V3_STATUS_PORT" in script
 
 
+def test_linuxch_deploy_script_serializes_compose_commands_with_lifecycle_lock() -> None:
+    script = Path("scripts/deploy-linuxch-compose.sh").read_text(encoding="utf-8")
+
+    assert "acquire_lifecycle_lock()" in script
+    assert "release_lifecycle_lock()" in script
+    assert 'AGENTIC_MESH_LIFECYCLE_LOCK_HELD:-0' in script
+    assert 'AGENTIC_MESH_LIFECYCLE_LOCK_ACQUIRED=1' in script
+    assert 'trap release_lifecycle_lock EXIT INT TERM' in script
+    assert "run_compose docker compose" in script
+    assert "run_compose docker-compose" in script
+    assert "exec docker compose" not in script
+    assert "exec docker-compose" not in script
+
+
 def test_dogfood_compose_env_example_lists_required_v3_live_inputs() -> None:
     env_example = Path("examples/projects/agentic-mesh-dev/deploy/compose/.env.example").read_text(
         encoding="utf-8"
@@ -256,6 +270,10 @@ def test_linuxch_release_script_defaults_to_v3_preflight_and_services() -> None:
     assert '--profile v3 stop "$AGENTIC_MESH_SUPERVISOR_SERVICE"' in script
     assert script.index('--profile v3 stop "$AGENTIC_MESH_SUPERVISOR_SERVICE"') < script.index(
         "--profile v3 up -d v3-nats"
+    )
+    assert "export AGENTIC_MESH_LIFECYCLE_LOCK_HELD=1" in script
+    assert script.index("export AGENTIC_MESH_LIFECYCLE_LOCK_HELD=1") < script.index(
+        "--profile build-image build runtime-image"
     )
 
 
