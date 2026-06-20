@@ -350,6 +350,9 @@ class V3Database:
             _ensure_column(self.connection, "releases", "closure_state", "TEXT NOT NULL DEFAULT 'open'")
             _ensure_column(self.connection, "artifacts", "url", "TEXT")
             _ensure_column(self.connection, "agent_sessions", "mode", "TEXT NOT NULL DEFAULT 'unknown'")
+            _ensure_column(self.connection, "role_memory", "role_instance_id", "TEXT NOT NULL DEFAULT ''")
+            _ensure_column(self.connection, "role_memory", "source_ref", "TEXT NOT NULL DEFAULT ''")
+            _migrate_legacy_role_memory(self.connection)
             self.connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_message_journal_message ON message_journal(message_id, created_at)"
             )
@@ -2616,6 +2619,26 @@ def _ensure_column(connection: sqlite3.Connection, table: str, column: str, defi
     columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _migrate_legacy_role_memory(connection: sqlite3.Connection) -> None:
+    columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(role_memory)")}
+    if {"role_instance_id", "role_id", "project_id"}.issubset(columns):
+        connection.execute(
+            """
+            UPDATE role_memory
+            SET role_instance_id = project_id || '.' || role_id || '.1'
+            WHERE role_instance_id = ''
+            """
+        )
+    if {"source_ref", "provenance_ref"}.issubset(columns):
+        connection.execute(
+            """
+            UPDATE role_memory
+            SET source_ref = provenance_ref
+            WHERE source_ref = ''
+            """
+        )
 
 
 def _enable_wal_journal_mode(connection: sqlite3.Connection, *, database_exists: bool) -> None:
