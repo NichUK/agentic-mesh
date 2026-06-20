@@ -21,9 +21,11 @@ def utc_now() -> str:
 @dataclass(frozen=True)
 class QueuedMessage:
     message_id: str
+    source: str
     target_role: str
     state: str
     text: str
+    payload: dict[str, Any]
     steering: bool
     correlation_id: str
     conversation_ref: str | None
@@ -485,9 +487,11 @@ class V4Database:
 def _queued_message(row: sqlite3.Row, *, state: str, delivery_attempts: int) -> QueuedMessage:
     return QueuedMessage(
         message_id=str(row["message_id"]),
+        source=str(row["source"]),
         target_role=str(row["target_role"]),
         state=state,
         text=str(row["text"]),
+        payload=json.loads(str(row["payload_json"])),
         steering=bool(row["steering"]),
         correlation_id=str(row["correlation_id"]),
         conversation_ref=row["conversation_ref"],

@@ -48,11 +48,13 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
 
     assert "agentic_mesh_v4.cli" in runtime["command"]
     assert "serve --host 0.0.0.0 --port 8100" in runtime["command"]
+    assert runtime["env_file"] == [{"path": ".env", "required": False}]
     assert runtime["ports"] == ["${AGENTIC_MESH_V4_STATUS_PORT:-8100}:8100"]
     assert "/var/run/docker.sock:/var/run/docker.sock" in runtime["volumes"]
 
     assert "agentic_mesh_v4.cli" in dispatcher["command"]
     assert "dispatch-loop" in dispatcher["command"]
+    assert dispatcher["env_file"] == [{"path": ".env", "required": False}]
     assert "--wake" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.v4.yml" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml" in dispatcher["command"]

@@ -8,6 +8,7 @@ from agentic_mesh_v4.codex_protocol import CodexProtocolError
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.db import utc_now
+from agentic_mesh_v4.teams_delivery import TeamsReplySender
 
 
 class ClientFactory(Protocol):
@@ -31,10 +32,12 @@ class V4Runtime:
         db: V4Database,
         project_config: V4ProjectConfig,
         client_factory: ClientFactory | None = None,
+        teams_reply_sender: TeamsReplySender | None = None,
     ) -> None:
         self.db = db
         self.project_config = project_config
         self.client_factory = client_factory
+        self.teams_reply_sender = teams_reply_sender
 
     def register_roles(self) -> None:
         for role in self.project_config.roles:
@@ -95,13 +98,28 @@ class V4Runtime:
                 turn_id = client.start_turn(thread_id=thread_id, text=message.text, model=role.model)
                 state = "active_turn"
             self.db.mark_message_state(message.message_id, state=state, summary=f"Delivered to {role_instance_id}")
-            self._drain_available_events(
+            reply_text = self._drain_available_events(
                 client=client,
                 role_instance_id=role_instance_id,
                 thread_id=thread_id,
                 turn_id=turn_id,
                 message_id=message.message_id,
             )
+            if message.source == "teams" and reply_text.strip():
+                sender = self.teams_reply_sender or TeamsReplySender.from_env()
+                delivery_id = sender.send_reply(
+                    role_id=role.role_id,
+                    activity=message.payload,
+                    text_markdown=reply_text.strip(),
+                )
+                self.db.record_message_journal(
+                    message_id=message.message_id,
+                    correlation_id=message.correlation_id,
+                    stage="reply_delivered",
+                    status="delivered",
+                    summary=f"Delivered Teams reply {delivery_id}",
+                    role_instance_id=role_instance_id,
+                )
             self.db.mark_message_state(message.message_id, state="completed", summary=f"Completed delivery to {role_instance_id}")
             return DispatchResult(message_id=message.message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
         except Exception as exc:
@@ -150,14 +168,17 @@ class V4Runtime:
         thread_id: str,
         turn_id: str | None,
         message_id: str,
-    ) -> None:
+    ) -> str:
+        reply_parts: list[str] = []
         while True:
             event = client.receive_event()
             if event is None:
-                return
+                return "".join(reply_parts)
             method = str(event.get("method") or "unknown")
             params = event.get("params") if isinstance(event.get("params"), dict) else {}
             content = _event_content(method, params)
+            if method == "item/agentMessage/delta":
+                reply_parts.append(content)
             self.db.record_agent_event(
                 role_instance_id=role_instance_id,
                 event_type=method,
@@ -168,7 +189,7 @@ class V4Runtime:
                 message_id=message_id,
             )
             if method == "turn/completed":
-                return
+                return "".join(reply_parts)
 
 
 def _event_content(method: str, params: dict[str, object]) -> str:

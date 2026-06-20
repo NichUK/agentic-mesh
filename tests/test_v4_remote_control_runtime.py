@@ -15,6 +15,15 @@ from agentic_mesh_v4.runtime import V4Runtime
 PROJECT_CONFIG = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml")
 
 
+class FakeTeamsReplySender:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def send_reply(self, *, role_id: str, activity: dict[str, object], text_markdown: str) -> str:
+        self.calls.append({"role_id": role_id, "activity": activity, "text_markdown": text_markdown})
+        return "teams-delivery-1"
+
+
 def test_v4_loads_full_sdlc_team_without_broker() -> None:
     config = load_project_config(PROJECT_CONFIG)
 
@@ -86,7 +95,7 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
         client_factory=lambda _role_id: CodexAppServerClient(transport),
     )
     runtime.register_roles()
-    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Check status")
+    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Check status", source="api")
 
     result = runtime.dispatch_once(role_id="project-manager")
 
@@ -97,6 +106,58 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["messages"][0]["state"] == "completed"
     assert snapshot["events"][0]["event_type"] == "turn/completed"
     assert snapshot["events"][1]["content"] == "Done"
+
+
+def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Yes"}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": ". Done."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+    teams_sender = FakeTeamsReplySender()
+    activity = {
+        "serviceUrl": "https://smba.test/tenant/",
+        "conversation": {"id": "conversation-1"},
+        "id": "activity-1",
+    }
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        teams_reply_sender=teams_sender,  # type: ignore[arg-type]
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Can you hear me?",
+        source="teams",
+        payload=activity,
+    )
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    expected_activity = dict(activity)
+    expected_activity.update({"target_role": "project-manager", "text": "Can you hear me?"})
+    assert teams_sender.calls == [
+        {"role_id": "project-manager", "activity": expected_activity, "text_markdown": "Yes. Done."}
+    ]
+    journal = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT stage, status, summary FROM message_journal WHERE message_id=? ORDER BY created_at",
+            (message_id,),
+        )
+    ]
+    assert any(item["stage"] == "reply_delivered" and item["status"] == "delivered" for item in journal)
 
 
 def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> None:
