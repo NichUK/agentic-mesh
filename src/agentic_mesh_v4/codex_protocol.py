@@ -57,6 +57,9 @@ class AppServerTransport:
     def receive(self) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def send_response(self, request_id: int | str, result: dict[str, Any]) -> None:
+        raise NotImplementedError
+
 
 class InMemoryTransport(AppServerTransport):
     """Deterministic fake transport for protocol and runtime tests."""
@@ -77,6 +80,9 @@ class InMemoryTransport(AppServerTransport):
         if self.responses:
             return self.responses.pop(0)
         return {"id": message.get("id"), "result": {}}
+
+    def send_response(self, request_id: int | str, result: dict[str, Any]) -> None:
+        self.sent.append({"id": request_id, "result": result})
 
     def receive(self) -> dict[str, Any] | None:
         if self.responses:
@@ -111,6 +117,9 @@ class WebSocketTransport(AppServerTransport):
         if "id" not in message:
             return None
         return self.receive()
+
+    def send_response(self, request_id: int | str, result: dict[str, Any]) -> None:
+        self._socket.send(json.dumps({"id": request_id, "result": result}, sort_keys=True))
 
     def receive(self) -> dict[str, Any] | None:
         raw = self._socket.recv()
@@ -211,6 +220,9 @@ class CodexAppServerClient:
             return self._pending_events.pop(0)
         return self.transport.receive()
 
+    def respond_to_server_request(self, *, request_id: int | str, result: dict[str, Any]) -> None:
+        self.transport.send_response(request_id, result)
+
     def _request(
         self,
         method: str,
@@ -234,6 +246,10 @@ class CodexAppServerClient:
                     continue
             if response.get("id") == request_id:
                 return self._response_result(method, response)
+            if response.get("method"):
+                self._pending_events.append(response)
+                response = self.transport.receive()
+                continue
             if "id" in response:
                 self._pending_responses[response["id"]] = response
                 response = self.transport.receive()

@@ -102,6 +102,32 @@ def test_v4_codex_protocol_ignores_stale_response_ids_until_matching_response() 
     assert client.receive_event()["method"] == "turn/status"
 
 
+def test_v4_codex_protocol_preserves_server_requests_with_ids_as_events() -> None:
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response(
+        {
+            "id": 99,
+            "method": "item/commandExecution/requestApproval",
+            "params": {"threadId": "thread-1", "turnId": "turn-1"},
+        }
+    )
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+
+    client = CodexAppServerClient(transport)
+    client.initialize()
+    thread_id = client.start_thread(model="gpt-5.5")
+    turn_id = client.start_turn(thread_id=thread_id, text="Inspect files")
+
+    assert turn_id == "turn-1"
+    event = client.receive_event()
+    assert event is not None
+    assert event["id"] == 99
+    assert event["method"] == "item/commandExecution/requestApproval"
+
+
 def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
@@ -131,6 +157,46 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["messages"][0]["state"] == "completed"
     assert snapshot["events"][0]["event_type"] == "turn/completed"
     assert snapshot["events"][1]["content"] == "Done"
+
+
+def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification(
+        {
+            "id": 42,
+            "method": "item/commandExecution/requestApproval",
+            "params": {"threadId": "thread-1", "turnId": "turn-1", "command": "ls /documents"},
+        }
+    )
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Checked."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Check mounts", source="api")
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert {"id": 42, "result": {"decision": "accept"}} in transport.sent
+    events = db.snapshot()["events"]
+    assert any(event["event_type"] == "item/commandExecution/requestApproval/autoAccepted" for event in events)
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "completed"
 
 
 def test_v4_runtime_retires_thread_when_sandbox_metadata_does_not_match(tmp_path: Path) -> None:

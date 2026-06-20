@@ -101,6 +101,7 @@ class V4Runtime:
             reply_text = self._drain_available_events(
                 client=client,
                 role_instance_id=role_instance_id,
+                approval_policy=getattr(role, "approval_policy"),
                 thread_id=thread_id,
                 turn_id=turn_id,
                 message_id=message.message_id,
@@ -213,6 +214,7 @@ class V4Runtime:
         *,
         client: CodexAppServerClient,
         role_instance_id: str,
+        approval_policy: str,
         thread_id: str,
         turn_id: str | None,
         message_id: str,
@@ -227,6 +229,17 @@ class V4Runtime:
             content = _event_content(method, params)
             if method == "item/agentMessage/delta":
                 reply_parts.append(content)
+            if _should_auto_accept_server_request(event=event, approval_policy=approval_policy):
+                client.respond_to_server_request(request_id=event["id"], result={"decision": "accept"})
+                self.db.record_agent_event(
+                    role_instance_id=role_instance_id,
+                    event_type=f"{method}/autoAccepted",
+                    content="Auto-accepted server approval request for approval_policy=never.",
+                    payload={"request_id": event["id"], "method": method},
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    message_id=message_id,
+                )
             self.db.record_agent_event(
                 role_instance_id=role_instance_id,
                 event_type=method,
@@ -246,6 +259,17 @@ def _event_content(method: str, params: dict[str, object]) -> str:
         if isinstance(value, str):
             return value
     return method
+
+
+def _should_auto_accept_server_request(*, event: dict[str, object], approval_policy: str) -> bool:
+    if approval_policy != "never" or "id" not in event:
+        return False
+    method = str(event.get("method") or "")
+    return method in {
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+        "item/permissions/requestApproval",
+    }
 
 
 def _looks_like_agent_unavailable(exc: BaseException) -> bool:
