@@ -669,6 +669,7 @@ class V3ToolService:
             "stage": _optional(payload.get("stage")),
             "status": _optional(payload.get("status")),
         }
+        query = _optional(payload.get("query") or payload.get("text"))
         where = []
         params: list[object] = []
         for column, value in filters.items():
@@ -676,6 +677,17 @@ class V3ToolService:
                 continue
             where.append(f"{column} = ?")
             params.append(value)
+        if query is not None:
+            like_query = f"%{query}%"
+            where.append(
+                "("
+                "message_id LIKE ? OR correlation_id LIKE ? OR conversation_ref LIKE ? "
+                "OR thread_ref LIKE ? OR source_ref LIKE ? OR target_role LIKE ? "
+                "OR work_item_id LIKE ? OR queue_item_id LIKE ? OR broker_subject LIKE ? "
+                "OR broker_consumer LIKE ? OR status LIKE ? OR summary LIKE ? OR payload_hash LIKE ? "
+                ")"
+            )
+            params.extend([like_query] * 13)
         where_sql = " WHERE " + " AND ".join(where) if where else ""
         params.append(limit)
         rows = self.db.connection.execute(
@@ -692,8 +704,11 @@ class V3ToolService:
             params,
         ).fetchall()
         entries = [dict(row) for row in rows]
+        active_filters = {key: value for key, value in filters.items() if value is not None}
+        if query is not None:
+            active_filters["query"] = query
         inspection = {
-            "filters": {key: value for key, value in filters.items() if value is not None},
+            "filters": active_filters,
             "count": len(entries),
             "entries": entries,
         }
