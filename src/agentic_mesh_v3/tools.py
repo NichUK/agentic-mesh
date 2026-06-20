@@ -1382,6 +1382,20 @@ class V3ToolService:
             return
         if not _is_role_message_target(target_role, self.configured_role_instance_ids):
             return
+        if target_role == role_from_instance(role_instance_id):
+            self.db.record_event(
+                "agent.governance_self_publish_skipped",
+                "agent",
+                role_instance_id,
+                {
+                    "call_id": call_id,
+                    "tool_name": tool_name,
+                    "target_role": target_role,
+                    "work_item_id": _optional(payload.get("work_item_id")),
+                    "summary": _summary(payload),
+                },
+            )
+            return
         broker_subject = f"agent.{target_role}"
         instance_id = str(payload.get("instance_id") or "1")
         broker_consumer = role_consumer_name(target_role, instance_id)
