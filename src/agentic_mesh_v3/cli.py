@@ -1796,6 +1796,8 @@ def _build_role_agent_service(
     kwargs["failure_reporter"] = DatabaseAgentFailureReporter(
         db,
         stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
+        broker=broker,
+        broker_stream=project_config.broker.stream,
     )
     kwargs["run_recorder"] = DatabaseAgentRunRecorder(db)
     kwargs["prompt_recorder"] = DatabaseAgentPromptRecorder(db)
