@@ -1737,6 +1737,73 @@ def test_v3_tool_service_raises_blocker_with_visible_next_action(tmp_path: Path)
     assert snapshot.work_items[0].attention_reason == "work item is in blocked"
 
 
+def test_v3_tool_service_publishes_blocker_to_explicit_owner_role_inbox(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Recover release closure",
+            description="Needs Project Manager coordination.",
+            state="release_review",
+            owner_role="release-manager",
+            current_phase="release_review",
+        )
+        tools = V3ToolService(
+            db,
+            broker=broker,
+            broker_stream="agent-inbox",
+            configured_role_instance_ids=("agentic-mesh-dev.project-manager.1",),
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.release-manager.1",
+            tool_name="blocker.raise",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Project Manager must coordinate missing closure evidence.",
+                "next_action": "Project Manager must obtain QA, delivery, and sponsor evidence before closure.",
+                "owner_role": "project-manager",
+                "current_phase": "operator_recovery",
+                "correlation_id": "corr-blocker-owner",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+        pending = broker.fetch("agent-inbox", "project-manager.1")
+        journal_rows = [
+            dict(row)
+            for row in db.connection.execute(
+                """
+                SELECT correlation_id, direction, stage, status, target_role,
+                       broker_subject, broker_consumer, summary
+                FROM message_journal
+                WHERE target_role='project-manager'
+                ORDER BY created_at
+                """
+            ).fetchall()
+        ]
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "blocked"
+    assert detail.owner_role == "project-manager"
+    assert len(pending) == 1
+    assert pending[0].subject == "agent.project-manager"
+    assert pending[0].payload["message_type"] == "blocker.raise"
+    assert pending[0].payload["target_role"] == "project-manager"
+    assert pending[0].payload["work_item_id"] == "work-1"
+    assert pending[0].payload["payload"]["owner_role"] == "project-manager"
+    assert journal_rows[0]["correlation_id"] == "corr-blocker-owner"
+    assert journal_rows[0]["direction"] == "broker"
+    assert journal_rows[0]["stage"] == "published"
+    assert journal_rows[0]["status"] == "published"
+    assert journal_rows[0]["broker_subject"] == "agent.project-manager"
+    assert journal_rows[0]["broker_consumer"] == "project-manager.1"
+    assert "Published blocker.raise to project-manager" in journal_rows[0]["summary"]
+
+
 def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:

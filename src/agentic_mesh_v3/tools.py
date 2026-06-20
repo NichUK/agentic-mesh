@@ -1376,8 +1376,10 @@ class V3ToolService:
     ) -> None:
         if self.broker is None or self.broker_stream is None:
             return
-        target_role = _optional(payload.get("target_role"))
+        target_role = _governance_message_target_role(tool_name, payload)
         if target_role is None:
+            return
+        if not _is_role_message_target(target_role, self.configured_role_instance_ids):
             return
         broker_subject = f"agent.{target_role}"
         instance_id = str(payload.get("instance_id") or "1")
@@ -1734,6 +1736,20 @@ def _validate_blocker_raise(payload: dict[str, Any]) -> None:
     _required(payload, "work_item_id")
     _required(payload, "summary")
     _required(payload, "next_action")
+
+
+def _governance_message_target_role(tool_name: str, payload: dict[str, Any]) -> str | None:
+    if tool_name == "blocker.raise":
+        return _optional(payload.get("owner_role"))
+    return _optional(payload.get("target_role"))
+
+
+def _is_role_message_target(target_role: str, configured_role_instance_ids: tuple[str, ...]) -> bool:
+    if target_role in {"sponsor", "stakeholder", "human", "operator"}:
+        return False
+    if not configured_role_instance_ids:
+        return True
+    return target_role in {role_from_instance(role_instance_id) for role_instance_id in configured_role_instance_ids}
 
 
 def _validate_consult_request(payload: dict[str, Any]) -> None:
