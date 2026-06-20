@@ -1211,6 +1211,7 @@ def _tool_needs_broker(tool_name: str, payload: dict[str, object]) -> bool:
     if tool_name in {"agent.delegate", "runtime.broker.inspect", "runtime.lifecycle.request", "runtime.sweep.request"}:
         return True
     if tool_name in {
+        "blocker.raise",
         "handoff.require",
         "consult.request",
         "informed.update",
@@ -1218,7 +1219,7 @@ def _tool_needs_broker(tool_name: str, payload: dict[str, object]) -> bool:
         "decision.record",
         "risk.register",
     }:
-        return _payload_has_any(payload, "target_role")
+        return _payload_has_any(payload, "target_role", "owner_role")
     return _tool_needs_stakeholder_bridge(tool_name, payload)
 
 

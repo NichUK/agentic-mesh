@@ -1598,6 +1598,97 @@ roles:
     assert "Published handoff.require to engineering" in journal_rows[0]["summary"]
 
 
+def test_cli_tool_call_wires_broker_for_owner_role_blocker(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    project_config = tmp_path / "project.yaml"
+    docs_root = tmp_path / "documents"
+    project_config.write_text(
+        f"""
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: filesystem
+  root: {docs_root.as_posix()}
+roles:
+  release-manager:
+    instances: 1
+  project-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "v3.sqlite3"
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Recover closure",
+            description="Needs Project Manager coordination.",
+            state="release_review",
+            owner_role="release-manager",
+        )
+    finally:
+        db.close()
+
+    result = main(
+        [
+            "--db",
+            str(db_path),
+            "--project-config",
+            str(project_config),
+            "tool-call",
+            "--role-instance-id",
+            "agentic-mesh-dev.release-manager.1",
+            "--tool-name",
+            "blocker.raise",
+            "--payload-json",
+            json.dumps(
+                {
+                    "work_item_id": "work-1",
+                    "correlation_id": "corr-cli-blocker-owner-1",
+                    "summary": "Project Manager must coordinate missing closure evidence.",
+                    "next_action": "Project Manager must collect evidence or record exceptions.",
+                    "owner_role": "project-manager",
+                    "current_phase": "operator_recovery",
+                }
+            ),
+        ]
+    )
+
+    output = capsys.readouterr().out
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        detail = db.work_item_detail("work-1")
+        journal_rows = db.connection.execute(
+            """
+            SELECT correlation_id, direction, stage, status, target_role,
+                   work_item_id, broker_subject, broker_consumer, summary
+            FROM message_journal
+            WHERE stage='published'
+            """
+        ).fetchall()
+    finally:
+        db.close()
+
+    assert result == 0
+    assert '"tool_name": "blocker.raise"' in output
+    assert detail is not None
+    assert detail.state == "blocked"
+    assert detail.owner_role == "project-manager"
+    assert len(journal_rows) == 1
+    assert journal_rows[0]["correlation_id"] == "corr-cli-blocker-owner-1"
+    assert journal_rows[0]["direction"] == "broker"
+    assert journal_rows[0]["status"] == "published"
+    assert journal_rows[0]["target_role"] == "project-manager"
+    assert journal_rows[0]["work_item_id"] == "work-1"
+    assert journal_rows[0]["broker_subject"] == "agent.project-manager"
+    assert journal_rows[0]["broker_consumer"] == "project-manager.1"
+    assert "Published blocker.raise to project-manager" in journal_rows[0]["summary"]
+
+
 def test_cli_tool_call_uses_project_config_stakeholder_bridge(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     project_config = tmp_path / "project.yaml"
     project_config.write_text(
