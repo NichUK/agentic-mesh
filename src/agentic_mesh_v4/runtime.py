@@ -138,9 +138,15 @@ class V4Runtime:
         for item in snapshot["roles"]:
             if item["role_instance_id"] == role_instance_id and item.get("active_thread_id"):
                 thread_id = str(item["active_thread_id"])
-                client.resume_thread(thread_id)
-                return thread_id
-        thread_id = client.start_thread(model=getattr(role, "model"), sandbox_mode=getattr(role, "sandbox_mode"))
+                if self._thread_matches_role(thread_id=thread_id, role_instance_id=role_instance_id, role=role):
+                    client.resume_thread(thread_id)
+                    return thread_id
+                self._retire_thread(role_instance_id=role_instance_id, thread_id=thread_id)
+        thread_id = client.start_thread(
+            model=getattr(role, "model"),
+            sandbox_mode=getattr(role, "sandbox_mode"),
+            approval_policy=getattr(role, "approval_policy"),
+        )
         now = utc_now()
         with self.db.connection:
             self.db.connection.execute(
@@ -153,12 +159,54 @@ class V4Runtime:
             )
             self.db.connection.execute(
                 """
-                INSERT OR IGNORE INTO codex_threads(thread_id, role_instance_id, status, created_at, updated_at)
-                VALUES(?,?,?,?,?)
+                INSERT OR IGNORE INTO codex_threads(
+                  thread_id, role_instance_id, sandbox_mode, approval_policy, status, created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?)
                 """,
-                (thread_id, role_instance_id, "active", now, now),
+                (
+                    thread_id,
+                    role_instance_id,
+                    getattr(role, "sandbox_mode"),
+                    getattr(role, "approval_policy"),
+                    "active",
+                    now,
+                    now,
+                ),
             )
         return thread_id
+
+    def _thread_matches_role(self, *, thread_id: str, role_instance_id: str, role: object) -> bool:
+        row = self.db.connection.execute(
+            """
+            SELECT sandbox_mode, approval_policy, status
+            FROM codex_threads
+            WHERE thread_id=? AND role_instance_id=?
+            """,
+            (thread_id, role_instance_id),
+        ).fetchone()
+        if row is None:
+            return False
+        return (
+            str(row["status"]) == "active"
+            and row["sandbox_mode"] == getattr(role, "sandbox_mode")
+            and row["approval_policy"] == getattr(role, "approval_policy")
+        )
+
+    def _retire_thread(self, *, role_instance_id: str, thread_id: str) -> None:
+        now = utc_now()
+        with self.db.connection:
+            self.db.connection.execute(
+                "UPDATE codex_threads SET status='retired', updated_at=? WHERE thread_id=?",
+                (now, thread_id),
+            )
+            self.db.connection.execute(
+                """
+                UPDATE role_instances
+                SET active_thread_id=NULL, active_turn_id=NULL, updated_at=?
+                WHERE role_instance_id=? AND active_thread_id=?
+                """,
+                (now, role_instance_id, thread_id),
+            )
 
     def _drain_available_events(
         self,

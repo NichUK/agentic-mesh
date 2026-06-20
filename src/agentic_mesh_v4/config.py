@@ -48,6 +48,7 @@ class V4RoleConfig:
     model: str = "gpt-5.5"
     reasoning_effort: str = "high"
     sandbox_mode: str = "workspace-write"
+    approval_policy: str = "on-request"
     codex_port: int = 4700
     idle_timeout_seconds: int = 900
     instructions: tuple[str, ...] = ()
@@ -119,6 +120,7 @@ def _roles_from_raw(raw_roles: object) -> tuple[V4RoleConfig, ...]:
                 model=str(worker.get("model") or "gpt-5.5"),
                 reasoning_effort=str(worker.get("reasoning_effort") or "high"),
                 sandbox_mode=_sandbox_mode(role_id, str(worker.get("sandbox_mode") or "")),
+                approval_policy=_approval_policy(role_id, str(worker.get("approval_policy") or "")),
                 codex_port=4700 + index,
                 idle_timeout_seconds=int(item.get("idle_timeout_seconds") or 900),
                 instructions=tuple(str(value) for value in item.get("instructions") or ()),
@@ -134,6 +136,7 @@ def _default_role(role_id: str, index: int) -> V4RoleConfig:
         template=role_id,
         authority="full" if role_id in FULL_ACCESS_ROLES else "scoped",
         sandbox_mode=_sandbox_mode(role_id, ""),
+        approval_policy=_approval_policy(role_id, ""),
         codex_port=4700 + index,
     )
 
@@ -144,6 +147,14 @@ def _sandbox_mode(role_id: str, configured: str) -> str:
     if role_id in FULL_ACCESS_ROLES:
         return "danger-full-access"
     return "workspace-write"
+
+
+def _approval_policy(role_id: str, configured: str) -> str:
+    if configured:
+        return configured
+    if role_id in FULL_ACCESS_ROLES:
+        return "never"
+    return "on-request"
 
 
 def _display_name(role_id: str) -> str:

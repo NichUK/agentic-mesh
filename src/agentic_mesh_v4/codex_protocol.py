@@ -148,12 +148,21 @@ class CodexAppServerClient:
         self.initialized = True
         return response
 
-    def start_thread(self, *, model: str, cwd: str | None = None, sandbox_mode: str | None = None) -> str:
+    def start_thread(
+        self,
+        *,
+        model: str,
+        cwd: str | None = None,
+        sandbox_mode: str | None = None,
+        approval_policy: str | None = None,
+    ) -> str:
         params: dict[str, Any] = {"model": model}
         if cwd:
             params["cwd"] = cwd
         if sandbox_mode:
             params["sandbox"] = sandbox_mode
+        if approval_policy:
+            params["approvalPolicy"] = approval_policy
         response = self._request("thread/start", params)
         thread = response.get("thread")
         if not isinstance(thread, dict) or not thread.get("id"):

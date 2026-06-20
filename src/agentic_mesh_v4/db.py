@@ -79,6 +79,8 @@ class V4Database:
                 CREATE TABLE IF NOT EXISTS codex_threads (
                   thread_id TEXT PRIMARY KEY,
                   role_instance_id TEXT NOT NULL,
+                  sandbox_mode TEXT,
+                  approval_policy TEXT,
                   status TEXT NOT NULL,
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL
@@ -217,6 +219,8 @@ class V4Database:
                   ON agent_events(thread_id, created_at);
                 """
             )
+            _ensure_column(self.connection, "codex_threads", "sandbox_mode", "TEXT")
+            _ensure_column(self.connection, "codex_threads", "approval_policy", "TEXT")
 
     def upsert_role_instance(
         self,
@@ -507,3 +511,9 @@ def _payload_hash(payload: dict[str, Any]) -> str:
 
 def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+
+def _ensure_column(connection: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
+    columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")

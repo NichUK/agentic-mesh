@@ -29,6 +29,8 @@ def test_v4_loads_full_sdlc_team_without_broker() -> None:
 
     assert tuple(role.role_id for role in config.roles) == DEFAULT_ROLE_IDS
     assert config.role("project-manager").authority == "full"
+    assert config.role("project-manager").sandbox_mode == "danger-full-access"
+    assert config.role("project-manager").approval_policy == "never"
     assert config.role("release-manager").authority == "full"
     assert config.role("product-manager").authority == "scoped"
 
@@ -60,7 +62,11 @@ def test_v4_codex_protocol_uses_remote_control_thread_and_turn_methods() -> None
 
     client = CodexAppServerClient(transport)
     client.initialize()
-    thread_id = client.start_thread(model="gpt-5.5", sandbox_mode="danger-full-access")
+    thread_id = client.start_thread(
+        model="gpt-5.5",
+        sandbox_mode="danger-full-access",
+        approval_policy="never",
+    )
     turn_id = client.start_turn(thread_id=thread_id, text="Do work")
 
     assert thread_id == "thread-1"
@@ -72,6 +78,7 @@ def test_v4_codex_protocol_uses_remote_control_thread_and_turn_methods() -> None
         "turn/start",
     ]
     assert transport.sent[2]["params"]["sandbox"] == "danger-full-access"
+    assert transport.sent[2]["params"]["approvalPolicy"] == "never"
     assert client.receive_event()["method"] == "thread/status"
     assert client.receive_event()["method"] == "turn/status"
     assert client.receive_event()["method"] == "item/agentMessage/delta"
@@ -124,6 +131,62 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["messages"][0]["state"] == "completed"
     assert snapshot["events"][0]["event_type"] == "turn/completed"
     assert snapshot["events"][1]["content"] == "Done"
+
+
+def test_v4_runtime_retires_thread_when_sandbox_metadata_does_not_match(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role = config.role("project-manager")
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    now = "2026-01-01T00:00:00+00:00"
+    with db.connection:
+        db.connection.execute(
+            """
+            INSERT INTO role_instances(
+              role_instance_id, role_id, display_name, service_name, state,
+              authority, codex_endpoint, active_thread_id, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                role_instance_id,
+                "project-manager",
+                "Project Manager",
+                role.service_name,
+                "ready",
+                "full",
+                f"ws://{role.service_name}:4700",
+                "old-thread",
+                now,
+            ),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_threads(thread_id, role_instance_id, status, created_at, updated_at)
+            VALUES(?,?,?,?,?)
+            """,
+            ("old-thread", role_instance_id, "active", now, now),
+        )
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {"thread": {"id": "new-thread"}}})
+    client = CodexAppServerClient(transport)
+    client.initialized = True
+
+    runtime = V4Runtime(db=db, project_config=config)
+    thread_id = runtime._thread_for_role(  # noqa: SLF001 - regression covers thread reuse safety.
+        client=client,
+        role_instance_id=role_instance_id,
+        role=role,
+    )
+
+    assert thread_id == "new-thread"
+    old_row = db.connection.execute("SELECT status FROM codex_threads WHERE thread_id='old-thread'").fetchone()
+    new_row = db.connection.execute(
+        "SELECT sandbox_mode, approval_policy FROM codex_threads WHERE thread_id='new-thread'"
+    ).fetchone()
+    assert old_row["status"] == "retired"
+    assert new_row["sandbox_mode"] == "danger-full-access"
+    assert new_row["approval_policy"] == "never"
 
 
 def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
@@ -199,6 +262,14 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
 
     assert "codex app-server --listen ws://0.0.0.0:4700" in rendered
     assert "agentic-mesh-dev-project-manager-1" in rendered
+    assert "--document-root /documents" in rendered
+    assert "${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents" in rendered
+    assert "${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/agent/.env:ro" in rendered
+    assert (
+        "${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}"
+        ":/mesh/agent/.ssh:ro"
+    ) in rendered
+    assert "HOME: /mesh/agent" in rendered
     assert "dispatcher:" in rendered
     assert "dispatch-loop" in rendered
     assert "working_dir: /mesh/agent" in rendered

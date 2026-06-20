@@ -18,7 +18,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    env_file:",
         "      - path: .env",
         "        required: false",
-        "    command: python -m agentic_mesh_v4.cli --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 --project-config /mesh/project/agentic-mesh/project-v4.yaml serve --host 0.0.0.0 --port 8100",
+        "    command: python -m agentic_mesh_v4.cli --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 --project-config /mesh/project/agentic-mesh/project-v4.yaml serve --host 0.0.0.0 --port 8100 --document-root /documents",
         "    ports:",
         "      - \"${AGENTIC_MESH_V4_STATUS_PORT:-8100}:8100\"",
         "    environment:",
@@ -26,6 +26,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
         "    volumes:",
         "      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro",
+        "      - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents",
         "      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project",
         "      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh",
         "      - /var/run/docker.sock:/var/run/docker.sock",
@@ -48,6 +49,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-agentic-mesh}",
         "    volumes:",
         "      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro",
+        "      - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents",
         "      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project",
         "      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh",
         "      - /var/run/docker.sock:/var/run/docker.sock",
@@ -63,7 +65,14 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "",
     ]
     for role in project_config.roles:
-        lines.extend(_role_service(role_id=role.role_id, service_name=role.service_name, port=role.codex_port))
+        lines.extend(
+            _role_service(
+                role_id=role.role_id,
+                service_name=role.service_name,
+                port=role.codex_port,
+                full_access=role.authority == "full",
+            )
+        )
         lines.append("")
     rendered = "\n".join(lines).rstrip() + "\n"
     validate_v4_compose(rendered)
@@ -77,10 +86,13 @@ def validate_v4_compose(rendered: str) -> None:
         raise ValueError(f"V4 compose contains V3-only components: {', '.join(found)}")
 
 
-def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
-    return [
+def _role_service(*, role_id: str, service_name: str, port: int, full_access: bool) -> list[str]:
+    lines = [
         f"  {service_name}:",
         "    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}",
+        "    env_file:",
+        "      - path: .env",
+        "        required: false",
         "    profiles:",
         "      - roles",
         "    working_dir: /mesh/agent",
@@ -89,10 +101,20 @@ def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
         f"      AGENTIC_MESH_ROLE_ID: {role_id}",
         f"      AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.{role_id}.1",
         "      CODEX_HOME: /mesh/worker-auth/codex",
+        "      HOME: /mesh/agent",
         "    volumes:",
         f"      - ${{AGENTIC_MESH_PROJECT_HOST_PATH:-../..}}/state/v4/agent-configs/{role_id}/1:/mesh/agent:ro",
+        "      - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents",
         "      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project",
         "      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh",
         "      - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex",
         "      - /var/run/docker.sock:/var/run/docker.sock",
     ]
+    if role_id == "project-manager":
+        lines.extend(
+            [
+                "      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/agent/.env:ro",
+                "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/agent/.ssh:ro",
+            ]
+        )
+    return lines
