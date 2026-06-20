@@ -133,6 +133,64 @@ def test_v3_database_migrates_existing_agent_run_status_columns(tmp_path: Path) 
     assert latest_runs["agentic-mesh-dev.project-manager.1"]["status"] == "completed"
 
 
+def test_v3_database_migrates_existing_role_memory_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "v3.sqlite3"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE agents (
+              role_instance_id TEXT PRIMARY KEY,
+              role_id TEXT NOT NULL,
+              container_state TEXT NOT NULL,
+              heartbeat_at TEXT,
+              current_work TEXT,
+              inbox_depth INTEGER NOT NULL DEFAULT 0,
+              dead_letter_depth INTEGER NOT NULL DEFAULT 0,
+              governance_waits_json TEXT NOT NULL DEFAULT '[]',
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE role_memory (
+              memory_id TEXT PRIMARY KEY,
+              role_id TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              summary TEXT NOT NULL,
+              provenance_ref TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO agents(role_instance_id, role_id, container_state)
+            VALUES ('agentic-mesh-dev.project-manager.1', 'project-manager', 'running');
+            INSERT INTO role_memory(memory_id, role_id, project_id, summary, provenance_ref)
+            VALUES (
+              'memory-old',
+              'project-manager',
+              'agentic-mesh-dev',
+              'Keep work moving.',
+              'work-item:old'
+            );
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+        columns = {row["name"] for row in db.connection.execute("PRAGMA table_info(role_memory)")}
+        memory = dict(db.connection.execute("SELECT role_instance_id, source_ref FROM role_memory").fetchone())
+    finally:
+        db.close()
+
+    assert {"role_instance_id", "source_ref"}.issubset(columns)
+    assert memory == {
+        "role_instance_id": "agentic-mesh-dev.project-manager.1",
+        "source_ref": "work-item:old",
+    }
+    assert snapshot.agents[0].memory_count == 1
+
+
 def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
