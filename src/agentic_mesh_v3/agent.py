@@ -795,15 +795,20 @@ def _is_inform_only_message(
     `agent.delegate`; treating pure informed updates as work creates noisy
     failures and hides the useful queue signal.
 
-    However, an informed update addressed to the current owner of the referenced
-    work item is not merely informational. The owner is accountable for deciding
-    whether the new evidence changes the next step, so it must reach the worker.
+    However, an informed update addressed to the current owner of a non-terminal
+    referenced work item is not merely informational. The owner is accountable
+    for deciding whether the new evidence changes the next step, so it must
+    reach the worker. Terminal work is already closed/canceled/superseded, so a
+    late informed update should be retained as memory and acknowledged without
+    trying to reopen or mutate terminal state.
     """
 
     if _payload_text(payload, "message_type") != "informed.update":
         return False
     work_item_id = _message_work_item_id(payload)
     if work_item_id is None:
+        return True
+    if work_item_state_provider.state_for_work_item(work_item_id) in TERMINAL_STATES:
         return True
     return work_item_state_provider.owner_for_work_item(work_item_id) != role_id
 

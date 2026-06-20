@@ -1326,6 +1326,87 @@ def test_role_agent_runs_worker_for_owner_targeted_informed_update(tmp_path: Pat
     assert any(row["stage"] == "acked" and row["status"] == "completed" for row in journal)
 
 
+def test_role_agent_acks_owner_targeted_informed_update_for_terminal_work(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.project-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.project-manager",
+        {
+            "message_type": "informed.update",
+            "message": "Late closure diagnostic for the Project Manager.",
+            "work_item_id": "work-closed",
+            "correlation_id": "corr-closed",
+            "source_message_id": "agent.platform-engineer:1508",
+        },
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    memory = InMemoryRoleMemory()
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-closed",
+            title="Closed work",
+            description="Already closed.",
+            state="closed",
+            owner_role="project-manager",
+            next_action="Release closed.",
+        )
+        service = RoleAgentService(
+            config=RoleInstanceConfig(
+                project_id="agentic-mesh-dev",
+                role_id="project-manager",
+                instance_id="1",
+                role_prompt_path=tmp_path / "role.md",
+                memory_db_path=tmp_path / "memory.sqlite3",
+                inbox_stream="agent-inbox",
+                inbox_consumer="project-manager.1",
+            ),
+            broker=broker,
+            worker=FailingIfCalledWorker(),
+            memory=memory,
+            work_item_state_provider=DatabaseWorkItemStateProvider(db),
+            run_recorder=DatabaseAgentRunRecorder(db),
+            message_journal=db,
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        runs = [
+            tuple(row)
+            for row in db.connection.execute(
+                "SELECT status, work_item_id FROM agent_runs WHERE message_id=?",
+                (published.message_id,),
+            ).fetchall()
+        ]
+        journal = db.connection.execute(
+            """
+            SELECT stage, status, summary
+            FROM message_journal
+            WHERE message_id=? AND stage='acked'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (published.message_id,),
+        ).fetchone()
+        detail = db.work_item_detail("work-closed")
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "inform_only_acknowledged"
+    assert broker.depth("agent-inbox").pending == 0
+    assert runs == [("inform_only_acknowledged", "work-closed")]
+    assert journal is not None
+    assert journal["status"] == "inform_only_acknowledged"
+    assert "without worker run" in journal["summary"]
+    assert detail is not None
+    assert detail.state == "closed"
+    assert memory.load_summary("agentic-mesh-dev.project-manager.1").startswith(
+        "Informed update for work-closed"
+    )
+
+
 def test_role_agent_acks_stale_message_for_terminal_work_item_without_worker_run(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])
