@@ -79,6 +79,8 @@ class InMemoryTransport(AppServerTransport):
         return {"id": message.get("id"), "result": {}}
 
     def receive(self) -> dict[str, Any] | None:
+        if self.responses:
+            return self.responses.pop(0)
         if self.notifications:
             return self.notifications.pop(0)
         return None
@@ -125,6 +127,7 @@ class CodexAppServerClient:
         self.transport = transport
         self.client_name = client_name
         self._next_id = 1
+        self._pending_events: list[dict[str, Any]] = []
         self.initialized = False
 
     def initialize(self) -> dict[str, Any]:
@@ -194,6 +197,8 @@ class CodexAppServerClient:
         return self._request("thread/turns/items/list", params)
 
     def receive_event(self) -> dict[str, Any] | None:
+        if self._pending_events:
+            return self._pending_events.pop(0)
         return self.transport.receive()
 
     def _request(
@@ -209,16 +214,23 @@ class CodexAppServerClient:
         request_id = self._next_id
         self._next_id += 1
         response = self.transport.send({"method": method, "id": request_id, "params": params})
-        if response is None:
-            return {}
-        if response.get("error"):
-            raise CodexProtocolError(str(response["error"]))
-        if response.get("id") != request_id:
-            raise CodexProtocolError(f"response id mismatch for {method}: {response.get('id')} != {request_id}")
-        result = response.get("result") or {}
-        if not isinstance(result, dict):
-            raise CodexProtocolError(f"response result for {method} must be an object")
-        return result
+        for _ in range(100):
+            if response is None:
+                response = self.transport.receive()
+                if response is None:
+                    continue
+            if response.get("error"):
+                raise CodexProtocolError(str(response["error"]))
+            if response.get("id") == request_id:
+                result = response.get("result") or {}
+                if not isinstance(result, dict):
+                    raise CodexProtocolError(f"response result for {method} must be an object")
+                return result
+            if "id" in response:
+                raise CodexProtocolError(f"response id mismatch for {method}: {response.get('id')} != {request_id}")
+            self._pending_events.append(response)
+            response = self.transport.receive()
+        raise CodexProtocolError(f"timed out waiting for response to {method}")
 
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         _validate_method(method)

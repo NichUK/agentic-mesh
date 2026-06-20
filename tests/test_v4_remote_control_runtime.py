@@ -43,7 +43,9 @@ def test_v4_codex_protocol_uses_remote_control_thread_and_turn_methods() -> None
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {"serverInfo": {"name": "fake"}}})
     transport.queue_response(None)
+    transport.queue_response({"method": "thread/status", "params": {"summary": "starting"}})
     transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"method": "turn/status", "params": {"summary": "running"}})
     transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
     transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Hello"}})
 
@@ -60,6 +62,8 @@ def test_v4_codex_protocol_uses_remote_control_thread_and_turn_methods() -> None
         "thread/start",
         "turn/start",
     ]
+    assert client.receive_event()["method"] == "thread/status"
+    assert client.receive_event()["method"] == "turn/status"
     assert client.receive_event()["method"] == "item/agentMessage/delta"
 
 
