@@ -1840,6 +1840,68 @@ def test_v3_tool_service_publishes_blocker_to_explicit_owner_role_inbox(tmp_path
     assert "Published blocker.raise to project-manager" in journal_rows[0]["summary"]
 
 
+def test_v3_tool_service_does_not_publish_governance_message_to_self(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    broker = InMemoryBrokerAdapter()
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Coordinate closure",
+            description="Project Manager owns the remaining coordination.",
+            state="active",
+            owner_role="project-manager",
+            current_phase="closure_coordination",
+        )
+        tools = V3ToolService(
+            db,
+            broker=broker,
+            broker_stream="agent-inbox",
+            configured_role_instance_ids=("agentic-mesh-dev.project-manager.1",),
+        )
+        tools.call(
+            role_instance_id="agentic-mesh-dev.project-manager.1",
+            tool_name="blocker.raise",
+            payload={
+                "work_item_id": "work-1",
+                "summary": "Project Manager is coordinating remaining evidence.",
+                "next_action": "Coordinate QA and release evidence before closure.",
+                "owner_role": "project-manager",
+                "current_phase": "closure_coordination",
+                "correlation_id": "corr-self-owned-blocker",
+            },
+        )
+
+        detail = db.work_item_detail("work-1")
+        with pytest.raises(ValueError, match="stream does not exist: agent-inbox"):
+            broker.pending("agent-inbox")
+        journal_rows = db.connection.execute(
+            """
+            SELECT * FROM message_journal
+            WHERE target_role='project-manager' AND stage='published'
+            """
+        ).fetchall()
+        events = [
+            dict(row)
+            for row in db.connection.execute(
+                """
+                SELECT event_type, aggregate_id, payload_json
+                FROM events
+                WHERE event_type='agent.governance_self_publish_skipped'
+                """
+            ).fetchall()
+        ]
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "blocked"
+    assert detail.owner_role == "project-manager"
+    assert journal_rows == []
+    assert len(events) == 1
+    assert events[0]["aggregate_id"] == "agentic-mesh-dev.project-manager.1"
+
+
 def test_v3_database_builds_work_item_governance_checklist(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
