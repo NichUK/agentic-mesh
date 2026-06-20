@@ -1417,6 +1417,51 @@ roles:
     assert result == 0
 
 
+def test_cli_tool_call_broker_retry_dead_letter_uses_project_broker_config(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("AGENTIC_MESH_ONEDRIVE_DRIVE_ID", raising=False)
+    project_config = tmp_path / "project.yaml"
+    project_config.write_text(
+        """
+project_id: agentic-mesh-dev
+broker:
+  adapter: in-memory
+  stream: agent-inbox
+document_library:
+  adapter: onedrive
+  drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}
+  root_path: /documents
+roles:
+  project-manager:
+    instances: 1
+  release-manager:
+    instances: 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="dead-letter message was not found"):
+        main(
+            [
+                "--db",
+                str(tmp_path / "v3.sqlite3"),
+                "--project-config",
+                str(project_config),
+                "tool-call",
+                "--role-instance-id",
+                "agentic-mesh-dev.project-manager.1",
+                "--tool-name",
+                "runtime.broker.retry_dead_letter",
+                "--payload-json",
+                '{"message_id":"missing","target_role":"release-manager","reason":"test retry wiring"}',
+            ]
+        )
+    captured = capsys.readouterr()
+
+    assert "broker is not configured" not in captured.err
+
+
 def test_cli_tool_call_lifecycle_request_uses_configured_compose_file(
     tmp_path: Path, capsys
 ) -> None:  # type: ignore[no-untyped-def]
