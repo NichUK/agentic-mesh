@@ -69,7 +69,12 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
     assert product_tools["blocker.raise"].terminal is True
     assert product_tools["blocker.raise"].do_tool is True
     assert product_tools["blocker.raise"].reply_tool is True
-    assert product_tools["blocker.raise"].required_fields == ("work_item_id", "summary", "next_action")
+    assert product_tools["blocker.raise"].required_fields == (
+        "work_item_id",
+        "summary",
+        "next_action",
+        "owner_role",
+    )
     assert product_tools["consult.request"].required_fields == ("work_item_id", "target_role", "question")
     assert product_tools["conversation.compact_context"].allowed is True
     assert product_tools["conversation.compact_context"].do_tool is True

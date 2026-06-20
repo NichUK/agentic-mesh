@@ -1715,6 +1715,7 @@ def test_v3_tool_service_raises_blocker_with_visible_next_action(tmp_path: Path)
                 "work_item_id": "work-1",
                 "summary": "Tenant admin consent is missing for Graph application permissions.",
                 "next_action": "Sponsor must grant admin consent or provide a tenant admin contact.",
+                "owner_role": "platform-engineer",
                 "current_phase": "deployment",
                 "target_ref": "entra-admin-consent",
             },
@@ -1735,6 +1736,41 @@ def test_v3_tool_service_raises_blocker_with_visible_next_action(tmp_path: Path)
     assert record.target_ref == "entra-admin-consent"
     assert record.summary == "Tenant admin consent is missing for Graph application permissions."
     assert snapshot.work_items[0].attention_reason == "work item is in blocked"
+
+
+def test_v3_tool_service_requires_explicit_blocker_owner_role(tmp_path: Path) -> None:
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-1",
+            title="Recover release closure",
+            description="Needs a real owner for the next action.",
+            state="release_review",
+            owner_role="release-manager",
+            current_phase="release_review",
+        )
+        tools = V3ToolService(db)
+
+        with pytest.raises(ValueError, match="owner_role is required for blocker.raise"):
+            tools.call(
+                role_instance_id="agentic-mesh-dev.release-manager.1",
+                tool_name="blocker.raise",
+                payload={
+                    "work_item_id": "work-1",
+                    "summary": "Closure evidence is missing.",
+                    "next_action": "Project Manager must coordinate missing closure evidence.",
+                    "current_phase": "operator_recovery",
+                },
+            )
+
+        detail = db.work_item_detail("work-1")
+    finally:
+        db.close()
+
+    assert detail is not None
+    assert detail.state == "release_review"
+    assert detail.owner_role == "release-manager"
 
 
 def test_v3_tool_service_publishes_blocker_to_explicit_owner_role_inbox(tmp_path: Path) -> None:

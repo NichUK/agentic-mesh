@@ -142,7 +142,7 @@ TOOL_REQUIRED_FIELDS = {
     "agent.delegate": ("target_role", "task", "reason", "expected_output"),
     "artifact.link": ("work_item_id", "relative_path"),
     "backlog.upsert": ("queue_item_id", "title", "summary", "owner_role"),
-    "blocker.raise": ("work_item_id", "summary", "next_action"),
+    "blocker.raise": ("work_item_id", "summary", "next_action", "owner_role"),
     "consult.request": ("work_item_id", "target_role", "question"),
     "conversation.compact_context": ("conversation_ref", "summary", "source_message_ids", "visibility"),
     "decision.record": ("work_item_id", "summary"),

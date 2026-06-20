@@ -1319,10 +1319,11 @@ class V3ToolService:
     ) -> None:
         if tool_name == "blocker.raise":
             _validate_blocker_raise(payload)
+            owner_role = _required(payload, "owner_role")
             self.db.update_work_item_state(
                 work_item_id=_required(payload, "work_item_id"),
                 state="blocked",
-                owner_role=str(payload.get("owner_role") or role_from_instance(role_instance_id)),
+                owner_role=owner_role,
                 current_phase=_optional(payload.get("current_phase")),
                 next_action=_required(payload, "next_action"),
             )
@@ -1736,6 +1737,7 @@ def _validate_blocker_raise(payload: dict[str, Any]) -> None:
     _required(payload, "work_item_id")
     _required(payload, "summary")
     _required(payload, "next_action")
+    _required(payload, "owner_role")
 
 
 def _governance_message_target_role(tool_name: str, payload: dict[str, Any]) -> str | None:
