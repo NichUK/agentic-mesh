@@ -1,9 +1,13 @@
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 from agentic_mesh_v3.broker import InMemoryBrokerAdapter
 from agentic_mesh_v3.connectors import LocalTeamsBridge
+from agentic_mesh_v3 import db as db_module
 from agentic_mesh_v3.db import V3Database
 from agentic_mesh_v3.deployment import CommandDeploymentTarget
 from agentic_mesh_v3.deployment import DeploymentResult
@@ -14,6 +18,38 @@ from agentic_mesh_v3.lifecycle import CommandExecutionResult
 from agentic_mesh_v3.lifecycle import ComposeLifecycleConfig
 from agentic_mesh_v3.reporting import AgentStatus
 from agentic_mesh_v3.tools import V3ToolService
+
+
+def test_v3_database_continues_when_existing_wal_database_is_temporarily_locked(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class LockedJournalConnection:
+        def __init__(self) -> None:
+            self.journal_attempts = 0
+
+        def execute(self, sql: str):  # noqa: ANN202
+            if sql == "PRAGMA journal_mode = WAL":
+                self.journal_attempts += 1
+                raise sqlite3.OperationalError("database is locked")
+            return []
+
+    connection = LockedJournalConnection()
+    monkeypatch.setattr(db_module, "SQLITE_JOURNAL_MODE_RETRY_SECONDS", 0.0)
+
+    db_module._enable_wal_journal_mode(connection, database_exists=True)  # type: ignore[arg-type]
+
+    assert connection.journal_attempts == 1
+
+
+def test_v3_database_raises_when_new_database_cannot_enable_wal(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class LockedJournalConnection:
+        def execute(self, sql: str):  # noqa: ANN202
+            if sql == "PRAGMA journal_mode = WAL":
+                raise sqlite3.OperationalError("database is locked")
+            return []
+
+    monkeypatch.setattr(db_module, "SQLITE_JOURNAL_MODE_RETRY_SECONDS", 0.0)
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        db_module._enable_wal_journal_mode(LockedJournalConnection(), database_exists=False)  # type: ignore[arg-type]
 
 
 def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) -> None:
