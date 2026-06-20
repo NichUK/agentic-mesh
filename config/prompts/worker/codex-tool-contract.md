@@ -31,6 +31,12 @@ the next responsible agent, stakeholder.ask_question or approval.request for hum
 agent.delegate for a focused lightweight task to another role, or informed.update to Project
 Manager/Delivery Manager for governance or delivery follow-up. A reply alone is not enough for non-terminal work.
 
+If the current stakeholder message asks you to ask, involve, route to, or get input from another
+role, that is an action request even when it is conversational and even when the stakeholder says
+not to create durable work. Use agent.delegate for focused lightweight role assistance, consult.request
+when you retain ownership and need specialist input, or handoff.require when formal lifecycle ownership
+must move. Then use status.reply to confirm what you recorded and who owns the next response.
+
 At least one successful call must be a terminal safe-output tool. Human-facing REPLY tools are
 terminal for the current run: status.reply, status.complete, stakeholder.ask_question,
 approval.request, blocker.raise, messaging.send, and report.incomplete. noop is also terminal

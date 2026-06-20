@@ -84,6 +84,20 @@ def test_v3_safe_output_prompt_has_operational_debug_playbook() -> None:
     assert "Agent-to-agent tools" in normalized_safe_outputs
 
 
+def test_v3_safe_output_prompt_handles_stakeholder_delegation_requests() -> None:
+    safe_outputs = Path("config/prompts/worker/safe-outputs.xml").read_text(encoding="utf-8")
+    contract = Path("config/prompts/worker/codex-tool-contract.md").read_text(encoding="utf-8")
+    normalized_safe_outputs = " ".join(safe_outputs.split())
+    normalized_contract = " ".join(contract.split())
+
+    assert "When a direct stakeholder message asks you to ask, involve, route to, or get input from another role" in normalized_safe_outputs
+    assert "treat that as an action request even if the sender says not to create tracked work" in normalized_safe_outputs
+    assert "Use `agent.delegate` when the target role should do a focused lightweight follow-up" in normalized_safe_outputs
+    assert "Then call `status.reply` with `text_markdown` to confirm the delegation/consult/handoff" in normalized_safe_outputs
+    assert "not to create durable work" in normalized_contract
+    assert "Use agent.delegate for focused lightweight role assistance" in normalized_contract
+
+
 def test_v3_system_prompt_restricts_broad_filesystem_searches() -> None:
     system_prompt = Path("config/prompts/worker/system-security.xml").read_text(encoding="utf-8")
     normalized = " ".join(system_prompt.split())

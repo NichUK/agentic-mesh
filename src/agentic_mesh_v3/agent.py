@@ -1753,7 +1753,18 @@ def _relevance_check_prompt_section(message: AgentMessage) -> str:
 
 def _agent_delegation_prompt_section(message: AgentMessage) -> str:
     if _optional_prompt_value(message.payload.get("message_type")) != "agent.delegate":
-        return "<agent-delegation>Not an agent-delegation assignment.</agent-delegation>"
+        return "\n".join(
+            [
+                "<agent-delegation>",
+                "No upstream agent.delegate assignment is attached to this message.",
+                "This does not limit your authority to create a new delegation.",
+                "If the current stakeholder or agent message asks you to involve, ask, route to, or get input from another role,",
+                "use agent.delegate for focused lightweight role assistance, consult.request when you retain ownership and need input,",
+                "or handoff.require when formal lifecycle ownership must move to another role.",
+                "Then use a REPLY safe-output so the sender knows what action you recorded.",
+                "</agent-delegation>",
+            ]
+        )
     source_role = _optional_prompt_value(message.payload.get("source_role")) or "unspecified"
     source_role_instance_id = _optional_prompt_value(message.payload.get("source_role_instance_id")) or "unspecified"
     task = _optional_prompt_value(message.payload.get("task")) or "unspecified"

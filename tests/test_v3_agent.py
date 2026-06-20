@@ -420,7 +420,48 @@ def test_role_agent_prompt_marks_non_delegation_assignments(tmp_path: Path) -> N
 
     assert result is not None
     assert result.status == "completed"
-    assert "<agent-delegation>Not an agent-delegation assignment.</agent-delegation>" in worker.prompt
+    assert "No upstream agent.delegate assignment is attached to this message." in worker.prompt
+    assert "This does not limit your authority to create a new delegation." in worker.prompt
+    assert "use agent.delegate for focused lightweight role assistance" in worker.prompt
+    assert "Then use a REPLY safe-output so the sender knows what action you recorded." in worker.prompt
+
+
+def test_project_manager_direct_prompt_guides_stakeholder_requested_delegation(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.project-manager"])
+    broker.publish(
+        "agent-inbox",
+        "agent.project-manager",
+        {
+            "message_type": "stakeholder.message",
+            "source_type": "dm",
+            "route_type": "role_dm",
+            "role_id": "project-manager",
+            "source_message_id": "msg-delegate-delivery",
+            "correlation_id": "corr-msg-delegate-delivery",
+            "text": (
+                "Project Manager delegation smoke test: ask Delivery Manager to provide a concise "
+                "delivery-health check for the mesh, then reply to me after you have delegated. "
+                "Do not create durable work."
+            ),
+        },
+    )
+    worker = CapturingWorker()
+    service = RoleAgentService(
+        config=_config(tmp_path, role_id="project-manager"),
+        broker=broker,
+        worker=worker,
+        memory=InMemoryRoleMemory(),
+    )
+
+    result = service.run_once()
+
+    assert result is not None
+    assert result.status == "completed"
+    assert "ask Delivery Manager to provide a concise delivery-health check" in worker.prompt
+    assert "This does not limit your authority to create a new delegation." in worker.prompt
+    assert "use agent.delegate for focused lightweight role assistance" in worker.prompt
+    assert "Then use a REPLY safe-output so the sender knows what action you recorded." in worker.prompt
 
 
 def test_role_agent_prioritizes_direct_messages_over_relevance_checks(tmp_path: Path) -> None:
