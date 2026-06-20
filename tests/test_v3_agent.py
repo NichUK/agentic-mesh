@@ -1051,6 +1051,61 @@ def test_role_agent_blocks_linked_work_item_on_dead_letter(tmp_path: Path) -> No
     )
 
 
+def test_project_manager_delivery_failure_escalates_to_delivery_manager(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.project-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.project-manager",
+        {
+            "request": "recover failed role",
+            "work_item_id": "work-123",
+            "correlation_id": "corr-123",
+            "source_message_id": "msg-123",
+        },
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-123",
+            title="Recover delivery",
+            description="Recover a failed role delivery.",
+            state="blocked",
+            owner_role="project-manager",
+        )
+        service = RoleAgentService(
+            config=_config(tmp_path, role_id="project-manager"),
+            broker=broker,
+            worker=NoToolWorker(),
+            memory=InMemoryRoleMemory(),
+            failure_reporter=DatabaseAgentFailureReporter(db, broker=broker, broker_stream="agent-inbox"),
+            message_journal=db,
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+        detail = db.work_item_detail("work-123")
+        recovery_messages = broker.fetch("agent-inbox", "delivery-manager.1")
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "dead_lettered"
+    assert detail is not None
+    assert detail.state == "blocked"
+    assert detail.owner_role == "delivery-manager"
+    assert "Delivery Manager must recover failed agent delivery" in detail.next_action
+    assert published.message_id in detail.next_action
+    assert len(recovery_messages) == 1
+    recovery = recovery_messages[0]
+    assert recovery.subject == "agent.delivery-manager"
+    assert recovery.payload["message_type"] == "operator_recovery.required"
+    assert recovery.payload["target_role"] == "delivery-manager"
+    assert recovery.payload["failed_message_id"] == published.message_id
+    assert "Delivery Manager either retries" in str(recovery.payload["expected_output"])
+
+
 def test_role_agent_acks_informed_update_without_worker_run_or_work_block(tmp_path: Path) -> None:
     broker = InMemoryBrokerAdapter()
     broker.ensure_stream("agent-inbox", ["agent.product-manager"])

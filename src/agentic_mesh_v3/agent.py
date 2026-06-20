@@ -482,12 +482,14 @@ class DatabaseAgentFailureReporter:
         broker: BrokerAdapter | None = None,
         broker_stream: str | None = None,
         project_manager_role_id: str = "project-manager",
+        delivery_manager_role_id: str = "delivery-manager",
     ) -> None:
         self.db = db
         self.stakeholder_bridge = stakeholder_bridge
         self.broker = broker
         self.broker_stream = broker_stream
         self.project_manager_role_id = project_manager_role_id
+        self.delivery_manager_role_id = delivery_manager_role_id
 
     def report_dead_letter(
         self,
@@ -525,11 +527,12 @@ class DatabaseAgentFailureReporter:
             )
             return
         operator_recovery = _is_operator_recovery_failure(error)
-        owner_role = "project-manager" if operator_recovery else role_id
+        recovery_owner_role = self._operator_recovery_owner(role_id)
+        owner_role = recovery_owner_role if operator_recovery else role_id
         current_phase = "operator_recovery" if operator_recovery else _payload_text(payload, "current_phase")
         if operator_recovery:
             next_action = (
-                f"Project Manager must recover failed agent delivery for {role_instance_id} on message {message_id}: {error}. "
+                f"{_role_display_name(recovery_owner_role)} must recover failed agent delivery for {role_instance_id} on message {message_id}: {error}. "
                 "Inspect the message journal, prompt/tool wiring, and latest work-item state; then retry the role, delegate a "
                 "focused diagnostic/fix to the right specialist, or record a concrete blocker with owner and next action."
             )
@@ -551,7 +554,8 @@ class DatabaseAgentFailureReporter:
             origin_message_id=_payload_text(payload, "source_message_id") or message_id,
         )
         if operator_recovery:
-            self._publish_project_manager_recovery(
+            self._publish_operator_recovery(
+                target_role=recovery_owner_role,
                 role_instance_id=role_instance_id,
                 role_id=role_id,
                 message_id=message_id,
@@ -669,9 +673,15 @@ class DatabaseAgentFailureReporter:
             return direct_route
         return dict(route)
 
-    def _publish_project_manager_recovery(
+    def _operator_recovery_owner(self, failed_role_id: str) -> str:
+        if failed_role_id == self.project_manager_role_id:
+            return self.delivery_manager_role_id
+        return self.project_manager_role_id
+
+    def _publish_operator_recovery(
         self,
         *,
+        target_role: str,
         role_instance_id: str,
         role_id: str,
         message_id: str,
@@ -682,7 +692,6 @@ class DatabaseAgentFailureReporter:
     ) -> None:
         if self.broker is None or self.broker_stream is None:
             return
-        target_role = self.project_manager_role_id
         subject = f"agent.{target_role}"
         consumer = role_consumer_name(target_role, "1")
         self.broker.ensure_stream(self.broker_stream, [subject])
@@ -699,7 +708,7 @@ class DatabaseAgentFailureReporter:
             "task": next_action,
             "reason": "Agent delivery dead-lettered with a safe-output/tool-contract failure.",
             "expected_output": (
-                "Project Manager either retries the failed role with focused context, delegates diagnosis to a specialist, "
+                f"{_role_display_name(target_role)} either retries the failed role with focused context, delegates diagnosis to a specialist, "
                 "or records a concrete blocker/exception with owner and next action."
             ),
             "correlation_id": _message_correlation_id(payload) or f"corr-{message_id}",
@@ -732,6 +741,10 @@ class DatabaseAgentFailureReporter:
             summary=f"Published operator recovery to {target_role}: {next_action[:140]}",
             payload=message_payload,
         )
+
+
+def _role_display_name(role_id: str) -> str:
+    return " ".join(part.capitalize() for part in role_id.split("-"))
 
 
 def _is_non_blocking_delivery_failure(payload: dict[str, object]) -> bool:
