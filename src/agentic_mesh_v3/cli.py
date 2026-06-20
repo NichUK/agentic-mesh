@@ -1208,7 +1208,13 @@ def _tool_needs_deployment_targets(tool_name: str) -> bool:
 
 
 def _tool_needs_broker(tool_name: str, payload: dict[str, object]) -> bool:
-    if tool_name in {"agent.delegate", "runtime.broker.inspect", "runtime.lifecycle.request", "runtime.sweep.request"}:
+    if tool_name in {
+        "agent.delegate",
+        "runtime.broker.inspect",
+        "runtime.broker.retry_dead_letter",
+        "runtime.lifecycle.request",
+        "runtime.sweep.request",
+    }:
         return True
     if tool_name in {
         "blocker.raise",
