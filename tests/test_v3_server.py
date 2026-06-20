@@ -548,7 +548,7 @@ def test_work_item_page_renders_detail_evidence(tmp_path: Path) -> None:
                 "work_item_id": "work-1",
                 "summary": "Deployment target credentials are missing.",
                 "next_action": "Provide staging deployment credentials.",
-                "blocked_role": "platform-engineer",
+                "owner_role": "platform-engineer",
             },
         )
         tools.call(
