@@ -34,19 +34,19 @@ mkdir -p "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4"
 
 sh scripts/deploy-linuxch-compose.sh --profile build-image build runtime-image
 
-python -m agentic_mesh_v4.cli \
+PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --db "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4/agentic-mesh-v4.sqlite3" \
   --project-config "$AGENTIC_MESH_PROJECT_HOST_PATH/agentic-mesh/project-v4.yaml" \
   init-db
 
-python -m agentic_mesh_v4.cli \
+PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --db "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4/agentic-mesh-v4.sqlite3" \
   --project-config "$AGENTIC_MESH_PROJECT_HOST_PATH/agentic-mesh/project-v4.yaml" \
   materialize-agent-configs \
   --agent-config-root "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4/agent-configs" \
   --role-templates-dir "$REPO_ROOT/config/roles"
 
-python -m agentic_mesh_v4.cli \
+PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --db "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4/agentic-mesh-v4.sqlite3" \
   --project-config "$AGENTIC_MESH_PROJECT_HOST_PATH/agentic-mesh/project-v4.yaml" \
   render-compose \
