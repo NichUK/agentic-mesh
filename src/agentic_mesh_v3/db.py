@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from dataclasses import asdict
 from datetime import datetime
 from datetime import timedelta
@@ -36,6 +37,10 @@ from agentic_mesh_v3.state_machine import validate_transition
 SCHEMA_VERSION = 1
 ATTENTION_STATES = {"blocked", "waiting_human", "waiting_agent", "waiting_external", "recovering"}
 STATUS_STALE_AFTER_SECONDS = 3600
+SQLITE_CONNECT_TIMEOUT_SECONDS = 60.0
+SQLITE_BUSY_TIMEOUT_MS = 60000
+SQLITE_JOURNAL_MODE_RETRY_SECONDS = 10.0
+SQLITE_JOURNAL_MODE_RETRY_INTERVAL_SECONDS = 0.25
 
 
 class V3Database:
@@ -49,11 +54,12 @@ class V3Database:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path, timeout=30.0)
+        database_exists = self.path.exists()
+        self.connection = sqlite3.connect(self.path, timeout=SQLITE_CONNECT_TIMEOUT_SECONDS)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
-        self.connection.execute("PRAGMA busy_timeout = 30000")
-        self.connection.execute("PRAGMA journal_mode = WAL")
+        self.connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+        _enable_wal_journal_mode(self.connection, database_exists=database_exists)
         self.connection.execute("PRAGMA synchronous = NORMAL")
 
     def close(self) -> None:
@@ -2601,6 +2607,31 @@ def _ensure_column(connection: sqlite3.Connection, table: str, column: str, defi
     columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _enable_wal_journal_mode(connection: sqlite3.Connection, *, database_exists: bool) -> None:
+    """Enable WAL without making live operator commands fragile under DB contention.
+
+    SQLite can raise `database is locked` while changing journal mode if another
+    live runtime connection is busy. Existing runtime databases are expected to
+    already be in WAL mode, so after a short retry window it is safer for
+    read/write operator commands to continue with the open connection than to
+    fail before they can publish recovery or control-plane work.
+    """
+
+    deadline = time.monotonic() + SQLITE_JOURNAL_MODE_RETRY_SECONDS
+    while True:
+        try:
+            connection.execute("PRAGMA journal_mode = WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower():
+                raise
+            if time.monotonic() >= deadline:
+                if database_exists:
+                    return
+                raise
+            time.sleep(SQLITE_JOURNAL_MODE_RETRY_INTERVAL_SECONDS)
 
 
 def _sha256(text: str) -> str:
