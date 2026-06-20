@@ -13,6 +13,7 @@ from agentic_mesh_v3.cli import _broker_inspection_payload
 from agentic_mesh_v3.cli import _build_role_agent_service
 from agentic_mesh_v3.cli import _ensure_agent_stream
 from agentic_mesh_v3.cli import _stakeholder_bridge
+from agentic_mesh_v3.cli import _tool_lifecycle_config
 from agentic_mesh_v3.cli import _worker_from_args
 from agentic_mesh_v3.cli import _enrich_tool_call_payload_from_env
 from agentic_mesh_v3.cli import main
@@ -90,6 +91,51 @@ def test_cli_enrichment_preserves_explicit_status_reply_target() -> None:
 
     assert payload["source_message_id"] == "msg-1"
     assert payload["reply_target_ref"] == "chat:explicit"
+
+
+def test_role_service_lifecycle_config_uses_project_compose_and_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    config_dir = project_root / "agentic-mesh"
+    compose_dir = project_root / "deploy" / "compose"
+    state_dir = project_root / "state"
+    config_dir.mkdir(parents=True)
+    compose_dir.mkdir(parents=True)
+    state_dir.mkdir()
+    project_config = config_dir / "project-v3.yaml"
+    project_config.write_text("project: {}\n", encoding="utf-8")
+    base_compose = compose_dir / "docker-compose.yml"
+    linuxch_compose = compose_dir / "docker-compose.linuxch.yml"
+    base_compose.write_text("services: {}\n", encoding="utf-8")
+    linuxch_compose.write_text("services: {}\n", encoding="utf-8")
+    lock_path = state_dir / "compose-lifecycle.lock"
+    monkeypatch.setenv("AGENTIC_MESH_LIFECYCLE_COMPOSE_PROJECT_NAME", "agentic-mesh")
+    monkeypatch.setenv("AGENTIC_MESH_LIFECYCLE_COMPOSE_PROFILES", "v3")
+    monkeypatch.setenv("AGENTIC_MESH_LIFECYCLE_WORKING_DIRECTORY", str(compose_dir))
+    monkeypatch.setenv("AGENTIC_MESH_LIFECYCLE_LOCK_PATH", str(lock_path))
+
+    config = _tool_lifecycle_config(
+        argparse.Namespace(
+            project_config=project_config,
+            lifecycle_compose_file=None,
+            lifecycle_compose_project_name=None,
+            lifecycle_compose_profile=None,
+            lifecycle_working_directory=None,
+            lifecycle_timeout_seconds=300,
+            lifecycle_lock_path=None,
+            lifecycle_lock_timeout_seconds=300,
+            lifecycle_lock_stale_seconds=900,
+        )
+    )
+
+    assert config is not None
+    assert config.compose_files == (base_compose, linuxch_compose)
+    assert config.project_name == "agentic-mesh"
+    assert config.profiles == ("v3",)
+    assert config.working_directory == compose_dir
+    assert config.lock_path == lock_path
 
 
 def test_safe_output_jsonl_importer_maps_legacy_file_outputs_to_db_tool_calls(tmp_path: Path) -> None:
