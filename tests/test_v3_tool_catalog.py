@@ -91,6 +91,9 @@ def test_tool_catalog_marks_role_scoped_permissions_and_terminal_tools() -> None
     assert product_tools["runtime.broker.inspect"].allowed is True
     assert product_tools["runtime.broker.inspect"].do_tool is True
     assert product_tools["runtime.broker.inspect"].required_fields == ("reason",)
+    assert product_tools["runtime.broker.retry_dead_letter"].allowed is True
+    assert product_tools["runtime.broker.retry_dead_letter"].do_tool is True
+    assert product_tools["runtime.broker.retry_dead_letter"].required_fields == ("message_id", "reason")
     assert product_tools["runtime.lifecycle.request"].allowed is True
     assert product_tools["runtime.lifecycle.request"].do_tool is True
     assert product_tools["runtime.lifecycle.request"].required_fields == ("reason",)

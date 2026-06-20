@@ -175,6 +175,9 @@ class V3ToolService:
         if tool_name == "runtime.broker.inspect":
             if self.broker is None or self.broker_stream is None:
                 raise ValueError("broker is not configured")
+        if tool_name == "runtime.broker.retry_dead_letter":
+            if self.broker is None or self.broker_stream is None:
+                raise ValueError("broker is not configured")
         if tool_name == "runtime.lifecycle.request":
             if self.lifecycle_config is None:
                 raise ValueError("lifecycle config is not configured")
@@ -426,6 +429,8 @@ class V3ToolService:
             self._request_runtime_sweep(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.broker.inspect":
             return self._inspect_broker(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
+        elif tool_name == "runtime.broker.retry_dead_letter":
+            return self._retry_dead_letter(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.lifecycle.request":
             return self._request_runtime_lifecycle(call_id=call_id, role_instance_id=role_instance_id, payload=payload)
         elif tool_name == "runtime.message_journal.inspect":
@@ -557,6 +562,108 @@ class V3ToolService:
             payload=event_payload,
         )
         return {"inspection": inspection}
+
+    def _retry_dead_letter(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.broker is None or self.broker_stream is None:
+            raise ValueError("broker is not configured")
+        message_id = _required(payload, "message_id")
+        limit = int(payload.get("limit") or 100)
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+        dead_letters = self.broker.dead_letters(self.broker_stream, limit=limit)
+        original = next((message for message in dead_letters if message.message_id == message_id), None)
+        if original is None:
+            raise ValueError(f"dead-letter message was not found in broker inspection: {message_id}")
+
+        target_role = _optional(payload.get("target_role") or payload.get("role_id"))
+        subject = _optional(payload.get("subject")) or original.subject
+        if target_role is not None:
+            subject = f"agent.{target_role}"
+        elif subject.startswith("agent."):
+            target_role = subject.removeprefix("agent.").split(".", 1)[0]
+        if not subject or not subject.startswith("agent."):
+            raise ValueError("dead-letter retry requires a target_role or an original agent.* subject")
+        if target_role is None:
+            raise ValueError("dead-letter retry requires a target_role")
+
+        instance_id = str(payload.get("instance_id") or "1")
+        consumer = role_consumer_name(target_role, instance_id)
+        retry_payload = {
+            key: value
+            for key, value in original.payload.items()
+            if key not in {"dead_letter_reason", "last_nack_reason"}
+        }
+        retry_payload.update(
+            {
+                "retried_from_message_id": message_id,
+                "retry_requested_by": role_instance_id,
+                "retry_call_id": call_id,
+                "retry_reason": _required(payload, "reason"),
+            }
+        )
+        correlation_id = str(
+            payload.get("correlation_id")
+            or retry_payload.get("correlation_id")
+            or f"corr-{message_id}"
+        )
+        retry_payload["correlation_id"] = correlation_id
+        self.broker.ensure_stream(self.broker_stream, [subject])
+        self.broker.ensure_consumer(self.broker_stream, consumer, filter_subject=subject)
+        retry_message = self.broker.publish(
+            self.broker_stream,
+            subject,
+            retry_payload,
+            message_id=_optional(payload.get("new_message_id")),
+        )
+        event_payload = {
+            "call_id": call_id,
+            "reason": _required(payload, "reason"),
+            "original_message_id": message_id,
+            "retry_message_id": retry_message.message_id,
+            "target_role": target_role,
+            "broker_subject": subject,
+            "broker_consumer": consumer,
+            "work_item_id": _optional(retry_payload.get("work_item_id") or payload.get("work_item_id")),
+        }
+        with self.db.connection:
+            self.db.record_event("runtime.dead_letter_retried", "agent", role_instance_id, event_payload)
+        self.db.record_message_journal(
+            message_id=message_id,
+            correlation_id=correlation_id,
+            direction="runtime",
+            stage="dead_letter_requeued",
+            status="completed",
+            source_ref=call_id,
+            target_role=target_role,
+            role_instance_id=role_instance_id,
+            work_item_id=event_payload["work_item_id"],
+            broker_subject=subject,
+            broker_consumer=consumer,
+            summary=f"Dead-letter retry requested for {message_id}: {_truncate_for_summary(payload.get('reason'))}",
+            payload=event_payload,
+        )
+        self.db.record_message_journal(
+            message_id=retry_message.message_id,
+            correlation_id=correlation_id,
+            direction="broker",
+            stage="published",
+            status="published",
+            source_ref=call_id,
+            target_role=target_role,
+            role_instance_id=role_instance_id,
+            work_item_id=event_payload["work_item_id"],
+            broker_subject=subject,
+            broker_consumer=consumer,
+            summary=f"Re-published dead-letter message to {target_role}.",
+            payload=retry_payload,
+        )
+        return {
+            "original_message_id": message_id,
+            "retry_message_id": retry_message.message_id,
+            "target_role": target_role,
+            "broker_subject": subject,
+            "broker_consumer": consumer,
+        }
 
     def _inspect_status(self, *, call_id: str, role_instance_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         project_id = str(payload.get("project_id") or _project_from_instance(role_instance_id))

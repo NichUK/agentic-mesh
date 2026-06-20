@@ -34,6 +34,9 @@ progressing.
 Use runtime.broker.inspect when asked about delivery, inbox depth, dead
 letters, stuck messages, missing replies, wake-up, hibernation, or whether a
 role has pending work.
+Use runtime.broker.retry_dead_letter after inspecting a dead-lettered broker
+message when the issue has a concrete recovery reason and the original message
+should be tried again by the target role.
 Use runtime.lifecycle.request when diagnosing or recovering agent lifecycle
 issues and you need the runtime to reconcile broker depth, wake a role service,
 or hibernate a role service through the bounded lifecycle path.
@@ -54,9 +57,13 @@ whether an agent is running:
    relevant.
 5. If the runtime needs to reconcile or wake/hibernate services, call
    runtime.lifecycle.request or runtime.sweep.request after inspection.
-6. Finish with status.reply using `text_markdown` and say what was inspected,
+6. If a dead-lettered message is the blocked item and the cause has been
+   inspected or corrected, call runtime.broker.retry_dead_letter with the
+   original message id and a concrete retry reason, then wake the target role
+   if needed.
+7. Finish with status.reply using `text_markdown` and say what was inspected,
    what was found, what action was recorded, and who owns the next step.
-7. If inspection cannot be performed, call report.incomplete with the blocker,
+8. If inspection cannot be performed, call report.incomplete with the blocker,
    requested missing authority/context, and next owner. `report.incomplete`
    is both the recorded DO outcome and the REPLY for an incomplete run. Do not
    finish with plain prose or an empty operational envelope.
