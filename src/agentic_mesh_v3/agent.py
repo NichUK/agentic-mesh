@@ -512,15 +512,25 @@ class DatabaseAgentFailureReporter:
                 },
             )
             return
-        next_action = (
-            f"Agent delivery dead-lettered for {role_instance_id} on message {message_id}: {error}. "
-            "Review the agent/tool wiring or retry the role after correcting the failure."
-        )
+        operator_recovery = _is_operator_recovery_failure(error)
+        owner_role = "project-manager" if operator_recovery else role_id
+        current_phase = "operator_recovery" if operator_recovery else _payload_text(payload, "current_phase")
+        if operator_recovery:
+            next_action = (
+                f"Project Manager must recover failed agent delivery for {role_instance_id} on message {message_id}: {error}. "
+                "Inspect the message journal, prompt/tool wiring, and latest work-item state; then retry the role, delegate a "
+                "focused diagnostic/fix to the right specialist, or record a concrete blocker with owner and next action."
+            )
+        else:
+            next_action = (
+                f"Agent delivery dead-lettered for {role_instance_id} on message {message_id}: {error}. "
+                "Review the agent/tool wiring or retry the role after correcting the failure."
+            )
         self.db.update_work_item_state(  # type: ignore[attr-defined]
             work_item_id=work_item_id,
             state="blocked",
-            owner_role=role_id,
-            current_phase=_payload_text(payload, "current_phase"),
+            owner_role=owner_role,
+            current_phase=current_phase,
             next_action=next_action,
             source_ref=f"message:{message_id}",
             correlation_id=_message_correlation_id(payload),
@@ -642,6 +652,16 @@ def _is_non_blocking_delivery_failure(payload: dict[str, object]) -> bool:
     """Return true for FYI-style deliveries that should not seize work ownership."""
 
     return _payload_text(payload, "message_type") in {"informed.update"}
+
+
+def _is_operator_recovery_failure(error: str) -> bool:
+    text = error.lower()
+    return (
+        "did not call any tool" in text
+        or "without valid terminal safe-output" in text
+        or "direct conversation used outputs that are not allowed" in text
+        or "worker subprocess stdout must be json" in text
+    )
 
 
 def _is_inform_only_message(payload: dict[str, object]) -> bool:
