@@ -1838,6 +1838,7 @@ def _terminal_tool_call_audit(
             stakeholder_bridge=_stakeholder_bridge(args, broker=broker),
             broker=broker,
             broker_stream=project_config.broker.stream,
+            lifecycle_config=_tool_lifecycle_config(args),
         ),
     )
     return DatabaseTerminalToolCallAudit(db, safe_output_importer=importer)
