@@ -16,4 +16,4 @@ COPY docker/agentic-mesh-entrypoint.sh /usr/local/bin/agentic-mesh-entrypoint
 RUN chmod +x /usr/local/bin/agentic-mesh-entrypoint
 
 ENTRYPOINT ["agentic-mesh-entrypoint"]
-CMD ["python", "-m", "agentic_mesh_v2.cli", "status-json"]
+CMD ["python", "-m", "agentic_mesh_v4.cli", "--project-config", "/mesh/project/agentic-mesh/project-v4.yaml", "status-json"]

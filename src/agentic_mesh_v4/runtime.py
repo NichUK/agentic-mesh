@@ -1,0 +1,192 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+from agentic_mesh_v4.codex_protocol import CodexAppServerClient
+from agentic_mesh_v4.codex_protocol import CodexProtocolError
+from agentic_mesh_v4.config import V4ProjectConfig
+from agentic_mesh_v4.db import V4Database
+from agentic_mesh_v4.db import utc_now
+
+
+class ClientFactory(Protocol):
+    def __call__(self, role_id: str) -> CodexAppServerClient:
+        ...
+
+
+@dataclass(frozen=True)
+class DispatchResult:
+    message_id: str
+    state: str
+    thread_id: str | None = None
+    turn_id: str | None = None
+    error: str | None = None
+
+
+class V4Runtime:
+    def __init__(
+        self,
+        *,
+        db: V4Database,
+        project_config: V4ProjectConfig,
+        client_factory: ClientFactory | None = None,
+    ) -> None:
+        self.db = db
+        self.project_config = project_config
+        self.client_factory = client_factory
+
+    def register_roles(self) -> None:
+        for role in self.project_config.roles:
+            self.db.upsert_role_instance(
+                role_instance_id=f"{self.project_config.project_id}.{role.role_id}.1",
+                role_id=role.role_id,
+                display_name=role.display_name,
+                service_name=role.service_name,
+                authority=role.authority,
+                codex_endpoint=f"ws://{role.service_name}:{role.codex_port}",
+            )
+
+    def enqueue_conversation(
+        self,
+        *,
+        target_role: str,
+        text: str,
+        source: str = "teams",
+        conversation_ref: str | None = None,
+        thread_ref: str | None = None,
+        steering: bool = False,
+        payload: dict[str, object] | None = None,
+    ) -> str:
+        self.project_config.role(target_role)
+        return self.db.enqueue_message(
+            target_role=target_role,
+            text=text,
+            source=source,
+            conversation_ref=conversation_ref,
+            thread_ref=thread_ref,
+            steering=steering,
+            payload=dict(payload or {}),
+        )
+
+    def dispatch_once(self, *, role_id: str) -> DispatchResult | None:
+        role = self.project_config.role(role_id)
+        role_instance_id = f"{self.project_config.project_id}.{role.role_id}.1"
+        message = self.db.claim_next_message(role_id=role.role_id, worker_id=role_instance_id)
+        if message is None:
+            return None
+        if self.client_factory is None:
+            self.db.mark_message_state(
+                message.message_id,
+                state="failed",
+                summary="No Codex app-server client factory is configured.",
+            )
+            return DispatchResult(message_id=message.message_id, state="failed", error="missing client factory")
+        try:
+            client = self.client_factory(role.role_id)
+            if not client.initialized:
+                client.initialize()
+            thread_id = self._thread_for_role(client=client, role_instance_id=role_instance_id, role=role)
+            if message.steering:
+                client.steer_turn(thread_id=thread_id, text=message.text)
+                turn_id = None
+                state = "steered"
+            else:
+                turn_id = client.start_turn(thread_id=thread_id, text=message.text, model=role.model)
+                state = "active_turn"
+            self.db.mark_message_state(message.message_id, state=state, summary=f"Delivered to {role_instance_id}")
+            self._drain_available_events(
+                client=client,
+                role_instance_id=role_instance_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                message_id=message.message_id,
+            )
+            self.db.mark_message_state(message.message_id, state="completed", summary=f"Completed delivery to {role_instance_id}")
+            return DispatchResult(message_id=message.message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
+        except (CodexProtocolError, RuntimeError, ValueError, OSError) as exc:
+            if _looks_like_agent_unavailable(exc):
+                self.db.mark_message_state(
+                    message.message_id,
+                    state="queued",
+                    summary=f"Agent app-server unavailable; queued for retry: {exc}",
+                )
+                return DispatchResult(message_id=message.message_id, state="queued", error=str(exc))
+            self.db.mark_message_state(message.message_id, state="failed", summary=str(exc))
+            return DispatchResult(message_id=message.message_id, state="failed", error=str(exc))
+
+    def _thread_for_role(self, *, client: CodexAppServerClient, role_instance_id: str, role: object) -> str:
+        snapshot = self.db.snapshot()
+        for item in snapshot["roles"]:
+            if item["role_instance_id"] == role_instance_id and item.get("active_thread_id"):
+                thread_id = str(item["active_thread_id"])
+                client.resume_thread(thread_id)
+                return thread_id
+        thread_id = client.start_thread(model=getattr(role, "model"), sandbox_mode=getattr(role, "sandbox_mode"))
+        now = utc_now()
+        with self.db.connection:
+            self.db.connection.execute(
+                """
+                UPDATE role_instances
+                SET active_thread_id=?, state='ready', updated_at=?
+                WHERE role_instance_id=?
+                """,
+                (thread_id, now, role_instance_id),
+            )
+            self.db.connection.execute(
+                """
+                INSERT OR IGNORE INTO codex_threads(thread_id, role_instance_id, status, created_at, updated_at)
+                VALUES(?,?,?,?,?)
+                """,
+                (thread_id, role_instance_id, "active", now, now),
+            )
+        return thread_id
+
+    def _drain_available_events(
+        self,
+        *,
+        client: CodexAppServerClient,
+        role_instance_id: str,
+        thread_id: str,
+        turn_id: str | None,
+        message_id: str,
+    ) -> None:
+        while True:
+            event = client.receive_event()
+            if event is None:
+                return
+            method = str(event.get("method") or "unknown")
+            params = event.get("params") if isinstance(event.get("params"), dict) else {}
+            content = _event_content(method, params)
+            self.db.record_agent_event(
+                role_instance_id=role_instance_id,
+                event_type=method,
+                content=content,
+                payload=event,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                message_id=message_id,
+            )
+
+
+def _event_content(method: str, params: dict[str, object]) -> str:
+    for key in ("text", "delta", "message", "summary"):
+        value = params.get(key)
+        if isinstance(value, str):
+            return value
+    return method
+
+
+def _looks_like_agent_unavailable(exc: BaseException) -> bool:
+    text = str(exc).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "connection refused",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "timed out",
+            "connection reset",
+            "websocket",
+        )
+    )

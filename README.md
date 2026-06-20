@@ -3,31 +3,31 @@
 Agentic Mesh is an enterprise-oriented runtime for composing long-running AI
 role agents into project-scoped collaboration networks.
 
-The active development direction is the V3 agent-owned runtime reset. V2 remains
-the last dogfood deployment until V3 proves the first end-to-end slice and is
-deployed intentionally.
+The active development direction is the V4 remote-control runtime reset. V4
+replaces the V3 broker-wrapped worker model with one Codex app-server
+remote-control container per configured role instance.
 
 ## Current Runtime Direction
 
-V3 moves lifecycle judgement out of the runtime and into self-contained,
-long-running role agents. The runtime becomes a platform kernel for startup,
-hibernation, broker access, connector bridges, document-library access,
-reporting, configuration materialisation, and telemetry.
+V4 keeps lifecycle judgement with role agents and reduces the runtime to
+infrastructure: Teams/API ingress, SQLite-backed message queues, Codex
+app-server WebSocket routing, safe-output tools for durable workflow effects,
+dashboard/reporting, hibernation/wake coordination, and telemetry.
 
-The V3 spine currently provides:
+The V4 spine currently provides:
 
-- explicit SDLC RACI and governance rules
-- a Project Manager role separate from Delivery Manager
-- topology validation for source/runtime/project/document boundaries
-- a broker adapter port with a NATS JetStream target and local test adapter
-- a self-contained role-agent service loop
-- V3 tool calls for backlog, work items, documents, approvals, releases, and status
-- a OneDrive/SharePoint document-library adapter boundary with Graph-backed implementation
-- a Teams bridge boundary with local and Graph-backed outbound implementations
-- `/status`, `/agents`, `/work-item/{id}`, and `/artifact-viewer/{id}/{filename}` reporting primitives
-- a local demo slice proving queue/work/agents/artifacts/release/closure projections
+- the full SDLC starter role set
+- one generated external `AGENTS.md` per role instance
+- one Codex app-server container per role instance
+- SQLite queue/state tables for messages, sessions, threads, turns, events,
+  safe-output calls, memory, artifacts, approvals, handoffs, and releases
+- app-server protocol client boundaries for `thread/start`, `thread/resume`,
+  `turn/start`, `turn/steer`, `turn/interrupt`, `thread/read`, and paginated
+  history reads
+- `/status`, `/agents`, `/work-item/{id}`, `/agent/{role}/thread`, and
+  `/artifact-viewer/{work-item-id}/{artifact}` reporting primitives
 
-The current dogfood status page is still the V2 runtime:
+The current dogfood status page is:
 
 ```text
 http://linuxch:8100/status
@@ -38,46 +38,37 @@ Useful local commands:
 ```powershell
 pip install -e .[dev]
 pytest -q
-agentic-mesh-v3 --db .tmp/v3.sqlite3 init-db
-agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev demo-slice --document-library-root .tmp/v3-documents
-agentic-mesh-v3 --db .tmp/v3-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml local-e2e-dogfood --deployment-target-id dogfood-compose
-agentic-mesh-v3 --db .tmp/v3-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml audit-dogfood
-agentic-mesh-v3 --db .tmp/v3-agent-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml agent-e2e-dogfood --runtime-state-dir .tmp/v3-agent-dogfood-runtime --deployment-target-id dogfood-compose
-agentic-mesh-v3 --db .tmp/v3-agent-dogfood.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml audit-dogfood --work-item-id work-v3-agent-service-e2e
-agentic-mesh-v3 --db .tmp/v3.sqlite3 --project-id agentic-mesh-dev status-json
-agentic-mesh --db .tmp/v2.sqlite3 init-db
-agentic-mesh --db .tmp/v2.sqlite3 demo-slice
-agentic-mesh --db .tmp/v2.sqlite3 status-json
+agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml init-db
+agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml materialize-agent-configs --agent-config-root .tmp/v4-agents --role-templates-dir config/roles
+agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml render-compose --output .tmp/docker-compose.v4.yml
+agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml enqueue-message --target-role project-manager --text "Give me a status update"
+agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json
 ```
 
-The `project-v3.yaml` dogfood command expects the V3 environment to provide
-NATS, Graph/Teams credentials, `AGENTIC_MESH_ONEDRIVE_TOKEN`,
-`AGENTIC_MESH_ONEDRIVE_DRIVE_ID`, `AGENTIC_MESH_SPONSOR_TEAMS_USER_ID`, and the
-configured `dogfood-compose` deployment target. Use `--document-library-root`
-only for local filesystem smoke tests; the V3 dogfood project configuration
-itself is OneDrive-backed.
+The `project-v4.yaml` dogfood command expects the V4 environment to provide
+Graph/Teams credentials, Codex auth mounts, `AGENTIC_MESH_ONEDRIVE_TOKEN`,
+`AGENTIC_MESH_ONEDRIVE_DRIVE_ID`, and `AGENTIC_MESH_SPONSOR_TEAMS_USER_ID`.
 
-Validate source/runtime/project boundaries:
+Validate source/runtime/project boundaries with the active V4 topology rules:
 
 ```powershell
-agentic-mesh-v3 validate-topology `
-  --source-repo C:\Dev\agentic-mesh `
-  --deployed-runtime C:\AgenticMesh\runtime `
-  --runtime-state C:\AgenticMesh\state `
-  --organisation-config-repo C:\AgenticMesh\org-config `
-  --project-config-repo C:\Projects\demo-config `
-  --document-library-root C:\Users\you\OneDrive\AgenticMesh\documents
+agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json
 ```
+
+The earlier `validate-topology` command remains in legacy packages until it is
+ported to V4, but new work should target the V4 package and project topology.
 
 ## Repository Layout
 
-- `src/agentic_mesh_v3/`: active V3 runtime reset package
-- `src/agentic_mesh_v2/`: frozen V2 runtime package, retained while V3 is proved
-- `tests/test_v3_*.py`: active V3 regression tests
-- `tests/test_v2_*.py`: active v2 regression tests
+- `src/agentic_mesh_v4/`: active V4 remote-control runtime package
+- `src/agentic_mesh_v3/`: previous V3 runtime package, retained temporarily
+- `src/agentic_mesh_v2/`: frozen V2 runtime package, retained temporarily
+- `tests/test_v4_*.py`: active V4 regression tests
+- `tests/test_v3_*.py` and `tests/test_v2_*.py`: legacy regression coverage
 - `examples/projects/agentic-mesh-dev/deploy/compose/`: dogfood compose
-  deployment, currently v2-only
-- `docs/architecture/v3-agent-owned-runtime.md`: V3 reset architecture
+  deployment, currently V4-first
+- `docs/architecture/v4-remote-control-runtime.md`: V4 reset architecture
+- `docs/architecture/v3-agent-owned-runtime.md`: previous V3 reset architecture
 - `docs/architecture/v2-runtime-reset.md`: previous v2 reset plan and topology
   direction
 - `docs/architecture/repository-topology.md`: source/runtime/project boundary
@@ -114,10 +105,9 @@ Agentic Mesh is intended to be open core.
 
 Open source core should remain useful on its own:
 
-- V3 agent-owned runtime kernel
-- broker, connector, document-library, and worker adapter ports
+- V4 remote-control runtime kernel
+- Teams connector, document-library, safe-output, and Codex app-server adapter ports
 - governance-aware role agents and RACI
-- V2 state machine and safe-output service while V2 remains available
 - SQLite local backend
 - Docker Compose deployment profile
 - documentation framework primitives

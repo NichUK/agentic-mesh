@@ -1,0 +1,199 @@
+project_id: agentic-mesh-dev
+name: Agentic Mesh Development V4
+goal:
+  description: Prove the V4 Codex remote-control agent runtime with one Codex app-server container per role, SQLite message queues, Teams routing, external role configuration, DB-backed memory, and safe-output tools for durable workflow effects.
+document_library:
+  adapter: onedrive
+  drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}
+  root_path: /documents
+  structure_policy: togaf-sdlc-v1
+target_repositories:
+  agentic-mesh:
+    type: git
+    path: ../../..
+    default_branch: develop
+connectors:
+  teams:
+    adapter: teams-bot-connector
+    identity_model: role_bots
+    tenant_id: ${AGENTIC_MESH_TENANT_ID}
+    graph_base_url: https://graph.microsoft.com/v1.0
+    ingress:
+      public_endpoint: ${AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT}
+      listen_host: 0.0.0.0
+      listen_port: 3978
+      path: /teams/activity
+    role_bots:
+      business-analyst:
+        display_name: AM-Business Analyst
+        bot_id_ref: teams-bot-business-analyst-app-id
+        secret_ref: teams-bot-business-analyst-secret
+      delivery-manager:
+        display_name: AM-Delivery Manager
+        bot_id_ref: teams-bot-delivery-manager-app-id
+        secret_ref: teams-bot-delivery-manager-secret
+      enterprise-architect:
+        display_name: AM-Enterprise Architect
+        bot_id_ref: teams-bot-enterprise-architect-app-id
+        secret_ref: teams-bot-enterprise-architect-secret
+      platform-engineer:
+        display_name: AM-Platform Engineer
+        bot_id_ref: teams-bot-platform-engineer-app-id
+        secret_ref: teams-bot-platform-engineer-secret
+      product-manager:
+        display_name: AM-Product Manager
+        bot_id_ref: teams-bot-product-manager-app-id
+        secret_ref: teams-bot-product-manager-secret
+      prompt-engineer:
+        display_name: AM-Prompt Engineer
+        bot_id_ref: teams-bot-prompt-engineer-app-id
+        secret_ref: teams-bot-prompt-engineer-secret
+      project-manager:
+        display_name: AM-Project Manager
+        bot_id_ref: teams-bot-project-manager-app-id
+        secret_ref: teams-bot-project-manager-secret
+      research-analyst:
+        display_name: AM-Research Analyst
+        bot_id_ref: teams-bot-research-analyst-app-id
+        secret_ref: teams-bot-research-analyst-secret
+      security-architect:
+        display_name: AM-Security Architect
+        bot_id_ref: teams-bot-security-architect-app-id
+        secret_ref: teams-bot-security-architect-secret
+      solution-architect:
+        display_name: AM-Solution Architect
+        bot_id_ref: teams-bot-solution-architect-app-id
+        secret_ref: teams-bot-solution-architect-secret
+      engineering:
+        display_name: AM-Engineering
+        bot_id_ref: teams-bot-engineering-app-id
+        secret_ref: teams-bot-engineering-secret
+      qa-engineer:
+        display_name: AM-QA Engineer
+        bot_id_ref: teams-bot-qa-engineer-app-id
+        secret_ref: teams-bot-qa-engineer-secret
+      release-manager:
+        display_name: AM-Release Manager
+        bot_id_ref: teams-bot-release-manager-app-id
+        secret_ref: teams-bot-release-manager-secret
+      technical-writer:
+        display_name: AM-Technical Writer
+        bot_id_ref: teams-bot-technical-writer-app-id
+        secret_ref: teams-bot-technical-writer-secret
+      ux-designer:
+        display_name: AM-UX Designer
+        bot_id_ref: teams-bot-ux-designer-app-id
+        secret_ref: teams-bot-ux-designer-secret
+    team:
+      id: ${AGENTIC_MESH_PROJECT_TEAM_ID}
+      name: dev-agentic-mesh
+    channels:
+      project:
+        id: ${AGENTIC_MESH_PROJECT_CHANNEL_ID}
+        name: project
+roles:
+  project-manager:
+    template: project-manager
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+  delivery-manager:
+    template: delivery-manager
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+  product-manager:
+    template: product-manager
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  business-analyst:
+    template: business-analyst
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  research-analyst:
+    template: research-analyst
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  enterprise-architect:
+    template: enterprise-architect
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  solution-architect:
+    template: solution-architect
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  security-architect:
+    template: security-architect
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  ux-designer:
+    template: ux-designer
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  engineering:
+    template: engineering
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+  qa-engineer:
+    template: qa-engineer
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  platform-engineer:
+    template: platform-engineer
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+  release-manager:
+    template: release-manager
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: danger-full-access
+  technical-writer:
+    template: technical-writer
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
+  prompt-engineer:
+    template: prompt-engineer
+    instances: 1
+    worker:
+      model: gpt-5.5
+      reasoning_effort: high
+      sandbox_mode: workspace-write
