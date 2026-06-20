@@ -92,6 +92,47 @@ def test_v3_database_migrates_existing_work_item_status_columns(tmp_path: Path) 
     assert snapshot.work_items[0].next_action == ""
 
 
+def test_v3_database_migrates_existing_agent_run_status_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "v3.sqlite3"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE agent_runs (
+              run_id TEXT PRIMARY KEY,
+              role_instance_id TEXT NOT NULL,
+              status TEXT NOT NULL
+            );
+            INSERT INTO agent_runs(run_id, role_instance_id, status)
+            VALUES ('run-old', 'agentic-mesh-dev.project-manager.1', 'completed');
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+        columns = {row["name"] for row in db.connection.execute("PRAGMA table_info(agent_runs)")}
+        latest_runs = db._latest_agent_runs()
+    finally:
+        db.close()
+
+    assert {
+        "message_id",
+        "work_item_id",
+        "subject",
+        "tool_calls_json",
+        "error",
+        "started_at",
+        "completed_at",
+    }.issubset(columns)
+    assert snapshot.work_items == ()
+    assert latest_runs["agentic-mesh-dev.project-manager.1"]["status"] == "completed"
+
+
 def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
