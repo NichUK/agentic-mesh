@@ -188,6 +188,8 @@ def test_codex_cli_command_builder_adds_exec_options() -> None:
         "gpt-5.5",
         "--sandbox",
         "workspace-write",
+        "--output-schema",
+        command[command.index("--output-schema") + 1],
         "--config",
         'approval_policy="never"',
         "--config",
@@ -195,6 +197,7 @@ def test_codex_cli_command_builder_adds_exec_options() -> None:
         "--config",
         'model_reasoning_effort="high"',
     ]
+    assert Path(command[command.index("--output-schema") + 1]).name == "tool-envelope.schema.json"
 
 
 def test_codex_resume_command_builder_adds_resume_options() -> None:
@@ -211,6 +214,8 @@ def test_codex_resume_command_builder_adds_resume_options() -> None:
         "--last",
         "--model",
         "gpt-5.5",
+        "--output-schema",
+        command[command.index("--output-schema") + 1],
         "--config",
         'approval_policy="never"',
         "--config",
@@ -219,6 +224,7 @@ def test_codex_resume_command_builder_adds_resume_options() -> None:
         'model_reasoning_effort="high"',
         "-",
     ]
+    assert Path(command[command.index("--output-schema") + 1]).name == "tool-envelope.schema.json"
 
 
 def test_persistent_session_worker_resumes_after_first_success(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -249,22 +255,28 @@ def test_persistent_session_worker_resumes_after_first_success(monkeypatch) -> N
     assert commands[0] == [
         "codex",
         "exec",
+        "--output-schema",
+        commands[0][commands[0].index("--output-schema") + 1],
         "--config",
         'approval_policy="never"',
         "--config",
         'shell_environment_policy.inherit="all"',
     ]
+    assert Path(commands[0][commands[0].index("--output-schema") + 1]).name == "tool-envelope.schema.json"
     assert commands[1] == [
         "codex",
         "exec",
         "resume",
         "--last",
+        "--output-schema",
+        commands[1][commands[1].index("--output-schema") + 1],
         "--config",
         'approval_policy="never"',
         "--config",
         'shell_environment_policy.inherit="all"',
         "-",
     ]
+    assert Path(commands[1][commands[1].index("--output-schema") + 1]).name == "tool-envelope.schema.json"
     assert worker.session_mode == "codex-exec-resume"
     assert worker.session_status == "active"
 
