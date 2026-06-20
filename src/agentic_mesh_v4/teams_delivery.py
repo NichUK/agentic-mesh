@@ -68,7 +68,12 @@ class TeamsReplySender:
 
     @classmethod
     def from_env(cls) -> TeamsReplySender:
-        return cls(tenant_id=os.environ.get("AGENTIC_MESH_GRAPH_TENANT_ID"))
+        return cls(
+            tenant_id=(
+                os.environ.get("AGENTIC_MESH_GRAPH_TENANT_ID")
+                or os.environ.get("AGENTIC_MESH_TENANT_ID")
+            )
+        )
 
     def send_reply(
         self,
