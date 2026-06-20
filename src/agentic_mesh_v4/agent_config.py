@@ -157,6 +157,8 @@ def _authority_markdown(role: V4RoleConfig) -> str:
                 "- Authority level: `full`.",
                 "- Sandbox: `danger-full-access` unless project config narrows it.",
                 "- You may perform host, Git, Docker, SSH, deployment, and operational actions when they are within your role and project instructions.",
+                "- The project document library is mounted at `/documents`.",
+                "- Your mounted home directory is `/mesh/home`; SSH credentials are expected at `/mesh/home/.ssh` and project environment details may be available at `/mesh/home/.env`.",
                 "- Record risky actions, evidence, and next owner clearly.",
             ]
         )

@@ -69,7 +69,7 @@ services:
       AGENTIC_MESH_ROLE_ID: project-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.project-manager.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/project-manager/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -77,8 +77,8 @@ services:
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/agent/.env:ro
-      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/agent/.ssh:ro
+      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro
+      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro
 
   agentic-mesh-dev-delivery-manager-1:
     image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
@@ -93,7 +93,7 @@ services:
       AGENTIC_MESH_ROLE_ID: delivery-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.delivery-manager.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/delivery-manager/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -115,7 +115,7 @@ services:
       AGENTIC_MESH_ROLE_ID: product-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.product-manager.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/product-manager/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -137,7 +137,7 @@ services:
       AGENTIC_MESH_ROLE_ID: business-analyst
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.business-analyst.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/business-analyst/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -159,7 +159,7 @@ services:
       AGENTIC_MESH_ROLE_ID: research-analyst
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.research-analyst.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/research-analyst/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -181,7 +181,7 @@ services:
       AGENTIC_MESH_ROLE_ID: enterprise-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.enterprise-architect.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/enterprise-architect/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -203,7 +203,7 @@ services:
       AGENTIC_MESH_ROLE_ID: solution-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.solution-architect.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/solution-architect/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -225,7 +225,7 @@ services:
       AGENTIC_MESH_ROLE_ID: security-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.security-architect.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/security-architect/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -247,7 +247,7 @@ services:
       AGENTIC_MESH_ROLE_ID: ux-designer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.ux-designer.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/ux-designer/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -269,7 +269,7 @@ services:
       AGENTIC_MESH_ROLE_ID: engineering
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.engineering.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/engineering/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -291,7 +291,7 @@ services:
       AGENTIC_MESH_ROLE_ID: qa-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.qa-engineer.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/qa-engineer/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -313,7 +313,7 @@ services:
       AGENTIC_MESH_ROLE_ID: platform-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.platform-engineer.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/platform-engineer/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -335,7 +335,7 @@ services:
       AGENTIC_MESH_ROLE_ID: release-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.release-manager.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/release-manager/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -357,7 +357,7 @@ services:
       AGENTIC_MESH_ROLE_ID: technical-writer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.technical-writer.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/technical-writer/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -379,7 +379,7 @@ services:
       AGENTIC_MESH_ROLE_ID: prompt-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.prompt-engineer.1
       CODEX_HOME: /mesh/worker-auth/codex
-      HOME: /mesh/agent
+      HOME: /mesh/home
     volumes:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/prompt-engineer/1:/mesh/agent:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents

@@ -101,7 +101,7 @@ def _role_service(*, role_id: str, service_name: str, port: int, full_access: bo
         f"      AGENTIC_MESH_ROLE_ID: {role_id}",
         f"      AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.{role_id}.1",
         "      CODEX_HOME: /mesh/worker-auth/codex",
-        "      HOME: /mesh/agent",
+        "      HOME: /mesh/home",
         "    volumes:",
         f"      - ${{AGENTIC_MESH_PROJECT_HOST_PATH:-../..}}/state/v4/agent-configs/{role_id}/1:/mesh/agent:ro",
         "      - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents",
@@ -113,8 +113,8 @@ def _role_service(*, role_id: str, service_name: str, port: int, full_access: bo
     if role_id == "project-manager":
         lines.extend(
             [
-                "      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/agent/.env:ro",
-                "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/agent/.ssh:ro",
+                "      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro",
+                "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro",
             ]
         )
     return lines

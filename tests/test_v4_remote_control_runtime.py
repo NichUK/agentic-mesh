@@ -255,6 +255,7 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "Agentic Mesh Role: Project Manager" in text
     assert "Durable project effects must be made through the configured safe-output tools" in text
     assert "Authority level: `full`" in text
+    assert "SSH credentials are expected at `/mesh/home/.ssh`" in text
 
 
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
@@ -264,12 +265,12 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
     assert "agentic-mesh-dev-project-manager-1" in rendered
     assert "--document-root /documents" in rendered
     assert "${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents" in rendered
-    assert "${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/agent/.env:ro" in rendered
+    assert "${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro" in rendered
     assert (
         "${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}"
-        ":/mesh/agent/.ssh:ro"
+        ":/mesh/home/.ssh:ro"
     ) in rendered
-    assert "HOME: /mesh/agent" in rendered
+    assert "HOME: /mesh/home" in rendered
     assert "dispatcher:" in rendered
     assert "dispatch-loop" in rendered
     assert "working_dir: /mesh/agent" in rendered
