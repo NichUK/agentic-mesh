@@ -1014,8 +1014,10 @@ def test_role_agent_blocks_linked_work_item_on_dead_letter(tmp_path: Path) -> No
     assert result.status == "dead_lettered"
     assert detail is not None
     assert detail.state == "blocked"
-    assert detail.owner_role == "product-manager"
-    assert "Agent delivery dead-lettered" in detail.next_action
+    assert detail.owner_role == "project-manager"
+    assert detail.current_phase == "operator_recovery"
+    assert "Project Manager must recover failed agent delivery" in detail.next_action
+    assert "agent did not call any tool" in detail.next_action
     assert published.message_id in detail.next_action
 
 
