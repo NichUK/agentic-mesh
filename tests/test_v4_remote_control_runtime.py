@@ -78,6 +78,7 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
     transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
     transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Done"}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
 
     runtime = V4Runtime(
         db=db,
@@ -94,7 +95,8 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert result.state == "completed"
     snapshot = db.snapshot()
     assert snapshot["messages"][0]["state"] == "completed"
-    assert snapshot["events"][0]["content"] == "Done"
+    assert snapshot["events"][0]["event_type"] == "turn/completed"
+    assert snapshot["events"][1]["content"] == "Done"
 
 
 def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> None:

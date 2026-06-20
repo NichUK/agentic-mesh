@@ -167,6 +167,8 @@ class V4Runtime:
                 turn_id=turn_id,
                 message_id=message_id,
             )
+            if method == "turn/completed":
+                return
 
 
 def _event_content(method: str, params: dict[str, object]) -> str:
