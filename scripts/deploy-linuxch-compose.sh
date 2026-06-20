@@ -217,20 +217,62 @@ if [ "$#" -eq 0 ]; then
   set -- up -d
 fi
 
+acquire_lifecycle_lock() {
+  if [ "${AGENTIC_MESH_LIFECYCLE_LOCK_HELD:-0}" = "1" ]; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH")"
+  lock_started_at=$(date +%s)
+  while ! mkdir "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" 2>/tmp/agentic-mesh-lifecycle-lock.err; do
+    if [ ! -e "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" ]; then
+      echo "Unable to create lifecycle lock at $AGENTIC_MESH_LIFECYCLE_LOCK_PATH:" >&2
+      cat /tmp/agentic-mesh-lifecycle-lock.err >&2
+      exit 1
+    fi
+    now=$(date +%s)
+    lock_age=$((now - $(stat -c %Y "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH" 2>/dev/null || echo "$now")))
+    if [ "$lock_age" -ge "$AGENTIC_MESH_LIFECYCLE_LOCK_STALE_SECONDS" ]; then
+      rm -rf "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH"
+      continue
+    fi
+    if [ $((now - lock_started_at)) -ge "$AGENTIC_MESH_LIFECYCLE_LOCK_TIMEOUT_SECONDS" ]; then
+      echo "Timed out waiting for lifecycle lock: $AGENTIC_MESH_LIFECYCLE_LOCK_PATH" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  printf '%s\n' "$$" > "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH/owner"
+  AGENTIC_MESH_LIFECYCLE_LOCK_ACQUIRED=1
+}
+
+release_lifecycle_lock() {
+  if [ "${AGENTIC_MESH_LIFECYCLE_LOCK_ACQUIRED:-0}" = "1" ]; then
+    rm -rf "$AGENTIC_MESH_LIFECYCLE_LOCK_PATH"
+  fi
+}
+
+run_compose() {
+  acquire_lifecycle_lock
+  trap release_lifecycle_lock EXIT INT TERM
+  "$@"
+}
+
 if docker compose version >/dev/null 2>&1; then
-  exec docker compose \
+  run_compose docker compose \
     --env-file "$STAGE_DIR/.env" \
     -f "$STAGE_DIR/docker-compose.yml" \
     -f "$STAGE_DIR/docker-compose.linuxch.yml" \
     "$@"
+  exit $?
 fi
 
 if command -v docker-compose >/dev/null 2>&1; then
-  exec docker-compose \
+  run_compose docker-compose \
     --env-file "$STAGE_DIR/.env" \
     -f "$STAGE_DIR/docker-compose.yml" \
     -f "$STAGE_DIR/docker-compose.linuxch.yml" \
     "$@"
+  exit $?
 fi
 
 echo "Docker Compose CLI is required for linuxch deployment." >&2
