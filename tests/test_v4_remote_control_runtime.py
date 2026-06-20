@@ -77,6 +77,24 @@ def test_v4_codex_protocol_uses_remote_control_thread_and_turn_methods() -> None
     assert client.receive_event()["method"] == "item/agentMessage/delta"
 
 
+def test_v4_codex_protocol_ignores_stale_response_ids_until_matching_response() -> None:
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 0, "result": {"stale": True}})
+    transport.queue_response({"method": "turn/status", "params": {"summary": "running"}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+
+    client = CodexAppServerClient(transport)
+    client.initialize()
+    thread_id = client.start_thread(model="gpt-5.5")
+    turn_id = client.start_turn(thread_id=thread_id, text="Status report")
+
+    assert turn_id == "turn-1"
+    assert client.receive_event()["method"] == "turn/status"
+
+
 def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()

@@ -128,6 +128,7 @@ class CodexAppServerClient:
         self.client_name = client_name
         self._next_id = 1
         self._pending_events: list[dict[str, Any]] = []
+        self._pending_responses: dict[int | str, dict[str, Any]] = {}
         self.initialized = False
 
     def initialize(self) -> dict[str, Any]:
@@ -213,21 +214,21 @@ class CodexAppServerClient:
             raise CodexProtocolError("Codex app-server client is not initialized")
         request_id = self._next_id
         self._next_id += 1
+        pending_response = self._pending_responses.pop(request_id, None)
+        if pending_response is not None:
+            return self._response_result(method, pending_response)
         response = self.transport.send({"method": method, "id": request_id, "params": params})
         for _ in range(100):
             if response is None:
                 response = self.transport.receive()
                 if response is None:
                     continue
-            if response.get("error"):
-                raise CodexProtocolError(str(response["error"]))
             if response.get("id") == request_id:
-                result = response.get("result") or {}
-                if not isinstance(result, dict):
-                    raise CodexProtocolError(f"response result for {method} must be an object")
-                return result
+                return self._response_result(method, response)
             if "id" in response:
-                raise CodexProtocolError(f"response id mismatch for {method}: {response.get('id')} != {request_id}")
+                self._pending_responses[response["id"]] = response
+                response = self.transport.receive()
+                continue
             self._pending_events.append(response)
             response = self.transport.receive()
         raise CodexProtocolError(f"timed out waiting for response to {method}")
@@ -235,6 +236,14 @@ class CodexAppServerClient:
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         _validate_method(method)
         self.transport.send({"method": method, "params": params})
+
+    def _response_result(self, method: str, response: dict[str, Any]) -> dict[str, Any]:
+        if response.get("error"):
+            raise CodexProtocolError(str(response["error"]))
+        result = response.get("result") or {}
+        if not isinstance(result, dict):
+            raise CodexProtocolError(f"response result for {method} must be an object")
+        return result
 
 
 def load_generated_protocol_methods(schema_dir: str | Path) -> set[str]:
