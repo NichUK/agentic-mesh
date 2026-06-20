@@ -46,11 +46,18 @@ def test_v3_safe_output_prompt_names_current_tools() -> None:
 
 def test_v3_codex_output_schema_requires_tool_call_envelope() -> None:
     schema = json.loads(Path("config/prompts/worker/tool-envelope.schema.json").read_text(encoding="utf-8"))
+    serialized_schema = json.dumps(schema)
 
     assert schema["type"] == "object"
     assert schema["required"] == ["tool_calls"]
     assert schema["properties"]["tool_calls"]["type"] == "array"
     assert schema["properties"]["tool_calls"]["minItems"] == 1
+    assert "oneOf" not in serialized_schema
+    assert "anyOf" not in serialized_schema
+    item_schema = schema["properties"]["tool_calls"]["items"]
+    assert item_schema["type"] == "object"
+    assert item_schema["additionalProperties"] is False
+    assert item_schema["required"] == ["tool_name", "call_id", "terminal"]
 
 
 def test_v3_worker_instructions_require_forward_route_or_terminal_closure() -> None:
