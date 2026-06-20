@@ -9,37 +9,22 @@
       "type": "array",
       "minItems": 1,
       "items": {
-        "oneOf": [
-          {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool_name", "call_id", "terminal"],
+        "properties": {
+          "tool_name": {
             "type": "string",
             "minLength": 1
           },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "tool_name": {
-                "type": "string",
-                "minLength": 1
-              },
-              "call_id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "terminal": {
-                "type": "boolean"
-              }
-            },
-            "anyOf": [
-              {
-                "required": ["tool_name"]
-              },
-              {
-                "required": ["call_id"]
-              }
-            ]
+          "call_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "terminal": {
+            "type": "boolean"
           }
-        ]
+        }
       }
     }
   }

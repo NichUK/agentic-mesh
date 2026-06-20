@@ -1696,14 +1696,43 @@ def _message_correlation_id(payload: dict[str, object]) -> str | None:
 
 def _agent_failure_reply_text(*, role_id: str, work_item_id: str | None, message_id: str, error: str) -> str:
     work_line = f"\n\nWork item: `{work_item_id}`" if work_item_id else ""
+    public_error = _agent_failure_public_error(error)
     return (
         f"**{role_id} could not complete the requested action.**"
         f"{work_line}\n\n"
         f"Message: `{message_id}`\n\n"
-        f"Problem: {error}\n\n"
+        f"Problem: {public_error}\n\n"
         "The runtime recorded this as an agent-delivery failure. "
         "Retry after the worker/tool wiring issue is corrected, or route the item to Project Manager for recovery."
     )
+
+
+def _agent_failure_public_error(error: str, *, limit: int = 360) -> str:
+    text = _classify_agent_failure_error(error)
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _classify_agent_failure_error(error: str) -> str:
+    lowered = error.casefold()
+    if "invalid_json_schema" in lowered:
+        return (
+            "Worker output schema was rejected by the model provider. "
+            "Runtime/operator must fix the configured safe-output schema and retry."
+        )
+    if "worker subprocess stdout must be json" in lowered:
+        return "Worker returned non-JSON stdout instead of the required safe-output envelope."
+    if "agent did not call any tool" in lowered:
+        return "Agent did not call any safe-output tool."
+    if "did not record a do safe-output" in lowered:
+        return "Agent did not record a DO safe-output tool call."
+    if "did not record a reply safe-output" in lowered:
+        return "Agent did not record a REPLY safe-output tool call."
+    if "codex-cli worker failed:" in lowered:
+        return _truncate(error.split("codex-cli worker failed:", 1)[1], 240)
+    return _truncate(error, 240)
 
 
 def _message_memory_version(memory_summary: str) -> str:

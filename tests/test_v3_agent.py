@@ -47,6 +47,15 @@ class DoOnlySymbolicWorker:
         return [f"noop:{message.message_id}"]
 
 
+class RuntimeErrorWorker:
+    def __init__(self, error: str) -> None:
+        self.error = error
+
+    def run(self, prompt, message):  # type: ignore[no-untyped-def]
+        del prompt, message
+        raise RuntimeError(self.error)
+
+
 class CapturingWorker:
     def __init__(self) -> None:
         self.prompt = ""
@@ -1669,10 +1678,65 @@ def test_role_agent_dead_letter_notifies_source_conversation(tmp_path: Path) -> 
     assert bridge.messages[0].target_ref == "conversation:pm-dm"
     assert bridge.messages[0].thread_ref == "thread-1"
     assert "project-manager could not complete" in bridge.messages[0].text_markdown
-    assert "agent did not call any tool" in bridge.messages[0].text_markdown
+    assert "Agent did not call any safe-output tool." in bridge.messages[0].text_markdown
     assert deliveries[-1]["purpose"] == "agent.failure"
     assert deliveries[-1]["status"] == "sent"
     assert any(row["stage"] == "reply_delivered" and row["status"] == "sent" for row in journal_rows)
+
+
+def test_role_agent_dead_letter_summarizes_provider_schema_errors(tmp_path: Path) -> None:
+    broker = InMemoryBrokerAdapter()
+    broker.ensure_stream("agent-inbox", ["agent.project-manager"])
+    published = broker.publish(
+        "agent-inbox",
+        "agent.project-manager",
+        {
+            "request": "status",
+            "connector": "teams",
+            "conversation_ref": "dm:project-manager",
+            "reply_target_ref": "conversation:pm-dm",
+            "reply_thread_ref": "thread-1",
+        },
+    )
+    raw_error = (
+        "codex-cli worker failed: OpenAI Codex v0.135.0\n"
+        "invalid_json_schema: In context=('properties','tool_calls','items'), "
+        "'oneOf' is not permitted.\n"
+        + ("full prompt and traceback " * 200)
+    )
+    db = V3Database(tmp_path / "v3.sqlite3")
+    bridge = FakeStakeholderBridge()
+    try:
+        db.migrate()
+        service = RoleAgentService(
+            config=RoleInstanceConfig(
+                project_id="agentic-mesh-dev",
+                role_id="project-manager",
+                instance_id="1",
+                role_prompt_path=_config(tmp_path).role_prompt_path,
+                memory_db_path=tmp_path / "memory.sqlite3",
+                inbox_stream="agent-inbox",
+                inbox_consumer="project-manager-1",
+            ),
+            broker=broker,
+            worker=RuntimeErrorWorker(raw_error),
+            memory=InMemoryRoleMemory(),
+            failure_reporter=DatabaseAgentFailureReporter(db, stakeholder_bridge=bridge),
+            max_delivery_attempts=1,
+        )
+
+        result = service.run_once()
+    finally:
+        db.close()
+
+    assert result is not None
+    assert result.status == "dead_lettered"
+    assert len(bridge.messages) == 1
+    text = bridge.messages[0].text_markdown
+    assert "Worker output schema was rejected by the model provider" in text
+    assert "OpenAI Codex" not in text
+    assert "full prompt and traceback" not in text
+    assert len(text) < 800
 
 
 def test_role_agent_requeues_if_worker_calls_no_terminal_tool(tmp_path: Path) -> None:
