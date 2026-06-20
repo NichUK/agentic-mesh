@@ -52,6 +52,46 @@ def test_v3_database_raises_when_new_database_cannot_enable_wal(monkeypatch) -> 
         db_module._enable_wal_journal_mode(LockedJournalConnection(), database_exists=False)  # type: ignore[arg-type]
 
 
+def test_v3_database_migrates_existing_work_item_status_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "v3.sqlite3"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE work_items (
+              work_item_id TEXT PRIMARY KEY,
+              queue_item_id TEXT,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL,
+              state TEXT NOT NULL,
+              owner_role TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO work_items(
+              work_item_id, queue_item_id, title, description, state, owner_role
+            ) VALUES (
+              'work-old', NULL, 'Old work', 'Old migrated work.', 'active', 'project-manager'
+            );
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    db = V3Database(db_path)
+    try:
+        db.migrate()
+        snapshot = db.status_snapshot(project_id="agentic-mesh-dev")
+        columns = {row["name"] for row in db.connection.execute("PRAGMA table_info(work_items)")}
+    finally:
+        db.close()
+
+    assert {"current_phase", "next_action", "governance_json"}.issubset(columns)
+    assert snapshot.work_items[0].work_item_id == "work-old"
+    assert snapshot.work_items[0].next_action == ""
+
+
 def test_v3_tool_service_records_backlog_work_agent_and_release(tmp_path: Path) -> None:
     db = V3Database(tmp_path / "v3.sqlite3")
     try:
