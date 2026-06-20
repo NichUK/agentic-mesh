@@ -95,7 +95,14 @@ class WebSocketTransport(AppServerTransport):
         headers = []
         if bearer_token:
             headers.append(f"Authorization: Bearer {bearer_token}")
-        self._socket = websocket.create_connection(endpoint, header=headers, timeout=timeout_seconds)
+        # Codex app-server rejects browser-style Origin headers on internal
+        # capability-token WebSocket connections.
+        self._socket = websocket.create_connection(
+            endpoint,
+            header=headers,
+            timeout=timeout_seconds,
+            suppress_origin=True,
+        )
 
     def send(self, message: dict[str, Any]) -> dict[str, Any] | None:
         self._socket.send(json.dumps(message, sort_keys=True))
