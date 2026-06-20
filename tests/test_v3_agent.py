@@ -1001,12 +1001,25 @@ def test_role_agent_blocks_linked_work_item_on_dead_letter(tmp_path: Path) -> No
             broker=broker,
             worker=NoToolWorker(),
             memory=InMemoryRoleMemory(),
-            failure_reporter=DatabaseAgentFailureReporter(db),
+            failure_reporter=DatabaseAgentFailureReporter(db, broker=broker, broker_stream="agent-inbox"),
+            message_journal=db,
             max_delivery_attempts=1,
         )
 
         result = service.run_once()
         detail = db.work_item_detail("work-123")
+        recovery_messages = broker.fetch("agent-inbox", "project-manager.1")
+        journal_rows = [
+            dict(row)
+            for row in db.connection.execute(
+                """
+                SELECT stage, status, target_role, broker_subject, broker_consumer, summary
+                FROM message_journal
+                WHERE target_role='project-manager'
+                ORDER BY created_at
+                """
+            ).fetchall()
+        ]
     finally:
         db.close()
 
@@ -1019,6 +1032,22 @@ def test_role_agent_blocks_linked_work_item_on_dead_letter(tmp_path: Path) -> No
     assert "Project Manager must recover failed agent delivery" in detail.next_action
     assert "agent did not call any tool" in detail.next_action
     assert published.message_id in detail.next_action
+    assert len(recovery_messages) == 1
+    recovery = recovery_messages[0]
+    assert recovery.subject == "agent.project-manager"
+    assert recovery.payload["message_type"] == "operator_recovery.required"
+    assert recovery.payload["failed_message_id"] == published.message_id
+    assert recovery.payload["work_item_id"] == "work-123"
+    assert recovery.payload["target_role"] == "project-manager"
+    assert "Project Manager either retries" in str(recovery.payload["expected_output"])
+    assert any(
+        row["stage"] == "published"
+        and row["status"] == "published"
+        and row["broker_subject"] == "agent.project-manager"
+        and row["broker_consumer"] == "project-manager.1"
+        and "operator recovery" in row["summary"]
+        for row in journal_rows
+    )
 
 
 def test_role_agent_acks_informed_update_without_worker_run_or_work_block(tmp_path: Path) -> None:

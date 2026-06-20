@@ -11,6 +11,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from agentic_mesh_v3.broker import BrokerAdapter
+from agentic_mesh_v3.broker_diagnostics import role_consumer_name
 from agentic_mesh_v3.connectors import OutboundMessage
 from agentic_mesh_v3.connectors import StakeholderBridge
 from agentic_mesh_v3.governance import GovernanceChecklist
@@ -473,9 +474,20 @@ class DatabaseAgentPromptRecorder:
 
 
 class DatabaseAgentFailureReporter:
-    def __init__(self, db: object, stakeholder_bridge: StakeholderBridge | None = None) -> None:
+    def __init__(
+        self,
+        db: object,
+        stakeholder_bridge: StakeholderBridge | None = None,
+        *,
+        broker: BrokerAdapter | None = None,
+        broker_stream: str | None = None,
+        project_manager_role_id: str = "project-manager",
+    ) -> None:
         self.db = db
         self.stakeholder_bridge = stakeholder_bridge
+        self.broker = broker
+        self.broker_stream = broker_stream
+        self.project_manager_role_id = project_manager_role_id
 
     def report_dead_letter(
         self,
@@ -538,6 +550,16 @@ class DatabaseAgentFailureReporter:
             created_by_role_instance=role_instance_id,
             origin_message_id=_payload_text(payload, "source_message_id") or message_id,
         )
+        if operator_recovery:
+            self._publish_project_manager_recovery(
+                role_instance_id=role_instance_id,
+                role_id=role_id,
+                message_id=message_id,
+                work_item_id=work_item_id,
+                error=error,
+                payload=payload,
+                next_action=next_action,
+            )
 
     def _notify_source_conversation(
         self,
@@ -646,6 +668,70 @@ class DatabaseAgentFailureReporter:
         if route is None:
             return direct_route
         return dict(route)
+
+    def _publish_project_manager_recovery(
+        self,
+        *,
+        role_instance_id: str,
+        role_id: str,
+        message_id: str,
+        work_item_id: str,
+        error: str,
+        payload: dict[str, object],
+        next_action: str,
+    ) -> None:
+        if self.broker is None or self.broker_stream is None:
+            return
+        target_role = self.project_manager_role_id
+        subject = f"agent.{target_role}"
+        consumer = role_consumer_name(target_role, "1")
+        self.broker.ensure_stream(self.broker_stream, [subject])
+        self.broker.ensure_consumer(self.broker_stream, consumer, filter_subject=subject)
+        message_payload: dict[str, object] = {
+            "message_type": "operator_recovery.required",
+            "source_role_instance_id": role_instance_id,
+            "source_role": role_id,
+            "target_role": target_role,
+            "work_item_id": work_item_id,
+            "failed_message_id": message_id,
+            "failed_role_instance_id": role_instance_id,
+            "error": error,
+            "task": next_action,
+            "reason": "Agent delivery dead-lettered with a safe-output/tool-contract failure.",
+            "expected_output": (
+                "Project Manager either retries the failed role with focused context, delegates diagnosis to a specialist, "
+                "or records a concrete blocker/exception with owner and next action."
+            ),
+            "correlation_id": _message_correlation_id(payload) or f"corr-{message_id}",
+        }
+        for optional_key in (
+            "queue_item_id",
+            "source_message_id",
+            "conversation_ref",
+            "reply_target_ref",
+            "reply_thread_ref",
+            "connector",
+        ):
+            value = _payload_text(payload, optional_key)
+            if value is not None:
+                message_payload[optional_key] = value
+        message = self.broker.publish(self.broker_stream, subject, message_payload)
+        self.db.record_message_journal(  # type: ignore[attr-defined]
+            message_id=message.message_id,
+            correlation_id=str(message_payload["correlation_id"]),
+            direction="broker",
+            stage="published",
+            status="published",
+            source_ref=f"message:{message_id}",
+            target_role=target_role,
+            role_instance_id=role_instance_id,
+            work_item_id=work_item_id,
+            queue_item_id=_payload_text(payload, "queue_item_id"),
+            broker_subject=subject,
+            broker_consumer=consumer,
+            summary=f"Published operator recovery to {target_role}: {next_action[:140]}",
+            payload=message_payload,
+        )
 
 
 def _is_non_blocking_delivery_failure(payload: dict[str, object]) -> bool:
