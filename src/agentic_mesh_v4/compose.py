@@ -92,6 +92,7 @@ def _role_service(*, role_id: str, service_name: str, port: int, full_access: bo
         command = (
             "sh -lc 'mkdir -p /root/.ssh; "
             "if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; "
+            "if [ -f /root/.ssh/config ]; then sed -i \"s#/mesh/home/.ssh#/root/.ssh#g\" /root/.ssh/config; fi; "
             "chmod 700 /root/.ssh; "
             "find /root/.ssh -type f -exec chmod 600 {} \\; 2>/dev/null || true; "
             f"exec codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'"

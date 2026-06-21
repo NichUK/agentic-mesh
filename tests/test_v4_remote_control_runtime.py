@@ -340,6 +340,7 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
         ":/mesh/home/.ssh:ro"
     ) in rendered
     assert "cp -r /mesh/home/.ssh/. /root/.ssh/" in rendered
+    assert 'sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config' in rendered
     assert "HOME: /mesh/home" in rendered
     assert "dispatcher:" in rendered
     assert "dispatch-loop" in rendered
