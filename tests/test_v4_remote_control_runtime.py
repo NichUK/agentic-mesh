@@ -320,8 +320,10 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     text = project_manager_agents.read_text(encoding="utf-8")
     assert "Agentic Mesh Role: Project Manager" in text
     assert "Durable project effects must be made through the configured safe-output tools" in text
+    assert "missing safe-output tools do not remove your ordinary shell" in text
     assert "Authority level: `full`" in text
     assert "SSH credentials are expected at `/mesh/home/.ssh`" in text
+    assert "continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection" in text
 
 
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
