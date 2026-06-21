@@ -87,6 +87,15 @@ def validate_v4_compose(rendered: str) -> None:
 
 
 def _role_service(*, role_id: str, service_name: str, port: int, full_access: bool) -> list[str]:
+    command = f"codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+    if role_id == "project-manager":
+        command = (
+            "sh -lc 'mkdir -p /root/.ssh; "
+            "if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; "
+            "chmod 700 /root/.ssh; "
+            "find /root/.ssh -type f -exec chmod 600 {} \\; 2>/dev/null || true; "
+            f"exec codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'"
+        )
     lines = [
         f"  {service_name}:",
         "    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}",
@@ -96,7 +105,7 @@ def _role_service(*, role_id: str, service_name: str, port: int, full_access: bo
         "    profiles:",
         "      - roles",
         "    working_dir: /mesh/agent",
-        f"    command: codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token",
+        f"    command: {command}",
         "    environment:",
         f"      AGENTIC_MESH_ROLE_ID: {role_id}",
         f"      AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.{role_id}.1",
@@ -115,7 +124,6 @@ def _role_service(*, role_id: str, service_name: str, port: int, full_access: bo
             [
                 "      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro",
                 "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro",
-                "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/root/.ssh:ro",
             ]
         )
     return lines

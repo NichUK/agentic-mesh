@@ -160,7 +160,7 @@ def _authority_markdown(role: V4RoleConfig) -> str:
                 "- Sandbox: `danger-full-access` unless project config narrows it.",
                 "- You may perform host, Git, Docker, SSH, deployment, and operational actions when they are within your role and project instructions.",
                 "- The project document library is mounted at `/documents`.",
-                "- Your mounted home directory is `/mesh/home`; SSH credentials are expected at `/mesh/home/.ssh` and are also mounted at `/root/.ssh` for OpenSSH default lookup. Project environment details may be available at `/mesh/home/.env`.",
+                "- Your mounted home directory is `/mesh/home`; SSH credentials are expected at `/mesh/home/.ssh` and are copied to `/root/.ssh` at container startup for OpenSSH default lookup. Project environment details may be available at `/mesh/home/.env`.",
                 "- If an Agentic Mesh safe-output/runtime tool mentioned in your instructions is not available in the Codex tool surface, continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection where appropriate. Report the missing tool as a tool-wiring gap only for the durable state change it would have recorded.",
                 "- Record risky actions, evidence, and next owner clearly.",
             ]

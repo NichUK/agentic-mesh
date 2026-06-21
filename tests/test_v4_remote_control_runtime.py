@@ -323,7 +323,7 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "missing safe-output tools do not remove your ordinary shell" in text
     assert "Authority level: `full`" in text
     assert "SSH credentials are expected at `/mesh/home/.ssh`" in text
-    assert "also mounted at `/root/.ssh` for OpenSSH default lookup" in text
+    assert "copied to `/root/.ssh` at container startup for OpenSSH default lookup" in text
     assert "continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection" in text
 
 
@@ -339,10 +339,7 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
         "${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}"
         ":/mesh/home/.ssh:ro"
     ) in rendered
-    assert (
-        "${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}"
-        ":/root/.ssh:ro"
-    ) in rendered
+    assert "cp -r /mesh/home/.ssh/. /root/.ssh/" in rendered
     assert "HOME: /mesh/home" in rendered
     assert "dispatcher:" in rendered
     assert "dispatch-loop" in rendered
