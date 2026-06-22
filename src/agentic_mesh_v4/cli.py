@@ -134,6 +134,7 @@ def main(argv: list[str] | None = None) -> None:
                 project_config=project_config,
                 client_factory=factory,
                 document_syncer=_document_syncer(args.project_config),
+                agent_config_root=args.agent_config_root,
             ).dispatch_once(role_id=role.role_id)
             _print_json(_dispatch_result(result))
             return
@@ -222,6 +223,7 @@ def _dispatch_available_messages(
         project_config=project_config,
         client_factory=factory,
         document_syncer=_document_syncer(project_config_path),
+        agent_config_root=agent_config_root,
     )
     runtime.register_roles()
     for role in project_config.roles:

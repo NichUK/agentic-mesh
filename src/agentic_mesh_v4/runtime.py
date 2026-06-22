@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 from typing import Protocol
 
@@ -36,12 +38,14 @@ class V4Runtime:
         client_factory: ClientFactory | None = None,
         teams_reply_sender: TeamsReplySender | None = None,
         document_syncer: Callable[[], object] | None = None,
+        agent_config_root: str | Path | None = None,
     ) -> None:
         self.db = db
         self.project_config = project_config
         self.client_factory = client_factory
         self.teams_reply_sender = teams_reply_sender
         self.document_syncer = document_syncer
+        self.agent_config_root = Path(agent_config_root) if agent_config_root is not None else None
 
     def register_roles(self) -> None:
         for role in self.project_config.roles:
@@ -279,11 +283,17 @@ class V4Runtime:
         )
 
     def _thread_for_role(self, *, client: CodexAppServerClient, role_instance_id: str, role: object) -> str:
+        agent_config_hash = self._agent_config_hash(role_id=getattr(role, "role_id"))
         snapshot = self.db.snapshot()
         for item in snapshot["roles"]:
             if item["role_instance_id"] == role_instance_id and item.get("active_thread_id"):
                 thread_id = str(item["active_thread_id"])
-                if self._thread_matches_role(thread_id=thread_id, role_instance_id=role_instance_id, role=role):
+                if self._thread_matches_role(
+                    thread_id=thread_id,
+                    role_instance_id=role_instance_id,
+                    role=role,
+                    agent_config_hash=agent_config_hash,
+                ):
                     client.resume_thread(thread_id)
                     return thread_id
                 self._retire_thread(role_instance_id=role_instance_id, thread_id=thread_id)
@@ -305,12 +315,13 @@ class V4Runtime:
             self.db.connection.execute(
                 """
                 INSERT OR IGNORE INTO codex_threads(
-                  thread_id, role_instance_id, sandbox_mode, approval_policy, status, created_at, updated_at
-                ) VALUES(?,?,?,?,?,?,?)
+                  thread_id, role_instance_id, agent_config_hash, sandbox_mode, approval_policy, status, created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?,?)
                 """,
                 (
                     thread_id,
                     role_instance_id,
+                    agent_config_hash,
                     getattr(role, "sandbox_mode"),
                     getattr(role, "approval_policy"),
                     "active",
@@ -333,10 +344,17 @@ class V4Runtime:
             return None
         return str(row["active_thread_id"])
 
-    def _thread_matches_role(self, *, thread_id: str, role_instance_id: str, role: object) -> bool:
+    def _thread_matches_role(
+        self,
+        *,
+        thread_id: str,
+        role_instance_id: str,
+        role: object,
+        agent_config_hash: str,
+    ) -> bool:
         row = self.db.connection.execute(
             """
-            SELECT sandbox_mode, approval_policy, status
+            SELECT sandbox_mode, approval_policy, agent_config_hash, status
             FROM codex_threads
             WHERE thread_id=? AND role_instance_id=?
             """,
@@ -348,7 +366,29 @@ class V4Runtime:
             str(row["status"]) == "active"
             and row["sandbox_mode"] == getattr(role, "sandbox_mode")
             and row["approval_policy"] == getattr(role, "approval_policy")
+            and (row["agent_config_hash"] or "") == agent_config_hash
         )
+
+    def _agent_config_hash(self, *, role_id: str) -> str:
+        digest = hashlib.sha256()
+        if self.agent_config_root is not None:
+            role_root = self.agent_config_root / role_id / "1"
+            for filename in ("AGENTS.md", "container.json"):
+                path = role_root / filename
+                if path.exists():
+                    digest.update(filename.encode("utf-8"))
+                    digest.update(b"\0")
+                    digest.update(path.read_bytes())
+                    digest.update(b"\0")
+            if digest.digest() != hashlib.sha256().digest():
+                return digest.hexdigest()
+        role = self.project_config.role(role_id)
+        digest.update(role.role_id.encode("utf-8"))
+        digest.update(str(role.sandbox_mode).encode("utf-8"))
+        digest.update(str(role.approval_policy).encode("utf-8"))
+        digest.update(str(role.model).encode("utf-8"))
+        digest.update(str(role.reasoning_effort).encode("utf-8"))
+        return digest.hexdigest()
 
     def _retire_thread(self, *, role_instance_id: str, thread_id: str) -> None:
         now = utc_now()

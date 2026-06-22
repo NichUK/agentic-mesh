@@ -79,6 +79,7 @@ class V4Database:
                 CREATE TABLE IF NOT EXISTS codex_threads (
                   thread_id TEXT PRIMARY KEY,
                   role_instance_id TEXT NOT NULL,
+                  agent_config_hash TEXT,
                   sandbox_mode TEXT,
                   approval_policy TEXT,
                   status TEXT NOT NULL,
@@ -221,6 +222,7 @@ class V4Database:
             )
             _ensure_column(self.connection, "codex_threads", "sandbox_mode", "TEXT")
             _ensure_column(self.connection, "codex_threads", "approval_policy", "TEXT")
+            _ensure_column(self.connection, "codex_threads", "agent_config_hash", "TEXT")
 
     def upsert_role_instance(
         self,

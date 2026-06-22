@@ -497,6 +497,74 @@ def test_v4_runtime_retires_thread_when_sandbox_metadata_does_not_match(tmp_path
     assert new_row["approval_policy"] == "never"
 
 
+def test_v4_runtime_retires_thread_when_agent_config_changes(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    agent_config_root = tmp_path / "agents"
+    materialize_agent_configs(
+        project_config=config,
+        output_root=agent_config_root,
+        role_templates_dir=Path("config/roles"),
+    )
+    role = config.role("engineering")
+    role_instance_id = "agentic-mesh-dev.engineering.1"
+    runtime = V4Runtime(db=db, project_config=config, agent_config_root=agent_config_root)
+    original_hash = runtime._agent_config_hash(role_id="engineering")  # noqa: SLF001 - regression covers staleness.
+    now = "2026-01-01T00:00:00+00:00"
+    with db.connection:
+        db.connection.execute(
+            """
+            INSERT INTO role_instances(
+              role_instance_id, role_id, display_name, service_name, state,
+              authority, codex_endpoint, active_thread_id, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                role_instance_id,
+                "engineering",
+                "Engineering",
+                role.service_name,
+                "ready",
+                "full",
+                f"ws://{role.service_name}:4709",
+                "old-thread",
+                now,
+            ),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_threads(
+              thread_id, role_instance_id, agent_config_hash, sandbox_mode,
+              approval_policy, status, created_at, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            ("old-thread", role_instance_id, original_hash, role.sandbox_mode, role.approval_policy, "active", now, now),
+        )
+
+    agents_path = agent_config_root / "engineering" / "1" / "AGENTS.md"
+    agents_path.write_text(agents_path.read_text(encoding="utf-8") + "\nNew instruction.\n", encoding="utf-8")
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {"thread": {"id": "new-thread"}}})
+    client = CodexAppServerClient(transport)
+    client.initialized = True
+
+    thread_id = runtime._thread_for_role(  # noqa: SLF001 - regression covers config freshness.
+        client=client,
+        role_instance_id=role_instance_id,
+        role=role,
+    )
+
+    assert thread_id == "new-thread"
+    old_row = db.connection.execute("SELECT status FROM codex_threads WHERE thread_id='old-thread'").fetchone()
+    new_row = db.connection.execute(
+        "SELECT agent_config_hash, status FROM codex_threads WHERE thread_id='new-thread'"
+    ).fetchone()
+    assert old_row["status"] == "retired"
+    assert new_row["status"] == "active"
+    assert new_row["agent_config_hash"] != original_hash
+
+
 def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
