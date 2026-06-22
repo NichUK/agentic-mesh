@@ -317,6 +317,42 @@ def test_v4_dispatch_does_not_claim_second_message_while_role_has_active_turn(tm
     assert row["locked_by"] is None
 
 
+def test_v4_requeues_orphaned_active_messages_for_stopped_role(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="This turn was interrupted by deployment",
+        source="teams",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered to Project Manager")
+
+    recovered = db.requeue_active_messages_for_role(
+        target_role="project-manager",
+        summary="Recovered because role container is stopped.",
+    )
+
+    assert recovered == 1
+    message = db.connection.execute(
+        "SELECT state, locked_by, locked_at FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    role = db.connection.execute(
+        "SELECT state, active_turn_id FROM role_instances WHERE role_instance_id=?",
+        (role_instance_id,),
+    ).fetchone()
+    assert message["state"] == "queued"
+    assert message["locked_by"] is None
+    assert message["locked_at"] is None
+    assert role["state"] == "ready"
+    assert role["active_turn_id"] is None
+
+
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()

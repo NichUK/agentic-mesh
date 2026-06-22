@@ -214,6 +214,28 @@ def _dispatch_available_messages(
     runtime = V4Runtime(db=db, project_config=project_config, client_factory=factory)
     runtime.register_roles()
     for role in project_config.roles:
+        if lifecycle is not None and db.active_message_for_role(target_role=role.role_id) is not None:
+            if not lifecycle.is_service_running(role.service_name):
+                recovered = db.requeue_active_messages_for_role(
+                    target_role=role.role_id,
+                    summary=(
+                        f"Recovered orphaned active delivery for {role.role_id}; "
+                        f"compose service {role.service_name} is not running."
+                    ),
+                )
+                if recovered:
+                    print(
+                        json.dumps(
+                            {
+                                "role_id": role.role_id,
+                                "service_name": role.service_name,
+                                "state": "recovered_orphaned_active",
+                                "messages": recovered,
+                            },
+                            sort_keys=True,
+                        ),
+                        file=sys.stderr,
+                    )
         if not db.has_queued_messages(role_id=role.role_id):
             continue
         if lifecycle is not None:

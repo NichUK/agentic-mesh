@@ -37,6 +37,21 @@ class ComposeLifecycle:
             text=True,
         )
 
+    def is_service_running(self, service_name: str) -> bool:
+        command = self._base_command()
+        command.extend(["ps", "--status", "running", "--services"])
+        result = subprocess.run(
+            command,
+            cwd=self.working_directory,
+            env=os.environ.copy(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return False
+        return service_name in {line.strip() for line in result.stdout.splitlines()}
+
     def _base_command(self) -> list[str]:
         command = ["docker", "compose"]
         if self.env_file is not None:
@@ -46,4 +61,3 @@ class ComposeLifecycle:
         for compose_file in self.compose_files:
             command.extend(["-f", str(compose_file)])
         return command
-

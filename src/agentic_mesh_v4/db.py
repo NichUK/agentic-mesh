@@ -393,6 +393,56 @@ class V4Database:
         ).fetchone()
         return _row_dict(row) if row is not None else None
 
+    def requeue_active_messages_for_role(self, *, target_role: str, summary: str) -> int:
+        rows = list(
+            self.connection.execute(
+                """
+                SELECT message_id, correlation_id, locked_by
+                FROM message_queue
+                WHERE target_role=? AND state IN ('delivering', 'active_turn')
+                ORDER BY updated_at ASC
+                """,
+                (target_role,),
+            )
+        )
+        if not rows:
+            return 0
+        now = utc_now()
+        with self.connection:
+            for row in rows:
+                self.connection.execute(
+                    """
+                    UPDATE message_queue
+                    SET state='queued',
+                        locked_by=NULL,
+                        locked_at=NULL,
+                        updated_at=?
+                    WHERE message_id=?
+                    """,
+                    (now, row["message_id"]),
+                )
+                if row["locked_by"]:
+                    self.connection.execute(
+                        """
+                        UPDATE role_instances
+                        SET active_turn_id=NULL,
+                            state='ready',
+                            updated_at=?
+                        WHERE role_instance_id=?
+                        """,
+                        (now, row["locked_by"]),
+                    )
+        for row in rows:
+            self.record_message_journal(
+                message_id=str(row["message_id"]),
+                correlation_id=str(row["correlation_id"]),
+                role_instance_id=str(row["locked_by"]) if row["locked_by"] else None,
+                stage="recovered",
+                status="queued",
+                summary=summary,
+            )
+        return len(rows)
+
     def record_message_journal(
         self,
         *,
