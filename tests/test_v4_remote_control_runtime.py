@@ -40,6 +40,9 @@ def test_v4_loads_full_sdlc_team_without_broker() -> None:
     assert config.role("project-manager").approval_policy == "never"
     assert config.role("release-manager").authority == "full"
     assert config.role("product-manager").authority == "scoped"
+    assert config.role("product-manager").approval_policy == "never"
+    assert config.role("qa-engineer").sandbox_mode == "workspace-write"
+    assert config.role("qa-engineer").approval_policy == "never"
 
 
 def test_v4_sqlite_queue_claims_steering_first(tmp_path: Path) -> None:
