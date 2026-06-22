@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 
-TERMINAL_MESSAGE_STATES = {"completed", "failed", "dead_lettered"}
+TERMINAL_MESSAGE_STATES = {"completed", "failed", "dead_lettered", "steered"}
 
 
 def utc_now() -> str:
@@ -378,7 +378,7 @@ class V4Database:
         conversation_ref: str | None = None,
     ) -> dict[str, Any] | None:
         params: list[object] = [target_role]
-        where = "target_role=? AND state IN ('delivering', 'active_turn', 'steered')"
+        where = "target_role=? AND state IN ('delivering', 'active_turn')"
         if conversation_ref:
             where += " AND conversation_ref=?"
             params.append(conversation_ref)
@@ -513,7 +513,7 @@ class V4Database:
         }
         active_messages: dict[str, dict[str, Any]] = {}
         for item in messages:
-            if item["state"] not in {"delivering", "active_turn", "steered"}:
+            if item["state"] not in {"delivering", "active_turn"}:
                 continue
             locked_by = item.get("locked_by")
             if not locked_by:

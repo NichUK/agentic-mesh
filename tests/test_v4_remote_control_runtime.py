@@ -283,6 +283,40 @@ def test_v4_queue_directive_overrides_same_conversation_steering(tmp_path: Path)
     assert transport.sent == []
 
 
+def test_v4_dispatch_does_not_claim_second_message_while_role_has_active_turn(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    first_message = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Keep working on this",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(first_message, state="active_turn", summary="Delivered to Project Manager")
+    second_message = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="queue: make this separate",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is None
+    row = db.connection.execute(
+        "SELECT state, delivery_attempts, locked_by FROM message_queue WHERE message_id=?",
+        (second_message,),
+    ).fetchone()
+    assert row["state"] == "queued"
+    assert row["delivery_attempts"] == 0
+    assert row["locked_by"] is None
+
+
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()

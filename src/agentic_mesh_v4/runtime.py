@@ -129,6 +129,9 @@ class V4Runtime:
     def dispatch_once(self, *, role_id: str) -> DispatchResult | None:
         role = self.project_config.role(role_id)
         role_instance_id = f"{self.project_config.project_id}.{role.role_id}.1"
+        active = self.db.active_message_for_role(target_role=role.role_id)
+        if active is not None:
+            return None
         message = self.db.claim_next_message(role_id=role.role_id, worker_id=role_instance_id)
         if message is None:
             return None
