@@ -24,6 +24,13 @@ class FakeTeamsReplySender:
         return "teams-delivery-1"
 
 
+class TimeoutAfterNotificationTransport(InMemoryTransport):
+    def receive(self) -> dict[str, object] | None:
+        if self.responses or self.notifications:
+            return super().receive()
+        raise TimeoutError("Connection timed out")
+
+
 def test_v4_loads_full_sdlc_team_without_broker() -> None:
     config = load_project_config(PROJECT_CONFIG)
 
@@ -211,6 +218,40 @@ def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: 
     assert [event["event_type"] for event in events].count("item/completed") == 1
     assert any(event["event_type"] == "turn/completed" for event in events)
     assert any(event["content"] == " Actually done." for event in events)
+
+
+def test_v4_runtime_requeues_partial_output_timeout_without_marking_complete(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = TimeoutAfterNotificationTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "I will do this."}})
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="engineering", text="Implement work", source="api")
+
+    result = runtime.dispatch_once(role_id="engineering")
+
+    assert result is not None
+    assert result.state == "queued"
+    row = db.connection.execute(
+        "SELECT state, locked_by, locked_at FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    assert row["state"] == "queued"
+    assert row["locked_by"] is None
+    assert row["locked_at"] is None
+    events = [dict(row) for row in db.connection.execute("SELECT event_type, content FROM agent_events ORDER BY created_at")]
+    assert any(event["event_type"] == "turn/readTimeoutAfterOutput" for event in events)
 
 
 def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> None:

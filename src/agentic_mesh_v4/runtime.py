@@ -431,7 +431,7 @@ class V4Runtime:
                         turn_id=turn_id,
                         message_id=message_id,
                     )
-                    return "".join(reply_parts)
+                    raise RuntimeError(f"turn timed out before completion after partial output: {exc}") from exc
                 raise
             if event is None:
                 return "".join(reply_parts)
