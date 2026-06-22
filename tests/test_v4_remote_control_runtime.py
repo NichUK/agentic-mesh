@@ -50,6 +50,21 @@ def test_v4_sqlite_queue_claims_steering_first(tmp_path: Path) -> None:
     assert claimed.steering is True
 
 
+def test_v4_sqlite_queue_claims_ready_messages_as_deliverable_work(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="ux-designer", text="Review UX handoff")
+    db.mark_message_state(message_id, state="ready", summary="Legacy/manual handoff marked ready")
+
+    assert db.has_queued_messages(role_id="ux-designer") is True
+    claimed = db.claim_next_message(role_id="ux-designer", worker_id="agentic-mesh-dev.ux-designer.1")
+
+    assert claimed is not None
+    assert claimed.message_id == message_id
+
+
 def test_v4_codex_protocol_uses_remote_control_thread_and_turn_methods() -> None:
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {"serverInfo": {"name": "fake"}}})

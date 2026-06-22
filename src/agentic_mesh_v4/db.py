@@ -310,7 +310,7 @@ class V4Database:
             row = self.connection.execute(
                 """
                 SELECT * FROM message_queue
-                WHERE target_role=? AND state='queued'
+                WHERE target_role=? AND state IN ('queued', 'ready')
                 ORDER BY steering DESC, created_at ASC
                 LIMIT 1
                 """,
@@ -326,7 +326,7 @@ class V4Database:
                     locked_by=?,
                     locked_at=?,
                     updated_at=?
-                WHERE message_id=? AND state='queued'
+                WHERE message_id=? AND state IN ('queued', 'ready')
                 """,
                 (worker_id, now, now, row["message_id"]),
             )
@@ -345,7 +345,7 @@ class V4Database:
         row = self.connection.execute(
             """
             SELECT 1 FROM message_queue
-            WHERE target_role=? AND state='queued'
+            WHERE target_role=? AND state IN ('queued', 'ready')
             LIMIT 1
             """,
             (role_id,),
@@ -589,7 +589,7 @@ class V4Database:
             }
         queued_counts: dict[str, int] = {}
         for item in messages:
-            if item["state"] == "queued":
+            if item["state"] in {"queued", "ready"}:
                 role_id = str(item["target_role"])
                 queued_counts[role_id] = queued_counts.get(role_id, 0) + 1
         for role in roles:

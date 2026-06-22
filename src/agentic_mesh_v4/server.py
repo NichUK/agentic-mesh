@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -92,7 +94,7 @@ class V4Handler(BaseHTTPRequestHandler):
     def _handle_teams_activity(self) -> None:
         payload = self._read_json()
         text = str(payload.get("text") or payload.get("message") or "")
-        target_role = _target_role(payload)
+        target_role = _target_role(payload, self.project_config)
         conversation_ref = str(payload.get("conversation_ref") or payload.get("conversation", {}).get("id") or "")
         thread_ref = str(payload.get("reply_thread_ref") or payload.get("thread_ref") or "")
         db = V4Database(self.db_path)
@@ -181,7 +183,11 @@ def serve(
     server.serve_forever()
 
 
-def _target_role(payload: dict[str, object]) -> str:
+def _target_role(payload: dict[str, object], project_config: V4ProjectConfig) -> str:
+    if str(payload.get("channelId") or "").casefold() == "msteams":
+        recipient_role = _target_role_from_recipient(payload, project_config)
+        if recipient_role:
+            return recipient_role
     direct = payload.get("target_role")
     if isinstance(direct, str) and direct:
         return direct
@@ -197,6 +203,31 @@ def _target_role(payload: dict[str, object]) -> str:
         if role_id in text or role_id.replace("-", " ") in text:
             return role_id
     return "project-manager"
+
+
+def _target_role_from_recipient(payload: dict[str, object], project_config: V4ProjectConfig) -> str | None:
+    recipient = payload.get("recipient")
+    if not isinstance(recipient, dict):
+        return None
+    recipient_id = str(recipient.get("id") or "")
+    recipient_name = _normalise_role_label(str(recipient.get("name") or ""))
+    for role in project_config.roles:
+        if recipient_name in {
+            _normalise_role_label(role.display_name),
+            _normalise_role_label(f"AM-{role.display_name}"),
+            _normalise_role_label(role.role_id),
+            _normalise_role_label(role.role_id.replace("-", " ")),
+        }:
+            return role.role_id
+        env_role = role.role_id.upper().replace("-", "_")
+        app_id = os.environ.get(f"TEAMS_BOT_{env_role}_APP_ID")
+        if app_id and recipient_id in {app_id, f"28:{app_id}"}:
+            return role.role_id
+    return None
+
+
+def _normalise_role_label(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
 
 def _safe_artifact_path(root: Path, relative_path: str) -> Path:
