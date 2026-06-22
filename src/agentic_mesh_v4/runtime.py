@@ -338,7 +338,21 @@ class V4Runtime:
     ) -> str:
         reply_parts: list[str] = []
         while True:
-            event = client.receive_event()
+            try:
+                event = client.receive_event()
+            except Exception as exc:
+                if reply_parts:
+                    self.db.record_agent_event(
+                        role_instance_id=role_instance_id,
+                        event_type="turn/readTimeoutAfterOutput",
+                        content=str(exc),
+                        payload={"error": str(exc)},
+                        thread_id=thread_id,
+                        turn_id=turn_id,
+                        message_id=message_id,
+                    )
+                    return "".join(reply_parts)
+                raise
             if event is None:
                 return "".join(reply_parts)
             method = str(event.get("method") or "unknown")
@@ -366,7 +380,7 @@ class V4Runtime:
                 turn_id=turn_id,
                 message_id=message_id,
             )
-            if method == "turn/completed":
+            if method == "turn/completed" or (method == "item/completed" and reply_parts):
                 return "".join(reply_parts)
 
 

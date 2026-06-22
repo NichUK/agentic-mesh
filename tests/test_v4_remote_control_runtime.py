@@ -159,6 +159,39 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["events"][1]["content"] == "Done"
 
 
+def test_v4_runtime_completes_when_codex_stream_ends_with_item_completed(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Done"}})
+    transport.queue_notification({"method": "item/completed", "params": {}})
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Check status", source="api")
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    row = db.connection.execute(
+        "SELECT state, locked_by, locked_at FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    assert row["state"] == "completed"
+    assert row["locked_by"] is None
+    assert row["locked_at"] is None
+
+
 def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()

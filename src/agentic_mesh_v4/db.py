@@ -359,10 +359,23 @@ class V4Database:
                 "SELECT correlation_id FROM message_queue WHERE message_id=?",
                 (message_id,),
             ).fetchone()
-            self.connection.execute(
-                "UPDATE message_queue SET state=?, updated_at=? WHERE message_id=?",
-                (state, now, message_id),
-            )
+            if state == "queued" or state in TERMINAL_MESSAGE_STATES:
+                self.connection.execute(
+                    """
+                    UPDATE message_queue
+                    SET state=?,
+                        locked_by=NULL,
+                        locked_at=NULL,
+                        updated_at=?
+                    WHERE message_id=?
+                    """,
+                    (state, now, message_id),
+                )
+            else:
+                self.connection.execute(
+                    "UPDATE message_queue SET state=?, updated_at=? WHERE message_id=?",
+                    (state, now, message_id),
+                )
         self.record_message_journal(
             message_id=message_id,
             correlation_id=str(row["correlation_id"] if row else f"corr-{message_id}"),
