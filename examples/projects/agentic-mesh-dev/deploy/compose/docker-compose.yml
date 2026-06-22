@@ -105,7 +105,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/project-manager/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/project-manager/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -135,7 +135,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/delivery-manager/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/delivery-manager/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -165,7 +165,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/product-manager/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/product-manager/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -192,7 +192,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/business-analyst/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/business-analyst/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -219,7 +219,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/research-analyst/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/research-analyst/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -246,7 +246,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/enterprise-architect/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/enterprise-architect/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -273,7 +273,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/solution-architect/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/solution-architect/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -300,7 +300,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/security-architect/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/security-architect/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -327,7 +327,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/ux-designer/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/ux-designer/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -354,7 +354,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/engineering/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/engineering/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -382,7 +382,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/qa-engineer/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/qa-engineer/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -409,7 +409,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/platform-engineer/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/platform-engineer/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -439,7 +439,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/release-manager/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/release-manager/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -469,7 +469,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/technical-writer/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/technical-writer/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
@@ -496,7 +496,7 @@ services:
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
-      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/prompt-engineer/1:/mesh/agent:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-configs/prompt-engineer/1:/mesh/agent
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
