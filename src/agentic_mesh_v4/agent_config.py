@@ -21,6 +21,8 @@ Tooling boundary: safe-output tools are required to record durable Agentic Mesh 
 
 After any meaningful work or no-work decision, confirm what happened and identify the next owner. Unless you are at the end of a flow, hand off to a human or at least one role agent when work must continue.
 
+If you are asked to implement, verify, release, recover, or otherwise perform work that is within your role authority, do the work before replying. Do not stop at "I will inspect" or "I will do this" unless you are reporting a real blocker. Before claiming a path, sandbox, or tool is read-only or unavailable, verify it with shell/filesystem evidence and include the exact failing path or command in the blocker.
+
 Use the project document library as the source of truth. Memory is a concise source-linked accelerator and must cite documents, work items, events, or conversations.
 
 Canonical document-library paths:
@@ -178,6 +180,8 @@ def _authority_markdown(role: V4RoleConfig) -> str:
                 "- Authority level: `full`.",
                 "- Sandbox: `danger-full-access` unless project config narrows it.",
                 "- You may perform host, Git, Docker, SSH, deployment, and operational actions when they are within your role and project instructions.",
+                "- For approved implementation or operational work, assume `/mesh/workspaces/agentic-mesh`, `/documents`, and `/mesh/project` are writable unless a shell check proves otherwise.",
+                "- If you believe a writable mount is unavailable, run a minimal write/access probe before reporting a blocker; do not infer read-only status from missing safe-output tools or from the read-only `/mesh/agent` configuration mount.",
                 "- The project document library is mounted at `/documents`.",
                 "- Your mounted home directory is `/mesh/home`; SSH credentials are expected at `/mesh/home/.ssh` and are copied to `/root/.ssh` at container startup for OpenSSH default lookup. Project environment details may be available at `/mesh/home/.env`.",
                 "- If an Agentic Mesh safe-output/runtime tool mentioned in your instructions is not available in the Codex tool surface, continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection where appropriate. Report the missing tool as a tool-wiring gap only for the durable state change it would have recorded.",

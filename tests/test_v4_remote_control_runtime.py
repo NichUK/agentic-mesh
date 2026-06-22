@@ -659,9 +659,13 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "Agentic Mesh Role: Project Manager" in text
     assert "Durable project effects must be made through the configured safe-output tools" in text
     assert "missing safe-output tools do not remove your ordinary shell" in text
+    assert "do the work before replying" in text
+    assert "Before claiming a path, sandbox, or tool is read-only or unavailable" in text
     assert "Work-item dossiers must be written under `/documents/work-items/{work_item_id}`" in text
     assert "Do not create canonical work-item artifacts under `/mesh/project/work-items`" in text
     assert "Authority level: `full`" in text
+    assert "assume `/mesh/workspaces/agentic-mesh`, `/documents`, and `/mesh/project` are writable" in text
+    assert "run a minimal write/access probe before reporting a blocker" in text
     assert "SSH credentials are expected at `/mesh/home/.ssh`" in text
     assert "copied to `/root/.ssh` at container startup for OpenSSH default lookup" in text
     assert "continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection" in text
