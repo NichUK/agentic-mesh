@@ -174,7 +174,7 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["events"][1]["content"] == "Done"
 
 
-def test_v4_runtime_completes_when_codex_stream_ends_with_item_completed(tmp_path: Path) -> None:
+def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
     config = load_project_config(PROJECT_CONFIG)
@@ -183,8 +183,10 @@ def test_v4_runtime_completes_when_codex_stream_ends_with_item_completed(tmp_pat
     transport.queue_response(None)
     transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
     transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
-    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Done"}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "I will inspect."}})
     transport.queue_notification({"method": "item/completed", "params": {}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": " Actually done."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
 
     runtime = V4Runtime(
         db=db,
@@ -205,6 +207,10 @@ def test_v4_runtime_completes_when_codex_stream_ends_with_item_completed(tmp_pat
     assert row["state"] == "completed"
     assert row["locked_by"] is None
     assert row["locked_at"] is None
+    events = [dict(row) for row in db.connection.execute("SELECT event_type, content FROM agent_events ORDER BY created_at")]
+    assert [event["event_type"] for event in events].count("item/completed") == 1
+    assert any(event["event_type"] == "turn/completed" for event in events)
+    assert any(event["content"] == " Actually done." for event in events)
 
 
 def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> None:

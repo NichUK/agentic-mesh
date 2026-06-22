@@ -460,7 +460,7 @@ class V4Runtime:
                 turn_id=turn_id,
                 message_id=message_id,
             )
-            if method == "turn/completed" or (method == "item/completed" and reply_parts):
+            if method == "turn/completed":
                 return "".join(reply_parts)
 
 
