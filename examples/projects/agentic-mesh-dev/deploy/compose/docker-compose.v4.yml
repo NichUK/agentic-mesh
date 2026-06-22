@@ -1,13 +1,38 @@
 services:
-  runtime-image:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+  base-agent-image:
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     build:
       context: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
+      target: base-agent
+    profiles:
+      - build-image
+
+  ops-agent-image:
+    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}
+    build:
+      context: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
+      target: ops-agent
+    profiles:
+      - build-image
+
+  dev-agent-image:
+    image: ${AGENTIC_MESH_DEV_IMAGE_TAG:-agentic-mesh:dev-agent}
+    build:
+      context: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
+      target: dev-agent
+    profiles:
+      - build-image
+
+  qa-agent-image:
+    image: ${AGENTIC_MESH_QA_IMAGE_TAG:-agentic-mesh:qa-agent}
+    build:
+      context: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}
+      target: qa-agent
     profiles:
       - build-image
 
   runtime:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}
     env_file:
       - path: .env
         required: false
@@ -25,7 +50,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   dispatcher:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}
     env_file:
       - path: .env
         required: false
@@ -38,7 +63,10 @@ services:
       AGENTIC_MESH_WORKSPACE_HOST_PATH: ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}
       AGENTIC_MESH_CODEX_HOME_HOST_PATH: ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}
       AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH: ${AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH:-../../../../../config/otel/collector.yaml}
-      AGENTIC_MESH_IMAGE_TAG: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+      AGENTIC_MESH_BASE_IMAGE_TAG: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
+      AGENTIC_MESH_OPS_IMAGE_TAG: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}
+      AGENTIC_MESH_DEV_IMAGE_TAG: ${AGENTIC_MESH_DEV_IMAGE_TAG:-agentic-mesh:dev-agent}
+      AGENTIC_MESH_QA_IMAGE_TAG: ${AGENTIC_MESH_QA_IMAGE_TAG:-agentic-mesh:qa-agent}
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-agentic-mesh}
     volumes:
       - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
@@ -57,17 +85,18 @@ services:
       - "4318:4318"
 
   agentic-mesh-dev-project-manager-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}
     env_file:
       - path: .env
         required: false
     profiles:
       - roles
     working_dir: /mesh/agent
-    command: codex app-server --listen ws://0.0.0.0:4700 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token
+    command: sh -lc 'mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex app-server --listen ws://0.0.0.0:4700 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: project-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.project-manager.1
+      AGENTIC_MESH_TOOL_PROFILE: ops-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -81,17 +110,18 @@ services:
       - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro
 
   agentic-mesh-dev-delivery-manager-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}
     env_file:
       - path: .env
         required: false
     profiles:
       - roles
     working_dir: /mesh/agent
-    command: codex app-server --listen ws://0.0.0.0:4701 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token
+    command: sh -lc 'mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex app-server --listen ws://0.0.0.0:4701 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: delivery-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.delivery-manager.1
+      AGENTIC_MESH_TOOL_PROFILE: ops-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -101,9 +131,11 @@ services:
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro
+      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro
 
   agentic-mesh-dev-product-manager-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -114,6 +146,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: product-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.product-manager.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -122,10 +155,9 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-business-analyst-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -136,6 +168,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: business-analyst
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.business-analyst.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -144,10 +177,9 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-research-analyst-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -158,6 +190,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: research-analyst
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.research-analyst.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -166,10 +199,9 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-enterprise-architect-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -180,6 +212,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: enterprise-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.enterprise-architect.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -188,10 +221,9 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-solution-architect-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -202,6 +234,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: solution-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.solution-architect.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -210,10 +243,9 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-security-architect-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -224,6 +256,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: security-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.security-architect.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -232,10 +265,9 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-ux-designer-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -246,6 +278,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: ux-designer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.ux-designer.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -254,10 +287,9 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-engineering-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_DEV_IMAGE_TAG:-agentic-mesh:dev-agent}
     env_file:
       - path: .env
         required: false
@@ -268,6 +300,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: engineering
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.engineering.1
+      AGENTIC_MESH_TOOL_PROFILE: dev-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -279,7 +312,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-qa-engineer-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_QA_IMAGE_TAG:-agentic-mesh:qa-agent}
     env_file:
       - path: .env
         required: false
@@ -290,6 +323,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: qa-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.qa-engineer.1
+      AGENTIC_MESH_TOOL_PROFILE: qa-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -298,20 +332,20 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-platform-engineer-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}
     env_file:
       - path: .env
         required: false
     profiles:
       - roles
     working_dir: /mesh/agent
-    command: codex app-server --listen ws://0.0.0.0:4711 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token
+    command: sh -lc 'mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex app-server --listen ws://0.0.0.0:4711 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: platform-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.platform-engineer.1
+      AGENTIC_MESH_TOOL_PROFILE: ops-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -321,19 +355,22 @@ services:
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro
+      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro
 
   agentic-mesh-dev-release-manager-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}
     env_file:
       - path: .env
         required: false
     profiles:
       - roles
     working_dir: /mesh/agent
-    command: codex app-server --listen ws://0.0.0.0:4712 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token
+    command: sh -lc 'mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex app-server --listen ws://0.0.0.0:4712 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: release-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.release-manager.1
+      AGENTIC_MESH_TOOL_PROFILE: ops-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -343,9 +380,11 @@ services:
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro
+      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro
 
   agentic-mesh-dev-technical-writer-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -356,6 +395,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: technical-writer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.technical-writer.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -364,10 +404,9 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock
 
   agentic-mesh-dev-prompt-engineer-1:
-    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}
+    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}
     env_file:
       - path: .env
         required: false
@@ -378,6 +417,7 @@ services:
     environment:
       AGENTIC_MESH_ROLE_ID: prompt-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.prompt-engineer.1
+      AGENTIC_MESH_TOOL_PROFILE: base-agent
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -386,4 +426,3 @@ services:
       - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex
-      - /var/run/docker.sock:/var/run/docker.sock

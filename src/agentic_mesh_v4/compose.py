@@ -3,18 +3,50 @@ from __future__ import annotations
 from agentic_mesh_v4.config import V4ProjectConfig
 
 
+OPS_ROLES = {"project-manager", "delivery-manager", "platform-engineer", "release-manager"}
+DEV_ROLES = {"engineering"}
+QA_ROLES = {"qa-engineer"}
+SSH_ROLES = OPS_ROLES
+DOCKER_SOCKET_ROLES = OPS_ROLES | DEV_ROLES
+
+
 def render_compose(project_config: V4ProjectConfig) -> str:
     lines: list[str] = [
         "services:",
-        "  runtime-image:",
-        "    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}",
+        "  base-agent-image:",
+        "    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}",
         "    build:",
         "      context: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}",
+        "      target: base-agent",
+        "    profiles:",
+        "      - build-image",
+        "",
+        "  ops-agent-image:",
+        "    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}",
+        "    build:",
+        "      context: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}",
+        "      target: ops-agent",
+        "    profiles:",
+        "      - build-image",
+        "",
+        "  dev-agent-image:",
+        "    image: ${AGENTIC_MESH_DEV_IMAGE_TAG:-agentic-mesh:dev-agent}",
+        "    build:",
+        "      context: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}",
+        "      target: dev-agent",
+        "    profiles:",
+        "      - build-image",
+        "",
+        "  qa-agent-image:",
+        "    image: ${AGENTIC_MESH_QA_IMAGE_TAG:-agentic-mesh:qa-agent}",
+        "    build:",
+        "      context: ${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:-../../../../..}",
+        "      target: qa-agent",
         "    profiles:",
         "      - build-image",
         "",
         "  runtime:",
-        "    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}",
+        "    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}",
         "    env_file:",
         "      - path: .env",
         "        required: false",
@@ -32,7 +64,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "      - /var/run/docker.sock:/var/run/docker.sock",
         "",
         "  dispatcher:",
-        "    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}",
+        "    image: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}",
         "    env_file:",
         "      - path: .env",
         "        required: false",
@@ -45,7 +77,10 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "      AGENTIC_MESH_WORKSPACE_HOST_PATH: ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}",
         "      AGENTIC_MESH_CODEX_HOME_HOST_PATH: ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}",
         "      AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH: ${AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH:-../../../../../config/otel/collector.yaml}",
-        "      AGENTIC_MESH_IMAGE_TAG: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}",
+        "      AGENTIC_MESH_BASE_IMAGE_TAG: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}",
+        "      AGENTIC_MESH_OPS_IMAGE_TAG: ${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}",
+        "      AGENTIC_MESH_DEV_IMAGE_TAG: ${AGENTIC_MESH_DEV_IMAGE_TAG:-agentic-mesh:dev-agent}",
+        "      AGENTIC_MESH_QA_IMAGE_TAG: ${AGENTIC_MESH_QA_IMAGE_TAG:-agentic-mesh:qa-agent}",
         "      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-agentic-mesh}",
         "    volumes:",
         "      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro",
@@ -65,14 +100,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "",
     ]
     for role in project_config.roles:
-        lines.extend(
-            _role_service(
-                role_id=role.role_id,
-                service_name=role.service_name,
-                port=role.codex_port,
-                full_access=role.authority == "full",
-            )
-        )
+        lines.extend(_role_service(role_id=role.role_id, service_name=role.service_name, port=role.codex_port))
         lines.append("")
     rendered = "\n".join(lines).rstrip() + "\n"
     validate_v4_compose(rendered)
@@ -86,9 +114,9 @@ def validate_v4_compose(rendered: str) -> None:
         raise ValueError(f"V4 compose contains V3-only components: {', '.join(found)}")
 
 
-def _role_service(*, role_id: str, service_name: str, port: int, full_access: bool) -> list[str]:
+def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
     command = f"codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
-    if role_id == "project-manager":
+    if role_id in SSH_ROLES:
         command = (
             "sh -lc 'mkdir -p /root/.ssh; "
             "if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; "
@@ -99,7 +127,7 @@ def _role_service(*, role_id: str, service_name: str, port: int, full_access: bo
         )
     lines = [
         f"  {service_name}:",
-        "    image: ${AGENTIC_MESH_IMAGE_TAG:-agentic-mesh:local}",
+        f"    image: {_role_image(role_id)}",
         "    env_file:",
         "      - path: .env",
         "        required: false",
@@ -110,6 +138,7 @@ def _role_service(*, role_id: str, service_name: str, port: int, full_access: bo
         "    environment:",
         f"      AGENTIC_MESH_ROLE_ID: {role_id}",
         f"      AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.{role_id}.1",
+        f"      AGENTIC_MESH_TOOL_PROFILE: {_tool_profile(role_id)}",
         "      CODEX_HOME: /mesh/worker-auth/codex",
         "      HOME: /mesh/home",
         "    volumes:",
@@ -118,13 +147,32 @@ def _role_service(*, role_id: str, service_name: str, port: int, full_access: bo
         "      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project",
         "      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh",
         "      - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex",
-        "      - /var/run/docker.sock:/var/run/docker.sock",
     ]
-    if role_id == "project-manager":
-        lines.extend(
-            [
-                "      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro",
-                "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro",
-            ]
-        )
+    if role_id in DOCKER_SOCKET_ROLES:
+        lines.append("      - /var/run/docker.sock:/var/run/docker.sock")
+    if role_id in SSH_ROLES:
+        lines.extend([
+            "      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro",
+            "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro",
+        ])
     return lines
+
+
+def _role_image(role_id: str) -> str:
+    if role_id in OPS_ROLES:
+        return "${AGENTIC_MESH_OPS_IMAGE_TAG:-agentic-mesh:ops-agent}"
+    if role_id in DEV_ROLES:
+        return "${AGENTIC_MESH_DEV_IMAGE_TAG:-agentic-mesh:dev-agent}"
+    if role_id in QA_ROLES:
+        return "${AGENTIC_MESH_QA_IMAGE_TAG:-agentic-mesh:qa-agent}"
+    return "${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}"
+
+
+def _tool_profile(role_id: str) -> str:
+    if role_id in OPS_ROLES:
+        return "ops-agent"
+    if role_id in DEV_ROLES:
+        return "dev-agent"
+    if role_id in QA_ROLES:
+        return "qa-agent"
+    return "base-agent"

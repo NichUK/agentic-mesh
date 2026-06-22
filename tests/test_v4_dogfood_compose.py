@@ -140,7 +140,7 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
 
     assert "AGENTIC_MESH_RELEASE_SERVICES:=runtime dispatcher otel-collector" in script
     assert "AGENTIC_MESH_ROLE_SERVICES:=" in script
-    assert "--profile build-image build runtime-image" in script
+    assert "--profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image" in script
     assert "--profile v4 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile roles stop $AGENTIC_MESH_ROLE_SERVICES" in script
     assert "--profile roles rm -f $AGENTIC_MESH_ROLE_SERVICES" in script

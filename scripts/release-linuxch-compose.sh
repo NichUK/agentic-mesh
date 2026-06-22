@@ -34,7 +34,7 @@ export AGENTIC_MESH_ROLE_SERVICES
 cd "$REPO_ROOT"
 mkdir -p "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4"
 
-sh scripts/deploy-linuxch-compose.sh --profile build-image build runtime-image
+sh scripts/deploy-linuxch-compose.sh --profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image
 
 PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --db "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4/agentic-mesh-v4.sqlite3" \

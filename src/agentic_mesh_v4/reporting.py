@@ -11,14 +11,24 @@ def render_status(snapshot: dict[str, Any]) -> str:
     queued = [item for item in messages if item["state"] == "queued"]
     failed = [item for item in messages if item["state"] in {"failed", "dead_lettered"}]
     completed = [item for item in messages if item["state"] == "completed"]
+    work_items = snapshot.get("work_items") or []
+    artifacts = snapshot.get("artifacts") or []
+    active_work = [
+        item
+        for item in work_items
+        if str(item.get("state") or "").casefold()
+        not in {"closed", "cancelled", "canceled", "released", "done", "complete", "completed", "superseded"}
+    ]
     return _page(
         "Agentic Mesh V4 Status",
         [
             "<h1>Agentic Mesh V4 Status</h1>",
             _nav(),
+            "<h2>Active Work Items And Human/Agent Waits</h2>",
+            _work_item_table(active_work, artifacts, empty="No active work items."),
             "<h2>Queue</h2>",
             _message_table(queued, empty="No queued messages."),
-            "<h2>Active</h2>",
+            "<h2>Active Agent Turns</h2>",
             _message_table(active, empty="No active turns."),
             "<h2>Attention Needed</h2>",
             _message_table(failed, empty="No failed messages."),
@@ -134,6 +144,42 @@ def _message_table(items: list[dict[str, Any]], *, empty: str) -> str:
         rows.append(f"<tr><td colspan=\"5\">{html.escape(empty)}</td></tr>")
     return (
         "<table><thead><tr><th>Message</th><th>Role</th><th>State</th><th>Text</th><th>Updated</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _work_item_table(items: list[dict[str, Any]], artifacts: list[dict[str, Any]], *, empty: str) -> str:
+    artifacts_by_work: dict[str, list[dict[str, Any]]] = {}
+    for artifact in artifacts:
+        work_item_id = str(artifact.get("work_item_id") or "")
+        artifacts_by_work.setdefault(work_item_id, []).append(artifact)
+    rows = []
+    for item in items:
+        work_item_id = str(item.get("work_item_id") or "")
+        artifact_links = []
+        for artifact in artifacts_by_work.get(work_item_id, [])[:8]:
+            path = str(artifact.get("path") or "")
+            title = str(artifact.get("title") or Path(path).name or "artifact")
+            artifact_links.append(
+                f"<a href=\"/artifact-viewer/{html.escape(path)}\">{html.escape(title)}</a>"
+            )
+        artifact_cell = "<br>".join(artifact_links)
+        rows.append(
+            "<tr>"
+            f"<td><a href=\"/work-item/{html.escape(work_item_id)}\">{html.escape(work_item_id)}</a></td>"
+            f"<td>{html.escape(str(item.get('title') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('state') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('owner_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('next_action') or ''))}</td>"
+            f"<td>{artifact_cell}</td>"
+            f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"7\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Work item</th><th>Title</th><th>State</th><th>Owner</th>"
+        "<th>Next action</th><th>Artifacts</th><th>Updated</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
 

@@ -26,9 +26,21 @@ Use the project document library as the source of truth. Memory is a concise sou
 Canonical document-library paths:
 - `/documents` is the only mounted project artifact/document library root inside role containers.
 - Work-item dossiers must be written under `/documents/work-items/{work_item_id}`.
-- Every work-item dossier must maintain `/documents/work-items/{work_item_id}/index.md`.
-- The overall work-item index must be maintained at `/documents/work-items/index.md`.
+- Every work-item dossier must maintain a concise local index at `/documents/work-items/{work_item_id}/00-index.md` containing only the work-item name, a brief description, and links to typed documents.
+- The overall work-item index must be maintained at `/documents/work-items/index.md` and must link each work item to its local `00-index.md`.
 - `/mesh/project` contains project configuration and runtime state. Do not create canonical work-item artifacts under `/mesh/project/work-items` or under embedded system-repo example folders.
+
+Document naming rules:
+- Use framework document slots such as `020-product-definition.md`, `030-experience-design.md`, `030-solution-design.md`, `050-security-review.md`, `060-prompt-contract.md`, `100-implementation-log.md`, `110-quality-evidence.md`, and `140-release-record.md`.
+- Do not invent descriptive filenames for standard lifecycle artifacts when a framework slot exists.
+- Put detailed content in the typed lifecycle document, not in `00-index.md`.
+
+Role tool-profile boundary:
+- `base-agent` roles have common document, Git, search, JSON/YAML, HTTP, and runtime client tooling for role-scoped work.
+- `ops-agent` roles may use SSH, Docker/Compose, SQLite, process/network diagnostics, and host/runtime inspection when their charter requires governance, delivery, platform, or release evidence.
+- `dev-agent` roles may use build, test, package, and repository tooling for implementation and verification.
+- `qa-agent` roles may use test runners, Playwright/browser tooling, screenshot/artifact capture, and HTTP/API validation for quality evidence.
+- Installed tools do not grant authority by themselves; role charter, project config, safe-output policy, and sponsor decisions still govern use.
 
 Ask sponsors or stakeholders when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitments change.
 

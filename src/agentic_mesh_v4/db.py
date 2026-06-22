@@ -546,9 +546,23 @@ class V4Database:
                 "SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50"
             )
         ]
+        work_items = [
+            _row_dict(row)
+            for row in self.connection.execute(
+                "SELECT * FROM work_items ORDER BY updated_at DESC"
+            )
+        ]
+        artifacts = [
+            _row_dict(row)
+            for row in self.connection.execute(
+                "SELECT * FROM artifacts ORDER BY created_at DESC"
+            )
+        ]
         return {
             "roles": roles,
             "messages": messages,
+            "work_items": work_items,
+            "artifacts": artifacts,
             "events": events,
             "queue_depth": sum(1 for item in messages if item["state"] not in TERMINAL_MESSAGE_STATES),
         }
