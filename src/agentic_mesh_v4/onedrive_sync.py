@@ -36,7 +36,7 @@ def sync_local_documents_to_onedrive(
     adapter = str(library.get("adapter") or "").casefold().replace("_", "-")
     if adapter not in {"onedrive", "sharepoint"}:
         raise OneDriveSyncError(f"document_library.adapter must be onedrive/sharepoint, got {adapter!r}")
-    token = access_token or os.environ.get("AGENTIC_MESH_ONEDRIVE_TOKEN")
+    token = access_token or _access_token_from_refresh() or os.environ.get("AGENTIC_MESH_ONEDRIVE_TOKEN")
     if not token:
         raise OneDriveSyncError("AGENTIC_MESH_ONEDRIVE_TOKEN is required")
     configured_drive_id = _expand(str(library.get("drive_id") or ""))
@@ -170,3 +170,36 @@ def _expand(value: str) -> str:
 def _normalise_root_path(path: str) -> str:
     path = "/" + path.strip("/")
     return posixpath.normpath(path)
+
+
+def _access_token_from_refresh() -> str | None:
+    client_id = os.environ.get("AGENTIC_MESH_GRAPH_CLIENT_ID")
+    refresh_token = os.environ.get("AGENTIC_MESH_GRAPH_REFRESH_TOKEN")
+    tenant_id = os.environ.get("AGENTIC_MESH_GRAPH_TENANT_ID") or os.environ.get("AGENTIC_MESH_TENANT_ID")
+    scopes = os.environ.get("AGENTIC_MESH_GRAPH_SCOPES")
+    if not client_id or not refresh_token or not tenant_id or not scopes:
+        return None
+    body = urllib.parse.urlencode(
+        {
+            "client_id": client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "scope": scopes,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - Microsoft login URL.
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise OneDriveSyncError(f"Graph refresh-token exchange failed: {exc.code} {detail}") from exc
+    access_token = payload.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise OneDriveSyncError("Graph refresh-token exchange did not return an access token")
+    return access_token
