@@ -188,6 +188,101 @@ def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> No
     assert project_manager["memory_count"] == 1
 
 
+def test_v4_same_conversation_message_steers_into_active_turn(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    first_message = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Start work",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(first_message, state="active_turn", summary="Delivered to Project Manager")
+    with db.connection:
+        db.connection.execute(
+            "UPDATE role_instances SET active_thread_id=? WHERE role_instance_id=?",
+            ("thread-1", role_instance_id),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_threads(thread_id, role_instance_id, status, created_at, updated_at, sandbox_mode, approval_policy)
+            VALUES(?,?,?,?,?,?,?)
+            """,
+            ("thread-1", role_instance_id, "active", "now", "now", "danger-full-access", "never"),
+        )
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {}})
+    transport.queue_response({"id": 3, "result": {}})
+    steering_runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+
+    steered_message = steering_runtime.enqueue_or_steer_conversation(
+        target_role="project-manager",
+        text="Add this to the same thought",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (steered_message,),
+    ).fetchone()["state"] == "steered"
+    assert [item["method"] for item in transport.sent if "method" in item] == [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "turn/steer",
+    ]
+
+
+def test_v4_queue_directive_overrides_same_conversation_steering(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    first_message = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Start work",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(first_message, state="active_turn", summary="Delivered to Project Manager")
+    transport = InMemoryTransport()
+    steering_runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+
+    queued_message = steering_runtime.enqueue_or_steer_conversation(
+        target_role="project-manager",
+        text="QuEuE : please make this separate",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+
+    row = db.connection.execute(
+        "SELECT state, steering FROM message_queue WHERE message_id=?",
+        (queued_message,),
+    ).fetchone()
+    assert row["state"] == "queued"
+    assert row["steering"] == 0
+    assert transport.sent == []
+
+
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()

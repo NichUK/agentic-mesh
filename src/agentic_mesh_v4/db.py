@@ -371,6 +371,28 @@ class V4Database:
             summary=summary or f"Message state changed to {state}",
         )
 
+    def active_message_for_role(
+        self,
+        *,
+        target_role: str,
+        conversation_ref: str | None = None,
+    ) -> dict[str, Any] | None:
+        params: list[object] = [target_role]
+        where = "target_role=? AND state IN ('delivering', 'active_turn', 'steered')"
+        if conversation_ref:
+            where += " AND conversation_ref=?"
+            params.append(conversation_ref)
+        row = self.connection.execute(
+            f"""
+            SELECT * FROM message_queue
+            WHERE {where}
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+        return _row_dict(row) if row is not None else None
+
     def record_message_journal(
         self,
         *,

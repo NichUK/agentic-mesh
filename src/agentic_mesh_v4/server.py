@@ -9,6 +9,8 @@ from urllib.parse import unquote
 from urllib.parse import urlparse
 
 from agentic_mesh_v4.config import V4ProjectConfig
+from agentic_mesh_v4.codex_protocol import CodexAppServerClient
+from agentic_mesh_v4.codex_protocol import WebSocketTransport
 from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.reporting import render_agent_thread
 from agentic_mesh_v4.reporting import render_agents
@@ -96,9 +98,13 @@ class V4Handler(BaseHTTPRequestHandler):
         db = V4Database(self.db_path)
         try:
             db.migrate()
-            runtime = V4Runtime(db=db, project_config=self.project_config)
+            runtime = V4Runtime(
+                db=db,
+                project_config=self.project_config,
+                client_factory=_client_factory(),
+            )
             runtime.register_roles()
-            message_id = runtime.enqueue_conversation(
+            message_id = runtime.enqueue_or_steer_conversation(
                 target_role=target_role,
                 text=text,
                 source="teams",
@@ -118,9 +124,13 @@ class V4Handler(BaseHTTPRequestHandler):
         db = V4Database(self.db_path)
         try:
             db.migrate()
-            runtime = V4Runtime(db=db, project_config=self.project_config)
+            runtime = V4Runtime(
+                db=db,
+                project_config=self.project_config,
+                client_factory=_client_factory(),
+            )
             runtime.register_roles()
-            message_id = runtime.enqueue_conversation(
+            message_id = runtime.enqueue_or_steer_conversation(
                 target_role=target_role,
                 text=text,
                 source="api",
@@ -195,3 +205,18 @@ def _safe_artifact_path(root: Path, relative_path: str) -> Path:
     if root != candidate and root not in candidate.parents:
         raise ValueError("artifact path escapes document root")
     return candidate
+
+
+def _client_factory():
+    def factory(role_id: str) -> CodexAppServerClient:
+        role_config = V4Handler.project_config.role(role_id)
+        token_file = Path("/mesh/project/state/v4/agent-configs") / role_id / "1" / "ws-token"
+        token = token_file.read_text(encoding="utf-8").strip() if token_file.exists() else None
+        return CodexAppServerClient(
+            WebSocketTransport(
+                f"ws://{role_config.service_name}:{role_config.codex_port}",
+                bearer_token=token,
+            )
+        )
+
+    return factory

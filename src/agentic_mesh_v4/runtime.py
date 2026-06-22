@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -71,6 +72,59 @@ class V4Runtime:
             steering=steering,
             payload=dict(payload or {}),
         )
+
+    def enqueue_or_steer_conversation(
+        self,
+        *,
+        target_role: str,
+        text: str,
+        source: str = "teams",
+        conversation_ref: str | None = None,
+        thread_ref: str | None = None,
+        steering: bool = False,
+        payload: dict[str, object] | None = None,
+    ) -> str:
+        role = self.project_config.role(target_role)
+        active = self.db.active_message_for_role(
+            target_role=target_role,
+            conversation_ref=conversation_ref,
+        )
+        force_queue = _starts_with_queue_directive(text)
+        should_steer = (steering or (active is not None and bool(conversation_ref))) and not force_queue
+        message_id = self.db.enqueue_message(
+            target_role=target_role,
+            text=text,
+            source=source,
+            conversation_ref=conversation_ref,
+            thread_ref=thread_ref,
+            steering=should_steer,
+            payload=dict(payload or {}),
+        )
+        if not should_steer or self.client_factory is None:
+            return message_id
+        role_instance_id = f"{self.project_config.project_id}.{role.role_id}.1"
+        thread_id = self._active_thread_id(role_instance_id)
+        if not thread_id:
+            return message_id
+        try:
+            client = self.client_factory(role.role_id)
+            if not client.initialized:
+                client.initialize()
+            client.resume_thread(thread_id)
+            client.steer_turn(thread_id=thread_id, text=text)
+        except Exception as exc:
+            self.db.mark_message_state(
+                message_id,
+                state="queued",
+                summary=f"Steering failed; queued for normal delivery: {exc}",
+            )
+            return message_id
+        self.db.mark_message_state(
+            message_id,
+            state="steered",
+            summary=f"Steered into active turn for {role_instance_id}",
+        )
+        return message_id
 
     def dispatch_once(self, *, role_id: str) -> DispatchResult | None:
         role = self.project_config.role(role_id)
@@ -223,6 +277,19 @@ class V4Runtime:
             )
         return thread_id
 
+    def _active_thread_id(self, role_instance_id: str) -> str | None:
+        row = self.db.connection.execute(
+            """
+            SELECT active_thread_id
+            FROM role_instances
+            WHERE role_instance_id=?
+            """,
+            (role_instance_id,),
+        ).fetchone()
+        if row is None or row["active_thread_id"] is None:
+            return None
+        return str(row["active_thread_id"])
+
     def _thread_matches_role(self, *, thread_id: str, role_instance_id: str, role: object) -> bool:
         row = self.db.connection.execute(
             """
@@ -332,3 +399,7 @@ def _looks_like_agent_unavailable(exc: BaseException) -> bool:
             "websocket",
         )
     )
+
+
+def _starts_with_queue_directive(text: str) -> bool:
+    return re.match(r"^\s*queue\s*:", text, flags=re.IGNORECASE) is not None
