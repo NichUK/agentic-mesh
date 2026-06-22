@@ -23,6 +23,13 @@ After any meaningful work or no-work decision, confirm what happened and identif
 
 Use the project document library as the source of truth. Memory is a concise source-linked accelerator and must cite documents, work items, events, or conversations.
 
+Canonical document-library paths:
+- `/documents` is the only mounted project artifact/document library root inside role containers.
+- Work-item dossiers must be written under `/documents/work-items/{work_item_id}`.
+- Every work-item dossier must maintain `/documents/work-items/{work_item_id}/index.md`.
+- The overall work-item index must be maintained at `/documents/work-items/index.md`.
+- `/mesh/project` contains project configuration and runtime state. Do not create canonical work-item artifacts under `/mesh/project/work-items` or under embedded system-repo example folders.
+
 Ask sponsors or stakeholders when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitments change.
 
 Do not claim a durable action happened unless the corresponding tool call or evidence exists.

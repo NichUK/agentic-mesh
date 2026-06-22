@@ -15,6 +15,7 @@ from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.lifecycle import ComposeLifecycle
+from agentic_mesh_v4.onedrive_sync import sync_local_documents_to_onedrive
 from agentic_mesh_v4.runtime import V4Runtime
 from agentic_mesh_v4.server import serve
 
@@ -64,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
     schema.add_argument("--codex-bin", default="codex")
 
     subparsers.add_parser("status-json")
+
+    sync_documents = subparsers.add_parser("sync-documents")
+    sync_documents.add_argument("--local-root", type=Path, required=True)
+    sync_documents.add_argument("--drive-id")
     return parser
 
 
@@ -160,6 +165,20 @@ def main(argv: list[str] | None = None) -> None:
             return
         if args.command == "status-json":
             _print_json(db.snapshot())
+            return
+        if args.command == "sync-documents":
+            result = sync_local_documents_to_onedrive(
+                project_config=args.project_config,
+                local_root=args.local_root,
+                drive_id=args.drive_id,
+            )
+            _print_json(
+                {
+                    "uploaded": result.uploaded,
+                    "folders_created": result.folders_created,
+                    "root_path": result.root_path,
+                }
+            )
             return
     finally:
         db.close()
