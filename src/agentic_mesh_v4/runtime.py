@@ -97,6 +97,25 @@ class V4Runtime:
             else:
                 turn_id = client.start_turn(thread_id=thread_id, text=message.text, model=role.model)
                 state = "active_turn"
+                now = utc_now()
+                with self.db.connection:
+                    self.db.connection.execute(
+                        """
+                        UPDATE role_instances
+                        SET active_turn_id=?, state='active', updated_at=?
+                        WHERE role_instance_id=?
+                        """,
+                        (turn_id, now, role_instance_id),
+                    )
+                    if turn_id is not None:
+                        self.db.connection.execute(
+                            """
+                            INSERT OR REPLACE INTO codex_turns(
+                              turn_id, thread_id, message_id, status, started_at, completed_at
+                            ) VALUES(?,?,?,?,?,NULL)
+                            """,
+                            (turn_id, thread_id, message.message_id, "active", now),
+                        )
             self.db.mark_message_state(message.message_id, state=state, summary=f"Delivered to {role_instance_id}")
             reply_text = self._drain_available_events(
                 client=client,
@@ -121,9 +140,37 @@ class V4Runtime:
                     summary=f"Delivered Teams reply {delivery_id}",
                     role_instance_id=role_instance_id,
                 )
+            now = utc_now()
+            with self.db.connection:
+                self.db.connection.execute(
+                    """
+                    UPDATE role_instances
+                    SET active_turn_id=NULL, state='ready', updated_at=?
+                    WHERE role_instance_id=?
+                    """,
+                    (now, role_instance_id),
+                )
+                if turn_id is not None:
+                    self.db.connection.execute(
+                        """
+                        UPDATE codex_turns
+                        SET status='completed', completed_at=?
+                        WHERE turn_id=?
+                        """,
+                        (now, turn_id),
+                    )
             self.db.mark_message_state(message.message_id, state="completed", summary=f"Completed delivery to {role_instance_id}")
             return DispatchResult(message_id=message.message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
         except Exception as exc:
+            with self.db.connection:
+                self.db.connection.execute(
+                    """
+                    UPDATE role_instances
+                    SET active_turn_id=NULL, state='ready', updated_at=?
+                    WHERE role_instance_id=?
+                    """,
+                    (utc_now(), role_instance_id),
+                )
             if _looks_like_agent_unavailable(exc):
                 self.db.mark_message_state(
                     message.message_id,

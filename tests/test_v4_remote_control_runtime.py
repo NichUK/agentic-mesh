@@ -159,6 +159,35 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["events"][1]["content"] == "Done"
 
 
+def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    db.record_memory(
+        role_instance_id=role_instance_id,
+        summary="Sponsor prefers visible processing state.",
+        source_ref="conversation",
+    )
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Please do a status sweep",
+        source="teams",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered to Project Manager")
+
+    project_manager = next(
+        item for item in db.snapshot()["roles"] if item["role_instance_id"] == role_instance_id
+    )
+
+    assert project_manager["effective_state"] == "busy"
+    assert project_manager["current_message"]["message_id"] == message_id
+    assert project_manager["memory_count"] == 1
+
+
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()

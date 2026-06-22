@@ -31,14 +31,33 @@ def render_status(snapshot: dict[str, Any]) -> str:
 def render_agents(snapshot: dict[str, Any]) -> str:
     rows = []
     for item in snapshot["roles"]:
+        role_id = str(item["role_id"])
+        thread_id = str(item.get("active_thread_id") or "")
+        thread_cell = (
+            f"<a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(_short_id(thread_id))}</a>"
+            if thread_id
+            else ""
+        )
+        current = item.get("current_message")
+        if isinstance(current, dict):
+            current_cell = (
+                f"<a href=\"/status#{html.escape(str(current.get('message_id') or ''))}\">"
+                f"{html.escape(_short_id(str(current.get('message_id') or '')))}</a>"
+                f"<br><small>{html.escape(str(current.get('state') or ''))}</small>"
+                f"<br>{html.escape(_truncate(str(current.get('text') or ''), 120))}"
+            )
+        else:
+            queued = int(item.get("queued_messages") or 0)
+            current_cell = f"{queued} queued" if queued else ""
         rows.append(
             "<tr>"
-            f"<td><a href=\"/agent/{html.escape(item['role_id'])}/thread\">{html.escape(item['display_name'])}</a></td>"
-            f"<td>{html.escape(item['state'])}</td>"
+            f"<td><a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(item['display_name'])}</a></td>"
+            f"<td>{html.escape(str(item.get('effective_state') or item['state']))}</td>"
             f"<td>{html.escape(item['authority'])}</td>"
             f"<td>{html.escape(item['codex_endpoint'])}</td>"
-            f"<td>{html.escape(str(item.get('active_thread_id') or ''))}</td>"
-            f"<td>{html.escape(str(item.get('memory_version') or 0))}</td>"
+            f"<td>{thread_cell}</td>"
+            f"<td>{current_cell}</td>"
+            f"<td>{html.escape(str(item.get('memory_count') or 0))}</td>"
             "</tr>"
         )
     return _page(
@@ -46,8 +65,8 @@ def render_agents(snapshot: dict[str, Any]) -> str:
         [
             "<h1>Agents</h1>",
             _nav(),
-            "<table><thead><tr><th>Agent</th><th>State</th><th>Authority</th><th>Codex endpoint</th><th>Thread</th><th>Memory</th></tr></thead>"
-            f"<tbody>{''.join(rows) or '<tr><td colspan=\"6\">No roles configured.</td></tr>'}</tbody></table>",
+            "<table><thead><tr><th>Agent</th><th>State</th><th>Authority</th><th>Codex endpoint</th><th>Thread</th><th>Current message</th><th>Memory</th></tr></thead>"
+            f"<tbody>{''.join(rows) or '<tr><td colspan=\"7\">No roles configured.</td></tr>'}</tbody></table>",
         ],
     )
 
@@ -103,7 +122,7 @@ def _message_table(items: list[dict[str, Any]], *, empty: str) -> str:
     rows = []
     for item in items:
         rows.append(
-            "<tr>"
+            f"<tr id=\"{html.escape(item['message_id'])}\">"
             f"<td>{html.escape(item['message_id'])}</td>"
             f"<td>{html.escape(item['target_role'])}</td>"
             f"<td>{html.escape(item['state'])}</td>"
@@ -121,6 +140,18 @@ def _message_table(items: list[dict[str, Any]], *, empty: str) -> str:
 
 def _nav() -> str:
     return '<nav><a href="/status">Status</a> <a href="/agents">Agents</a> <a href="/status.json">JSON</a></nav>'
+
+
+def _short_id(value: str) -> str:
+    if len(value) <= 18:
+        return value
+    return f"{value[:8]}...{value[-6:]}"
+
+
+def _truncate(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1].rstrip() + "…"
 
 
 def _page(title: str, parts: list[str]) -> str:

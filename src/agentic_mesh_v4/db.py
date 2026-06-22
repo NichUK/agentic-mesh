@@ -460,6 +460,15 @@ class V4Database:
                 """,
                 (memory_id, role_instance_id, summary, source_ref, utc_now()),
             )
+            self.connection.execute(
+                """
+                UPDATE role_instances
+                SET memory_version=memory_version + 1,
+                    updated_at=?
+                WHERE role_instance_id=?
+                """,
+                (utc_now(), role_instance_id),
+            )
         return memory_id
 
     def list_messages(self, *, state: str | None = None) -> list[dict[str, Any]]:
@@ -474,6 +483,41 @@ class V4Database:
     def snapshot(self) -> dict[str, Any]:
         roles = [_row_dict(row) for row in self.connection.execute("SELECT * FROM role_instances ORDER BY role_id")]
         messages = self.list_messages()
+        memory_counts = {
+            str(row["role_instance_id"]): int(row["count"])
+            for row in self.connection.execute(
+                "SELECT role_instance_id, COUNT(*) AS count FROM role_memory GROUP BY role_instance_id"
+            )
+        }
+        active_messages: dict[str, dict[str, Any]] = {}
+        for item in messages:
+            if item["state"] not in {"delivering", "active_turn", "steered"}:
+                continue
+            locked_by = item.get("locked_by")
+            if not locked_by:
+                continue
+            active_messages[str(locked_by)] = {
+                "message_id": item["message_id"],
+                "state": item["state"],
+                "text": item["text"],
+                "updated_at": item["updated_at"],
+            }
+        queued_counts: dict[str, int] = {}
+        for item in messages:
+            if item["state"] == "queued":
+                role_id = str(item["target_role"])
+                queued_counts[role_id] = queued_counts.get(role_id, 0) + 1
+        for role in roles:
+            role_instance_id = str(role["role_instance_id"])
+            role["memory_count"] = memory_counts.get(role_instance_id, 0)
+            role["queued_messages"] = queued_counts.get(str(role["role_id"]), 0)
+            active_message = active_messages.get(role_instance_id)
+            if active_message is not None:
+                role["current_message"] = active_message
+                role["effective_state"] = "busy"
+            else:
+                role["current_message"] = None
+                role["effective_state"] = role["state"]
         events = [
             _row_dict(row)
             for row in self.connection.execute(
