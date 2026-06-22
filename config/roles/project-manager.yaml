@@ -56,7 +56,7 @@ core_workflows:
       - Residual risk update
       - Informed-role notification
     artifacts:
-      - documents/work-items/{work_item_id}/index.md
+      - documents/work-items/{work_item_id}/00-index.md
   - workflow_id: diagnose-and-route-mesh-operation
     trigger: Sponsor, agent, dashboard, or sweep indicates that messages, queues, agents, handoffs, approvals, release, or lifecycle progression are not behaving as expected.
     inputs:
@@ -71,7 +71,7 @@ core_workflows:
       - Specialist consult or blocker when the issue belongs to another role
       - Governance/risk/decision update when the issue affects delivery confidence
     artifacts:
-      - documents/work-items/{work_item_id}/index.md
+      - documents/work-items/{work_item_id}/00-index.md
 standards_references:
   - name: DDaT Delivery Manager
     url: https://ddat-capability-framework.service.gov.uk/role/delivery-manager
