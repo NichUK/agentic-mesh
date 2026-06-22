@@ -70,6 +70,8 @@ def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
         assert service_name in service_names
         service = compose["services"][service_name]
         assert service["profiles"] == ["roles"]
+        assert service["cap_add"] == ["SYS_ADMIN"]
+        assert service["security_opt"] == ["seccomp=unconfined", "apparmor=unconfined"]
         assert service["working_dir"] == "/mesh/agent"
         assert "codex app-server" in service["command"]
         assert "--ws-auth capability-token" in service["command"]
