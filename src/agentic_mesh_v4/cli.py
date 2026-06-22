@@ -70,6 +70,37 @@ def build_parser() -> argparse.ArgumentParser:
     sync_documents = subparsers.add_parser("sync-documents")
     sync_documents.add_argument("--local-root", type=Path, required=True)
     sync_documents.add_argument("--drive-id")
+
+    safe_output = subparsers.add_parser("safe-output")
+    safe_output_subparsers = safe_output.add_subparsers(dest="safe_output_command", required=True)
+
+    work_item_update = safe_output_subparsers.add_parser("work-item-update")
+    work_item_update.add_argument("--role-id", required=True)
+    work_item_update.add_argument("--work-item-id", required=True)
+    work_item_update.add_argument("--title")
+    work_item_update.add_argument("--state")
+    work_item_update.add_argument("--owner-role")
+    work_item_update.add_argument("--next-action")
+
+    artifact_link = safe_output_subparsers.add_parser("artifact-link")
+    artifact_link.add_argument("--role-id", required=True)
+    artifact_link.add_argument("--work-item-id", required=True)
+    artifact_link.add_argument("--path", required=True)
+    artifact_link.add_argument("--title", required=True)
+
+    handoff = safe_output_subparsers.add_parser("handoff")
+    handoff.add_argument("--from-role", required=True)
+    handoff.add_argument("--to-role", required=True)
+    handoff.add_argument("--work-item-id", required=True)
+    handoff.add_argument("--state", required=True)
+    handoff.add_argument("--next-action", required=True)
+    handoff.add_argument("--reason", required=True)
+    handoff.add_argument("--message")
+
+    memory = safe_output_subparsers.add_parser("memory-record")
+    memory.add_argument("--role-id", required=True)
+    memory.add_argument("--summary", required=True)
+    memory.add_argument("--source-ref", required=True)
     return parser
 
 
@@ -186,6 +217,9 @@ def main(argv: list[str] | None = None) -> None:
                 }
             )
             return
+        if args.command == "safe-output":
+            _handle_safe_output(args=args, db=db, project_config=project_config)
+            return
     finally:
         db.close()
 
@@ -284,6 +318,118 @@ def _document_syncer(project_config_path: Path):
         )
 
     return sync
+
+
+def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
+    command = args.safe_output_command
+    if command == "work-item-update":
+        project_config.role(args.role_id)
+        if args.owner_role:
+            project_config.role(args.owner_role)
+        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        payload = {
+            "work_item_id": args.work_item_id,
+            "title": args.title,
+            "state": args.state,
+            "owner_role": args.owner_role,
+            "next_action": args.next_action,
+        }
+        db.upsert_work_item(
+            work_item_id=args.work_item_id,
+            title=args.title,
+            state=args.state,
+            owner_role=args.owner_role,
+            next_action=args.next_action,
+        )
+        call_id = db.record_safe_output_call(
+            role_instance_id=role_instance_id,
+            tool_name="work_item.update",
+            payload={key: value for key, value in payload.items() if value is not None},
+        )
+        _print_json({"call_id": call_id, "work_item_id": args.work_item_id})
+        return
+    if command == "artifact-link":
+        project_config.role(args.role_id)
+        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        artifact_id = db.record_artifact(work_item_id=args.work_item_id, path=args.path, title=args.title)
+        call_id = db.record_safe_output_call(
+            role_instance_id=role_instance_id,
+            tool_name="document.link_artifact",
+            payload={
+                "work_item_id": args.work_item_id,
+                "path": args.path,
+                "title": args.title,
+                "artifact_id": artifact_id,
+            },
+        )
+        _print_json({"artifact_id": artifact_id, "call_id": call_id})
+        return
+    if command == "handoff":
+        project_config.role(args.from_role)
+        project_config.role(args.to_role)
+        from_role_instance_id = f"{project_config.project_id}.{args.from_role}.1"
+        handoff_id = db.record_handoff(
+            from_role=args.from_role,
+            to_role=args.to_role,
+            work_item_id=args.work_item_id,
+            reason=args.reason,
+        )
+        db.upsert_work_item(
+            work_item_id=args.work_item_id,
+            state=args.state,
+            owner_role=args.to_role,
+            next_action=args.next_action,
+        )
+        payload = {
+            "work_item_id": args.work_item_id,
+            "from_role": args.from_role,
+            "to_role": args.to_role,
+            "state": args.state,
+            "next_action": args.next_action,
+            "reason": args.reason,
+            "handoff_id": handoff_id,
+        }
+        call_id = db.record_safe_output_call(
+            role_instance_id=from_role_instance_id,
+            tool_name="handoff.require",
+            payload=payload,
+        )
+        message_text = args.message or (
+            f"Handoff for {args.work_item_id} from {args.from_role} to {args.to_role}. "
+            f"Next action: {args.next_action}"
+        )
+        message_id = db.enqueue_message(
+            target_role=args.to_role,
+            text=message_text,
+            source="safe-output",
+            payload=payload,
+        )
+        _print_json(
+            {
+                "call_id": call_id,
+                "handoff_id": handoff_id,
+                "message_id": message_id,
+                "work_item_id": args.work_item_id,
+                "target_role": args.to_role,
+            }
+        )
+        return
+    if command == "memory-record":
+        project_config.role(args.role_id)
+        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        memory_id = db.record_memory(
+            role_instance_id=role_instance_id,
+            summary=args.summary,
+            source_ref=args.source_ref,
+        )
+        call_id = db.record_safe_output_call(
+            role_instance_id=role_instance_id,
+            tool_name="memory.propose_update",
+            payload={"memory_id": memory_id, "summary": args.summary, "source_ref": args.source_ref},
+        )
+        _print_json({"call_id": call_id, "memory_id": memory_id})
+        return
+    raise ValueError(f"unknown safe-output command: {command}")
 
 
 def _dispatch_result(result) -> dict[str, object] | None:

@@ -537,6 +537,93 @@ class V4Database:
             )
         return call_id
 
+    def upsert_work_item(
+        self,
+        *,
+        work_item_id: str,
+        title: str | None = None,
+        state: str | None = None,
+        owner_role: str | None = None,
+        next_action: str | None = None,
+    ) -> None:
+        existing = self.connection.execute(
+            "SELECT * FROM work_items WHERE work_item_id=?",
+            (work_item_id,),
+        ).fetchone()
+        if existing is None and (title is None or state is None or owner_role is None):
+            raise ValueError("new work items require title, state, and owner_role")
+        now = utc_now()
+        with self.connection:
+            if existing is None:
+                self.connection.execute(
+                    """
+                    INSERT INTO work_items(
+                      work_item_id, title, state, owner_role, next_action, created_at, updated_at
+                    ) VALUES(?,?,?,?,?,?,?)
+                    """,
+                    (work_item_id, title, state, owner_role, next_action or "", now, now),
+                )
+                return
+            self.connection.execute(
+                """
+                UPDATE work_items
+                SET title=?,
+                    state=?,
+                    owner_role=?,
+                    next_action=?,
+                    updated_at=?
+                WHERE work_item_id=?
+                """,
+                (
+                    title if title is not None else existing["title"],
+                    state if state is not None else existing["state"],
+                    owner_role if owner_role is not None else existing["owner_role"],
+                    next_action if next_action is not None else existing["next_action"],
+                    now,
+                    work_item_id,
+                ),
+            )
+
+    def record_artifact(
+        self,
+        *,
+        work_item_id: str,
+        path: str,
+        title: str,
+        artifact_id: str | None = None,
+    ) -> str:
+        artifact_id = artifact_id or f"artifact-{uuid4().hex}"
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT OR IGNORE INTO artifacts(artifact_id, work_item_id, path, title, created_at)
+                VALUES(?,?,?,?,?)
+                """,
+                (artifact_id, work_item_id, path, title, utc_now()),
+            )
+        return artifact_id
+
+    def record_handoff(
+        self,
+        *,
+        from_role: str,
+        to_role: str,
+        reason: str,
+        work_item_id: str | None = None,
+        handoff_id: str | None = None,
+        status: str = "open",
+    ) -> str:
+        handoff_id = handoff_id or f"handoff-{uuid4().hex}"
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO handoffs(handoff_id, work_item_id, from_role, to_role, reason, status, created_at)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                (handoff_id, work_item_id, from_role, to_role, reason, status, utc_now()),
+            )
+        return handoff_id
+
     def record_memory(self, *, role_instance_id: str, summary: str, source_ref: str) -> str:
         memory_id = f"mem-{uuid4().hex}"
         with self.connection:
