@@ -96,6 +96,9 @@ def test_linuxch_deploy_script_preserves_v4_live_environment() -> None:
     for name in [
         "AGENTIC_MESH_ONEDRIVE_TOKEN",
         "AGENTIC_MESH_ONEDRIVE_DRIVE_ID",
+        "AGENTIC_MESH_GRAPH_CLIENT_ID",
+        "AGENTIC_MESH_GRAPH_TENANT_ID",
+        "AGENTIC_MESH_GRAPH_REFRESH_TOKEN",
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT",
@@ -108,6 +111,8 @@ def test_linuxch_deploy_script_preserves_v4_live_environment() -> None:
     ]:
         assert f"export {name}" in script
         assert f"{name}=${name}" in script
+    assert "export AGENTIC_MESH_GRAPH_SCOPES" in script
+    assert "AGENTIC_MESH_GRAPH_SCOPES='$AGENTIC_MESH_GRAPH_SCOPES'" in script
     assert "AGENTIC_MESH_V3_STATUS_PORT" not in script
     assert "AGENTIC_MESH_NATS_STATE_HOST_PATH" not in script
 
@@ -120,6 +125,10 @@ def test_dogfood_compose_env_example_lists_required_v4_live_inputs() -> None:
     for name in [
         "AGENTIC_MESH_ONEDRIVE_TOKEN",
         "AGENTIC_MESH_ONEDRIVE_DRIVE_ID",
+        "AGENTIC_MESH_GRAPH_CLIENT_ID",
+        "AGENTIC_MESH_GRAPH_TENANT_ID",
+        "AGENTIC_MESH_GRAPH_REFRESH_TOKEN",
+        "AGENTIC_MESH_GRAPH_SCOPES",
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT",

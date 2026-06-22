@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Callable
 from typing import Protocol
 
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
@@ -34,11 +35,13 @@ class V4Runtime:
         project_config: V4ProjectConfig,
         client_factory: ClientFactory | None = None,
         teams_reply_sender: TeamsReplySender | None = None,
+        document_syncer: Callable[[], object] | None = None,
     ) -> None:
         self.db = db
         self.project_config = project_config
         self.client_factory = client_factory
         self.teams_reply_sender = teams_reply_sender
+        self.document_syncer = document_syncer
 
     def register_roles(self) -> None:
         for role in self.project_config.roles:
@@ -217,6 +220,7 @@ class V4Runtime:
                         (now, turn_id),
                     )
             self.db.mark_message_state(message.message_id, state="completed", summary=f"Completed delivery to {role_instance_id}")
+            self._sync_documents_after_turn(message_id=message.message_id, correlation_id=message.correlation_id, role_instance_id=role_instance_id)
             return DispatchResult(message_id=message.message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
         except Exception as exc:
             with self.db.connection:
@@ -237,6 +241,42 @@ class V4Runtime:
                 return DispatchResult(message_id=message.message_id, state="queued", error=str(exc))
             self.db.mark_message_state(message.message_id, state="failed", summary=str(exc))
             return DispatchResult(message_id=message.message_id, state="failed", error=str(exc))
+
+    def _sync_documents_after_turn(self, *, message_id: str, correlation_id: str, role_instance_id: str) -> None:
+        if self.document_syncer is None:
+            return
+        try:
+            result = self.document_syncer()
+        except Exception as exc:  # noqa: BLE001 - sync must not fail the completed agent turn.
+            self.db.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                role_instance_id=role_instance_id,
+                stage="document_sync",
+                status="failed",
+                summary=f"Document sync failed after agent turn: {exc}",
+            )
+            self.db.record_agent_event(
+                role_instance_id=role_instance_id,
+                event_type="document_sync/failed",
+                content=str(exc),
+                message_id=message_id,
+            )
+            return
+        uploaded = getattr(result, "uploaded", None)
+        folders_created = getattr(result, "folders_created", None)
+        root_path = getattr(result, "root_path", "")
+        summary = "Document sync completed"
+        if uploaded is not None and folders_created is not None:
+            summary = f"Document sync completed: uploaded {uploaded}, folders created {folders_created}, root {root_path}"
+        self.db.record_message_journal(
+            message_id=message_id,
+            correlation_id=correlation_id,
+            role_instance_id=role_instance_id,
+            stage="document_sync",
+            status="completed",
+            summary=summary,
+        )
 
     def _thread_for_role(self, *, client: CodexAppServerClient, role_instance_id: str, role: object) -> str:
         snapshot = self.db.snapshot()

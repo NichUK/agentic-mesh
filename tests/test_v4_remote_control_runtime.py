@@ -534,6 +534,102 @@ def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
     assert any(item["stage"] == "reply_delivered" and item["status"] == "delivered" for item in journal)
 
 
+def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Wrote artifact."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+    sync_calls: list[str] = []
+
+    class SyncResult:
+        uploaded = 3
+        folders_created = 1
+        root_path = "/documents"
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        document_syncer=lambda: sync_calls.append("sync") or SyncResult(),
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Write a dossier", source="api")
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert sync_calls == ["sync"]
+    journal = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT stage, status, summary FROM message_journal WHERE message_id=? ORDER BY created_at",
+            (message_id,),
+        )
+    ]
+    assert any(
+        item["stage"] == "document_sync"
+        and item["status"] == "completed"
+        and "uploaded 3" in item["summary"]
+        for item in journal
+    )
+
+
+def test_v4_runtime_records_document_sync_failure_without_failing_message(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Wrote artifact."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+
+    def failing_sync() -> object:
+        raise RuntimeError("Graph 401")
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        document_syncer=failing_sync,
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Write a dossier", source="api")
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "completed"
+    journal = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT stage, status, summary FROM message_journal WHERE message_id=? ORDER BY created_at",
+            (message_id,),
+        )
+    ]
+    assert any(
+        item["stage"] == "document_sync"
+        and item["status"] == "failed"
+        and "Graph 401" in item["summary"]
+        for item in journal
+    )
+    events = db.snapshot()["events"]
+    assert any(event["event_type"] == "document_sync/failed" for event in events)
+
+
 def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> None:
     config = load_project_config(PROJECT_CONFIG)
     written = materialize_agent_configs(

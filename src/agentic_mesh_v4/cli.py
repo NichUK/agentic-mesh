@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 import subprocess
 import sys
@@ -128,9 +129,12 @@ def main(argv: list[str] | None = None) -> None:
                     )
                 )
 
-            result = V4Runtime(db=db, project_config=project_config, client_factory=factory).dispatch_once(
-                role_id=role.role_id
-            )
+            result = V4Runtime(
+                db=db,
+                project_config=project_config,
+                client_factory=factory,
+                document_syncer=_document_syncer(args.project_config),
+            ).dispatch_once(role_id=role.role_id)
             _print_json(_dispatch_result(result))
             return
         if args.command == "dispatch-loop":
@@ -146,6 +150,7 @@ def main(argv: list[str] | None = None) -> None:
                 processed = _dispatch_available_messages(
                     db=db,
                     project_config=project_config,
+                    project_config_path=args.project_config,
                     agent_config_root=args.agent_config_root,
                     lifecycle=lifecycle,
                 )
@@ -195,6 +200,7 @@ def _dispatch_available_messages(
     *,
     db: V4Database,
     project_config,
+    project_config_path: Path,
     agent_config_root: Path,
     lifecycle: ComposeLifecycle | None,
 ) -> int:
@@ -211,7 +217,12 @@ def _dispatch_available_messages(
             )
         )
 
-    runtime = V4Runtime(db=db, project_config=project_config, client_factory=factory)
+    runtime = V4Runtime(
+        db=db,
+        project_config=project_config,
+        client_factory=factory,
+        document_syncer=_document_syncer(project_config_path),
+    )
     runtime.register_roles()
     for role in project_config.roles:
         if lifecycle is not None and db.active_message_for_role(target_role=role.role_id) is not None:
@@ -259,6 +270,18 @@ def _dispatch_available_messages(
         if result is not None:
             processed += 1
     return processed
+
+
+def _document_syncer(project_config_path: Path):
+    local_root = Path(os.environ.get("AGENTIC_MESH_DOCUMENT_ROOT", "/documents"))
+
+    def sync() -> object:
+        return sync_local_documents_to_onedrive(
+            project_config=project_config_path,
+            local_root=local_root,
+        )
+
+    return sync
 
 
 def _dispatch_result(result) -> dict[str, object] | None:
