@@ -5,6 +5,8 @@ import subprocess
 
 import yaml
 
+from agentic_mesh_v4.lifecycle import ComposeLifecycle
+
 
 V4_PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml")
 V4_ROLE_IDS = {
@@ -187,6 +189,49 @@ def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checko
         in env_example
     )
     assert "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh\n" not in env_example
+
+
+def test_v4_compose_lifecycle_env_file_overrides_container_environment(
+    tmp_path, monkeypatch
+) -> None:
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "AGENTIC_MESH_PROJECT_HOST_PATH=/home/nich/agentic-mesh-projects/agentic-mesh-dev",
+                "AGENTIC_MESH_SYSTEM_HOST_PATH=/home/nich/agentic-mesh",
+                "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh-projects/agentic-mesh-dev/target-repos/agentic-mesh",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENTIC_MESH_PROJECT_HOST_PATH", "/mesh/project")
+    monkeypatch.setenv("AGENTIC_MESH_SYSTEM_HOST_PATH", "/mesh/system")
+    monkeypatch.setenv("AGENTIC_MESH_WORKSPACE_HOST_PATH", "/mesh/workspaces/agentic-mesh")
+    calls: list[dict[str, str]] = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(kwargs["env"])
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    ComposeLifecycle(
+        compose_files=(compose_file,),
+        env_file=env_file,
+        working_directory=tmp_path,
+    ).wake_service("agentic-mesh-dev-project-manager-1")
+
+    assert calls
+    assert calls[0]["AGENTIC_MESH_PROJECT_HOST_PATH"] == (
+        "/home/nich/agentic-mesh-projects/agentic-mesh-dev"
+    )
+    assert calls[0]["AGENTIC_MESH_SYSTEM_HOST_PATH"] == "/home/nich/agentic-mesh"
+    assert calls[0]["AGENTIC_MESH_WORKSPACE_HOST_PATH"] == (
+        "/home/nich/agentic-mesh-projects/agentic-mesh-dev/target-repos/agentic-mesh"
+    )
 
 
 def test_v4_dogfood_project_config_exists_for_compose_profile() -> None:
