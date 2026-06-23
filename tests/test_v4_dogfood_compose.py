@@ -149,9 +149,15 @@ def test_dogfood_compose_env_example_lists_required_v4_live_inputs() -> None:
 def test_linuxch_release_script_defaults_to_v4_services() -> None:
     script = Path("scripts/release-linuxch-compose.sh").read_text(encoding="utf-8")
 
+    assert "AGENTIC_MESH_SYSTEM_HOST_PATH:=/home/nich/agentic-mesh" in script
+    assert (
+        "AGENTIC_MESH_WORKSPACE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/target-repos/agentic-mesh"
+        in script
+    )
     assert "AGENTIC_MESH_RELEASE_SERVICES:=runtime dispatcher otel-collector" in script
     assert "AGENTIC_MESH_ROLE_SERVICES:=" in script
     assert "--profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image" in script
+    assert "--profile v4 stop $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile v4 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile roles stop $AGENTIC_MESH_ROLE_SERVICES" in script
     assert "--profile roles rm -f $AGENTIC_MESH_ROLE_SERVICES" in script
@@ -162,6 +168,25 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
         assert f"agentic-mesh-dev-{role_id}-1" in script
     assert "v3-nats" not in script
     assert "v3-supervisor" not in script
+
+
+def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checkout() -> None:
+    script = Path("scripts/deploy-linuxch-compose.sh").read_text(encoding="utf-8")
+    env_example = Path("examples/projects/agentic-mesh-dev/deploy/compose/.env.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "AGENTIC_MESH_WORKSPACE_HOST_PATH=\"${AGENTIC_MESH_WORKSPACE_HOST_PATH:-$AGENTIC_MESH_PROJECT_HOST_PATH/target-repos/agentic-mesh}\""
+        in script
+    )
+    assert "AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM" in script
+    assert "Refusing to deploy: AGENTIC_MESH_WORKSPACE_HOST_PATH resolves to AGENTIC_MESH_SYSTEM_HOST_PATH." in script
+    assert (
+        "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh-projects/agentic-mesh-dev/target-repos/agentic-mesh"
+        in env_example
+    )
+    assert "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh\n" not in env_example
 
 
 def test_v4_dogfood_project_config_exists_for_compose_profile() -> None:

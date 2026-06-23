@@ -4,10 +4,10 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
-: "${AGENTIC_MESH_WORKSPACE_HOST_PATH:=/home/nich/agentic-mesh}"
 : "${AGENTIC_MESH_RUNTIME_BUILD_CONTEXT:=/home/nich/agentic-mesh}"
 : "${AGENTIC_MESH_SYSTEM_HOST_PATH:=/home/nich/agentic-mesh}"
 : "${AGENTIC_MESH_PROJECT_HOST_PATH:=/home/nich/agentic-mesh-projects/agentic-mesh-dev}"
+: "${AGENTIC_MESH_WORKSPACE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/target-repos/agentic-mesh}"
 : "${AGENTIC_MESH_DOCUMENTS_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/documents}"
 : "${AGENTIC_MESH_CODEX_HOME_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/worker_mounts/codex-agentic-mesh-dev-team-home-q}"
 : "${AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH:=/home/nich/agentic-mesh/config/otel/collector.yaml}"
@@ -36,6 +36,8 @@ cd "$REPO_ROOT"
 mkdir -p "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4"
 
 sh scripts/deploy-linuxch-compose.sh --profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image
+
+sh scripts/deploy-linuxch-compose.sh --profile v4 stop $AGENTIC_MESH_RELEASE_SERVICES >/dev/null 2>&1 || true
 
 PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --db "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4/agentic-mesh-v4.sqlite3" \
