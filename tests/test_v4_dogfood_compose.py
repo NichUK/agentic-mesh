@@ -210,9 +210,11 @@ def test_v4_compose_lifecycle_env_file_overrides_container_environment(
     monkeypatch.setenv("AGENTIC_MESH_PROJECT_HOST_PATH", "/mesh/project")
     monkeypatch.setenv("AGENTIC_MESH_SYSTEM_HOST_PATH", "/mesh/system")
     monkeypatch.setenv("AGENTIC_MESH_WORKSPACE_HOST_PATH", "/mesh/workspaces/agentic-mesh")
+    commands: list[list[str]] = []
     calls: list[dict[str, str]] = []
 
     def fake_run(*args, **kwargs):
+        commands.append(args[0])
         calls.append(kwargs["env"])
         return subprocess.CompletedProcess(args[0], 0, "", "")
 
@@ -225,6 +227,13 @@ def test_v4_compose_lifecycle_env_file_overrides_container_environment(
     ).wake_service("agentic-mesh-dev-project-manager-1")
 
     assert calls
+    assert commands[0][-5:] == [
+        "up",
+        "-d",
+        "--no-deps",
+        "--no-recreate",
+        "agentic-mesh-dev-project-manager-1",
+    ]
     assert calls[0]["AGENTIC_MESH_PROJECT_HOST_PATH"] == (
         "/home/nich/agentic-mesh-projects/agentic-mesh-dev"
     )
