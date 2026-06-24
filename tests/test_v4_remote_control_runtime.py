@@ -867,6 +867,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
 
     assert "new EventSource(\"thread/events\")" in html
     assert "http-equiv=\"refresh\"" not in html
+    assert 'id="agent-output"' in html
     assert "No-cache rebuild started." in html
     assert "Live push stream connected." in html
 

@@ -117,6 +117,8 @@ def render_agent_thread(
             f"<h1>{html.escape(role_id)} Thread</h1>",
             _nav(),
             '<p><a href="thread.json">Thread JSON</a>. <span id="live-status">Live push stream connected.</span></p>',
+            "<h2>Agent output</h2>",
+            f'<pre id="agent-output">{html.escape(_agent_output(events))}</pre>',
             "<h2>Recent messages</h2>",
             '<table><thead><tr><th>Updated</th><th>State</th><th>Message</th><th>Text</th></tr></thead>'
             f"<tbody id=\"agent-messages\">{''.join(message_rows) or '<tr><td colspan=\"4\">No messages recorded for this role.</td></tr>'}</tbody></table>",
@@ -281,6 +283,20 @@ function renderMessages(messages) {
   }
 }
 
+function renderOutput(events) {
+  const output = document.getElementById("agent-output");
+  const chunks = [];
+  for (const item of events.slice().reverse()) {
+    if (item.event_type === "item/agentMessage/delta" && item.content) {
+      chunks.push(item.content);
+    }
+    if (item.event_type === "item/completed" && item.content && !chunks.length) {
+      chunks.push(item.content);
+    }
+  }
+  output.textContent = chunks.join("");
+}
+
 function renderEvents(events) {
   const body = document.getElementById("agent-events");
   body.replaceChildren();
@@ -323,6 +339,7 @@ function renderEvents(events) {
 
 eventSource.addEventListener("snapshot", (event) => {
   const snapshot = JSON.parse(event.data);
+  renderOutput(snapshot.events || []);
   renderMessages(snapshot.messages || []);
   renderEvents(snapshot.events || []);
 });
@@ -333,6 +350,22 @@ eventSource.onerror = () => {
 };
 </script>
 """
+
+
+def _agent_output(events: list[dict[str, Any]]) -> str:
+    deltas = [
+        str(item.get("content") or "")
+        for item in reversed(events)
+        if item.get("event_type") == "item/agentMessage/delta" and item.get("content")
+    ]
+    if deltas:
+        return "".join(deltas)
+    completed = [
+        str(item.get("content") or "")
+        for item in reversed(events)
+        if item.get("event_type") == "item/completed" and item.get("content")
+    ]
+    return "\n".join(item for item in completed if item)
 
 
 def _page(title: str, parts: list[str]) -> str:
