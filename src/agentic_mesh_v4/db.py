@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -313,7 +314,10 @@ class V4Database:
                 """
                 SELECT * FROM message_queue
                 WHERE target_role=? AND state IN ('queued', 'ready')
-                ORDER BY steering DESC, created_at ASC
+                ORDER BY
+                    steering DESC,
+                    CASE WHEN source='teams' THEN 0 ELSE 1 END,
+                    created_at ASC
                 LIMIT 1
                 """,
                 (role_id,),
@@ -408,18 +412,29 @@ class V4Database:
         ).fetchone()
         return _row_dict(row) if row is not None else None
 
-    def requeue_active_messages_for_role(self, *, target_role: str, summary: str) -> int:
-        rows = list(
-            self.connection.execute(
-                """
-                SELECT message_id, correlation_id, locked_by
-                FROM message_queue
-                WHERE target_role=? AND state IN ('delivering', 'active_turn')
-                ORDER BY updated_at ASC
-                """,
-                (target_role,),
+    def requeue_active_messages_for_role(
+        self,
+        *,
+        target_role: str,
+        summary: str,
+        stale_after_seconds: float | None = None,
+    ) -> int:
+        rows = [
+            row
+            for row in list(
+                self.connection.execute(
+                    """
+                    SELECT message_id, correlation_id, locked_by, updated_at
+                    FROM message_queue
+                    WHERE target_role=? AND state IN ('delivering', 'active_turn')
+                    ORDER BY updated_at ASC
+                    """,
+                    (target_role,),
+                )
             )
-        )
+            if stale_after_seconds is None
+            or _is_stale_timestamp(str(row["updated_at"]), stale_after_seconds=stale_after_seconds)
+        ]
         if not rows:
             return 0
         now = utc_now()
@@ -743,6 +758,16 @@ def _payload_hash(payload: dict[str, Any]) -> str:
 
 def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+
+def _is_stale_timestamp(value: str, *, stale_after_seconds: float) -> bool:
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return datetime.now(UTC) - timestamp >= timedelta(seconds=stale_after_seconds)
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, declaration: str) -> None:

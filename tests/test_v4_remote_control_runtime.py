@@ -60,6 +60,21 @@ def test_v4_sqlite_queue_claims_steering_first(tmp_path: Path) -> None:
     assert claimed.steering is True
 
 
+def test_v4_sqlite_queue_prioritizes_human_teams_messages_after_steering(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
+    runtime.register_roles()
+    runtime.enqueue_conversation(target_role="release-manager", text="internal handoff", source="safe-output")
+    teams_id = runtime.enqueue_conversation(target_role="release-manager", text="Are you releasing it?", source="teams")
+
+    claimed = db.claim_next_message(role_id="release-manager", worker_id="agentic-mesh-dev.release-manager.1")
+
+    assert claimed is not None
+    assert claimed.message_id == teams_id
+    assert claimed.source == "teams"
+
+
 def test_v4_sqlite_queue_claims_ready_messages_as_deliverable_work(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
@@ -449,6 +464,51 @@ def test_v4_requeues_orphaned_active_messages_for_stopped_role(tmp_path: Path) -
     assert message["locked_at"] is None
     assert role["state"] == "ready"
     assert role["active_turn_id"] is None
+
+
+def test_v4_requeues_stale_active_messages_but_keeps_fresh_active_turns(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.release-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    stale_message = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="Deployment turn interrupted the dispatcher",
+        source="safe-output",
+    )
+    fresh_message = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="Fresh active release turn",
+        source="safe-output",
+    )
+    db.claim_next_message(role_id="release-manager", worker_id=role_instance_id)
+    db.mark_message_state(stale_message, state="active_turn", summary="Delivered to Release Manager")
+    db.claim_next_message(role_id="release-manager", worker_id=role_instance_id)
+    db.mark_message_state(fresh_message, state="active_turn", summary="Delivered to Release Manager")
+    db.connection.execute(
+        "UPDATE message_queue SET updated_at='2000-01-01T00:00:00+00:00' WHERE message_id=?",
+        (stale_message,),
+    )
+    db.connection.commit()
+
+    recovered = db.requeue_active_messages_for_role(
+        target_role="release-manager",
+        stale_after_seconds=3600,
+        summary="Recovered stale active release turn.",
+    )
+
+    assert recovered == 1
+    rows = {
+        row["message_id"]: row["state"]
+        for row in db.connection.execute(
+            "SELECT message_id, state FROM message_queue WHERE message_id IN (?,?)",
+            (stale_message, fresh_message),
+        )
+    }
+    assert rows[stale_message] == "queued"
+    assert rows[fresh_message] == "active_turn"
 
 
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:

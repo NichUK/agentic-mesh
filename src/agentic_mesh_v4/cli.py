@@ -58,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_loop.add_argument("--compose-project-name")
     dispatch_loop.add_argument("--compose-env-file", type=Path)
     dispatch_loop.add_argument("--compose-working-directory", type=Path)
+    dispatch_loop.add_argument("--active-turn-stale-seconds", type=float, default=7200.0)
     dispatch_loop.add_argument("--wake", action="store_true")
     dispatch_loop.add_argument("--once", action="store_true")
 
@@ -194,6 +195,7 @@ def main(argv: list[str] | None = None) -> None:
                     project_config_path=args.project_config,
                     agent_config_root=args.agent_config_root,
                     lifecycle=lifecycle,
+                    active_turn_stale_seconds=args.active_turn_stale_seconds,
                 )
                 if args.once:
                     _print_json({"processed": processed})
@@ -261,6 +263,7 @@ def _dispatch_available_messages(
     project_config_path: Path,
     agent_config_root: Path,
     lifecycle: ComposeLifecycle | None,
+    active_turn_stale_seconds: float,
 ) -> int:
     processed = 0
 
@@ -284,6 +287,43 @@ def _dispatch_available_messages(
     )
     runtime.register_roles()
     for role in project_config.roles:
+        if db.active_message_for_role(target_role=role.role_id) is not None:
+            recovered_stale = db.requeue_active_messages_for_role(
+                target_role=role.role_id,
+                stale_after_seconds=active_turn_stale_seconds,
+                summary=(
+                    f"Recovered stale active delivery for {role.role_id}; "
+                    f"message stayed active longer than {active_turn_stale_seconds:.0f} seconds."
+                ),
+            )
+            if recovered_stale and lifecycle is not None:
+                try:
+                    lifecycle.hibernate_service(role.service_name)
+                except subprocess.CalledProcessError as exc:
+                    print(
+                        json.dumps(
+                            {
+                                "role_id": role.role_id,
+                                "service_name": role.service_name,
+                                "state": "stale_hibernate_failed",
+                                "error": exc.stderr or exc.stdout or str(exc),
+                            },
+                            sort_keys=True,
+                        ),
+                        file=sys.stderr,
+                    )
+                print(
+                    json.dumps(
+                        {
+                            "role_id": role.role_id,
+                            "service_name": role.service_name,
+                            "state": "recovered_stale_active",
+                            "messages": recovered_stale,
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
         if lifecycle is not None and db.active_message_for_role(target_role=role.role_id) is not None:
             if not lifecycle.is_service_running(role.service_name):
                 recovered = db.requeue_active_messages_for_role(
