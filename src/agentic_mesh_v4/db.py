@@ -679,6 +679,30 @@ class V4Database:
         sql += " ORDER BY created_at ASC"
         return [_row_dict(row) for row in self.connection.execute(sql, params)]
 
+    def list_agent_events_for_role(self, *, role_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM agent_events
+            WHERE role_instance_id LIKE ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (f"%.{role_id}.%", limit),
+        )
+        return [_row_dict(row) for row in rows]
+
+    def list_messages_for_role(self, *, role_id: str, limit: int = 25) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM message_queue
+            WHERE target_role=?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (role_id, limit),
+        )
+        return [_row_dict(row) for row in rows]
+
     def snapshot(self) -> dict[str, Any]:
         roles = [_row_dict(row) for row in self.connection.execute("SELECT * FROM role_instances ORDER BY role_id")]
         messages = self.list_messages()

@@ -9,6 +9,7 @@ from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.db import V4Database
+from agentic_mesh_v4.reporting import render_agent_thread
 from agentic_mesh_v4.runtime import V4Runtime
 
 
@@ -766,6 +767,108 @@ def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
         )
     ]
     assert any(item["stage"] == "reply_delivered" and item["status"] == "delivered" for item in journal)
+
+
+def test_v4_runtime_delivers_commentary_progress_to_teams(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I am rebuilding the runtime and will report back.",
+                }
+            },
+        }
+    )
+    transport.queue_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Runtime rebuild completed.",
+                }
+            },
+        }
+    )
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+    teams_sender = FakeTeamsReplySender()
+    activity = {
+        "serviceUrl": "https://smba.test/tenant/",
+        "conversation": {"id": "conversation-1"},
+        "id": "activity-1",
+    }
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        teams_reply_sender=teams_sender,  # type: ignore[arg-type]
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="try again",
+        source="teams",
+        payload=activity,
+    )
+
+    result = runtime.dispatch_once(role_id="release-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert [call["text_markdown"] for call in teams_sender.calls] == [
+        "I am rebuilding the runtime and will report back.",
+        "Runtime rebuild completed.",
+    ]
+    journal = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT stage, status, summary FROM message_journal WHERE message_id=? ORDER BY created_at",
+            (message_id,),
+        )
+    ]
+    assert any(item["stage"] == "progress_delivered" and item["status"] == "delivered" for item in journal)
+    assert any(item["stage"] == "reply_delivered" and item["status"] == "delivered" for item in journal)
+
+
+def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
+    html = render_agent_thread(
+        role_id="release-manager",
+        messages=[
+            {
+                "updated_at": "2026-06-24T10:00:00+00:00",
+                "state": "active_turn",
+                "message_id": "msg-1",
+                "text": "try again",
+            }
+        ],
+        events=[
+            {
+                "created_at": "2026-06-24T10:00:01+00:00",
+                "event_type": "item/agentMessage/delta",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "No-cache rebuild started.",
+                "payload_json": '{"method":"item/agentMessage/delta"}',
+            }
+        ],
+    )
+
+    assert "new EventSource(\"thread/events\")" in html
+    assert "http-equiv=\"refresh\"" not in html
+    assert "No-cache rebuild started." in html
+    assert "Live push stream connected." in html
 
 
 def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:

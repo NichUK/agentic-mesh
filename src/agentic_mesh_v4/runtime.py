@@ -4,6 +4,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from typing import Callable
 from typing import Protocol
 
@@ -181,17 +182,25 @@ class V4Runtime:
                             (turn_id, thread_id, message.message_id, "active", now),
                         )
             self.db.mark_message_state(message.message_id, state=state, summary=f"Delivered to {role_instance_id}")
+            teams_sender: object | None = None
+            if message.source == "teams":
+                teams_sender = self.teams_reply_sender or TeamsReplySender.from_env()
             reply_text = self._drain_available_events(
                 client=client,
                 role_instance_id=role_instance_id,
+                role_id=role.role_id,
                 approval_policy=getattr(role, "approval_policy"),
                 thread_id=thread_id,
                 turn_id=turn_id,
                 message_id=message.message_id,
+                message_source=message.source,
+                message_payload=message.payload,
+                message_correlation_id=message.correlation_id,
+                teams_reply_sender=teams_sender,
             )
             if message.source == "teams" and reply_text.strip():
-                sender = self.teams_reply_sender or TeamsReplySender.from_env()
-                delivery_id = sender.send_reply(
+                assert teams_sender is not None
+                delivery_id = teams_sender.send_reply(
                     role_id=role.role_id,
                     activity=message.payload,
                     text_markdown=reply_text.strip(),
@@ -411,17 +420,23 @@ class V4Runtime:
         *,
         client: CodexAppServerClient,
         role_instance_id: str,
+        role_id: str,
         approval_policy: str,
         thread_id: str,
         turn_id: str | None,
         message_id: str,
+        message_source: str,
+        message_payload: dict[str, Any],
+        message_correlation_id: str,
+        teams_reply_sender: object | None,
     ) -> str:
-        reply_parts: list[str] = []
+        fallback_reply_parts: list[str] = []
+        final_reply: str | None = None
         while True:
             try:
                 event = client.receive_event()
             except Exception as exc:
-                if reply_parts:
+                if fallback_reply_parts or final_reply:
                     self.db.record_agent_event(
                         role_instance_id=role_instance_id,
                         event_type="turn/readTimeoutAfterOutput",
@@ -434,12 +449,36 @@ class V4Runtime:
                     raise RuntimeError(f"turn timed out before completion after partial output: {exc}") from exc
                 raise
             if event is None:
-                return "".join(reply_parts)
+                return final_reply or "".join(fallback_reply_parts)
             method = str(event.get("method") or "unknown")
             params = event.get("params") if isinstance(event.get("params"), dict) else {}
             content = _event_content(method, params)
             if method == "item/agentMessage/delta":
-                reply_parts.append(content)
+                fallback_reply_parts.append(content)
+            completed_message = _completed_agent_message(event)
+            if completed_message is not None:
+                phase, text = completed_message
+                if phase == "final_answer":
+                    final_reply = text
+                elif (
+                    phase == "commentary"
+                    and message_source == "teams"
+                    and text.strip()
+                    and teams_reply_sender is not None
+                ):
+                    delivery_id = teams_reply_sender.send_reply(
+                        role_id=role_id,
+                        activity=message_payload,
+                        text_markdown=text.strip(),
+                    )
+                    self.db.record_message_journal(
+                        message_id=message_id,
+                        correlation_id=message_correlation_id,
+                        stage="progress_delivered",
+                        status="delivered",
+                        summary=f"Delivered Teams progress reply {delivery_id}",
+                        role_instance_id=role_instance_id,
+                    )
             if _should_auto_accept_server_request(event=event, approval_policy=approval_policy):
                 client.respond_to_server_request(request_id=event["id"], result={"decision": "accept"})
                 self.db.record_agent_event(
@@ -461,7 +500,7 @@ class V4Runtime:
                 message_id=message_id,
             )
             if method == "turn/completed":
-                return "".join(reply_parts)
+                return final_reply or "".join(fallback_reply_parts)
 
 
 def _event_content(method: str, params: dict[str, object]) -> str:
@@ -470,6 +509,22 @@ def _event_content(method: str, params: dict[str, object]) -> str:
         if isinstance(value, str):
             return value
     return method
+
+
+def _completed_agent_message(event: dict[str, object]) -> tuple[str, str] | None:
+    if event.get("method") != "item/completed":
+        return None
+    params = event.get("params")
+    if not isinstance(params, dict):
+        return None
+    item = params.get("item")
+    if not isinstance(item, dict) or item.get("type") != "agentMessage":
+        return None
+    text = item.get("text")
+    if not isinstance(text, str):
+        return None
+    phase = item.get("phase")
+    return (phase if isinstance(phase, str) else "", text)
 
 
 def _should_auto_accept_server_request(*, event: dict[str, object], approval_policy: str) -> bool:

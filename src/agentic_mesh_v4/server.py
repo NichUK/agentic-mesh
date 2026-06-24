@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -32,6 +33,10 @@ class V4Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._json({"status": "ok", "runtime": "agentic_mesh_v4"})
             return
+        if path.startswith("/agent/") and path.endswith("/thread/events"):
+            role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread/events")).strip("/")
+            self._agent_thread_events(role_id)
+            return
         db = V4Database(self.db_path)
         try:
             db.migrate()
@@ -46,18 +51,23 @@ class V4Handler(BaseHTTPRequestHandler):
                 return
             if path.startswith("/agent/") and path.endswith("/thread"):
                 role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread")).strip("/")
-                events = [
-                    dict(row)
-                    for row in db.connection.execute(
-                        """
-                        SELECT * FROM agent_events
-                        WHERE role_instance_id LIKE ?
-                        ORDER BY created_at DESC LIMIT 200
-                        """,
-                        (f"%.{role_id}.%",),
+                self._html(
+                    render_agent_thread(
+                        role_id=role_id,
+                        events=db.list_agent_events_for_role(role_id=role_id, limit=250),
+                        messages=db.list_messages_for_role(role_id=role_id, limit=20),
                     )
-                ]
-                self._html(render_agent_thread(role_id, events))
+                )
+                return
+            if path.startswith("/agent/") and path.endswith("/thread.json"):
+                role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread.json")).strip("/")
+                self._json(
+                    {
+                        "role_id": role_id,
+                        "messages": db.list_messages_for_role(role_id=role_id, limit=20),
+                        "events": db.list_agent_events_for_role(role_id=role_id, limit=250),
+                    }
+                )
                 return
             if path.startswith("/work-item/"):
                 work_item_id = unquote(path.removeprefix("/work-item/")).strip("/")
@@ -166,6 +176,40 @@ class V4Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _agent_thread_events(self, role_id: str) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        previous_payload = ""
+        deadline = time.monotonic() + 1800
+        while time.monotonic() < deadline:
+            db = V4Database(self.db_path)
+            try:
+                db.migrate()
+                payload = json.dumps(
+                    {
+                        "role_id": role_id,
+                        "messages": db.list_messages_for_role(role_id=role_id, limit=20),
+                        "events": db.list_agent_events_for_role(role_id=role_id, limit=250),
+                    },
+                    sort_keys=True,
+                )
+            finally:
+                db.close()
+            try:
+                if payload != previous_payload:
+                    self.wfile.write(f"event: snapshot\ndata: {payload}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    previous_payload = payload
+                else:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            time.sleep(2)
 
 
 def serve(
