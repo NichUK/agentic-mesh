@@ -511,6 +511,47 @@ def test_v4_requeues_stale_active_messages_but_keeps_fresh_active_turns(tmp_path
     assert rows[fresh_message] == "active_turn"
 
 
+def test_v4_agent_events_refresh_active_message_heartbeat(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.release-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="Deployment turn is still streaming",
+        source="safe-output",
+    )
+    db.claim_next_message(role_id="release-manager", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered to Release Manager")
+    db.connection.execute(
+        "UPDATE message_queue SET updated_at='2000-01-01T00:00:00+00:00' WHERE message_id=?",
+        (message_id,),
+    )
+    db.connection.commit()
+
+    db.record_agent_event(
+        role_instance_id=role_instance_id,
+        event_type="item/commandExecution/outputDelta",
+        content="still deploying",
+        message_id=message_id,
+    )
+    recovered = db.requeue_active_messages_for_role(
+        target_role="release-manager",
+        stale_after_seconds=3600,
+        summary="Recovered stale active release turn.",
+    )
+
+    assert recovered == 0
+    row = db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["state"] == "active_turn"
+
+
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()

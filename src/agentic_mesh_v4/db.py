@@ -510,6 +510,7 @@ class V4Database:
         message_id: str | None = None,
     ) -> str:
         event_id = f"event-{uuid4().hex}"
+        now = utc_now()
         with self.connection:
             self.connection.execute(
                 """
@@ -527,9 +528,18 @@ class V4Database:
                     event_type,
                     content,
                     json.dumps(payload or {}, sort_keys=True),
-                    utc_now(),
+                    now,
                 ),
             )
+            if message_id is not None:
+                self.connection.execute(
+                    """
+                    UPDATE message_queue
+                    SET updated_at=?
+                    WHERE message_id=? AND state IN ('delivering', 'active_turn')
+                    """,
+                    (now, message_id),
+                )
         return event_id
 
     def record_safe_output_call(

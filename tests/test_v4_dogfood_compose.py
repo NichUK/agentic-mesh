@@ -60,7 +60,7 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
     assert "dispatch-loop" in dispatcher["command"]
     assert dispatcher["env_file"] == [{"path": ".env", "required": False}]
     assert "--wake" in dispatcher["command"]
-    assert "--active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-7200}" in dispatcher["command"]
+    assert "--active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900}" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.v4.yml" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml" in dispatcher["command"]
     assert "/var/run/docker.sock:/var/run/docker.sock" in dispatcher["volumes"]

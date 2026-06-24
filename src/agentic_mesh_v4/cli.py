@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_loop.add_argument("--compose-project-name")
     dispatch_loop.add_argument("--compose-env-file", type=Path)
     dispatch_loop.add_argument("--compose-working-directory", type=Path)
-    dispatch_loop.add_argument("--active-turn-stale-seconds", type=float, default=7200.0)
+    dispatch_loop.add_argument("--active-turn-stale-seconds", type=float, default=900.0)
     dispatch_loop.add_argument("--wake", action="store_true")
     dispatch_loop.add_argument("--once", action="store_true")
 
