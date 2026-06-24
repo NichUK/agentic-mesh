@@ -61,6 +61,15 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_loop.add_argument("--wake", action="store_true")
     dispatch_loop.add_argument("--once", action="store_true")
 
+    watchdog_loop = subparsers.add_parser("watchdog-loop")
+    watchdog_loop.add_argument("--compose-file", type=Path, action="append", default=[])
+    watchdog_loop.add_argument("--compose-project-name")
+    watchdog_loop.add_argument("--compose-env-file", type=Path)
+    watchdog_loop.add_argument("--compose-working-directory", type=Path)
+    watchdog_loop.add_argument("--service", action="append", default=[])
+    watchdog_loop.add_argument("--poll-interval-seconds", type=float, default=30.0)
+    watchdog_loop.add_argument("--once", action="store_true")
+
     schema = subparsers.add_parser("generate-protocol-schema")
     schema.add_argument("--output", type=Path, required=True)
     schema.add_argument("--codex-bin", default="codex")
@@ -192,6 +201,20 @@ def main(argv: list[str] | None = None) -> None:
                 if processed == 0:
                     time.sleep(args.poll_interval_seconds)
             return
+        if args.command == "watchdog-loop":
+            lifecycle = ComposeLifecycle(
+                compose_files=tuple(args.compose_file),
+                project_name=args.compose_project_name,
+                env_file=args.compose_env_file,
+                working_directory=args.compose_working_directory,
+            )
+            services = tuple(args.service or ("runtime", "dispatcher"))
+            while True:
+                checked = _watchdog_services(lifecycle=lifecycle, services=services)
+                if args.once:
+                    _print_json({"checked": checked})
+                    return
+                time.sleep(args.poll_interval_seconds)
         if args.command == "generate-protocol-schema":
             args.output.mkdir(parents=True, exist_ok=True)
             subprocess.run(
@@ -306,6 +329,31 @@ def _dispatch_available_messages(
         if result is not None:
             processed += 1
     return processed
+
+
+def _watchdog_services(*, lifecycle: ComposeLifecycle, services: tuple[str, ...]) -> list[dict[str, str]]:
+    checked: list[dict[str, str]] = []
+    for service_name in services:
+        try:
+            if lifecycle.is_service_running(service_name):
+                checked.append({"service": service_name, "state": "running"})
+                continue
+            lifecycle.wake_service(service_name)
+            checked.append({"service": service_name, "state": "restarted"})
+        except subprocess.CalledProcessError as exc:
+            checked.append(
+                {
+                    "service": service_name,
+                    "state": "restart_failed",
+                    "error": exc.stderr or exc.stdout or str(exc),
+                }
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard path
+            checked.append({"service": service_name, "state": "check_failed", "error": str(exc)})
+    for item in checked:
+        if item["state"] != "running":
+            print(json.dumps(item, sort_keys=True), file=sys.stderr)
+    return checked
 
 
 def _document_syncer(project_config_path: Path):
