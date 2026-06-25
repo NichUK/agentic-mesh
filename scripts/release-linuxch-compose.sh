@@ -50,10 +50,6 @@ export AGENTIC_MESH_PREFER_PARENT_PATHS=1
 cd "$REPO_ROOT"
 mkdir -p "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4"
 
-sh scripts/deploy-linuxch-compose.sh --profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image
-
-sh scripts/deploy-linuxch-compose.sh --profile v4 stop $AGENTIC_MESH_RELEASE_SERVICES >/dev/null 2>&1 || true
-
 PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --db "$AGENTIC_MESH_PROJECT_HOST_PATH/state/v4/agentic-mesh-v4.sqlite3" \
   --project-config "$AGENTIC_MESH_PROJECT_HOST_PATH/agentic-mesh/project-v4.yaml" \
@@ -73,6 +69,19 @@ PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --output "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"
 cp "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml" \
   "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.yml"
+
+if grep -q "/mesh/workspaces/agentic-mesh/src" "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"; then
+  echo "Refusing to release: generated V4 compose points control-plane PYTHONPATH at the workspace repo." >&2
+  exit 1
+fi
+if ! grep -q "PYTHONPATH: /mesh/system/src" "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"; then
+  echo "Refusing to release: generated V4 compose is missing control-plane PYTHONPATH=/mesh/system/src." >&2
+  exit 1
+fi
+
+sh scripts/deploy-linuxch-compose.sh --profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image
+
+sh scripts/deploy-linuxch-compose.sh --profile v4 stop $AGENTIC_MESH_RELEASE_SERVICES >/dev/null 2>&1 || true
 
 sh scripts/deploy-linuxch-compose.sh --profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES
 

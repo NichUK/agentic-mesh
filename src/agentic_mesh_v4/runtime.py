@@ -97,6 +97,8 @@ class V4Runtime:
             target_role=target_role,
             conversation_ref=conversation_ref,
         )
+        if active is None and conversation_ref:
+            active = self.db.active_message_for_role(target_role=target_role, unscoped_only=True)
         force_queue = _starts_with_queue_directive(text)
         should_steer = (steering or (active is not None and bool(conversation_ref))) and not force_queue
         message_id = self.db.enqueue_message(
@@ -114,16 +116,16 @@ class V4Runtime:
         thread_id = self._active_thread_id(role_instance_id)
         if not thread_id:
             return message_id
+        expected_turn_id = self._active_turn_id(role_instance_id)
         try:
             client = self.client_factory(role.role_id)
             if not client.initialized:
                 client.initialize()
             client.resume_thread(thread_id)
-            client.steer_turn(thread_id=thread_id, text=text)
+            client.steer_turn(thread_id=thread_id, text=text, expected_turn_id=expected_turn_id)
         except Exception as exc:
-            self.db.mark_message_state(
+            self.db.downgrade_message_to_normal_delivery(
                 message_id,
-                state="queued",
                 summary=f"Steering failed; queued for normal delivery: {exc}",
             )
             return message_id
@@ -156,14 +158,42 @@ class V4Runtime:
                 client.initialize()
             thread_id = self._thread_for_role(client=client, role_instance_id=role_instance_id, role=role)
             if message.steering:
-                client.steer_turn(thread_id=thread_id, text=message.text)
-                turn_id = None
-                state = "steered"
-            else:
+                expected_turn_id = self._active_turn_id(role_instance_id)
+                if expected_turn_id:
+                    client.steer_turn(thread_id=thread_id, text=message.text, expected_turn_id=expected_turn_id)
+                    turn_id = None
+                    state = "steered"
+                else:
+                    self.db.downgrade_message_to_normal_delivery(
+                        message.message_id,
+                        summary="Steering message had no active turn; starting it as a normal turn.",
+                    )
+                    message = type(message)(
+                        message_id=message.message_id,
+                        source=message.source,
+                        target_role=message.target_role,
+                        state=message.state,
+                        text=message.text,
+                        payload=message.payload,
+                        steering=False,
+                        correlation_id=message.correlation_id,
+                        conversation_ref=message.conversation_ref,
+                        thread_ref=message.thread_ref,
+                        delivery_attempts=message.delivery_attempts,
+                    )
+            if not message.steering:
                 turn_id = client.start_turn(thread_id=thread_id, text=message.text, model=role.model)
                 state = "active_turn"
                 now = utc_now()
                 with self.db.connection:
+                    self.db.connection.execute(
+                        """
+                        UPDATE codex_turns
+                        SET status='stale_closed', completed_at=?
+                        WHERE thread_id=? AND status='active' AND turn_id<>?
+                        """,
+                        (now, thread_id, turn_id),
+                    )
                     self.db.connection.execute(
                         """
                         UPDATE role_instances
@@ -353,6 +383,19 @@ class V4Runtime:
             return None
         return str(row["active_thread_id"])
 
+    def _active_turn_id(self, role_instance_id: str) -> str | None:
+        row = self.db.connection.execute(
+            """
+            SELECT active_turn_id
+            FROM role_instances
+            WHERE role_instance_id=?
+            """,
+            (role_instance_id,),
+        ).fetchone()
+        if row is None or row["active_turn_id"] is None:
+            return None
+        return str(row["active_turn_id"])
+
     def _thread_matches_role(
         self,
         *,
@@ -452,6 +495,24 @@ class V4Runtime:
                 return final_reply or "".join(fallback_reply_parts)
             method = str(event.get("method") or "unknown")
             params = event.get("params") if isinstance(event.get("params"), dict) else {}
+            event_thread_id = params.get("threadId")
+            event_turn_id = params.get("turnId")
+            if (
+                turn_id is not None
+                and isinstance(event_turn_id, str)
+                and event_turn_id
+                and event_turn_id != turn_id
+            ):
+                self.db.record_agent_event(
+                    role_instance_id=role_instance_id,
+                    event_type=f"{method}/foreignTurnIgnored",
+                    content=_event_content(method, params),
+                    payload=event,
+                    thread_id=event_thread_id if isinstance(event_thread_id, str) else thread_id,
+                    turn_id=event_turn_id,
+                    message_id=self._message_id_for_turn(event_turn_id),
+                )
+                continue
             content = _event_content(method, params)
             if method == "item/agentMessage/delta":
                 fallback_reply_parts.append(content)
@@ -501,6 +562,15 @@ class V4Runtime:
             )
             if method == "turn/completed":
                 return final_reply or "".join(fallback_reply_parts)
+
+    def _message_id_for_turn(self, turn_id: str) -> str | None:
+        row = self.db.connection.execute(
+            "SELECT message_id FROM codex_turns WHERE turn_id=?",
+            (turn_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["message_id"])
 
 
 def _event_content(method: str, params: dict[str, object]) -> str:
