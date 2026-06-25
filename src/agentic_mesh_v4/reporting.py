@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 from typing import Any
 
@@ -81,15 +82,33 @@ def render_agents(snapshot: dict[str, Any]) -> str:
     )
 
 
-def render_agent_thread(role_id: str, events: list[dict[str, Any]]) -> str:
+def render_agent_thread(
+    role_id: str,
+    events: list[dict[str, Any]],
+    messages: list[dict[str, Any]] | None = None,
+) -> str:
+    messages = messages or []
+    message_rows = []
+    for item in messages:
+        message_rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('state') or ''))}</td>"
+            f"<td><code>{html.escape(str(item.get('message_id') or ''))}</code></td>"
+            f"<td>{html.escape(str(item.get('text') or ''))}</td>"
+            "</tr>"
+        )
     rows = []
-    for item in events:
+    for item in reversed(events):
+        payload = str(item.get("payload_json") or "{}")
         rows.append(
             "<tr>"
-            f"<td>{html.escape(item['created_at'])}</td>"
-            f"<td>{html.escape(item['event_type'])}</td>"
-            f"<td>{html.escape(item.get('turn_id') or '')}</td>"
-            f"<td>{html.escape(item.get('content') or '')}</td>"
+            f"<td>{html.escape(str(item.get('created_at') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('event_type') or ''))}</td>"
+            f"<td><code>{html.escape(str(item.get('turn_id') or ''))}</code><br>"
+            f"<small><code>{html.escape(str(item.get('message_id') or ''))}</code></small></td>"
+            f"<td><pre>{html.escape(str(item.get('content') or ''))}</pre>"
+            f"<details><summary>Raw event</summary><pre>{html.escape(_pretty_json(payload))}</pre></details></td>"
             "</tr>"
         )
     return _page(
@@ -97,8 +116,16 @@ def render_agent_thread(role_id: str, events: list[dict[str, Any]]) -> str:
         [
             f"<h1>{html.escape(role_id)} Thread</h1>",
             _nav(),
-            "<table><thead><tr><th>Time</th><th>Event</th><th>Turn</th><th>Content</th></tr></thead>"
-            f"<tbody>{''.join(rows) or '<tr><td colspan=\"4\">No stream events recorded.</td></tr>'}</tbody></table>",
+            '<p><a href="thread.json">Thread JSON</a>. <span id="live-status">Live push stream connected.</span></p>',
+            "<h2>Agent output</h2>",
+            f'<pre id="agent-output">{html.escape(_agent_output(events))}</pre>',
+            "<h2>Recent messages</h2>",
+            '<table><thead><tr><th>Updated</th><th>State</th><th>Message</th><th>Text</th></tr></thead>'
+            f"<tbody id=\"agent-messages\">{''.join(message_rows) or '<tr><td colspan=\"4\">No messages recorded for this role.</td></tr>'}</tbody></table>",
+            "<h2>Agent event stream</h2>",
+            '<table><thead><tr><th>Time</th><th>Event</th><th>Turn</th><th>Content</th></tr></thead>'
+            f"<tbody id=\"agent-events\">{''.join(rows) or '<tr><td colspan=\"4\">No stream events recorded.</td></tr>'}</tbody></table>",
+            _agent_thread_live_script(),
         ],
     )
 
@@ -131,10 +158,11 @@ def render_artifact(path: Path) -> str:
 def _message_table(items: list[dict[str, Any]], *, empty: str) -> str:
     rows = []
     for item in items:
+        role_id = str(item["target_role"])
         rows.append(
             f"<tr id=\"{html.escape(item['message_id'])}\">"
             f"<td>{html.escape(item['message_id'])}</td>"
-            f"<td>{html.escape(item['target_role'])}</td>"
+            f"<td><a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(role_id)}</a></td>"
             f"<td>{html.escape(item['state'])}</td>"
             f"<td>{html.escape(item['text'])}</td>"
             f"<td>{html.escape(item['updated_at'])}</td>"
@@ -198,6 +226,146 @@ def _truncate(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 1].rstrip() + "…"
+
+
+def _pretty_json(value: str) -> str:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    return json.dumps(parsed, indent=2, sort_keys=True)
+
+
+def _agent_thread_live_script() -> str:
+    return r"""
+<script>
+const eventSource = new EventSource("thread/events");
+
+function setText(element, value) {
+  element.textContent = value == null ? "" : String(value);
+  return element;
+}
+
+function makeCell(value, tag = "td") {
+  return setText(document.createElement(tag), value);
+}
+
+function makeCode(value) {
+  const code = document.createElement("code");
+  return setText(code, value);
+}
+
+function makePre(value) {
+  const pre = document.createElement("pre");
+  return setText(pre, value);
+}
+
+function renderMessages(messages) {
+  const body = document.getElementById("agent-messages");
+  body.replaceChildren();
+  if (!messages.length) {
+    const row = document.createElement("tr");
+    const cell = makeCell("No messages recorded for this role.");
+    cell.colSpan = 4;
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+  for (const item of messages) {
+    const row = document.createElement("tr");
+    row.appendChild(makeCell(item.updated_at));
+    row.appendChild(makeCell(item.state));
+    const message = document.createElement("td");
+    message.appendChild(makeCode(item.message_id));
+    row.appendChild(message);
+    row.appendChild(makeCell(item.text));
+    body.appendChild(row);
+  }
+}
+
+function renderOutput(events) {
+  const output = document.getElementById("agent-output");
+  const chunks = [];
+  for (const item of events.slice().reverse()) {
+    if (item.event_type === "item/agentMessage/delta" && item.content) {
+      chunks.push(item.content);
+    }
+    if (item.event_type === "item/completed" && item.content && !chunks.length) {
+      chunks.push(item.content);
+    }
+  }
+  output.textContent = chunks.join("");
+}
+
+function renderEvents(events) {
+  const body = document.getElementById("agent-events");
+  body.replaceChildren();
+  if (!events.length) {
+    const row = document.createElement("tr");
+    const cell = makeCell("No stream events recorded.");
+    cell.colSpan = 4;
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+  for (const item of events.slice().reverse()) {
+    const row = document.createElement("tr");
+    row.appendChild(makeCell(item.created_at));
+    row.appendChild(makeCell(item.event_type));
+    const turn = document.createElement("td");
+    turn.appendChild(makeCode(item.turn_id || ""));
+    turn.appendChild(document.createElement("br"));
+    const small = document.createElement("small");
+    small.appendChild(makeCode(item.message_id || ""));
+    turn.appendChild(small);
+    row.appendChild(turn);
+
+    const content = document.createElement("td");
+    content.appendChild(makePre(item.content || ""));
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "Raw event";
+    details.appendChild(summary);
+    let raw = item.payload_json || "{}";
+    try {
+      raw = JSON.stringify(JSON.parse(raw), null, 2);
+    } catch (_) {}
+    details.appendChild(makePre(raw));
+    content.appendChild(details);
+    row.appendChild(content);
+    body.appendChild(row);
+  }
+}
+
+eventSource.addEventListener("snapshot", (event) => {
+  const snapshot = JSON.parse(event.data);
+  renderOutput(snapshot.events || []);
+  renderMessages(snapshot.messages || []);
+  renderEvents(snapshot.events || []);
+});
+
+eventSource.onerror = () => {
+  const marker = document.getElementById("live-status");
+  if (marker) marker.textContent = "Live stream disconnected; reload to reconnect.";
+};
+</script>
+"""
+
+
+def _agent_output(events: list[dict[str, Any]]) -> str:
+    deltas = [
+        str(item.get("content") or "")
+        for item in reversed(events)
+        if item.get("event_type") == "item/agentMessage/delta" and item.get("content")
+    ]
+    if deltas:
+        return "".join(deltas)
+    completed = [
+        str(item.get("content") or "")
+        for item in reversed(events)
+        if item.get("event_type") == "item/completed" and item.get("content")
+    ]
+    return "\n".join(item for item in completed if item)
 
 
 def _page(title: str, parts: list[str]) -> str:

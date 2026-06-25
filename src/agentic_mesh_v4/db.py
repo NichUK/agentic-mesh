@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -79,6 +80,7 @@ class V4Database:
                 CREATE TABLE IF NOT EXISTS codex_threads (
                   thread_id TEXT PRIMARY KEY,
                   role_instance_id TEXT NOT NULL,
+                  agent_config_hash TEXT,
                   sandbox_mode TEXT,
                   approval_policy TEXT,
                   status TEXT NOT NULL,
@@ -221,6 +223,7 @@ class V4Database:
             )
             _ensure_column(self.connection, "codex_threads", "sandbox_mode", "TEXT")
             _ensure_column(self.connection, "codex_threads", "approval_policy", "TEXT")
+            _ensure_column(self.connection, "codex_threads", "agent_config_hash", "TEXT")
 
     def upsert_role_instance(
         self,
@@ -310,8 +313,11 @@ class V4Database:
             row = self.connection.execute(
                 """
                 SELECT * FROM message_queue
-                WHERE target_role=? AND state='queued'
-                ORDER BY steering DESC, created_at ASC
+                WHERE target_role=? AND state IN ('queued', 'ready')
+                ORDER BY
+                    steering DESC,
+                    CASE WHEN source='teams' THEN 0 ELSE 1 END,
+                    created_at ASC
                 LIMIT 1
                 """,
                 (role_id,),
@@ -326,7 +332,7 @@ class V4Database:
                     locked_by=?,
                     locked_at=?,
                     updated_at=?
-                WHERE message_id=? AND state='queued'
+                WHERE message_id=? AND state IN ('queued', 'ready')
                 """,
                 (worker_id, now, now, row["message_id"]),
             )
@@ -345,7 +351,7 @@ class V4Database:
         row = self.connection.execute(
             """
             SELECT 1 FROM message_queue
-            WHERE target_role=? AND state='queued'
+            WHERE target_role=? AND state IN ('queued', 'ready')
             LIMIT 1
             """,
             (role_id,),
@@ -406,18 +412,29 @@ class V4Database:
         ).fetchone()
         return _row_dict(row) if row is not None else None
 
-    def requeue_active_messages_for_role(self, *, target_role: str, summary: str) -> int:
-        rows = list(
-            self.connection.execute(
-                """
-                SELECT message_id, correlation_id, locked_by
-                FROM message_queue
-                WHERE target_role=? AND state IN ('delivering', 'active_turn')
-                ORDER BY updated_at ASC
-                """,
-                (target_role,),
+    def requeue_active_messages_for_role(
+        self,
+        *,
+        target_role: str,
+        summary: str,
+        stale_after_seconds: float | None = None,
+    ) -> int:
+        rows = [
+            row
+            for row in list(
+                self.connection.execute(
+                    """
+                    SELECT message_id, correlation_id, locked_by, updated_at
+                    FROM message_queue
+                    WHERE target_role=? AND state IN ('delivering', 'active_turn')
+                    ORDER BY updated_at ASC
+                    """,
+                    (target_role,),
+                )
             )
-        )
+            if stale_after_seconds is None
+            or _is_stale_timestamp(str(row["updated_at"]), stale_after_seconds=stale_after_seconds)
+        ]
         if not rows:
             return 0
         now = utc_now()
@@ -493,6 +510,7 @@ class V4Database:
         message_id: str | None = None,
     ) -> str:
         event_id = f"event-{uuid4().hex}"
+        now = utc_now()
         with self.connection:
             self.connection.execute(
                 """
@@ -510,9 +528,18 @@ class V4Database:
                     event_type,
                     content,
                     json.dumps(payload or {}, sort_keys=True),
-                    utc_now(),
+                    now,
                 ),
             )
+            if message_id is not None:
+                self.connection.execute(
+                    """
+                    UPDATE message_queue
+                    SET updated_at=?
+                    WHERE message_id=? AND state IN ('delivering', 'active_turn')
+                    """,
+                    (now, message_id),
+                )
         return event_id
 
     def record_safe_output_call(
@@ -534,6 +561,93 @@ class V4Database:
                 (call_id, role_instance_id, tool_name, json.dumps(payload, sort_keys=True), 1 if durable else 0, utc_now()),
             )
         return call_id
+
+    def upsert_work_item(
+        self,
+        *,
+        work_item_id: str,
+        title: str | None = None,
+        state: str | None = None,
+        owner_role: str | None = None,
+        next_action: str | None = None,
+    ) -> None:
+        existing = self.connection.execute(
+            "SELECT * FROM work_items WHERE work_item_id=?",
+            (work_item_id,),
+        ).fetchone()
+        if existing is None and (title is None or state is None or owner_role is None):
+            raise ValueError("new work items require title, state, and owner_role")
+        now = utc_now()
+        with self.connection:
+            if existing is None:
+                self.connection.execute(
+                    """
+                    INSERT INTO work_items(
+                      work_item_id, title, state, owner_role, next_action, created_at, updated_at
+                    ) VALUES(?,?,?,?,?,?,?)
+                    """,
+                    (work_item_id, title, state, owner_role, next_action or "", now, now),
+                )
+                return
+            self.connection.execute(
+                """
+                UPDATE work_items
+                SET title=?,
+                    state=?,
+                    owner_role=?,
+                    next_action=?,
+                    updated_at=?
+                WHERE work_item_id=?
+                """,
+                (
+                    title if title is not None else existing["title"],
+                    state if state is not None else existing["state"],
+                    owner_role if owner_role is not None else existing["owner_role"],
+                    next_action if next_action is not None else existing["next_action"],
+                    now,
+                    work_item_id,
+                ),
+            )
+
+    def record_artifact(
+        self,
+        *,
+        work_item_id: str,
+        path: str,
+        title: str,
+        artifact_id: str | None = None,
+    ) -> str:
+        artifact_id = artifact_id or f"artifact-{uuid4().hex}"
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT OR IGNORE INTO artifacts(artifact_id, work_item_id, path, title, created_at)
+                VALUES(?,?,?,?,?)
+                """,
+                (artifact_id, work_item_id, path, title, utc_now()),
+            )
+        return artifact_id
+
+    def record_handoff(
+        self,
+        *,
+        from_role: str,
+        to_role: str,
+        reason: str,
+        work_item_id: str | None = None,
+        handoff_id: str | None = None,
+        status: str = "open",
+    ) -> str:
+        handoff_id = handoff_id or f"handoff-{uuid4().hex}"
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO handoffs(handoff_id, work_item_id, from_role, to_role, reason, status, created_at)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                (handoff_id, work_item_id, from_role, to_role, reason, status, utc_now()),
+            )
+        return handoff_id
 
     def record_memory(self, *, role_instance_id: str, summary: str, source_ref: str) -> str:
         memory_id = f"mem-{uuid4().hex}"
@@ -565,6 +679,30 @@ class V4Database:
         sql += " ORDER BY created_at ASC"
         return [_row_dict(row) for row in self.connection.execute(sql, params)]
 
+    def list_agent_events_for_role(self, *, role_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM agent_events
+            WHERE role_instance_id LIKE ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (f"%.{role_id}.%", limit),
+        )
+        return [_row_dict(row) for row in rows]
+
+    def list_messages_for_role(self, *, role_id: str, limit: int = 25) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM message_queue
+            WHERE target_role=?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (role_id, limit),
+        )
+        return [_row_dict(row) for row in rows]
+
     def snapshot(self) -> dict[str, Any]:
         roles = [_row_dict(row) for row in self.connection.execute("SELECT * FROM role_instances ORDER BY role_id")]
         messages = self.list_messages()
@@ -589,7 +727,7 @@ class V4Database:
             }
         queued_counts: dict[str, int] = {}
         for item in messages:
-            if item["state"] == "queued":
+            if item["state"] in {"queued", "ready"}:
                 role_id = str(item["target_role"])
                 queued_counts[role_id] = queued_counts.get(role_id, 0) + 1
         for role in roles:
@@ -654,6 +792,16 @@ def _payload_hash(payload: dict[str, Any]) -> str:
 
 def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+
+def _is_stale_timestamp(value: str, *, stale_after_seconds: float) -> bool:
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return datetime.now(UTC) - timestamp >= timedelta(seconds=stale_after_seconds)
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, declaration: str) -> None:

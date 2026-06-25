@@ -9,6 +9,7 @@ from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.db import V4Database
+from agentic_mesh_v4.reporting import render_agent_thread
 from agentic_mesh_v4.runtime import V4Runtime
 
 
@@ -24,6 +25,13 @@ class FakeTeamsReplySender:
         return "teams-delivery-1"
 
 
+class TimeoutAfterNotificationTransport(InMemoryTransport):
+    def receive(self) -> dict[str, object] | None:
+        if self.responses or self.notifications:
+            return super().receive()
+        raise TimeoutError("Connection timed out")
+
+
 def test_v4_loads_full_sdlc_team_without_broker() -> None:
     config = load_project_config(PROJECT_CONFIG)
 
@@ -33,6 +41,9 @@ def test_v4_loads_full_sdlc_team_without_broker() -> None:
     assert config.role("project-manager").approval_policy == "never"
     assert config.role("release-manager").authority == "full"
     assert config.role("product-manager").authority == "scoped"
+    assert config.role("product-manager").approval_policy == "never"
+    assert config.role("qa-engineer").sandbox_mode == "workspace-write"
+    assert config.role("qa-engineer").approval_policy == "never"
 
 
 def test_v4_sqlite_queue_claims_steering_first(tmp_path: Path) -> None:
@@ -48,6 +59,36 @@ def test_v4_sqlite_queue_claims_steering_first(tmp_path: Path) -> None:
     assert claimed is not None
     assert claimed.message_id == steer_id
     assert claimed.steering is True
+
+
+def test_v4_sqlite_queue_prioritizes_human_teams_messages_after_steering(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
+    runtime.register_roles()
+    runtime.enqueue_conversation(target_role="release-manager", text="internal handoff", source="safe-output")
+    teams_id = runtime.enqueue_conversation(target_role="release-manager", text="Are you releasing it?", source="teams")
+
+    claimed = db.claim_next_message(role_id="release-manager", worker_id="agentic-mesh-dev.release-manager.1")
+
+    assert claimed is not None
+    assert claimed.message_id == teams_id
+    assert claimed.source == "teams"
+
+
+def test_v4_sqlite_queue_claims_ready_messages_as_deliverable_work(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="ux-designer", text="Review UX handoff")
+    db.mark_message_state(message_id, state="ready", summary="Legacy/manual handoff marked ready")
+
+    assert db.has_queued_messages(role_id="ux-designer") is True
+    claimed = db.claim_next_message(role_id="ux-designer", worker_id="agentic-mesh-dev.ux-designer.1")
+
+    assert claimed is not None
+    assert claimed.message_id == message_id
 
 
 def test_v4_codex_protocol_uses_remote_control_thread_and_turn_methods() -> None:
@@ -159,7 +200,7 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["events"][1]["content"] == "Done"
 
 
-def test_v4_runtime_completes_when_codex_stream_ends_with_item_completed(tmp_path: Path) -> None:
+def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
     config = load_project_config(PROJECT_CONFIG)
@@ -168,8 +209,10 @@ def test_v4_runtime_completes_when_codex_stream_ends_with_item_completed(tmp_pat
     transport.queue_response(None)
     transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
     transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
-    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Done"}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "I will inspect."}})
     transport.queue_notification({"method": "item/completed", "params": {}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": " Actually done."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
 
     runtime = V4Runtime(
         db=db,
@@ -190,6 +233,44 @@ def test_v4_runtime_completes_when_codex_stream_ends_with_item_completed(tmp_pat
     assert row["state"] == "completed"
     assert row["locked_by"] is None
     assert row["locked_at"] is None
+    events = [dict(row) for row in db.connection.execute("SELECT event_type, content FROM agent_events ORDER BY created_at")]
+    assert [event["event_type"] for event in events].count("item/completed") == 1
+    assert any(event["event_type"] == "turn/completed" for event in events)
+    assert any(event["content"] == " Actually done." for event in events)
+
+
+def test_v4_runtime_requeues_partial_output_timeout_without_marking_complete(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = TimeoutAfterNotificationTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "I will do this."}})
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="engineering", text="Implement work", source="api")
+
+    result = runtime.dispatch_once(role_id="engineering")
+
+    assert result is not None
+    assert result.state == "queued"
+    row = db.connection.execute(
+        "SELECT state, locked_by, locked_at FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    assert row["state"] == "queued"
+    assert row["locked_by"] is None
+    assert row["locked_at"] is None
+    events = [dict(row) for row in db.connection.execute("SELECT event_type, content FROM agent_events ORDER BY created_at")]
+    assert any(event["event_type"] == "turn/readTimeoutAfterOutput" for event in events)
 
 
 def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> None:
@@ -386,6 +467,92 @@ def test_v4_requeues_orphaned_active_messages_for_stopped_role(tmp_path: Path) -
     assert role["active_turn_id"] is None
 
 
+def test_v4_requeues_stale_active_messages_but_keeps_fresh_active_turns(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.release-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    stale_message = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="Deployment turn interrupted the dispatcher",
+        source="safe-output",
+    )
+    fresh_message = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="Fresh active release turn",
+        source="safe-output",
+    )
+    db.claim_next_message(role_id="release-manager", worker_id=role_instance_id)
+    db.mark_message_state(stale_message, state="active_turn", summary="Delivered to Release Manager")
+    db.claim_next_message(role_id="release-manager", worker_id=role_instance_id)
+    db.mark_message_state(fresh_message, state="active_turn", summary="Delivered to Release Manager")
+    db.connection.execute(
+        "UPDATE message_queue SET updated_at='2000-01-01T00:00:00+00:00' WHERE message_id=?",
+        (stale_message,),
+    )
+    db.connection.commit()
+
+    recovered = db.requeue_active_messages_for_role(
+        target_role="release-manager",
+        stale_after_seconds=3600,
+        summary="Recovered stale active release turn.",
+    )
+
+    assert recovered == 1
+    rows = {
+        row["message_id"]: row["state"]
+        for row in db.connection.execute(
+            "SELECT message_id, state FROM message_queue WHERE message_id IN (?,?)",
+            (stale_message, fresh_message),
+        )
+    }
+    assert rows[stale_message] == "queued"
+    assert rows[fresh_message] == "active_turn"
+
+
+def test_v4_agent_events_refresh_active_message_heartbeat(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.release-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="Deployment turn is still streaming",
+        source="safe-output",
+    )
+    db.claim_next_message(role_id="release-manager", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered to Release Manager")
+    db.connection.execute(
+        "UPDATE message_queue SET updated_at='2000-01-01T00:00:00+00:00' WHERE message_id=?",
+        (message_id,),
+    )
+    db.connection.commit()
+
+    db.record_agent_event(
+        role_instance_id=role_instance_id,
+        event_type="item/commandExecution/outputDelta",
+        content="still deploying",
+        message_id=message_id,
+    )
+    recovered = db.requeue_active_messages_for_role(
+        target_role="release-manager",
+        stale_after_seconds=3600,
+        summary="Recovered stale active release turn.",
+    )
+
+    assert recovered == 0
+    row = db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["state"] == "active_turn"
+
+
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
@@ -482,6 +649,74 @@ def test_v4_runtime_retires_thread_when_sandbox_metadata_does_not_match(tmp_path
     assert new_row["approval_policy"] == "never"
 
 
+def test_v4_runtime_retires_thread_when_agent_config_changes(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    agent_config_root = tmp_path / "agents"
+    materialize_agent_configs(
+        project_config=config,
+        output_root=agent_config_root,
+        role_templates_dir=Path("config/roles"),
+    )
+    role = config.role("engineering")
+    role_instance_id = "agentic-mesh-dev.engineering.1"
+    runtime = V4Runtime(db=db, project_config=config, agent_config_root=agent_config_root)
+    original_hash = runtime._agent_config_hash(role_id="engineering")  # noqa: SLF001 - regression covers staleness.
+    now = "2026-01-01T00:00:00+00:00"
+    with db.connection:
+        db.connection.execute(
+            """
+            INSERT INTO role_instances(
+              role_instance_id, role_id, display_name, service_name, state,
+              authority, codex_endpoint, active_thread_id, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                role_instance_id,
+                "engineering",
+                "Engineering",
+                role.service_name,
+                "ready",
+                "full",
+                f"ws://{role.service_name}:4709",
+                "old-thread",
+                now,
+            ),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_threads(
+              thread_id, role_instance_id, agent_config_hash, sandbox_mode,
+              approval_policy, status, created_at, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            ("old-thread", role_instance_id, original_hash, role.sandbox_mode, role.approval_policy, "active", now, now),
+        )
+
+    agents_path = agent_config_root / "engineering" / "1" / "AGENTS.md"
+    agents_path.write_text(agents_path.read_text(encoding="utf-8") + "\nNew instruction.\n", encoding="utf-8")
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {"thread": {"id": "new-thread"}}})
+    client = CodexAppServerClient(transport)
+    client.initialized = True
+
+    thread_id = runtime._thread_for_role(  # noqa: SLF001 - regression covers config freshness.
+        client=client,
+        role_instance_id=role_instance_id,
+        role=role,
+    )
+
+    assert thread_id == "new-thread"
+    old_row = db.connection.execute("SELECT status FROM codex_threads WHERE thread_id='old-thread'").fetchone()
+    new_row = db.connection.execute(
+        "SELECT agent_config_hash, status FROM codex_threads WHERE thread_id='new-thread'"
+    ).fetchone()
+    assert old_row["status"] == "retired"
+    assert new_row["status"] == "active"
+    assert new_row["agent_config_hash"] != original_hash
+
+
 def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
@@ -534,6 +769,205 @@ def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
     assert any(item["stage"] == "reply_delivered" and item["status"] == "delivered" for item in journal)
 
 
+def test_v4_runtime_delivers_commentary_progress_to_teams(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I am rebuilding the runtime and will report back.",
+                }
+            },
+        }
+    )
+    transport.queue_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "Runtime rebuild completed.",
+                }
+            },
+        }
+    )
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+    teams_sender = FakeTeamsReplySender()
+    activity = {
+        "serviceUrl": "https://smba.test/tenant/",
+        "conversation": {"id": "conversation-1"},
+        "id": "activity-1",
+    }
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        teams_reply_sender=teams_sender,  # type: ignore[arg-type]
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="try again",
+        source="teams",
+        payload=activity,
+    )
+
+    result = runtime.dispatch_once(role_id="release-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert [call["text_markdown"] for call in teams_sender.calls] == [
+        "I am rebuilding the runtime and will report back.",
+        "Runtime rebuild completed.",
+    ]
+    journal = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT stage, status, summary FROM message_journal WHERE message_id=? ORDER BY created_at",
+            (message_id,),
+        )
+    ]
+    assert any(item["stage"] == "progress_delivered" and item["status"] == "delivered" for item in journal)
+    assert any(item["stage"] == "reply_delivered" and item["status"] == "delivered" for item in journal)
+
+
+def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
+    html = render_agent_thread(
+        role_id="release-manager",
+        messages=[
+            {
+                "updated_at": "2026-06-24T10:00:00+00:00",
+                "state": "active_turn",
+                "message_id": "msg-1",
+                "text": "try again",
+            }
+        ],
+        events=[
+            {
+                "created_at": "2026-06-24T10:00:01+00:00",
+                "event_type": "item/agentMessage/delta",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "No-cache rebuild started.",
+                "payload_json": '{"method":"item/agentMessage/delta"}',
+            }
+        ],
+    )
+
+    assert "new EventSource(\"thread/events\")" in html
+    assert "http-equiv=\"refresh\"" not in html
+    assert 'id="agent-output"' in html
+    assert "No-cache rebuild started." in html
+    assert "Live push stream connected." in html
+
+
+def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Wrote artifact."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+    sync_calls: list[str] = []
+
+    class SyncResult:
+        uploaded = 3
+        folders_created = 1
+        root_path = "/documents"
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        document_syncer=lambda: sync_calls.append("sync") or SyncResult(),
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Write a dossier", source="api")
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert sync_calls == ["sync"]
+    journal = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT stage, status, summary FROM message_journal WHERE message_id=? ORDER BY created_at",
+            (message_id,),
+        )
+    ]
+    assert any(
+        item["stage"] == "document_sync"
+        and item["status"] == "completed"
+        and "uploaded 3" in item["summary"]
+        for item in journal
+    )
+
+
+def test_v4_runtime_records_document_sync_failure_without_failing_message(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Wrote artifact."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+
+    def failing_sync() -> object:
+        raise RuntimeError("Graph 401")
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        document_syncer=failing_sync,
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Write a dossier", source="api")
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "completed"
+    journal = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT stage, status, summary FROM message_journal WHERE message_id=? ORDER BY created_at",
+            (message_id,),
+        )
+    ]
+    assert any(
+        item["stage"] == "document_sync"
+        and item["status"] == "failed"
+        and "Graph 401" in item["summary"]
+        for item in journal
+    )
+    events = db.snapshot()["events"]
+    assert any(event["event_type"] == "document_sync/failed" for event in events)
+
+
 def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> None:
     config = load_project_config(PROJECT_CONFIG)
     written = materialize_agent_configs(
@@ -548,9 +982,13 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "Agentic Mesh Role: Project Manager" in text
     assert "Durable project effects must be made through the configured safe-output tools" in text
     assert "missing safe-output tools do not remove your ordinary shell" in text
+    assert "do the work before replying" in text
+    assert "Before claiming a path, sandbox, or tool is read-only or unavailable" in text
     assert "Work-item dossiers must be written under `/documents/work-items/{work_item_id}`" in text
     assert "Do not create canonical work-item artifacts under `/mesh/project/work-items`" in text
     assert "Authority level: `full`" in text
+    assert "assume `/mesh/workspaces/agentic-mesh`, `/documents`, and `/mesh/project` are writable" in text
+    assert "run a minimal write/access probe before reporting a blocker" in text
     assert "SSH credentials are expected at `/mesh/home/.ssh`" in text
     assert "copied to `/root/.ssh` at container startup for OpenSSH default lookup" in text
     assert "continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection" in text

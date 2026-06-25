@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -30,6 +33,10 @@ class V4Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._json({"status": "ok", "runtime": "agentic_mesh_v4"})
             return
+        if path.startswith("/agent/") and path.endswith("/thread/events"):
+            role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread/events")).strip("/")
+            self._agent_thread_events(role_id)
+            return
         db = V4Database(self.db_path)
         try:
             db.migrate()
@@ -44,18 +51,23 @@ class V4Handler(BaseHTTPRequestHandler):
                 return
             if path.startswith("/agent/") and path.endswith("/thread"):
                 role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread")).strip("/")
-                events = [
-                    dict(row)
-                    for row in db.connection.execute(
-                        """
-                        SELECT * FROM agent_events
-                        WHERE role_instance_id LIKE ?
-                        ORDER BY created_at DESC LIMIT 200
-                        """,
-                        (f"%.{role_id}.%",),
+                self._html(
+                    render_agent_thread(
+                        role_id=role_id,
+                        events=db.list_agent_events_for_role(role_id=role_id, limit=250),
+                        messages=db.list_messages_for_role(role_id=role_id, limit=20),
                     )
-                ]
-                self._html(render_agent_thread(role_id, events))
+                )
+                return
+            if path.startswith("/agent/") and path.endswith("/thread.json"):
+                role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread.json")).strip("/")
+                self._json(
+                    {
+                        "role_id": role_id,
+                        "messages": db.list_messages_for_role(role_id=role_id, limit=20),
+                        "events": db.list_agent_events_for_role(role_id=role_id, limit=250),
+                    }
+                )
                 return
             if path.startswith("/work-item/"):
                 work_item_id = unquote(path.removeprefix("/work-item/")).strip("/")
@@ -92,7 +104,7 @@ class V4Handler(BaseHTTPRequestHandler):
     def _handle_teams_activity(self) -> None:
         payload = self._read_json()
         text = str(payload.get("text") or payload.get("message") or "")
-        target_role = _target_role(payload)
+        target_role = _target_role(payload, self.project_config)
         conversation_ref = str(payload.get("conversation_ref") or payload.get("conversation", {}).get("id") or "")
         thread_ref = str(payload.get("reply_thread_ref") or payload.get("thread_ref") or "")
         db = V4Database(self.db_path)
@@ -165,6 +177,40 @@ class V4Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _agent_thread_events(self, role_id: str) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        previous_payload = ""
+        deadline = time.monotonic() + 1800
+        while time.monotonic() < deadline:
+            db = V4Database(self.db_path)
+            try:
+                db.migrate()
+                payload = json.dumps(
+                    {
+                        "role_id": role_id,
+                        "messages": db.list_messages_for_role(role_id=role_id, limit=20),
+                        "events": db.list_agent_events_for_role(role_id=role_id, limit=250),
+                    },
+                    sort_keys=True,
+                )
+            finally:
+                db.close()
+            try:
+                if payload != previous_payload:
+                    self.wfile.write(f"event: snapshot\ndata: {payload}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                    previous_payload = payload
+                else:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            time.sleep(2)
+
 
 def serve(
     *,
@@ -181,7 +227,11 @@ def serve(
     server.serve_forever()
 
 
-def _target_role(payload: dict[str, object]) -> str:
+def _target_role(payload: dict[str, object], project_config: V4ProjectConfig) -> str:
+    if str(payload.get("channelId") or "").casefold() == "msteams":
+        recipient_role = _target_role_from_recipient(payload, project_config)
+        if recipient_role:
+            return recipient_role
     direct = payload.get("target_role")
     if isinstance(direct, str) and direct:
         return direct
@@ -197,6 +247,31 @@ def _target_role(payload: dict[str, object]) -> str:
         if role_id in text or role_id.replace("-", " ") in text:
             return role_id
     return "project-manager"
+
+
+def _target_role_from_recipient(payload: dict[str, object], project_config: V4ProjectConfig) -> str | None:
+    recipient = payload.get("recipient")
+    if not isinstance(recipient, dict):
+        return None
+    recipient_id = str(recipient.get("id") or "")
+    recipient_name = _normalise_role_label(str(recipient.get("name") or ""))
+    for role in project_config.roles:
+        if recipient_name in {
+            _normalise_role_label(role.display_name),
+            _normalise_role_label(f"AM-{role.display_name}"),
+            _normalise_role_label(role.role_id),
+            _normalise_role_label(role.role_id.replace("-", " ")),
+        }:
+            return role.role_id
+        env_role = role.role_id.upper().replace("-", "_")
+        app_id = os.environ.get(f"TEAMS_BOT_{env_role}_APP_ID")
+        if app_id and recipient_id in {app_id, f"28:{app_id}"}:
+            return role.role_id
+    return None
+
+
+def _normalise_role_label(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
 
 def _safe_artifact_path(root: Path, relative_path: str) -> Path:

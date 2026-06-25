@@ -29,25 +29,30 @@ Committed architecture decisions:
 - `ADR-002`: Queue-aware agent hibernation and open-core direction.
 - `ADR-003`: Project-scoped build and deployment outputs.
 - `ADR-004`: V3 agent-owned runtime reset.
+- V4 remote-control runtime supersedes V3 for active dogfood/runtime work.
 
 Core principles:
 
-- The active implementation is V3. Runtime code lives under
-  `src/agentic_mesh_v3`.
-- Do not add new runtime code under removed or legacy package paths.
-- V3 agents own work progression. The runtime provides platform services such
-  as startup, hibernation, broker access, connector bridges, document-library
-  access, reporting, config materialisation, and telemetry.
+- The active implementation is V4. Runtime code lives under
+  `src/agentic_mesh_v4`.
+- Do not add new runtime code under removed or legacy package paths. V2 and V3
+  packages may exist only as historical source until removed by an explicit
+  cleanup slice; no active deployment, prompt, Compose profile, or role workflow
+  should depend on them.
+- V4 agents own work progression. The runtime provides platform services such
+  as startup, hibernation, connector bridges, document-library access,
+  reporting, config materialisation, telemetry, and reliable handoff delivery.
 - Governance is explicit. Agents must consult required RACI roles and
   stakeholders before completing phases, inform roles that must be informed,
   and record governance exceptions when consultation is intentionally skipped.
-- Runtime operational state and read models are stored in the V3 database, with
+- Runtime operational state and read models are stored in the V4 database, with
   repository interfaces kept suitable for Postgres later.
 - The document library remains the canonical project knowledge base. Runtime
   database records make work inspectable, recoverable, and observable; they do
   not replace durable project documentation.
-- Role-agent work is recorded through safe-output calls and terminal run
-  status, not by parsing free-text or legacy JSON result envelopes.
+- Durable role-agent work is recorded through safe-output calls and terminal run
+  status, not by parsing free-text or legacy JSON result envelopes. Ordinary
+  conversation may stream directly from the role's remote-control Codex thread.
 - Long-running self-contained role services are the operating model. Agents own
   role judgment, handoffs, consultations, documentation, and confirmation.
 - Permanent role templates are stable and rarely updated.
@@ -84,11 +89,11 @@ Current example files:
 
 - `config/roles/product-manager.yaml`
 - `config/roles/engineering.yaml`
-- `examples/projects/agentic-mesh-dev/agentic-mesh/project-v3.yaml`
+- `examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml`
 - `examples/projects/example-project/agentic-mesh/project.yaml`
 
 These are starter examples, not final canonical role templates. Runtime code
-must target the V3 agent-owned runtime model.
+must target the V4 remote-control runtime model.
 
 ## Product Positioning
 
@@ -240,8 +245,8 @@ Before committing:
 - Run `python scripts/check-pr-size.py --base origin/develop --committed-only` before pushing
   a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
-- Run `python -m agentic_mesh_v3.cli status-json --db .tmp/v3/agentic-mesh-v3.sqlite3`
-  for a basic V3 runtime read-model smoke.
+- Run `python -m agentic_mesh_v4.cli --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml --db .tmp/v4/agentic-mesh-v4.sqlite3 status-json`
+  for a basic V4 runtime read-model smoke.
 - Run `agentic-mesh validate-topology ...` for source/runtime/project boundary
   changes.
 - Run `docker compose ... config --quiet` when Compose outputs change.

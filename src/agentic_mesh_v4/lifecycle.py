@@ -15,11 +15,11 @@ class ComposeLifecycle:
 
     def wake_service(self, service_name: str) -> None:
         command = self._base_command()
-        command.extend(["up", "-d", service_name])
+        command.extend(["up", "-d", "--no-deps", "--no-recreate", service_name])
         subprocess.run(
             command,
             cwd=self.working_directory,
-            env=os.environ.copy(),
+            env=self._compose_environment(),
             check=True,
             capture_output=True,
             text=True,
@@ -31,7 +31,7 @@ class ComposeLifecycle:
         subprocess.run(
             command,
             cwd=self.working_directory,
-            env=os.environ.copy(),
+            env=self._compose_environment(),
             check=True,
             capture_output=True,
             text=True,
@@ -43,7 +43,7 @@ class ComposeLifecycle:
         result = subprocess.run(
             command,
             cwd=self.working_directory,
-            env=os.environ.copy(),
+            env=self._compose_environment(),
             check=False,
             capture_output=True,
             text=True,
@@ -61,3 +61,31 @@ class ComposeLifecycle:
         for compose_file in self.compose_files:
             command.extend(["-f", str(compose_file)])
         return command
+
+    def _compose_environment(self) -> dict[str, str]:
+        environment = os.environ.copy()
+        if self.env_file is not None:
+            environment.update(_read_compose_env_file(self.env_file))
+        return environment
+
+
+def _read_compose_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        values[key] = _strip_env_quotes(value.strip())
+    return values
+
+
+def _strip_env_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value

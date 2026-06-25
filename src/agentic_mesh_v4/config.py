@@ -48,7 +48,7 @@ class V4RoleConfig:
     model: str = "gpt-5.5"
     reasoning_effort: str = "high"
     sandbox_mode: str = "workspace-write"
-    approval_policy: str = "on-request"
+    approval_policy: str = "never"
     codex_port: int = 4700
     idle_timeout_seconds: int = 900
     instructions: tuple[str, ...] = ()
@@ -152,9 +152,7 @@ def _sandbox_mode(role_id: str, configured: str) -> str:
 def _approval_policy(role_id: str, configured: str) -> str:
     if configured:
         return configured
-    if role_id in FULL_ACCESS_ROLES:
-        return "never"
-    return "on-request"
+    return "never"
 
 
 def _display_name(role_id: str) -> str:

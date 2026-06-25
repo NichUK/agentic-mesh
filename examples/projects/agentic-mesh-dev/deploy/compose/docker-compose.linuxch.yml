@@ -15,6 +15,14 @@ services:
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
       - /var/run/docker.sock:/var/run/docker.sock
 
+  watchdog:
+    restart: unless-stopped
+    volumes:
+      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
+      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh
+      - /var/run/docker.sock:/var/run/docker.sock
+
   otel-collector:
     ports: !reset []
     networks:

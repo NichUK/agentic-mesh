@@ -5,6 +5,9 @@ import subprocess
 
 import yaml
 
+from agentic_mesh_v4.cli import _watchdog_services
+from agentic_mesh_v4.lifecycle import ComposeLifecycle
+
 
 V4_PROJECT_FILE = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml")
 V4_ROLE_IDS = {
@@ -45,20 +48,34 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
     compose = _load_dogfood_compose()
     runtime = compose["services"]["runtime"]
     dispatcher = compose["services"]["dispatcher"]
+    watchdog = compose["services"]["watchdog"]
 
     assert "agentic_mesh_v4.cli" in runtime["command"]
     assert "serve --host 0.0.0.0 --port 8100" in runtime["command"]
     assert runtime["env_file"] == [{"path": ".env", "required": False}]
     assert runtime["ports"] == ["${AGENTIC_MESH_V4_STATUS_PORT:-8100}:8100"]
+    assert runtime["environment"]["PYTHONPATH"] == "/mesh/system/src"
     assert "/var/run/docker.sock:/var/run/docker.sock" in runtime["volumes"]
 
     assert "agentic_mesh_v4.cli" in dispatcher["command"]
     assert "dispatch-loop" in dispatcher["command"]
     assert dispatcher["env_file"] == [{"path": ".env", "required": False}]
+    assert dispatcher["environment"]["PYTHONPATH"] == "/mesh/system/src"
     assert "--wake" in dispatcher["command"]
+    assert "--active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900}" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.v4.yml" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml" in dispatcher["command"]
     assert "/var/run/docker.sock:/var/run/docker.sock" in dispatcher["volumes"]
+
+    assert "agentic_mesh_v4.cli" in watchdog["command"]
+    assert "watchdog-loop" in watchdog["command"]
+    assert watchdog["env_file"] == [{"path": ".env", "required": False}]
+    assert watchdog["environment"]["PYTHONPATH"] == "/mesh/system/src"
+    assert "--service runtime" in watchdog["command"]
+    assert "--service dispatcher" in watchdog["command"]
+    assert "--compose-file /mesh/project/deploy/compose/docker-compose.v4.yml" in watchdog["command"]
+    assert "--compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml" in watchdog["command"]
+    assert "/var/run/docker.sock:/var/run/docker.sock" in watchdog["volumes"]
 
 
 def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
@@ -70,13 +87,16 @@ def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
         assert service_name in service_names
         service = compose["services"][service_name]
         assert service["profiles"] == ["roles"]
+        assert service["cap_add"] == ["SYS_ADMIN"]
+        assert service["security_opt"] == ["seccomp=unconfined", "apparmor=unconfined"]
         assert service["working_dir"] == "/mesh/agent"
         assert "codex app-server" in service["command"]
         assert "--ws-auth capability-token" in service["command"]
         assert "--ws-token-file /mesh/agent/ws-token" in service["command"]
         assert service["environment"]["AGENTIC_MESH_ROLE_ID"] == role_id
         assert service["environment"]["AGENTIC_MESH_ROLE_INSTANCE_ID"] == f"agentic-mesh-dev.{role_id}.1"
-        assert f"/state/v4/agent-configs/{role_id}/1:/mesh/agent:ro" in "\n".join(service["volumes"])
+        assert service["environment"]["PYTHONPATH"] == "/mesh/system/src"
+        assert f"/state/v4/agent-configs/{role_id}/1:/mesh/agent" in "\n".join(service["volumes"])
 
 
 def test_linuxch_overlay_restarts_only_v4_runtime_services() -> None:
@@ -84,6 +104,7 @@ def test_linuxch_overlay_restarts_only_v4_runtime_services() -> None:
 
     assert "  runtime:\n    restart: unless-stopped" in overlay
     assert "  dispatcher:\n    restart: unless-stopped" in overlay
+    assert "  watchdog:\n    restart: unless-stopped" in overlay
     assert "  otel-collector:" in overlay
     assert "v3-nats:" not in overlay
     assert "v3-supervisor:" not in overlay
@@ -96,6 +117,9 @@ def test_linuxch_deploy_script_preserves_v4_live_environment() -> None:
     for name in [
         "AGENTIC_MESH_ONEDRIVE_TOKEN",
         "AGENTIC_MESH_ONEDRIVE_DRIVE_ID",
+        "AGENTIC_MESH_GRAPH_CLIENT_ID",
+        "AGENTIC_MESH_GRAPH_TENANT_ID",
+        "AGENTIC_MESH_GRAPH_REFRESH_TOKEN",
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT",
@@ -108,6 +132,8 @@ def test_linuxch_deploy_script_preserves_v4_live_environment() -> None:
     ]:
         assert f"export {name}" in script
         assert f"{name}=${name}" in script
+    assert "export AGENTIC_MESH_GRAPH_SCOPES" in script
+    assert "AGENTIC_MESH_GRAPH_SCOPES='$AGENTIC_MESH_GRAPH_SCOPES'" in script
     assert "AGENTIC_MESH_V3_STATUS_PORT" not in script
     assert "AGENTIC_MESH_NATS_STATE_HOST_PATH" not in script
 
@@ -120,6 +146,10 @@ def test_dogfood_compose_env_example_lists_required_v4_live_inputs() -> None:
     for name in [
         "AGENTIC_MESH_ONEDRIVE_TOKEN",
         "AGENTIC_MESH_ONEDRIVE_DRIVE_ID",
+        "AGENTIC_MESH_GRAPH_CLIENT_ID",
+        "AGENTIC_MESH_GRAPH_TENANT_ID",
+        "AGENTIC_MESH_GRAPH_REFRESH_TOKEN",
+        "AGENTIC_MESH_GRAPH_SCOPES",
         "AGENTIC_MESH_SPONSOR_TEAMS_USER_ID",
         "AGENTIC_MESH_TEAMS_TOKEN",
         "AGENTIC_MESH_TEAMS_PUBLIC_ENDPOINT",
@@ -129,6 +159,8 @@ def test_dogfood_compose_env_example_lists_required_v4_live_inputs() -> None:
         "AGENTIC_MESH_PROJECT_CHANNEL_ID",
         "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID",
         "AGENTIC_MESH_V4_STATUS_PORT",
+        "AGENTIC_MESH_WATCHDOG_INTERVAL_SECONDS",
+        "AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS",
     ]:
         assert f"{name}=" in env_example
     assert "AGENTIC_MESH_V3_STATUS_PORT" not in env_example
@@ -138,10 +170,19 @@ def test_dogfood_compose_env_example_lists_required_v4_live_inputs() -> None:
 def test_linuxch_release_script_defaults_to_v4_services() -> None:
     script = Path("scripts/release-linuxch-compose.sh").read_text(encoding="utf-8")
 
-    assert "AGENTIC_MESH_RELEASE_SERVICES:=runtime dispatcher otel-collector" in script
+    assert "AGENTIC_MESH_SYSTEM_HOST_PATH=$(linuxch_host_path_or_default" in script
+    assert "/home/nich/agentic-mesh" in script
+    assert (
+        "AGENTIC_MESH_WORKSPACE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/target-repos/agentic-mesh"
+        not in script
+    )
+    assert "linuxch_host_path_or_default" in script
+    assert "AGENTIC_MESH_COMPOSE_STAGE_DIR" in script
+    assert "AGENTIC_MESH_RELEASE_SERVICES:=runtime dispatcher watchdog otel-collector" in script
     assert "AGENTIC_MESH_ROLE_SERVICES:=" in script
     assert "--profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image" in script
-    assert "--profile v4 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
+    assert "--profile v4 stop $AGENTIC_MESH_RELEASE_SERVICES" in script
+    assert "--profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile roles stop $AGENTIC_MESH_ROLE_SERVICES" in script
     assert "--profile roles rm -f $AGENTIC_MESH_ROLE_SERVICES" in script
     assert "project-v4.yaml" in script
@@ -151,6 +192,101 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
         assert f"agentic-mesh-dev-{role_id}-1" in script
     assert "v3-nats" not in script
     assert "v3-supervisor" not in script
+
+
+def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checkout() -> None:
+    script = Path("scripts/deploy-linuxch-compose.sh").read_text(encoding="utf-8")
+    env_example = Path("examples/projects/agentic-mesh-dev/deploy/compose/.env.example").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "AGENTIC_MESH_WORKSPACE_HOST_PATH=\"${AGENTIC_MESH_WORKSPACE_HOST_PATH:-$AGENTIC_MESH_PROJECT_HOST_PATH/target-repos/agentic-mesh}\""
+        in script
+    )
+    assert "AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM" in script
+    assert "reject_container_bind_path" in script
+    assert "which is an in-container path, not a Docker host bind path" in script
+    assert "Refusing to deploy: AGENTIC_MESH_WORKSPACE_HOST_PATH resolves to AGENTIC_MESH_SYSTEM_HOST_PATH." in script
+    assert (
+        "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh-projects/agentic-mesh-dev/target-repos/agentic-mesh"
+        in env_example
+    )
+    assert "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh\n" not in env_example
+
+
+def test_v4_compose_lifecycle_env_file_overrides_container_environment(
+    tmp_path, monkeypatch
+) -> None:
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "AGENTIC_MESH_PROJECT_HOST_PATH=/home/nich/agentic-mesh-projects/agentic-mesh-dev",
+                "AGENTIC_MESH_SYSTEM_HOST_PATH=/home/nich/agentic-mesh",
+                "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh-projects/agentic-mesh-dev/target-repos/agentic-mesh",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENTIC_MESH_PROJECT_HOST_PATH", "/mesh/project")
+    monkeypatch.setenv("AGENTIC_MESH_SYSTEM_HOST_PATH", "/mesh/system")
+    monkeypatch.setenv("AGENTIC_MESH_WORKSPACE_HOST_PATH", "/mesh/workspaces/agentic-mesh")
+    commands: list[list[str]] = []
+    calls: list[dict[str, str]] = []
+
+    def fake_run(*args, **kwargs):
+        commands.append(args[0])
+        calls.append(kwargs["env"])
+        return subprocess.CompletedProcess(args[0], 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    ComposeLifecycle(
+        compose_files=(compose_file,),
+        env_file=env_file,
+        working_directory=tmp_path,
+    ).wake_service("agentic-mesh-dev-project-manager-1")
+
+    assert calls
+    assert commands[0][-5:] == [
+        "up",
+        "-d",
+        "--no-deps",
+        "--no-recreate",
+        "agentic-mesh-dev-project-manager-1",
+    ]
+    assert calls[0]["AGENTIC_MESH_PROJECT_HOST_PATH"] == (
+        "/home/nich/agentic-mesh-projects/agentic-mesh-dev"
+    )
+    assert calls[0]["AGENTIC_MESH_SYSTEM_HOST_PATH"] == "/home/nich/agentic-mesh"
+    assert calls[0]["AGENTIC_MESH_WORKSPACE_HOST_PATH"] == (
+        "/home/nich/agentic-mesh-projects/agentic-mesh-dev/target-repos/agentic-mesh"
+    )
+
+
+def test_v4_watchdog_restarts_missing_control_plane_services() -> None:
+    class FakeLifecycle:
+        def __init__(self) -> None:
+            self.started: list[str] = []
+
+        def is_service_running(self, service_name: str) -> bool:
+            return service_name == "runtime"
+
+        def wake_service(self, service_name: str) -> None:
+            self.started.append(service_name)
+
+    lifecycle = FakeLifecycle()
+
+    checked = _watchdog_services(lifecycle=lifecycle, services=("runtime", "dispatcher"))  # type: ignore[arg-type]
+
+    assert checked == [
+        {"service": "runtime", "state": "running"},
+        {"service": "dispatcher", "state": "restarted"},
+    ]
+    assert lifecycle.started == ["dispatcher"]
 
 
 def test_v4_dogfood_project_config_exists_for_compose_profile() -> None:
