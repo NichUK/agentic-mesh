@@ -212,6 +212,8 @@ def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checko
     assert "AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM" in script
     assert "reject_container_bind_path" in script
     assert "Refusing to deploy: staged V4 compose points control-plane PYTHONPATH at the workspace repo." in script
+    assert "Refusing to deploy: effective V4 compose points control-plane PYTHONPATH at the workspace repo." in script
+    assert "validate_effective_compose docker" in script
     assert "Regenerate compose from the system source before deploying." in script
     assert "which is an in-container path, not a Docker host bind path" in script
     assert "Refusing to deploy: AGENTIC_MESH_WORKSPACE_HOST_PATH resolves to AGENTIC_MESH_SYSTEM_HOST_PATH." in script
