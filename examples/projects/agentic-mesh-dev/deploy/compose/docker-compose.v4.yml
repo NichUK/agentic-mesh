@@ -42,7 +42,7 @@ services:
     environment:
       AGENTIC_MESH_RUNTIME_VERSION: v4
       AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
     volumes:
       - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro
       - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents
@@ -59,7 +59,7 @@ services:
     environment:
       AGENTIC_MESH_RUNTIME_VERSION: v4
       AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       AGENTIC_MESH_SYSTEM_HOST_PATH: ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}
       AGENTIC_MESH_PROJECT_HOST_PATH: ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}
       AGENTIC_MESH_WORKSPACE_HOST_PATH: ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}
@@ -86,7 +86,7 @@ services:
     environment:
       AGENTIC_MESH_RUNTIME_VERSION: v4
       AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       AGENTIC_MESH_SYSTEM_HOST_PATH: ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}
       AGENTIC_MESH_PROJECT_HOST_PATH: ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}
       AGENTIC_MESH_WORKSPACE_HOST_PATH: ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}
@@ -131,7 +131,7 @@ services:
       AGENTIC_MESH_ROLE_ID: project-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.project-manager.1
       AGENTIC_MESH_TOOL_PROFILE: ops-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -162,7 +162,7 @@ services:
       AGENTIC_MESH_ROLE_ID: delivery-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.delivery-manager.1
       AGENTIC_MESH_TOOL_PROFILE: ops-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -193,7 +193,7 @@ services:
       AGENTIC_MESH_ROLE_ID: product-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.product-manager.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -221,7 +221,7 @@ services:
       AGENTIC_MESH_ROLE_ID: business-analyst
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.business-analyst.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -249,7 +249,7 @@ services:
       AGENTIC_MESH_ROLE_ID: research-analyst
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.research-analyst.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -277,7 +277,7 @@ services:
       AGENTIC_MESH_ROLE_ID: enterprise-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.enterprise-architect.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -305,7 +305,7 @@ services:
       AGENTIC_MESH_ROLE_ID: solution-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.solution-architect.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -333,7 +333,7 @@ services:
       AGENTIC_MESH_ROLE_ID: security-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.security-architect.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -361,7 +361,7 @@ services:
       AGENTIC_MESH_ROLE_ID: ux-designer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.ux-designer.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -389,7 +389,7 @@ services:
       AGENTIC_MESH_ROLE_ID: engineering
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.engineering.1
       AGENTIC_MESH_TOOL_PROFILE: dev-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -418,7 +418,7 @@ services:
       AGENTIC_MESH_ROLE_ID: qa-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.qa-engineer.1
       AGENTIC_MESH_TOOL_PROFILE: qa-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -446,7 +446,7 @@ services:
       AGENTIC_MESH_ROLE_ID: platform-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.platform-engineer.1
       AGENTIC_MESH_TOOL_PROFILE: ops-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -477,7 +477,7 @@ services:
       AGENTIC_MESH_ROLE_ID: release-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.release-manager.1
       AGENTIC_MESH_TOOL_PROFILE: ops-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -508,7 +508,7 @@ services:
       AGENTIC_MESH_ROLE_ID: technical-writer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.technical-writer.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:
@@ -536,7 +536,7 @@ services:
       AGENTIC_MESH_ROLE_ID: prompt-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.prompt-engineer.1
       AGENTIC_MESH_TOOL_PROFILE: base-agent
-      PYTHONPATH: /mesh/workspaces/agentic-mesh/src
+      PYTHONPATH: /mesh/system/src
       CODEX_HOME: /mesh/worker-auth/codex
       HOME: /mesh/home
     volumes:

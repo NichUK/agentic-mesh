@@ -54,13 +54,13 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
     assert "serve --host 0.0.0.0 --port 8100" in runtime["command"]
     assert runtime["env_file"] == [{"path": ".env", "required": False}]
     assert runtime["ports"] == ["${AGENTIC_MESH_V4_STATUS_PORT:-8100}:8100"]
-    assert runtime["environment"]["PYTHONPATH"] == "/mesh/workspaces/agentic-mesh/src"
+    assert runtime["environment"]["PYTHONPATH"] == "/mesh/system/src"
     assert "/var/run/docker.sock:/var/run/docker.sock" in runtime["volumes"]
 
     assert "agentic_mesh_v4.cli" in dispatcher["command"]
     assert "dispatch-loop" in dispatcher["command"]
     assert dispatcher["env_file"] == [{"path": ".env", "required": False}]
-    assert dispatcher["environment"]["PYTHONPATH"] == "/mesh/workspaces/agentic-mesh/src"
+    assert dispatcher["environment"]["PYTHONPATH"] == "/mesh/system/src"
     assert "--wake" in dispatcher["command"]
     assert "--active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900}" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.v4.yml" in dispatcher["command"]
@@ -70,7 +70,7 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
     assert "agentic_mesh_v4.cli" in watchdog["command"]
     assert "watchdog-loop" in watchdog["command"]
     assert watchdog["env_file"] == [{"path": ".env", "required": False}]
-    assert watchdog["environment"]["PYTHONPATH"] == "/mesh/workspaces/agentic-mesh/src"
+    assert watchdog["environment"]["PYTHONPATH"] == "/mesh/system/src"
     assert "--service runtime" in watchdog["command"]
     assert "--service dispatcher" in watchdog["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.v4.yml" in watchdog["command"]
@@ -95,7 +95,7 @@ def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
         assert "--ws-token-file /mesh/agent/ws-token" in service["command"]
         assert service["environment"]["AGENTIC_MESH_ROLE_ID"] == role_id
         assert service["environment"]["AGENTIC_MESH_ROLE_INSTANCE_ID"] == f"agentic-mesh-dev.{role_id}.1"
-        assert service["environment"]["PYTHONPATH"] == "/mesh/workspaces/agentic-mesh/src"
+        assert service["environment"]["PYTHONPATH"] == "/mesh/system/src"
         assert f"/state/v4/agent-configs/{role_id}/1:/mesh/agent" in "\n".join(service["volumes"])
 
 
