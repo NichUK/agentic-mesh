@@ -97,6 +97,8 @@ class V4Runtime:
             target_role=target_role,
             conversation_ref=conversation_ref,
         )
+        if active is None and conversation_ref:
+            active = self.db.active_message_for_role(target_role=target_role)
         force_queue = _starts_with_queue_directive(text)
         should_steer = (steering or (active is not None and bool(conversation_ref))) and not force_queue
         message_id = self.db.enqueue_message(
@@ -114,16 +116,16 @@ class V4Runtime:
         thread_id = self._active_thread_id(role_instance_id)
         if not thread_id:
             return message_id
+        expected_turn_id = self._active_turn_id(role_instance_id)
         try:
             client = self.client_factory(role.role_id)
             if not client.initialized:
                 client.initialize()
             client.resume_thread(thread_id)
-            client.steer_turn(thread_id=thread_id, text=text)
+            client.steer_turn(thread_id=thread_id, text=text, expected_turn_id=expected_turn_id)
         except Exception as exc:
-            self.db.mark_message_state(
+            self.db.downgrade_message_to_normal_delivery(
                 message_id,
-                state="queued",
                 summary=f"Steering failed; queued for normal delivery: {exc}",
             )
             return message_id
@@ -156,10 +158,30 @@ class V4Runtime:
                 client.initialize()
             thread_id = self._thread_for_role(client=client, role_instance_id=role_instance_id, role=role)
             if message.steering:
-                client.steer_turn(thread_id=thread_id, text=message.text)
-                turn_id = None
-                state = "steered"
-            else:
+                expected_turn_id = self._active_turn_id(role_instance_id)
+                if expected_turn_id:
+                    client.steer_turn(thread_id=thread_id, text=message.text, expected_turn_id=expected_turn_id)
+                    turn_id = None
+                    state = "steered"
+                else:
+                    self.db.downgrade_message_to_normal_delivery(
+                        message.message_id,
+                        summary="Steering message had no active turn; starting it as a normal turn.",
+                    )
+                    message = type(message)(
+                        message_id=message.message_id,
+                        source=message.source,
+                        target_role=message.target_role,
+                        state=message.state,
+                        text=message.text,
+                        payload=message.payload,
+                        steering=False,
+                        correlation_id=message.correlation_id,
+                        conversation_ref=message.conversation_ref,
+                        thread_ref=message.thread_ref,
+                        delivery_attempts=message.delivery_attempts,
+                    )
+            if not message.steering:
                 turn_id = client.start_turn(thread_id=thread_id, text=message.text, model=role.model)
                 state = "active_turn"
                 now = utc_now()
@@ -352,6 +374,19 @@ class V4Runtime:
         if row is None or row["active_thread_id"] is None:
             return None
         return str(row["active_thread_id"])
+
+    def _active_turn_id(self, role_instance_id: str) -> str | None:
+        row = self.db.connection.execute(
+            """
+            SELECT active_turn_id
+            FROM role_instances
+            WHERE role_instance_id=?
+            """,
+            (role_instance_id,),
+        ).fetchone()
+        if row is None or row["active_turn_id"] is None:
+            return None
+        return str(row["active_turn_id"])
 
     def _thread_matches_role(
         self,

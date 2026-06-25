@@ -390,6 +390,33 @@ class V4Database:
             summary=summary or f"Message state changed to {state}",
         )
 
+    def downgrade_message_to_normal_delivery(self, message_id: str, *, summary: str) -> None:
+        now = utc_now()
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT correlation_id FROM message_queue WHERE message_id=?",
+                (message_id,),
+            ).fetchone()
+            self.connection.execute(
+                """
+                UPDATE message_queue
+                SET state='queued',
+                    steering=0,
+                    locked_by=NULL,
+                    locked_at=NULL,
+                    updated_at=?
+                WHERE message_id=?
+                """,
+                (now, message_id),
+            )
+        self.record_message_journal(
+            message_id=message_id,
+            correlation_id=str(row["correlation_id"] if row else f"corr-{message_id}"),
+            stage="steering_downgraded",
+            status="queued",
+            summary=summary,
+        )
+
     def active_message_for_role(
         self,
         *,
