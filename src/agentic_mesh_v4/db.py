@@ -394,21 +394,30 @@ class V4Database:
         now = utc_now()
         with self.connection:
             row = self.connection.execute(
-                "SELECT correlation_id FROM message_queue WHERE message_id=?",
+                "SELECT correlation_id, locked_by FROM message_queue WHERE message_id=?",
                 (message_id,),
             ).fetchone()
-            self.connection.execute(
-                """
-                UPDATE message_queue
-                SET state='queued',
-                    steering=0,
-                    locked_by=NULL,
-                    locked_at=NULL,
-                    updated_at=?
-                WHERE message_id=?
-                """,
-                (now, message_id),
-            )
+            if row and row["locked_by"]:
+                # Message is currently claimed by a dispatcher; only clear the steering
+                # flag so the in-flight work is not exposed to duplicate claiming.
+                self.connection.execute(
+                    "UPDATE message_queue SET steering=0, updated_at=? WHERE message_id=?",
+                    (now, message_id),
+                )
+            else:
+                # Message is not yet claimed; safe to reset fully to queued state.
+                self.connection.execute(
+                    """
+                    UPDATE message_queue
+                    SET state='queued',
+                        steering=0,
+                        locked_by=NULL,
+                        locked_at=NULL,
+                        updated_at=?
+                    WHERE message_id=?
+                    """,
+                    (now, message_id),
+                )
         self.record_message_journal(
             message_id=message_id,
             correlation_id=str(row["correlation_id"] if row else f"corr-{message_id}"),
@@ -422,12 +431,15 @@ class V4Database:
         *,
         target_role: str,
         conversation_ref: str | None = None,
+        unscoped_only: bool = False,
     ) -> dict[str, Any] | None:
         params: list[object] = [target_role]
         where = "target_role=? AND state IN ('delivering', 'active_turn')"
         if conversation_ref:
             where += " AND conversation_ref=?"
             params.append(conversation_ref)
+        elif unscoped_only:
+            where += " AND conversation_ref IS NULL"
         row = self.connection.execute(
             f"""
             SELECT * FROM message_queue

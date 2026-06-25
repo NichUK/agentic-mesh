@@ -98,7 +98,7 @@ class V4Runtime:
             conversation_ref=conversation_ref,
         )
         if active is None and conversation_ref:
-            active = self.db.active_message_for_role(target_role=target_role)
+            active = self.db.active_message_for_role(target_role=target_role, unscoped_only=True)
         force_queue = _starts_with_queue_directive(text)
         should_steer = (steering or (active is not None and bool(conversation_ref))) and not force_queue
         message_id = self.db.enqueue_message(

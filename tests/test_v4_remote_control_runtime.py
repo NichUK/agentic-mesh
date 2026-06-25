@@ -459,6 +459,46 @@ def test_v4_orphaned_steering_message_dispatches_as_normal_turn(tmp_path: Path) 
     assert "turn/start" in [item["method"] for item in transport.sent if "method" in item]
 
 
+def test_v4_cross_conversation_active_turn_does_not_trigger_steering(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    # conversation-2 has an active turn in progress
+    first_message = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Do something for conv-2",
+        source="teams",
+        conversation_ref="conversation-2",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(first_message, state="active_turn", summary="Delivered")
+    transport = InMemoryTransport()
+    steering_runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+
+    # New message from conversation-1 should NOT be steered into conv-2's active turn
+    queued_message = steering_runtime.enqueue_or_steer_conversation(
+        target_role="project-manager",
+        text="Hello from conversation-1",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+
+    row = db.connection.execute(
+        "SELECT state, steering FROM message_queue WHERE message_id=?",
+        (queued_message,),
+    ).fetchone()
+    assert row["state"] == "queued"
+    assert row["steering"] == 0
+    assert transport.sent == []
+
+
 def test_v4_queue_directive_overrides_same_conversation_steering(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
