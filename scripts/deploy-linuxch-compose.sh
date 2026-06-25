@@ -103,6 +103,28 @@ AGENTIC_MESH_LIFECYCLE_COMPOSE_PROJECT_NAME="${AGENTIC_MESH_LIFECYCLE_COMPOSE_PR
 AGENTIC_MESH_LIFECYCLE_COMPOSE_PROFILES="${AGENTIC_MESH_LIFECYCLE_COMPOSE_PROFILES:-v4}"
 AGENTIC_MESH_LIFECYCLE_WORKING_DIRECTORY="${AGENTIC_MESH_LIFECYCLE_WORKING_DIRECTORY:-/mesh/project/deploy/compose}"
 
+reject_container_bind_path() {
+  name=$1
+  value=$2
+  case "$value" in
+    /mesh|/mesh/*|/documents|/documents/*|/workspace|/workspace/*)
+      if [ "${AGENTIC_MESH_ALLOW_CONTAINER_BIND_PATHS:-}" != "1" ]; then
+        printf '%s\n' "Refusing to deploy: $name is '$value', which is an in-container path, not a Docker host bind path." >&2
+        printf '%s\n' "Use linuxch host paths such as /home/nich/agentic-mesh-projects/agentic-mesh-dev, or set AGENTIC_MESH_ALLOW_CONTAINER_BIND_PATHS=1 only for an explicit local-dev override." >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
+reject_container_bind_path AGENTIC_MESH_RUNTIME_BUILD_CONTEXT "$AGENTIC_MESH_RUNTIME_BUILD_CONTEXT"
+reject_container_bind_path AGENTIC_MESH_SYSTEM_HOST_PATH "$AGENTIC_MESH_SYSTEM_HOST_PATH"
+reject_container_bind_path AGENTIC_MESH_PROJECT_HOST_PATH "$AGENTIC_MESH_PROJECT_HOST_PATH"
+reject_container_bind_path AGENTIC_MESH_WORKSPACE_HOST_PATH "$AGENTIC_MESH_WORKSPACE_HOST_PATH"
+reject_container_bind_path AGENTIC_MESH_DOCUMENTS_HOST_PATH "$AGENTIC_MESH_DOCUMENTS_HOST_PATH"
+reject_container_bind_path AGENTIC_MESH_CODEX_HOME_HOST_PATH "$AGENTIC_MESH_CODEX_HOME_HOST_PATH"
+reject_container_bind_path AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH "$AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH"
+
 if [ "${AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM:-}" != "1" ]; then
   RESOLVED_WORKSPACE=$(mkdir -p "$AGENTIC_MESH_WORKSPACE_HOST_PATH" && cd "$AGENTIC_MESH_WORKSPACE_HOST_PATH" && pwd -P)
   RESOLVED_SYSTEM=$(cd "$AGENTIC_MESH_SYSTEM_HOST_PATH" && pwd -P)

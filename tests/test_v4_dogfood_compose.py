@@ -166,16 +166,19 @@ def test_dogfood_compose_env_example_lists_required_v4_live_inputs() -> None:
 def test_linuxch_release_script_defaults_to_v4_services() -> None:
     script = Path("scripts/release-linuxch-compose.sh").read_text(encoding="utf-8")
 
-    assert "AGENTIC_MESH_SYSTEM_HOST_PATH:=/home/nich/agentic-mesh" in script
+    assert "AGENTIC_MESH_SYSTEM_HOST_PATH=$(linuxch_host_path_or_default" in script
+    assert "/home/nich/agentic-mesh" in script
     assert (
         "AGENTIC_MESH_WORKSPACE_HOST_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/target-repos/agentic-mesh"
-        in script
+        not in script
     )
+    assert "linuxch_host_path_or_default" in script
+    assert "AGENTIC_MESH_COMPOSE_STAGE_DIR" in script
     assert "AGENTIC_MESH_RELEASE_SERVICES:=runtime dispatcher watchdog otel-collector" in script
     assert "AGENTIC_MESH_ROLE_SERVICES:=" in script
     assert "--profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image" in script
     assert "--profile v4 stop $AGENTIC_MESH_RELEASE_SERVICES" in script
-    assert "--profile v4 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
+    assert "--profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile roles stop $AGENTIC_MESH_ROLE_SERVICES" in script
     assert "--profile roles rm -f $AGENTIC_MESH_ROLE_SERVICES" in script
     assert "project-v4.yaml" in script
@@ -198,6 +201,8 @@ def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checko
         in script
     )
     assert "AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM" in script
+    assert "reject_container_bind_path" in script
+    assert "which is an in-container path, not a Docker host bind path" in script
     assert "Refusing to deploy: AGENTIC_MESH_WORKSPACE_HOST_PATH resolves to AGENTIC_MESH_SYSTEM_HOST_PATH." in script
     assert (
         "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh-projects/agentic-mesh-dev/target-repos/agentic-mesh"
