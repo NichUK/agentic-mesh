@@ -188,6 +188,14 @@ class V4Runtime:
                 with self.db.connection:
                     self.db.connection.execute(
                         """
+                        UPDATE codex_turns
+                        SET status='stale_closed', completed_at=?
+                        WHERE thread_id=? AND status='active' AND turn_id<>?
+                        """,
+                        (now, thread_id, turn_id),
+                    )
+                    self.db.connection.execute(
+                        """
                         UPDATE role_instances
                         SET active_turn_id=?, state='active', updated_at=?
                         WHERE role_instance_id=?
@@ -487,6 +495,24 @@ class V4Runtime:
                 return final_reply or "".join(fallback_reply_parts)
             method = str(event.get("method") or "unknown")
             params = event.get("params") if isinstance(event.get("params"), dict) else {}
+            event_thread_id = params.get("threadId")
+            event_turn_id = params.get("turnId")
+            if (
+                turn_id is not None
+                and isinstance(event_turn_id, str)
+                and event_turn_id
+                and event_turn_id != turn_id
+            ):
+                self.db.record_agent_event(
+                    role_instance_id=role_instance_id,
+                    event_type=f"{method}/foreignTurnIgnored",
+                    content=_event_content(method, params),
+                    payload=event,
+                    thread_id=event_thread_id if isinstance(event_thread_id, str) else thread_id,
+                    turn_id=event_turn_id,
+                    message_id=self._message_id_for_turn(event_turn_id),
+                )
+                continue
             content = _event_content(method, params)
             if method == "item/agentMessage/delta":
                 fallback_reply_parts.append(content)
@@ -536,6 +562,15 @@ class V4Runtime:
             )
             if method == "turn/completed":
                 return final_reply or "".join(fallback_reply_parts)
+
+    def _message_id_for_turn(self, turn_id: str) -> str | None:
+        row = self.db.connection.execute(
+            "SELECT message_id FROM codex_turns WHERE turn_id=?",
+            (turn_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["message_id"])
 
 
 def _event_content(method: str, params: dict[str, object]) -> str:

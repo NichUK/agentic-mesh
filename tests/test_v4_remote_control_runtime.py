@@ -909,6 +909,102 @@ def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
     assert any(item["stage"] == "reply_delivered" and item["status"] == "delivered" for item in journal)
 
 
+def test_v4_runtime_ignores_foreign_turn_events_for_current_message(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-current"}}})
+    transport.queue_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-old",
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "This belongs to the previous turn.",
+                },
+            },
+        }
+    )
+    transport.queue_notification(
+        {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-current",
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "This answers the current message.",
+                },
+            },
+        }
+    )
+    transport.queue_notification(
+        {"method": "turn/completed", "params": {"threadId": "thread-1", "turnId": "turn-current"}}
+    )
+    teams_sender = FakeTeamsReplySender()
+    activity = {
+        "serviceUrl": "https://smba.test/tenant/",
+        "conversation": {"id": "conversation-1"},
+        "id": "activity-1",
+    }
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        teams_reply_sender=teams_sender,  # type: ignore[arg-type]
+    )
+    runtime.register_roles()
+    old_message_id = runtime.enqueue_conversation(target_role="release-manager", text="old", source="teams")
+    with db.connection:
+        db.connection.execute(
+            """
+            INSERT INTO codex_turns(turn_id, thread_id, message_id, status, started_at, completed_at)
+            VALUES(?,?,?,?,?,NULL)
+            """,
+            ("turn-old", "thread-1", old_message_id, "active", "2026-01-01T00:00:00+00:00"),
+        )
+    db.mark_message_state(old_message_id, state="failed", summary="Old turn failed before retry.")
+    message_id = runtime.enqueue_conversation(
+        target_role="release-manager",
+        text="Did it work?",
+        source="teams",
+        payload=activity,
+    )
+
+    result = runtime.dispatch_once(role_id="release-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert [call["text_markdown"] for call in teams_sender.calls] == ["This answers the current message."]
+    events = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT event_type, message_id, turn_id FROM agent_events ORDER BY created_at"
+        )
+    ]
+    assert any(
+        event["event_type"] == "item/completed/foreignTurnIgnored"
+        and event["message_id"] == old_message_id
+        and event["turn_id"] == "turn-old"
+        for event in events
+    )
+    assert db.connection.execute(
+        "SELECT status FROM codex_turns WHERE turn_id='turn-old'"
+    ).fetchone()["status"] == "stale_closed"
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "completed"
+
+
 def test_v4_runtime_delivers_commentary_progress_to_teams(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
