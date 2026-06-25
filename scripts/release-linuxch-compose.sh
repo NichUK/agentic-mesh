@@ -71,6 +71,8 @@ PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --project-config "$AGENTIC_MESH_PROJECT_HOST_PATH/agentic-mesh/project-v4.yaml" \
   render-compose \
   --output "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"
+cp "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml" \
+  "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.yml"
 
 sh scripts/deploy-linuxch-compose.sh --profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES
 
