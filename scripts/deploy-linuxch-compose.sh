@@ -209,6 +209,11 @@ export AGENTIC_MESH_LIFECYCLE_WORKING_DIRECTORY
 mkdir -p "$STAGE_DIR"
 cp "$COMPOSE_SRC/$COMPOSE_FILE_NAME" "$STAGE_DIR/docker-compose.yml"
 cp "$COMPOSE_SRC/docker-compose.linuxch.yml" "$STAGE_DIR/docker-compose.linuxch.yml"
+if grep -q "/mesh/workspaces/agentic-mesh/src" "$STAGE_DIR/docker-compose.yml"; then
+  echo "Refusing to deploy: staged V4 compose points control-plane PYTHONPATH at the workspace repo." >&2
+  echo "Regenerate compose from the system source before deploying." >&2
+  exit 1
+fi
 cat > "$STAGE_DIR/.env" <<EOF
 AGENTIC_MESH_WORKSPACE_HOST_PATH=$AGENTIC_MESH_WORKSPACE_HOST_PATH
 AGENTIC_MESH_URL_ROOT=$AGENTIC_MESH_URL_ROOT

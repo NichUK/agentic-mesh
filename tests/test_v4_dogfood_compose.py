@@ -180,6 +180,11 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
     assert "AGENTIC_MESH_COMPOSE_STAGE_DIR" in script
     assert "AGENTIC_MESH_RELEASE_SERVICES:=runtime dispatcher watchdog otel-collector" in script
     assert "AGENTIC_MESH_ROLE_SERVICES:=" in script
+    assert script.index("render-compose") < script.index(
+        "--profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image"
+    )
+    assert "Refusing to release: generated V4 compose points control-plane PYTHONPATH at the workspace repo." in script
+    assert "PYTHONPATH: /mesh/system/src" in script
     assert "--profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image" in script
     assert "--profile v4 stop $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
@@ -206,6 +211,8 @@ def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checko
     )
     assert "AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM" in script
     assert "reject_container_bind_path" in script
+    assert "Refusing to deploy: staged V4 compose points control-plane PYTHONPATH at the workspace repo." in script
+    assert "Regenerate compose from the system source before deploying." in script
     assert "which is an in-container path, not a Docker host bind path" in script
     assert "Refusing to deploy: AGENTIC_MESH_WORKSPACE_HOST_PATH resolves to AGENTIC_MESH_SYSTEM_HOST_PATH." in script
     assert (
