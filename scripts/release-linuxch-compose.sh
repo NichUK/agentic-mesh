@@ -14,7 +14,7 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 : "${AGENTIC_MESH_URL_ROOT:=http://linuxch:8100}"
 : "${AGENTIC_MESH_V4_STATUS_PORT:=8100}"
 : "${AGENTIC_MESH_LIFECYCLE_LOCK_PATH:=$AGENTIC_MESH_PROJECT_HOST_PATH/state/compose-lifecycle.lock}"
-: "${AGENTIC_MESH_RELEASE_SERVICES:=runtime dispatcher watchdog otel-collector}"
+: "${AGENTIC_MESH_RELEASE_SERVICES:=runtime dispatcher otel-collector}"
 : "${AGENTIC_MESH_ROLE_SERVICES:=agentic-mesh-dev-project-manager-1 agentic-mesh-dev-delivery-manager-1 agentic-mesh-dev-product-manager-1 agentic-mesh-dev-business-analyst-1 agentic-mesh-dev-research-analyst-1 agentic-mesh-dev-enterprise-architect-1 agentic-mesh-dev-solution-architect-1 agentic-mesh-dev-security-architect-1 agentic-mesh-dev-ux-designer-1 agentic-mesh-dev-engineering-1 agentic-mesh-dev-qa-engineer-1 agentic-mesh-dev-platform-engineer-1 agentic-mesh-dev-release-manager-1 agentic-mesh-dev-technical-writer-1 agentic-mesh-dev-prompt-engineer-1}"
 : "${AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES:=0}"
 
@@ -57,7 +57,7 @@ PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   render-compose \
   --output "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"
 
-sh scripts/deploy-linuxch-compose.sh --profile v4 up -d --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES
+sh scripts/deploy-linuxch-compose.sh --profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES
 
 if [ "$AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES" = "0" ]; then
   sh scripts/deploy-linuxch-compose.sh --profile roles stop $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
