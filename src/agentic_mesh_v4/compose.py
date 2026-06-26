@@ -178,6 +178,7 @@ def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
         "      HOME: /mesh/home",
         "    volumes:",
         f"      - ${{AGENTIC_MESH_PROJECT_HOST_PATH:-../..}}/state/v4/agent-configs/{role_id}/1:/mesh/agent",
+        "      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro",
         "      - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents",
         "      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project",
         "      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh",
