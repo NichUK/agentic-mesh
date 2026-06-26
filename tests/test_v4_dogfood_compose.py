@@ -96,7 +96,10 @@ def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
         assert service["environment"]["AGENTIC_MESH_ROLE_ID"] == role_id
         assert service["environment"]["AGENTIC_MESH_ROLE_INSTANCE_ID"] == f"agentic-mesh-dev.{role_id}.1"
         assert service["environment"]["PYTHONPATH"] == "/mesh/system/src"
-        assert f"/state/v4/agent-configs/{role_id}/1:/mesh/agent" in "\n".join(service["volumes"])
+        volumes = "\n".join(service["volumes"])
+        assert f"/state/v4/agent-configs/{role_id}/1:/mesh/agent" in volumes
+        assert ":/mesh/system:ro" in volumes
+        assert ":/mesh/workspaces/agentic-mesh" in volumes
 
 
 def test_linuxch_overlay_restarts_only_v4_runtime_services() -> None:
