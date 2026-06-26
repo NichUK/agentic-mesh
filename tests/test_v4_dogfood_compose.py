@@ -105,6 +105,9 @@ def test_linuxch_overlay_restarts_only_v4_runtime_services() -> None:
     assert "  runtime:\n    restart: unless-stopped" in overlay
     assert "  dispatcher:\n    restart: unless-stopped" in overlay
     assert "  watchdog:\n    restart: unless-stopped" in overlay
+    assert overlay.count("PYTHONPATH: /mesh/system/src") >= len(V4_ROLE_IDS) + 3
+    for role_id in V4_ROLE_IDS:
+        assert f"  agentic-mesh-dev-{role_id}-1:" in overlay
     assert "  otel-collector:" in overlay
     assert "v3-nats:" not in overlay
     assert "v3-supervisor:" not in overlay
