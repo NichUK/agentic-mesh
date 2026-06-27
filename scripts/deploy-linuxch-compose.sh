@@ -128,11 +128,24 @@ reject_container_bind_path AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH "$AGENTI
 if [ "${AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM:-}" != "1" ]; then
   RESOLVED_WORKSPACE=$(mkdir -p "$AGENTIC_MESH_WORKSPACE_HOST_PATH" && cd "$AGENTIC_MESH_WORKSPACE_HOST_PATH" && pwd -P)
   RESOLVED_SYSTEM=$(cd "$AGENTIC_MESH_SYSTEM_HOST_PATH" && pwd -P)
+  RESOLVED_BUILD_CONTEXT=$(cd "$AGENTIC_MESH_RUNTIME_BUILD_CONTEXT" && pwd -P)
   if [ "$RESOLVED_WORKSPACE" = "$RESOLVED_SYSTEM" ]; then
     printf '%s\n' "Refusing to deploy: AGENTIC_MESH_WORKSPACE_HOST_PATH resolves to AGENTIC_MESH_SYSTEM_HOST_PATH." >&2
     printf '%s\n' "Set AGENTIC_MESH_WORKSPACE_HOST_PATH to a separate target repo, or set AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM=1 for an explicit local-dev override." >&2
     exit 1
   fi
+  if [ "$RESOLVED_WORKSPACE" = "$RESOLVED_BUILD_CONTEXT" ]; then
+    printf '%s\n' "Refusing to deploy: AGENTIC_MESH_RUNTIME_BUILD_CONTEXT resolves to AGENTIC_MESH_WORKSPACE_HOST_PATH." >&2
+    printf '%s\n' "Build the runtime image from the clean system source checkout, not the mutable project target repo." >&2
+    exit 1
+  fi
+  case "$RESOLVED_SYSTEM" in
+    "$RESOLVED_WORKSPACE"/*)
+      printf '%s\n' "Refusing to deploy: AGENTIC_MESH_SYSTEM_HOST_PATH is inside AGENTIC_MESH_WORKSPACE_HOST_PATH." >&2
+      printf '%s\n' "Use the clean system checkout for /mesh/system so agent workspace edits cannot change the running control plane." >&2
+      exit 1
+      ;;
+  esac
 fi
 export AGENTIC_MESH_WORKSPACE_HOST_PATH
 export AGENTIC_MESH_URL_ROOT
