@@ -15,6 +15,13 @@ class TeamsDeliveryError(RuntimeError):
     pass
 
 
+PROCESSING_REACTION_NAME = "eyes"
+PROCESSING_REACTION_GLYPH = "\U0001F440"
+PROCESSING_REACTION_UNSUPPORTED_REASON = (
+    "Microsoft Graph reaction route or delegated token is unavailable"
+)
+
+
 @dataclass(frozen=True)
 class TeamsRoleIdentity:
     role_id: str
@@ -106,6 +113,25 @@ class TeamsReplySender:
         response = self.transport.post_json(endpoint, payload, authorization=f"Bearer {token}")
         return _delivery_id(response, endpoint + text_markdown)
 
+    def add_processing_reaction(
+        self,
+        *,
+        role_id: str,
+        activity: dict[str, object],
+    ) -> str | None:
+        del role_id
+        route = _graph_reaction_route(activity)
+        token = _graph_delegated_token_from_env(self.transport, tenant_id=self.tenant_id)
+        if route is None or token is None:
+            return None
+        self.transport.post_json(
+            route,
+            {"reactionType": PROCESSING_REACTION_GLYPH},
+            authorization=f"Bearer {token}",
+        )
+        delivery_seed = route + PROCESSING_REACTION_GLYPH
+        return f"graph-setReaction-{hashlib.sha256(delivery_seed.encode('utf-8')).hexdigest()[:16]}"
+
     def _token(self, identity: TeamsRoleIdentity) -> str:
         cached = self._token_cache.get(identity.role_id)
         now = time.time()
@@ -183,3 +209,83 @@ def _delivery_id(response: dict[str, object], fallback_seed: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return f"bot-framework-message-{hashlib.sha256(fallback_seed.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _graph_delegated_token_from_env(transport: BotFrameworkTransport, *, tenant_id: str | None) -> str | None:
+    client_id = os.environ.get("AGENTIC_MESH_GRAPH_CLIENT_ID")
+    refresh_token = os.environ.get("AGENTIC_MESH_GRAPH_REFRESH_TOKEN")
+    scopes = os.environ.get("AGENTIC_MESH_GRAPH_SCOPES")
+    authority = tenant_id or os.environ.get("AGENTIC_MESH_GRAPH_TENANT_ID") or os.environ.get("AGENTIC_MESH_TENANT_ID")
+    if client_id and refresh_token and scopes and authority:
+        response = transport.post_form(
+            f"https://login.microsoftonline.com/{urllib.parse.quote(authority, safe='')}/oauth2/v2.0/token",
+            {
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "refresh_token": refresh_token,
+                "scope": scopes,
+            },
+        )
+        token = response.get("access_token") if isinstance(response, dict) else None
+        if isinstance(token, str) and token.strip():
+            return token.strip()
+    for name in ("AGENTIC_MESH_TEAMS_TOKEN", "AGENTIC_MESH_GRAPH_TOKEN", "AGENTIC_MESH_GRAPH_DELEGATED_TOKEN"):
+        value = os.environ.get(name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def _graph_reaction_route(activity: dict[str, object]) -> str | None:
+    message_id = _activity_string(activity, "id")
+    if message_id is None:
+        return None
+    base_url = (os.environ.get("AGENTIC_MESH_GRAPH_BASE_URL") or "https://graph.microsoft.com/v1.0").rstrip("/")
+    channel_data = activity.get("channelData") if isinstance(activity.get("channelData"), dict) else {}
+    team_id = (
+        _nested_string(channel_data, "team", "id")
+        or _activity_string(activity, "team_id")
+        or os.environ.get("AGENTIC_MESH_PROJECT_TEAM_ID")
+    )
+    channel_id = (
+        _nested_string(channel_data, "channel", "id")
+        or _activity_string(activity, "channel_id")
+        or os.environ.get("AGENTIC_MESH_PROJECT_CHANNEL_ID")
+    )
+    reply_to_id = _activity_string(activity, "replyToId")
+    if team_id and channel_id:
+        team = urllib.parse.quote(team_id.strip(), safe="")
+        channel = urllib.parse.quote(channel_id.strip(), safe="")
+        message = urllib.parse.quote(message_id.strip(), safe="")
+        if reply_to_id and reply_to_id != message_id:
+            parent = urllib.parse.quote(reply_to_id.strip(), safe="")
+            return f"{base_url}/teams/{team}/channels/{channel}/messages/{parent}/replies/{message}/setReaction"
+        return f"{base_url}/teams/{team}/channels/{channel}/messages/{message}/setReaction"
+    conversation = activity.get("conversation")
+    chat_id = _activity_string(activity, "chat_id")
+    if chat_id is None and isinstance(conversation, dict):
+        chat_id = _string_value(conversation.get("id"))
+    if chat_id:
+        chat = urllib.parse.quote(chat_id.strip(), safe="")
+        message = urllib.parse.quote(message_id.strip(), safe="")
+        return f"{base_url}/chats/{chat}/messages/{message}/setReaction"
+    return None
+
+
+def _activity_string(activity: dict[str, object], key: str) -> str | None:
+    return _string_value(activity.get(key))
+
+
+def _nested_string(data: object, *path: str) -> str | None:
+    current = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return _string_value(current)
+
+
+def _string_value(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
