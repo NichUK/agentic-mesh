@@ -13,6 +13,9 @@ from agentic_mesh_v4.codex_protocol import CodexProtocolError
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.db import utc_now
+from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_GLYPH
+from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_NAME
+from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_UNSUPPORTED_REASON
 from agentic_mesh_v4.teams_delivery import TeamsReplySender
 
 
@@ -121,6 +124,14 @@ class V4Runtime:
             client = self.client_factory(role.role_id)
             if not client.initialized:
                 client.initialize()
+            self._acknowledge_message_processing_payload(
+                source=source,
+                payload=dict(payload or {}),
+                message_id=message_id,
+                correlation_id=f"corr-{message_id}",
+                role_id=role.role_id,
+                role_instance_id=role_instance_id,
+            )
             client.resume_thread(thread_id)
             client.steer_turn(thread_id=thread_id, text=text, expected_turn_id=expected_turn_id)
         except Exception as exc:
@@ -156,6 +167,11 @@ class V4Runtime:
             client = self.client_factory(role.role_id)
             if not client.initialized:
                 client.initialize()
+            self._acknowledge_message_processing(
+                message=message,
+                role_id=role.role_id,
+                role_instance_id=role_instance_id,
+            )
             thread_id = self._thread_for_role(client=client, role_instance_id=role_instance_id, role=role)
             if message.steering:
                 expected_turn_id = self._active_turn_id(role_instance_id)
@@ -284,6 +300,92 @@ class V4Runtime:
                 return DispatchResult(message_id=message.message_id, state="queued", error=str(exc))
             self.db.mark_message_state(message.message_id, state="failed", summary=str(exc))
             return DispatchResult(message_id=message.message_id, state="failed", error=str(exc))
+
+    def _acknowledge_message_processing(
+        self,
+        *,
+        message: object,
+        role_id: str,
+        role_instance_id: str,
+    ) -> None:
+        if getattr(message, "source") != "teams":
+            return
+        payload = getattr(message, "payload")
+        if not isinstance(payload, dict):
+            return
+        self._acknowledge_message_processing_payload(
+            source=getattr(message, "source"),
+            payload=payload,
+            message_id=getattr(message, "message_id"),
+            correlation_id=getattr(message, "correlation_id"),
+            role_id=role_id,
+            role_instance_id=role_instance_id,
+        )
+
+    def _acknowledge_message_processing_payload(
+        self,
+        *,
+        source: str,
+        payload: dict[str, object],
+        message_id: str,
+        correlation_id: str,
+        role_id: str,
+        role_instance_id: str,
+    ) -> None:
+        if source != "teams":
+            return
+        sender = self.teams_reply_sender or TeamsReplySender.from_env()
+        reaction = getattr(sender, "add_processing_reaction", None)
+        if not callable(reaction):
+            self.db.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                role_instance_id=role_instance_id,
+                stage="processing_reaction",
+                status="unsupported",
+                summary="Processing reaction skipped: Teams sender does not support reactions.",
+            )
+            return
+        try:
+            delivery_id = reaction(
+                role_id=role_id,
+                activity=payload,
+            )
+        except Exception as exc:  # noqa: BLE001 - acknowledgement must not block processing.
+            self.db.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                role_instance_id=role_instance_id,
+                stage="processing_reaction",
+                status="failed",
+                summary=f"Processing reaction failed: {exc}",
+            )
+            self.db.record_agent_event(
+                role_instance_id=role_instance_id,
+                event_type="processing_reaction/failed",
+                content=str(exc),
+                payload={"error": str(exc), "reaction": PROCESSING_REACTION_NAME},
+                message_id=message_id,
+            )
+            return
+        if delivery_id is None:
+            self.db.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                role_instance_id=role_instance_id,
+                stage="processing_reaction",
+                status="unsupported",
+                summary=f"Processing reaction skipped: {PROCESSING_REACTION_UNSUPPORTED_REASON}.",
+            )
+            return
+        self.db.record_message_journal(
+            message_id=message_id,
+            correlation_id=correlation_id,
+            role_instance_id=role_instance_id,
+            stage="processing_reaction",
+            status="delivered",
+            summary=f"Delivered Teams processing reaction {PROCESSING_REACTION_NAME} {PROCESSING_REACTION_GLYPH}: {delivery_id}",
+        )
 
     def _sync_documents_after_turn(self, *, message_id: str, correlation_id: str, role_instance_id: str) -> None:
         if self.document_syncer is None:
