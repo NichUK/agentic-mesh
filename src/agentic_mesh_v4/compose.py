@@ -69,7 +69,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    env_file:",
         "      - path: .env",
         "        required: false",
-        "    command: python -m agentic_mesh_v4.cli --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 --project-config /mesh/project/agentic-mesh/project-v4.yaml dispatch-loop --agent-config-root /mesh/project/state/v4/agent-configs --compose-file /mesh/project/deploy/compose/docker-compose.v4.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --compose-env-file /mesh/project/deploy/compose/.env --compose-working-directory /mesh/project/deploy/compose --active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900} --wake",
+        "    command: python -m agentic_mesh_v4.cli --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 --project-config /mesh/project/agentic-mesh/project-v4.yaml dispatch-loop --agent-config-root /mesh/project/state/v4/agent-configs --compose-file /mesh/project/deploy/compose/docker-compose.v4.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --compose-env-file /mesh/project/deploy/compose/.env --compose-working-directory /mesh/project/deploy/compose --active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900} --dispatch-workers ${AGENTIC_MESH_DISPATCH_WORKERS:-8} --wake",
         "    environment:",
         "      AGENTIC_MESH_RUNTIME_VERSION: v4",
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
@@ -144,7 +144,14 @@ def validate_v4_compose(rendered: str) -> None:
 
 
 def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
-    command = f"codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+    start_codex = (
+        "mkdir -p /mesh/agent-workspace; "
+        "chmod 0777 /mesh/agent-workspace 2>/dev/null || true; "
+        "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; "
+        "cp /mesh/agent/container.json /mesh/agent-workspace/container.json 2>/dev/null || true; "
+        f"exec codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+    )
+    command = f"sh -lc '{start_codex}'"
     if role_id in SSH_ROLES:
         command = (
             "sh -lc 'mkdir -p /root/.ssh; "
@@ -152,7 +159,7 @@ def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
             "if [ -f /root/.ssh/config ]; then sed -i \"s#/mesh/home/.ssh#/root/.ssh#g\" /root/.ssh/config; fi; "
             "chmod 700 /root/.ssh; "
             "find /root/.ssh -type f -exec chmod 600 {} \\; 2>/dev/null || true; "
-            f"exec codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'"
+            f"{start_codex}'"
         )
     lines = [
         f"  {service_name}:",
@@ -167,7 +174,7 @@ def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
         "    security_opt:",
         "      - seccomp=unconfined",
         "      - apparmor=unconfined",
-        "    working_dir: /mesh/agent",
+        "    working_dir: /mesh/agent-workspace",
         f"    command: {command}",
         "    environment:",
         f"      AGENTIC_MESH_ROLE_ID: {role_id}",
@@ -178,6 +185,7 @@ def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
         "      HOME: /mesh/home",
         "    volumes:",
         f"      - ${{AGENTIC_MESH_PROJECT_HOST_PATH:-../..}}/state/v4/agent-configs/{role_id}/1:/mesh/agent",
+        f"      - ${{AGENTIC_MESH_PROJECT_HOST_PATH:-../..}}/state/v4/agent-workspaces/{role_id}/1:/mesh/agent-workspace",
         "      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro",
         "      - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents",
         "      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project",

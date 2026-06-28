@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import secrets
@@ -59,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_loop.add_argument("--compose-env-file", type=Path)
     dispatch_loop.add_argument("--compose-working-directory", type=Path)
     dispatch_loop.add_argument("--active-turn-stale-seconds", type=float, default=900.0)
+    dispatch_loop.add_argument("--dispatch-workers", type=int, default=8)
     dispatch_loop.add_argument("--wake", action="store_true")
     dispatch_loop.add_argument("--once", action="store_true")
 
@@ -188,7 +190,7 @@ def main(argv: list[str] | None = None) -> None:
                     env_file=args.compose_env_file,
                     working_directory=args.compose_working_directory,
                 )
-            while True:
+            if args.once:
                 processed = _dispatch_available_messages(
                     db=db,
                     project_config=project_config,
@@ -197,11 +199,18 @@ def main(argv: list[str] | None = None) -> None:
                     lifecycle=lifecycle,
                     active_turn_stale_seconds=args.active_turn_stale_seconds,
                 )
-                if args.once:
-                    _print_json({"processed": processed})
-                    return
-                if processed == 0:
-                    time.sleep(args.poll_interval_seconds)
+                _print_json({"processed": processed})
+                return
+            _dispatch_loop_concurrent(
+                db=db,
+                project_config=project_config,
+                project_config_path=args.project_config,
+                agent_config_root=args.agent_config_root,
+                lifecycle=lifecycle,
+                active_turn_stale_seconds=args.active_turn_stale_seconds,
+                poll_interval_seconds=args.poll_interval_seconds,
+                max_workers=max(1, args.dispatch_workers),
+            )
             return
         if args.command == "watchdog-loop":
             lifecycle = ComposeLifecycle(
@@ -369,6 +378,201 @@ def _dispatch_available_messages(
         if result is not None:
             processed += 1
     return processed
+
+
+def _dispatch_loop_concurrent(
+    *,
+    db: V4Database,
+    project_config,
+    project_config_path: Path,
+    agent_config_root: Path,
+    lifecycle: ComposeLifecycle | None,
+    active_turn_stale_seconds: float,
+    poll_interval_seconds: float,
+    max_workers: int,
+) -> None:
+    active: dict[str, concurrent.futures.Future[int]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        while True:
+            processed = _collect_completed_dispatches(active)
+            scheduled = _schedule_available_dispatches(
+                db=db,
+                project_config=project_config,
+                project_config_path=project_config_path,
+                agent_config_root=agent_config_root,
+                lifecycle=lifecycle,
+                active_turn_stale_seconds=active_turn_stale_seconds,
+                executor=executor,
+                active=active,
+            )
+            if processed == 0 and scheduled == 0:
+                time.sleep(poll_interval_seconds)
+
+
+def _collect_completed_dispatches(active: dict[str, concurrent.futures.Future[int]]) -> int:
+    processed = 0
+    for role_id, future in list(active.items()):
+        if not future.done():
+            continue
+        try:
+            processed += future.result()
+        except Exception as exc:  # noqa: BLE001 - dispatcher must survive role delivery failures.
+            print(
+                json.dumps(
+                    {
+                        "role_id": role_id,
+                        "state": "dispatch_worker_failed",
+                        "error": str(exc),
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+        del active[role_id]
+    return processed
+
+
+def _schedule_available_dispatches(
+    *,
+    db: V4Database,
+    project_config,
+    project_config_path: Path,
+    agent_config_root: Path,
+    lifecycle: ComposeLifecycle | None,
+    active_turn_stale_seconds: float,
+    executor: concurrent.futures.Executor,
+    active: dict[str, concurrent.futures.Future[int]],
+) -> int:
+    scheduled = 0
+    for role in project_config.roles:
+        if role.role_id in active:
+            continue
+        if db.active_message_for_role(target_role=role.role_id) is not None:
+            recovered_stale = db.requeue_active_messages_for_role(
+                target_role=role.role_id,
+                stale_after_seconds=active_turn_stale_seconds,
+                summary=(
+                    f"Recovered stale active delivery for {role.role_id}; "
+                    f"message stayed active longer than {active_turn_stale_seconds:.0f} seconds."
+                ),
+            )
+            if recovered_stale and lifecycle is not None:
+                _hibernate_recovered_role(lifecycle=lifecycle, role=role, recovered=recovered_stale)
+        if lifecycle is not None and db.active_message_for_role(target_role=role.role_id) is not None:
+            if not lifecycle.is_service_running(role.service_name):
+                recovered = db.requeue_active_messages_for_role(
+                    target_role=role.role_id,
+                    summary=(
+                        f"Recovered orphaned active delivery for {role.role_id}; "
+                        f"compose service {role.service_name} is not running."
+                    ),
+                )
+                if recovered:
+                    print(
+                        json.dumps(
+                            {
+                                "role_id": role.role_id,
+                                "service_name": role.service_name,
+                                "state": "recovered_orphaned_active",
+                                "messages": recovered,
+                            },
+                            sort_keys=True,
+                        ),
+                        file=sys.stderr,
+                    )
+        if not db.has_queued_messages(role_id=role.role_id):
+            continue
+        if lifecycle is not None:
+            try:
+                lifecycle.wake_service(role.service_name)
+            except subprocess.CalledProcessError as exc:
+                print(
+                    json.dumps(
+                        {
+                            "role_id": role.role_id,
+                            "service_name": role.service_name,
+                            "state": "wake_failed",
+                            "error": exc.stderr or exc.stdout or str(exc),
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                continue
+        active[role.role_id] = executor.submit(
+            _dispatch_role_message,
+            db_path=db.path,
+            project_config_path=project_config_path,
+            agent_config_root=agent_config_root,
+            role_id=role.role_id,
+        )
+        scheduled += 1
+    return scheduled
+
+
+def _dispatch_role_message(
+    *,
+    db_path: Path,
+    project_config_path: Path,
+    agent_config_root: Path,
+    role_id: str,
+) -> int:
+    worker_db = V4Database(db_path)
+    try:
+        worker_db.migrate()
+        project_config = load_project_config(project_config_path)
+
+        def factory(factory_role_id: str) -> CodexAppServerClient:
+            role_config = project_config.role(factory_role_id)
+            token_file = agent_config_root / factory_role_id / "1" / "ws-token"
+            token = token_file.read_text(encoding="utf-8").strip() if token_file.exists() else None
+            return CodexAppServerClient(
+                WebSocketTransport(
+                    f"ws://{role_config.service_name}:{role_config.codex_port}",
+                    bearer_token=token,
+                )
+            )
+
+        result = V4Runtime(
+            db=worker_db,
+            project_config=project_config,
+            client_factory=factory,
+            document_syncer=_document_syncer(project_config_path),
+            agent_config_root=agent_config_root,
+        ).dispatch_once(role_id=role_id)
+        return 1 if result is not None else 0
+    finally:
+        worker_db.close()
+
+
+def _hibernate_recovered_role(*, lifecycle: ComposeLifecycle, role, recovered: int) -> None:
+    try:
+        lifecycle.hibernate_service(role.service_name)
+    except subprocess.CalledProcessError as exc:
+        print(
+            json.dumps(
+                {
+                    "role_id": role.role_id,
+                    "service_name": role.service_name,
+                    "state": "stale_hibernate_failed",
+                    "error": exc.stderr or exc.stdout or str(exc),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+    print(
+        json.dumps(
+            {
+                "role_id": role.role_id,
+                "service_name": role.service_name,
+                "state": "recovered_stale_active",
+                "messages": recovered,
+            },
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+    )
 
 
 def _watchdog_services(*, lifecycle: ComposeLifecycle, services: tuple[str, ...]) -> list[dict[str, str]]:

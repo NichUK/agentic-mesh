@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import concurrent.futures
 from pathlib import Path
 
 from agentic_mesh_v4.agent_config import materialize_agent_configs
+from agentic_mesh_v4 import cli as v4_cli
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
 from agentic_mesh_v4.codex_protocol import InMemoryTransport
 from agentic_mesh_v4.compose import render_compose
@@ -693,6 +695,67 @@ def test_v4_agent_events_refresh_active_message_heartbeat(tmp_path: Path) -> Non
     assert row["state"] == "active_turn"
 
 
+def test_v4_dispatch_scheduler_schedules_queued_role_while_another_role_is_active(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    active_message = runtime.enqueue_conversation(
+        target_role="delivery-manager",
+        text="Long delivery turn",
+        source="safe-output",
+    )
+    db.claim_next_message(
+        role_id="delivery-manager",
+        worker_id="agentic-mesh-dev.delivery-manager.1",
+    )
+    db.mark_message_state(active_message, state="active_turn", summary="Delivery Manager is still working.")
+    queued_message = runtime.enqueue_conversation(
+        target_role="solution-architect",
+        text="Handoff that must not wait behind Delivery Manager.",
+        source="safe-output",
+    )
+    dispatched_roles: list[str] = []
+
+    def fake_dispatch_role_message(**kwargs) -> int:
+        dispatched_roles.append(kwargs["role_id"])
+        return 1
+
+    monkeypatch.setattr(v4_cli, "_dispatch_role_message", fake_dispatch_role_message)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        active: dict[str, concurrent.futures.Future[int]] = {}
+        scheduled = v4_cli._schedule_available_dispatches(  # noqa: SLF001 - regression for dispatcher scheduling.
+            db=db,
+            project_config=config,
+            project_config_path=PROJECT_CONFIG,
+            agent_config_root=tmp_path / "agents",
+            lifecycle=None,
+            active_turn_stale_seconds=3600,
+            executor=executor,
+            active=active,
+        )
+        processed = v4_cli._collect_completed_dispatches(active)  # noqa: SLF001
+
+    assert scheduled == 1
+    assert processed == 1
+    assert dispatched_roles == ["solution-architect"]
+    active_row = db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (active_message,),
+    ).fetchone()
+    queued_row = db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (queued_message,),
+    ).fetchone()
+    assert active_row["state"] == "active_turn"
+    assert queued_row["state"] == "queued"
+
+
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
@@ -1221,6 +1284,9 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "do the work before replying" in text
     assert "Before claiming a path, sandbox, or tool is read-only or unavailable" in text
     assert "Work-item dossiers must be written under `/documents/work-items/{work_item_id}`" in text
+    assert "`/mesh/agent` is your mounted role identity/configuration folder" in text
+    assert "`/mesh/agent-workspace` is your writable current working directory" in text
+    assert "If `pwd` is `/mesh/agent`, report a platform configuration defect" in text
     assert "Do not create canonical work-item artifacts under `/mesh/project/work-items`" in text
     assert "Authority level: `full`" in text
     assert "assume `/mesh/workspaces/agentic-mesh`, `/documents`, and `/mesh/project` are writable" in text
@@ -1247,7 +1313,9 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
     assert "HOME: /mesh/home" in rendered
     assert "dispatcher:" in rendered
     assert "dispatch-loop" in rendered
-    assert "working_dir: /mesh/agent" in rendered
+    assert "working_dir: /mesh/agent-workspace" in rendered
+    assert "${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-workspaces/project-manager/1:/mesh/agent-workspace" in rendered
+    assert "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md" in rendered
     assert "v3-nats" not in rendered
     assert "v3-supervisor" not in rendered
     assert "run-agent-service" not in rendered
