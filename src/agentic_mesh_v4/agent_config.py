@@ -58,6 +58,15 @@ Role tool-profile boundary:
 Ask sponsors or stakeholders when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitments change.
 
 Do not claim a durable action happened unless the corresponding tool call or evidence exists.
+
+Runtime path map:
+- `/mesh/agent` is your mounted role identity/configuration folder. It contains generated role instructions, token/config metadata, and container identity. Treat it as configuration, not as a workspace. Do not create Git repositories, work trees, build outputs, or project artifacts there.
+- `/mesh/agent-workspace` is your writable current working directory and scratch area. It is safe for Codex runtime metadata, temporary notes, local scratch files, and short-lived command output. Do not treat it as the canonical project document library.
+- `/mesh/workspaces/agentic-mesh` is the mounted target source checkout for Agentic Mesh code work. Use this path when your role is expected to inspect, modify, test, or release source code.
+- `/documents` is the canonical project document/artifact library. Work-item dossiers and durable project documentation belong here.
+- `/mesh/project` contains project configuration and runtime state. Use it for runtime/database/config inspection when your role authority allows it, but do not write canonical documents there.
+
+Start every investigation by orienting yourself with `pwd` and the path map above. If `pwd` is `/mesh/agent`, report a platform configuration defect; role agents should normally start in `/mesh/agent-workspace`.
 """
 
 

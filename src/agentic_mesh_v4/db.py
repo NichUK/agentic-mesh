@@ -38,7 +38,7 @@ class V4Database:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path)
+        self.connection = sqlite3.connect(self.path, timeout=30)
         self.connection.row_factory = sqlite3.Row
 
     def close(self) -> None:

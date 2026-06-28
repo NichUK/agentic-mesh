@@ -6,6 +6,8 @@ import subprocess
 import yaml
 
 from agentic_mesh_v4.cli import _watchdog_services
+from agentic_mesh_v4.compose import render_compose
+from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.lifecycle import ComposeLifecycle
 
 
@@ -63,6 +65,7 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
     assert dispatcher["environment"]["PYTHONPATH"] == "/mesh/system/src"
     assert "--wake" in dispatcher["command"]
     assert "--active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900}" in dispatcher["command"]
+    assert "--dispatch-workers ${AGENTIC_MESH_DISPATCH_WORKERS:-8}" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.v4.yml" in dispatcher["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml" in dispatcher["command"]
     assert "/var/run/docker.sock:/var/run/docker.sock" in dispatcher["volumes"]
@@ -89,8 +92,9 @@ def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
         assert service["profiles"] == ["roles"]
         assert service["cap_add"] == ["SYS_ADMIN"]
         assert service["security_opt"] == ["seccomp=unconfined", "apparmor=unconfined"]
-        assert service["working_dir"] == "/mesh/agent"
+        assert service["working_dir"] == "/mesh/agent-workspace"
         assert "codex app-server" in service["command"]
+        assert "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md" in service["command"]
         assert "--ws-auth capability-token" in service["command"]
         assert "--ws-token-file /mesh/agent/ws-token" in service["command"]
         assert service["environment"]["AGENTIC_MESH_ROLE_ID"] == role_id
@@ -98,6 +102,7 @@ def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
         assert service["environment"]["PYTHONPATH"] == "/mesh/system/src"
         volumes = "\n".join(service["volumes"])
         assert f"/state/v4/agent-configs/{role_id}/1:/mesh/agent" in volumes
+        assert f"/state/v4/agent-workspaces/{role_id}/1:/mesh/agent-workspace" in volumes
         assert ":/mesh/system:ro" in volumes
         assert ":/mesh/workspaces/agentic-mesh" in volumes
 
@@ -309,6 +314,7 @@ def test_v4_dogfood_project_config_exists_for_compose_profile() -> None:
 
 
 def test_linuxch_overlay_is_valid_for_v4_profile() -> None:
+    rendered_compose = render_compose(load_project_config(V4_PROJECT_FILE))
     result = subprocess.run(
         [
             "docker",
@@ -316,7 +322,7 @@ def test_linuxch_overlay_is_valid_for_v4_profile() -> None:
             "--profile",
             "v4",
             "-f",
-            "examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml",
+            "-",
             "-f",
             "examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml",
             "config",
@@ -325,15 +331,14 @@ def test_linuxch_overlay_is_valid_for_v4_profile() -> None:
         check=False,
         capture_output=True,
         text=True,
+        input=rendered_compose,
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
 
 
 def _load_dogfood_compose() -> dict[str, object]:
-    compose_path = Path("examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml")
-    with compose_path.open("r", encoding="utf-8") as handle:
-        compose = yaml.safe_load(handle)
+    compose = yaml.safe_load(render_compose(load_project_config(V4_PROJECT_FILE)))
     assert isinstance(compose, dict)
     return compose
 
