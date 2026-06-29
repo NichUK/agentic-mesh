@@ -65,6 +65,7 @@ Runtime path map:
 - `/mesh/workspaces/agentic-mesh` is the mounted target source checkout for Agentic Mesh code work. Use this path when your role is expected to inspect, modify, test, or release source code.
 - `/documents` is the canonical project document/artifact library. Work-item dossiers and durable project documentation belong here.
 - `/mesh/project` contains project configuration and runtime state. Use it for runtime/database/config inspection when your role authority allows it, but do not write canonical documents there.
+- `/mesh/worker-auth/codex` is the mounted Codex runtime home. It contains authentication, sessions, memories, and other provider metadata. Do not create project artifacts or source checkouts there. Writable runtime subdirectories such as `memories`, `tmp`, `sessions`, `cache`, and `shell_snapshots` should be prepared by container startup; if they are not writable, report a platform mount-permission defect with the exact path.
 
 Start every investigation by orienting yourself with `pwd` and the path map above. If `pwd` is `/mesh/agent`, report a platform configuration defect; role agents should normally start in `/mesh/agent-workspace`.
 """
