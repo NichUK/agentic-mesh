@@ -745,6 +745,12 @@ class V4Database:
     def snapshot(self) -> dict[str, Any]:
         roles = [_row_dict(row) for row in self.connection.execute("SELECT * FROM role_instances ORDER BY role_id")]
         messages = self.list_messages()
+        work_items_by_id = {
+            str(row["work_item_id"]): _row_dict(row)
+            for row in self.connection.execute("SELECT * FROM work_items")
+        }
+        for item in messages:
+            _annotate_message_display_state(item, work_items_by_id=work_items_by_id)
         memory_counts = {
             str(row["role_instance_id"]): int(row["count"])
             for row in self.connection.execute(
@@ -761,6 +767,8 @@ class V4Database:
             active_messages[str(locked_by)] = {
                 "message_id": item["message_id"],
                 "state": item["state"],
+                "display_state": item.get("display_state") or item["state"],
+                "display_reason": item.get("display_reason") or "",
                 "text": item["text"],
                 "updated_at": item["updated_at"],
             }
@@ -806,6 +814,44 @@ class V4Database:
             "events": events,
             "queue_depth": sum(1 for item in messages if item["state"] not in TERMINAL_MESSAGE_STATES),
         }
+
+
+def _annotate_message_display_state(
+    item: dict[str, Any],
+    *,
+    work_items_by_id: dict[str, dict[str, Any]],
+) -> None:
+    item["display_state"] = item.get("state")
+    item["display_reason"] = ""
+    if item.get("state") not in {"delivering", "active_turn"}:
+        return
+    payload = _payload_dict(item.get("payload_json"))
+    work_item_id = str(payload.get("work_item_id") or "")
+    if not work_item_id:
+        return
+    work_item = work_items_by_id.get(work_item_id)
+    if not work_item:
+        return
+    owner_role = str(work_item.get("owner_role") or "")
+    target_role = str(item.get("target_role") or "")
+    if owner_role and target_role and owner_role != target_role:
+        item["display_state"] = "finalizing_handoff"
+        item["display_reason"] = (
+            f"Work item {work_item_id} has moved to {owner_role}; "
+            f"{target_role} is finishing its prior turn."
+        )
+
+
+def _payload_dict(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        payload = json.loads(str(value))
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _queued_message(row: sqlite3.Row, *, state: str, delivery_attempts: int) -> QueuedMessage:

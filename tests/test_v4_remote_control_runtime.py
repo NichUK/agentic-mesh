@@ -12,6 +12,7 @@ from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.reporting import render_agent_thread
+from agentic_mesh_v4.reporting import render_status
 from agentic_mesh_v4.runtime import V4Runtime
 
 
@@ -302,6 +303,44 @@ def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> No
     assert project_manager["effective_state"] == "busy"
     assert project_manager["current_message"]["message_id"] == message_id
     assert project_manager["memory_count"] == 1
+
+
+def test_v4_snapshot_marks_active_turn_as_finalizing_after_handoff(tmp_path: Path) -> None:
+    db = V4Database(tmp_path / "v4.sqlite3")
+    db.migrate()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    role_instance_id = "agentic-mesh-dev.platform-engineer.1"
+    work_item_id = "work-finalizing-handoff"
+    db.upsert_work_item(
+        work_item_id=work_item_id,
+        title="Finalizing handoff",
+        state="qa_ready",
+        owner_role="qa-engineer",
+        next_action="QA owns the next step.",
+    )
+    message_id = runtime.enqueue_conversation(
+        target_role="platform-engineer",
+        text="Repair platform and hand back.",
+        source="safe-output",
+        payload={"work_item_id": work_item_id},
+    )
+    db.claim_next_message(role_id="platform-engineer", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered to Platform Engineer")
+
+    snapshot = db.snapshot()
+    message = next(item for item in snapshot["messages"] if item["message_id"] == message_id)
+    platform = next(item for item in snapshot["roles"] if item["role_instance_id"] == role_instance_id)
+
+    assert message["state"] == "active_turn"
+    assert message["display_state"] == "finalizing_handoff"
+    assert "has moved to qa-engineer" in message["display_reason"]
+    assert platform["current_message"]["display_state"] == "finalizing_handoff"
+
+    status_html = render_status(snapshot)
+    assert "finalizing_handoff (raw: active_turn)" in status_html
+    assert "has moved to qa-engineer" in status_html
 
 
 def test_v4_same_conversation_message_steers_into_active_turn(tmp_path: Path) -> None:
