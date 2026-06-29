@@ -54,7 +54,8 @@ def render_agents(snapshot: dict[str, Any]) -> str:
             current_cell = (
                 f"<a href=\"/status#{html.escape(str(current.get('message_id') or ''))}\">"
                 f"{html.escape(_short_id(str(current.get('message_id') or '')))}</a>"
-                f"<br><small>{html.escape(str(current.get('state') or ''))}</small>"
+                f"<br><small>{html.escape(_state_label(current))}</small>"
+                f"{_reason_line(current)}"
                 f"<br>{html.escape(_truncate(str(current.get('text') or ''), 120))}"
             )
         else:
@@ -93,7 +94,7 @@ def render_agent_thread(
         message_rows.append(
             "<tr>"
             f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
-            f"<td>{html.escape(str(item.get('state') or ''))}</td>"
+            f"<td>{html.escape(_state_label(item))}{_reason_line(item)}</td>"
             f"<td><code>{html.escape(str(item.get('message_id') or ''))}</code></td>"
             f"<td>{html.escape(str(item.get('text') or ''))}</td>"
             "</tr>"
@@ -163,7 +164,7 @@ def _message_table(items: list[dict[str, Any]], *, empty: str) -> str:
             f"<tr id=\"{html.escape(item['message_id'])}\">"
             f"<td>{html.escape(item['message_id'])}</td>"
             f"<td><a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(role_id)}</a></td>"
-            f"<td>{html.escape(item['state'])}</td>"
+            f"<td>{html.escape(_state_label(item))}{_reason_line(item)}</td>"
             f"<td>{html.escape(item['text'])}</td>"
             f"<td>{html.escape(item['updated_at'])}</td>"
             "</tr>"
@@ -214,6 +215,21 @@ def _work_item_table(items: list[dict[str, Any]], artifacts: list[dict[str, Any]
 
 def _nav() -> str:
     return '<nav><a href="/status">Status</a> <a href="/agents">Agents</a> <a href="/status.json">JSON</a></nav>'
+
+
+def _state_label(item: dict[str, Any]) -> str:
+    display_state = str(item.get("display_state") or item.get("state") or "")
+    raw_state = str(item.get("state") or "")
+    if display_state and raw_state and display_state != raw_state:
+        return f"{display_state} (raw: {raw_state})"
+    return display_state or raw_state
+
+
+def _reason_line(item: dict[str, Any]) -> str:
+    reason = str(item.get("display_reason") or "")
+    if not reason:
+        return ""
+    return f"<br><small>{html.escape(reason)}</small>"
 
 
 def _short_id(value: str) -> str:
