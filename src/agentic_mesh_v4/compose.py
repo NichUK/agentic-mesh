@@ -144,9 +144,14 @@ def validate_v4_compose(rendered: str) -> None:
 
 
 def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
+    writable_codex_subdirs = "memories tmp sessions cache shell_snapshots"
     start_codex = (
-        "mkdir -p /mesh/agent-workspace; "
-        "chmod 0777 /mesh/agent-workspace 2>/dev/null || true; "
+        "mkdir -p /mesh/agent-workspace /documents/work-items; "
+        "chmod -R a+rwX /mesh/agent-workspace /documents 2>/dev/null || true; "
+        f"for d in {writable_codex_subdirs}; do "
+        "mkdir -p /mesh/worker-auth/codex/$$d; "
+        "chmod -R a+rwX /mesh/worker-auth/codex/$$d 2>/dev/null || true; "
+        "done; "
         "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; "
         "cp /mesh/agent/container.json /mesh/agent-workspace/container.json 2>/dev/null || true; "
         f"exec codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"

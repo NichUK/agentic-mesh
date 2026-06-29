@@ -1286,6 +1286,9 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "Work-item dossiers must be written under `/documents/work-items/{work_item_id}`" in text
     assert "`/mesh/agent` is your mounted role identity/configuration folder" in text
     assert "`/mesh/agent-workspace` is your writable current working directory" in text
+    assert "`/mesh/worker-auth/codex` is the mounted Codex runtime home" in text
+    assert "Do not create project artifacts or source checkouts there" in text
+    assert "report a platform mount-permission defect with the exact path" in text
     assert "If `pwd` is `/mesh/agent`, report a platform configuration defect" in text
     assert "Do not create canonical work-item artifacts under `/mesh/project/work-items`" in text
     assert "Authority level: `full`" in text
