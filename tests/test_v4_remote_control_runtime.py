@@ -273,7 +273,7 @@ def test_v4_runtime_keeps_started_turn_active_after_read_timeout(tmp_path: Path)
     assert row["locked_by"] == "agentic-mesh-dev.engineering.1"
     assert row["locked_at"] is not None
     role = db.connection.execute(
-        "SELECT state, active_turn_id FROM role_instances WHERE role_id='engineering'",
+        "SELECT state, active_turn_id FROM role_instances WHERE role_instance_id='agentic-mesh-dev.engineering.1'",
     ).fetchone()
     assert role["state"] == "active"
     assert role["active_turn_id"] == "turn-1"

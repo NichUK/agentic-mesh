@@ -600,17 +600,18 @@ class V4Runtime:
             except Exception as exc:
                 if _looks_like_receive_timeout(exc):
                     event_type = "turn/readTimeoutAfterOutput" if fallback_reply_parts or final_reply else "turn/readTimeoutStillRunning"
+                    resolved_turn_id = turn_id or self._active_turn_id(role_instance_id)
                     self.db.record_agent_event(
                         role_instance_id=role_instance_id,
                         event_type=event_type,
                         content=str(exc),
                         payload={"error": str(exc)},
                         thread_id=thread_id,
-                        turn_id=turn_id,
+                        turn_id=resolved_turn_id,
                         message_id=message_id,
                     )
                     raise AgentTurnStillRunning(
-                        f"no app-server event before read timeout; leaving turn {turn_id or '<unknown>'} active"
+                        f"no app-server event before read timeout; leaving turn {resolved_turn_id or '<unknown>'} active"
                     ) from exc
                 raise
             if event is None:

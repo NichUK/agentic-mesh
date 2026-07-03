@@ -112,7 +112,18 @@ class WebSocketTransport(AppServerTransport):
         if bearer_token:
             headers.append(f"Authorization: Bearer {bearer_token}")
         if read_timeout_seconds is None:
-            read_timeout_seconds = int(os.environ.get("AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS", "14400"))
+            _raw = os.environ.get("AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS", "14400")
+            try:
+                _parsed = int(_raw)
+            except ValueError as exc:
+                raise ValueError(
+                    f"AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS must be a positive integer; got {_raw!r}"
+                ) from exc
+            if _parsed <= 0:
+                raise ValueError(
+                    f"AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS must be a positive integer; got {_raw!r}"
+                )
+            read_timeout_seconds = _parsed
         # Codex app-server rejects browser-style Origin headers on internal
         # capability-token WebSocket connections.
         self._socket = websocket.create_connection(
