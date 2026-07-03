@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -95,7 +96,14 @@ class InMemoryTransport(AppServerTransport):
 class WebSocketTransport(AppServerTransport):
     """Thin runtime transport for Codex app-server WebSocket JSON-RPC."""
 
-    def __init__(self, endpoint: str, *, bearer_token: str | None = None, timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        bearer_token: str | None = None,
+        timeout_seconds: int = 30,
+        read_timeout_seconds: int | None = None,
+    ) -> None:
         try:
             import websocket  # type: ignore[import-not-found]
         except ImportError as exc:  # pragma: no cover - depends on optional runtime package.
@@ -103,6 +111,8 @@ class WebSocketTransport(AppServerTransport):
         headers = []
         if bearer_token:
             headers.append(f"Authorization: Bearer {bearer_token}")
+        if read_timeout_seconds is None:
+            read_timeout_seconds = int(os.environ.get("AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS", "14400"))
         # Codex app-server rejects browser-style Origin headers on internal
         # capability-token WebSocket connections.
         self._socket = websocket.create_connection(
@@ -111,6 +121,7 @@ class WebSocketTransport(AppServerTransport):
             timeout=timeout_seconds,
             suppress_origin=True,
         )
+        self._socket.settimeout(read_timeout_seconds)
 
     def send(self, message: dict[str, Any]) -> dict[str, Any] | None:
         self._socket.send(json.dumps(message, sort_keys=True))

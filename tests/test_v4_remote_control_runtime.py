@@ -242,7 +242,7 @@ def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: 
     assert any(event["content"] == " Actually done." for event in events)
 
 
-def test_v4_runtime_requeues_partial_output_timeout_without_marking_complete(tmp_path: Path) -> None:
+def test_v4_runtime_keeps_started_turn_active_after_read_timeout(tmp_path: Path) -> None:
     db = V4Database(tmp_path / "v4.sqlite3")
     db.migrate()
     config = load_project_config(PROJECT_CONFIG)
@@ -264,14 +264,19 @@ def test_v4_runtime_requeues_partial_output_timeout_without_marking_complete(tmp
     result = runtime.dispatch_once(role_id="engineering")
 
     assert result is not None
-    assert result.state == "queued"
+    assert result.state == "active_turn"
     row = db.connection.execute(
         "SELECT state, locked_by, locked_at FROM message_queue WHERE message_id=?",
         (message_id,),
     ).fetchone()
-    assert row["state"] == "queued"
-    assert row["locked_by"] is None
-    assert row["locked_at"] is None
+    assert row["state"] == "active_turn"
+    assert row["locked_by"] == "agentic-mesh-dev.engineering.1"
+    assert row["locked_at"] is not None
+    role = db.connection.execute(
+        "SELECT state, active_turn_id FROM role_instances WHERE role_id='engineering'",
+    ).fetchone()
+    assert role["state"] == "active"
+    assert role["active_turn_id"] == "turn-1"
     events = [dict(row) for row in db.connection.execute("SELECT event_type, content FROM agent_events ORDER BY created_at")]
     assert any(event["event_type"] == "turn/readTimeoutAfterOutput" for event in events)
 

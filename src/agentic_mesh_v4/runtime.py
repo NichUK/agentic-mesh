@@ -33,6 +33,10 @@ class DispatchResult:
     error: str | None = None
 
 
+class AgentTurnStillRunning(RuntimeError):
+    """Raised when a started Codex turn is still running after an event read timeout."""
+
+
 class V4Runtime:
     def __init__(
         self,
@@ -281,6 +285,19 @@ class V4Runtime:
             self.db.mark_message_state(message.message_id, state="completed", summary=f"Completed delivery to {role_instance_id}")
             self._sync_documents_after_turn(message_id=message.message_id, correlation_id=message.correlation_id, role_instance_id=role_instance_id)
             return DispatchResult(message_id=message.message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
+        except AgentTurnStillRunning as exc:
+            self.db.mark_message_state(
+                message.message_id,
+                state="active_turn",
+                summary=f"Agent turn is still running for {role_instance_id}: {exc}",
+            )
+            return DispatchResult(
+                message_id=message.message_id,
+                state="active_turn",
+                thread_id=self._active_thread_id(role_instance_id),
+                turn_id=self._active_turn_id(role_instance_id),
+                error=str(exc),
+            )
         except Exception as exc:
             with self.db.connection:
                 self.db.connection.execute(
@@ -581,17 +598,20 @@ class V4Runtime:
             try:
                 event = client.receive_event()
             except Exception as exc:
-                if fallback_reply_parts or final_reply:
+                if _looks_like_receive_timeout(exc):
+                    event_type = "turn/readTimeoutAfterOutput" if fallback_reply_parts or final_reply else "turn/readTimeoutStillRunning"
                     self.db.record_agent_event(
                         role_instance_id=role_instance_id,
-                        event_type="turn/readTimeoutAfterOutput",
+                        event_type=event_type,
                         content=str(exc),
                         payload={"error": str(exc)},
                         thread_id=thread_id,
                         turn_id=turn_id,
                         message_id=message_id,
                     )
-                    raise RuntimeError(f"turn timed out before completion after partial output: {exc}") from exc
+                    raise AgentTurnStillRunning(
+                        f"no app-server event before read timeout; leaving turn {turn_id or '<unknown>'} active"
+                    ) from exc
                 raise
             if event is None:
                 return final_reply or "".join(fallback_reply_parts)
@@ -723,6 +743,11 @@ def _looks_like_agent_unavailable(exc: BaseException) -> bool:
             "websocket",
         )
     )
+
+
+def _looks_like_receive_timeout(exc: BaseException) -> bool:
+    text = str(exc).casefold()
+    return isinstance(exc, TimeoutError) or "timed out" in text or "timeout" in text
 
 
 def _starts_with_queue_directive(text: str) -> bool:
