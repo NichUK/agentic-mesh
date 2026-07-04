@@ -20,6 +20,8 @@ PROCESSING_REACTION_GLYPH = "\U0001F440"
 PROCESSING_REACTION_UNSUPPORTED_REASON = (
     "Microsoft Graph reaction route or delegated token is unavailable"
 )
+MISSING_GRAPH_ROUTE_REASON = "missing_graph_chat_route"
+MISSING_DELEGATED_GRAPH_TOKEN_REASON = "missing_delegated_graph_token"
 
 
 @dataclass(frozen=True)
@@ -30,11 +32,28 @@ class TeamsRoleIdentity:
     display_name: str
 
 
+@dataclass(frozen=True)
+class ProcessingReactionRoute:
+    url: str
+    route_type: str
+    message_id: str
+
+
+@dataclass(frozen=True)
+class ProcessingReactionDiagnostics:
+    route_type: str
+    message_id: str | None
+    unsupported_reason: str | None
+
+
 class BotFrameworkTransport(Protocol):
     def post_form(self, url: str, payload: dict[str, str]) -> dict[str, object]:
         ...
 
     def post_json(self, url: str, payload: dict[str, object], *, authorization: str) -> dict[str, object]:
+        ...
+
+    def put_json(self, url: str, payload: dict[str, object], *, authorization: str) -> dict[str, object]:
         ...
 
 
@@ -60,6 +79,18 @@ class UrlLibBotFrameworkTransport:
             },
         )
         return _read_json_response(request, error_label="Bot Framework message send")
+
+    def put_json(self, url: str, payload: dict[str, object], *, authorization: str) -> dict[str, object]:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            method="PUT",
+            headers={
+                "Authorization": authorization,
+                "Content-Type": "application/json; charset=utf-8",
+            },
+        )
+        return _read_json_response(request, error_label="Bot Framework message update")
 
 
 class TeamsReplySender:
@@ -95,7 +126,7 @@ class TeamsReplySender:
         if not isinstance(conversation, dict):
             raise TeamsDeliveryError("Teams activity conversation is missing")
         conversation_id = _required_string(conversation.get("id"), "Teams conversation id")
-        reply_to_id = activity.get("replyToId") or activity.get("id")
+        reply_to_id = activity.get("replyToId") or activity.get("bot_framework_activity_id") or activity.get("id")
         reply_to_id = str(reply_to_id) if isinstance(reply_to_id, str) and reply_to_id else None
         token = self._token(identity)
         target_conversation_id = _teams_thread_conversation_id(conversation_id, reply_to_id)
@@ -113,6 +144,67 @@ class TeamsReplySender:
         response = self.transport.post_json(endpoint, payload, authorization=f"Bearer {token}")
         return _delivery_id(response, endpoint + text_markdown)
 
+    def send_decision_card(
+        self,
+        *,
+        role_id: str,
+        activity: dict[str, object],
+        card: dict[str, object],
+    ) -> str:
+        identity = _identity_from_env(role_id)
+        service_url = _required_string(activity.get("serviceUrl"), "Teams activity serviceUrl").rstrip("/")
+        conversation = activity.get("conversation")
+        if not isinstance(conversation, dict):
+            raise TeamsDeliveryError("Teams activity conversation is missing")
+        conversation_id = _required_string(conversation.get("id"), "Teams conversation id")
+        token = self._token(identity)
+        endpoint = service_url + f"/v3/conversations/{urllib.parse.quote(conversation_id, safe='')}/activities"
+        payload: dict[str, object] = {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": card,
+                }
+            ],
+        }
+        response = self.transport.post_json(endpoint, payload, authorization=f"Bearer {token}")
+        return _delivery_id(response, endpoint + json.dumps(card, sort_keys=True))
+
+    def update_decision_card(
+        self,
+        *,
+        role_id: str,
+        activity: dict[str, object],
+        activity_id: str,
+        card: dict[str, object],
+    ) -> str:
+        identity = _identity_from_env(role_id)
+        service_url = _required_string(activity.get("serviceUrl"), "Teams activity serviceUrl").rstrip("/")
+        conversation = activity.get("conversation")
+        if not isinstance(conversation, dict):
+            raise TeamsDeliveryError("Teams activity conversation is missing")
+        conversation_id = _required_string(conversation.get("id"), "Teams conversation id")
+        activity_id = _required_string(activity_id, "Teams activity id")
+        token = self._token(identity)
+        endpoint = (
+            service_url
+            + f"/v3/conversations/{urllib.parse.quote(conversation_id, safe='')}/activities/"
+            + urllib.parse.quote(activity_id, safe="")
+        )
+        payload: dict[str, object] = {
+            "type": "message",
+            "id": activity_id,
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": card,
+                }
+            ],
+        }
+        response = self.transport.put_json(endpoint, payload, authorization=f"Bearer {token}")
+        return _delivery_id(response, endpoint + json.dumps(card, sort_keys=True))
+
     def add_processing_reaction(
         self,
         *,
@@ -125,11 +217,11 @@ class TeamsReplySender:
         if route is None or token is None:
             return None
         self.transport.post_json(
-            route,
+            route.url,
             {"reactionType": PROCESSING_REACTION_GLYPH},
             authorization=f"Bearer {token}",
         )
-        delivery_seed = route + PROCESSING_REACTION_GLYPH
+        delivery_seed = route.url + PROCESSING_REACTION_GLYPH
         return f"graph-setReaction-{hashlib.sha256(delivery_seed.encode('utf-8')).hexdigest()[:16]}"
 
     def _token(self, identity: TeamsRoleIdentity) -> str:
@@ -236,21 +328,63 @@ def _graph_delegated_token_from_env(transport: BotFrameworkTransport, *, tenant_
     return None
 
 
-def _graph_reaction_route(activity: dict[str, object]) -> str | None:
+def processing_reaction_diagnostics(activity: dict[str, object]) -> ProcessingReactionDiagnostics:
+    route = _graph_reaction_route(activity)
+    if route is not None:
+        return ProcessingReactionDiagnostics(
+            route_type=route.route_type,
+            message_id=route.message_id,
+            unsupported_reason=None,
+        )
+    message_id = _activity_string(activity, "id")
+    conversation = activity.get("conversation")
+    conversation_type = ""
+    if isinstance(conversation, dict):
+        conversation_type = (_string_value(conversation.get("conversationType")) or "").casefold()
+    if conversation_type == "personal":
+        return ProcessingReactionDiagnostics(
+            route_type="none",
+            message_id=message_id,
+            unsupported_reason=MISSING_GRAPH_ROUTE_REASON,
+        )
+    return ProcessingReactionDiagnostics(
+        route_type="none",
+        message_id=message_id,
+        unsupported_reason="missing_graph_route",
+    )
+
+
+def _graph_reaction_route(activity: dict[str, object]) -> ProcessingReactionRoute | None:
     message_id = _activity_string(activity, "id")
     if message_id is None:
         return None
     base_url = (os.environ.get("AGENTIC_MESH_GRAPH_BASE_URL") or "https://graph.microsoft.com/v1.0").rstrip("/")
     channel_data = activity.get("channelData") if isinstance(activity.get("channelData"), dict) else {}
+    conversation = activity.get("conversation")
+    conversation_type = ""
+    if isinstance(conversation, dict):
+        conversation_type = (_string_value(conversation.get("conversationType")) or "").casefold()
+    has_explicit_chat_id = (
+        _activity_string(activity, "graph_chat_id") is not None
+        or _activity_string(activity, "chat_id") is not None
+    )
     team_id = (
         _nested_string(channel_data, "team", "id")
         or _activity_string(activity, "team_id")
-        or os.environ.get("AGENTIC_MESH_PROJECT_TEAM_ID")
+        or (
+            os.environ.get("AGENTIC_MESH_PROJECT_TEAM_ID")
+            if conversation_type != "personal" and not has_explicit_chat_id
+            else None
+        )
     )
     channel_id = (
         _nested_string(channel_data, "channel", "id")
         or _activity_string(activity, "channel_id")
-        or os.environ.get("AGENTIC_MESH_PROJECT_CHANNEL_ID")
+        or (
+            os.environ.get("AGENTIC_MESH_PROJECT_CHANNEL_ID")
+            if conversation_type != "personal" and not has_explicit_chat_id
+            else None
+        )
     )
     reply_to_id = _activity_string(activity, "replyToId")
     if team_id and channel_id:
@@ -259,21 +393,46 @@ def _graph_reaction_route(activity: dict[str, object]) -> str | None:
         message = urllib.parse.quote(message_id.strip(), safe="")
         if reply_to_id and reply_to_id != message_id:
             parent = urllib.parse.quote(reply_to_id.strip(), safe="")
-            return f"{base_url}/teams/{team}/channels/{channel}/messages/{parent}/replies/{message}/setReaction"
-        return f"{base_url}/teams/{team}/channels/{channel}/messages/{message}/setReaction"
-    conversation = activity.get("conversation")
-    chat_id = _activity_string(activity, "chat_id")
-    if chat_id is None and isinstance(conversation, dict):
-        chat_id = _string_value(conversation.get("id"))
+            return ProcessingReactionRoute(
+                url=f"{base_url}/teams/{team}/channels/{channel}/messages/{parent}/replies/{message}/setReaction",
+                route_type="channel_reply",
+                message_id=message_id,
+            )
+        return ProcessingReactionRoute(
+            url=f"{base_url}/teams/{team}/channels/{channel}/messages/{message}/setReaction",
+            route_type="channel",
+            message_id=message_id,
+        )
+    chat_id = _graph_chat_id(activity)
     if chat_id:
         chat = urllib.parse.quote(chat_id.strip(), safe="")
         message = urllib.parse.quote(message_id.strip(), safe="")
-        return f"{base_url}/chats/{chat}/messages/{message}/setReaction"
+        return ProcessingReactionRoute(
+            url=f"{base_url}/chats/{chat}/messages/{message}/setReaction",
+            route_type="chat",
+            message_id=message_id,
+        )
     return None
 
 
 def _activity_string(activity: dict[str, object], key: str) -> str | None:
     return _string_value(activity.get(key))
+
+
+def _graph_chat_id(activity: dict[str, object]) -> str | None:
+    explicit_chat_id = _activity_string(activity, "graph_chat_id") or _activity_string(activity, "chat_id")
+    if explicit_chat_id:
+        return explicit_chat_id
+    conversation = activity.get("conversation")
+    if not isinstance(conversation, dict):
+        return None
+    conversation_id = _string_value(conversation.get("id"))
+    if conversation_id is None:
+        return None
+    conversation_type = (_string_value(conversation.get("conversationType")) or "").casefold()
+    if conversation_type == "personal" and conversation_id.startswith("a:"):
+        return None
+    return conversation_id
 
 
 def _nested_string(data: object, *path: str) -> str | None:

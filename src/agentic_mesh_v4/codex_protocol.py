@@ -213,11 +213,11 @@ class CodexAppServerClient:
             return str(turn["id"])
         return None
 
-    def steer_turn(self, *, thread_id: str, text: str, expected_turn_id: str | None = None) -> dict[str, Any]:
-        params: dict[str, Any] = {"threadId": thread_id, "input": [{"type": "text", "text": text}]}
-        if expected_turn_id:
-            params["expectedTurnId"] = expected_turn_id
-        return self._request("turn/steer", params)
+    def steer_turn(self, *, thread_id: str, text: str) -> dict[str, Any]:
+        return self._request(
+            "turn/steer",
+            {"threadId": thread_id, "input": [{"type": "text", "text": text}]},
+        )
 
     def interrupt_turn(self, *, thread_id: str, turn_id: str) -> dict[str, Any]:
         return self._request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})

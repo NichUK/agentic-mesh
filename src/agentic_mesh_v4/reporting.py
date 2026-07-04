@@ -12,7 +12,26 @@ def render_status(snapshot: dict[str, Any]) -> str:
     queued = [item for item in messages if item["state"] == "queued"]
     failed = [item for item in messages if item["state"] in {"failed", "dead_lettered"}]
     completed = [item for item in messages if item["state"] == "completed"]
+    completion_attention = snapshot.get("completion_attention") or []
+    decision_attention = snapshot.get("decision_attention") or []
+    decision_records = snapshot.get("decision_records") or []
+    active_owner_paths = snapshot.get("active_owner_paths") or []
+    blocked_handoff_attention = snapshot.get("blocked_handoff_attention") or []
+    handoff_conflicts = snapshot.get("handoff_conflicts") or []
+    document_merge_tasks = snapshot.get("document_merge_tasks") or []
+    document_write_warnings = snapshot.get("document_write_warnings") or []
+    preflight_attention = snapshot.get("preflight_attention") or []
+    evidence_contract_warnings = snapshot.get("evidence_contract_warnings") or []
+    evidence_contract_failures = snapshot.get("evidence_contract_failures") or []
+    watchdog_findings = snapshot.get("watchdog_findings") or []
+    watchdog_attention = snapshot.get("watchdog_attention") or [
+        item for item in watchdog_findings if str(item.get("severity") or "") == "high"
+    ]
+    planned_not_running = snapshot.get("planned_not_running") or snapshot.get("planned_not_dispatched") or []
+    not_running = snapshot.get("not_running") or []
+    watchdog_sweep_runs = snapshot.get("watchdog_sweep_runs") or []
     work_items = snapshot.get("work_items") or []
+    handoffs = snapshot.get("handoffs") or []
     artifacts = snapshot.get("artifacts") or []
     active_work = [
         item
@@ -27,17 +46,38 @@ def render_status(snapshot: dict[str, Any]) -> str:
             _nav(),
             "<h2>Active Work Items And Human/Agent Waits</h2>",
             _work_item_table(active_work, artifacts, empty="No active work items."),
+            "<h2>Active Owner Paths</h2>",
+            _active_owner_path_table(active_owner_paths, empty="No active handoff owner paths."),
+            "<h2>Watchdog Sweeps</h2>",
+            _watchdog_sweep_table(watchdog_sweep_runs, empty="No watchdog sweeps recorded."),
+            "<h2>Planned / Not Running</h2>",
+            _watchdog_finding_table(planned_not_running, empty="No planned work missing an active owner path."),
+            "<h2>Not Running Handoffs</h2>",
+            _watchdog_finding_table(not_running, empty="No not-running handoff/work findings."),
             "<h2>Queue</h2>",
             _message_table(queued, empty="No queued messages."),
+            "<h2>Active Handoffs</h2>",
+            _handoff_table(_active_handoffs(handoffs), empty="No active handoffs."),
             "<h2>Active Agent Turns</h2>",
             _message_table(active, empty="No active turns."),
             "<h2>Attention Needed</h2>",
+            _document_merge_task_table(document_merge_tasks, empty="No document merge tasks."),
+            _document_warning_table(document_write_warnings, empty="No document write warnings."),
+            _preflight_attention_table(preflight_attention, empty="No role artifact preflight failures."),
+            _evidence_contract_table(evidence_contract_warnings, empty="No evidence contract warnings."),
+            _evidence_contract_table(evidence_contract_failures, empty="No evidence contract failures."),
+            _blocked_handoff_table(blocked_handoff_attention, empty="No blocked handoffs."),
+            _handoff_conflict_table(handoff_conflicts, empty="No handoff conflicts."),
+            _decision_attention_table(decision_attention, empty="No pending human decisions."),
+            _completion_attention_table(completion_attention, empty="No completion diagnostics."),
+            _watchdog_finding_table(watchdog_attention, empty="No severe watchdog findings."),
             _message_table(failed, empty="No failed messages."),
             "<h2>Recent Completions</h2>",
             _message_table(completed[-20:], empty="No completions recorded."),
+            "<h2>Recent Human Decisions</h2>",
+            _decision_history_table(decision_records[:20], empty="No decisions recorded."),
         ],
     )
-
 
 def render_agents(snapshot: dict[str, Any]) -> str:
     rows = []
@@ -54,8 +94,7 @@ def render_agents(snapshot: dict[str, Any]) -> str:
             current_cell = (
                 f"<a href=\"/status#{html.escape(str(current.get('message_id') or ''))}\">"
                 f"{html.escape(_short_id(str(current.get('message_id') or '')))}</a>"
-                f"<br><small>{html.escape(_state_label(current))}</small>"
-                f"{_reason_line(current)}"
+                f"<br><small>{html.escape(str(current.get('state') or ''))}</small>"
                 f"<br>{html.escape(_truncate(str(current.get('text') or ''), 120))}"
             )
         else:
@@ -88,45 +127,60 @@ def render_agent_thread(
     events: list[dict[str, Any]],
     messages: list[dict[str, Any]] | None = None,
 ) -> str:
-    messages = messages or []
     message_rows = []
-    for item in messages:
+    for item in messages or []:
         message_rows.append(
             "<tr>"
-            f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
-            f"<td>{html.escape(_state_label(item))}{_reason_line(item)}</td>"
-            f"<td><code>{html.escape(str(item.get('message_id') or ''))}</code></td>"
-            f"<td>{html.escape(str(item.get('text') or ''))}</td>"
+            f"<td>{html.escape(item.get('updated_at') or '')}</td>"
+            f"<td>{html.escape(item.get('state') or '')}</td>"
+            f"<td>{html.escape(item.get('message_id') or '')}</td>"
+            f"<td>{html.escape(item.get('text') or '')}</td>"
             "</tr>"
         )
     rows = []
-    for item in reversed(events):
-        payload = str(item.get("payload_json") or "{}")
+    for item in events:
         rows.append(
             "<tr>"
-            f"<td>{html.escape(str(item.get('created_at') or ''))}</td>"
-            f"<td>{html.escape(str(item.get('event_type') or ''))}</td>"
-            f"<td><code>{html.escape(str(item.get('turn_id') or ''))}</code><br>"
-            f"<small><code>{html.escape(str(item.get('message_id') or ''))}</code></small></td>"
-            f"<td><pre>{html.escape(str(item.get('content') or ''))}</pre>"
-            f"<details><summary>Raw event</summary><pre>{html.escape(_pretty_json(payload))}</pre></details></td>"
+            f"<td>{html.escape(item['created_at'])}</td>"
+            f"<td>{html.escape(item['event_type'])}</td>"
+            f"<td>{html.escape(item.get('turn_id') or '')}</td>"
+            f"<td>{html.escape(item.get('content') or '')}</td>"
             "</tr>"
         )
+    event_lines = [
+        f"{html.escape(item.get('created_at') or '')} "
+        f"{html.escape(item.get('event_type') or '')}: "
+        f"{html.escape(item.get('content') or '')}"
+        for item in events
+    ]
     return _page(
         f"{role_id} Thread",
         [
             f"<h1>{html.escape(role_id)} Thread</h1>",
             _nav(),
-            '<p><a href="thread.json">Thread JSON</a>. <span id="live-status">Live push stream connected.</span></p>',
-            "<h2>Agent output</h2>",
-            f'<pre id="agent-output">{html.escape(_agent_output(events))}</pre>',
-            "<h2>Recent messages</h2>",
-            '<table><thead><tr><th>Updated</th><th>State</th><th>Message</th><th>Text</th></tr></thead>'
-            f"<tbody id=\"agent-messages\">{''.join(message_rows) or '<tr><td colspan=\"4\">No messages recorded for this role.</td></tr>'}</tbody></table>",
-            "<h2>Agent event stream</h2>",
-            '<table><thead><tr><th>Time</th><th>Event</th><th>Turn</th><th>Content</th></tr></thead>'
-            f"<tbody id=\"agent-events\">{''.join(rows) or '<tr><td colspan=\"4\">No stream events recorded.</td></tr>'}</tbody></table>",
-            _agent_thread_live_script(),
+            "<h2>Current Messages</h2>",
+            "<table><thead><tr><th>Updated</th><th>State</th><th>Message</th><th>Text</th></tr></thead>"
+            f"<tbody>{''.join(message_rows) or '<tr><td colspan=\"4\">No active messages.</td></tr>'}</tbody></table>",
+            "<h2>Live Output</h2>",
+            f"<pre id=\"agent-output\">{html.escape(chr(10).join(event_lines))}</pre>",
+            "<p id=\"stream-state\">Connecting live push stream...</p>",
+            "<table><thead><tr><th>Time</th><th>Event</th><th>Turn</th><th>Content</th></tr></thead>"
+            f"<tbody>{''.join(rows) or '<tr><td colspan=\"4\">No stream events recorded.</td></tr>'}</tbody></table>",
+            """
+<script>
+const streamState = document.getElementById("stream-state");
+const output = document.getElementById("agent-output");
+const events = new EventSource("thread/events");
+events.onopen = () => { streamState.textContent = "Live push stream connected."; };
+events.onmessage = (event) => {
+  if (!event.data) return;
+  const line = document.createElement("div");
+  line.textContent = event.data;
+  output.appendChild(line);
+};
+events.onerror = () => { streamState.textContent = "Live push stream disconnected; retrying."; };
+</script>
+""",
         ],
     )
 
@@ -159,12 +213,11 @@ def render_artifact(path: Path) -> str:
 def _message_table(items: list[dict[str, Any]], *, empty: str) -> str:
     rows = []
     for item in items:
-        role_id = str(item["target_role"])
         rows.append(
             f"<tr id=\"{html.escape(item['message_id'])}\">"
             f"<td>{html.escape(item['message_id'])}</td>"
-            f"<td><a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(role_id)}</a></td>"
-            f"<td>{html.escape(_state_label(item))}{_reason_line(item)}</td>"
+            f"<td>{html.escape(item['target_role'])}</td>"
+            f"<td>{html.escape(item['state'])}</td>"
             f"<td>{html.escape(item['text'])}</td>"
             f"<td>{html.escape(item['updated_at'])}</td>"
             "</tr>"
@@ -213,23 +266,388 @@ def _work_item_table(items: list[dict[str, Any]], artifacts: list[dict[str, Any]
     )
 
 
+def _active_handoffs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in items
+        if str(item.get("status") or "") in {"open", "accepted", "blocked"}
+    ]
+
+
+def _handoff_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        work_item_id = str(item.get("work_item_id") or "")
+        work_cell = (
+            f"<a href=\"/work-item/{html.escape(work_item_id)}\">{html.escape(work_item_id)}</a>"
+            if work_item_id
+            else ""
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('handoff_id') or ''))}</td>"
+            f"<td>{work_cell}</td>"
+            f"<td>{html.escape(str(item.get('from_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('to_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('status') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('reason') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('created_at') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"7\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Handoff</th><th>Work item</th><th>From</th><th>To</th>"
+        "<th>Status</th><th>Reason</th><th>Created</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _completion_attention_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        work_item_id = str(item.get("work_item_id") or "")
+        work_cell = (
+            f"<a href=\"/work-item/{html.escape(work_item_id)}\">{html.escape(work_item_id)}</a>"
+            if work_item_id
+            else ""
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('message_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('state') or ''))}</td>"
+            f"<td>{work_cell}</td>"
+            f"<td>{html.escape(str(item.get('missing_predicate') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('next_action') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"7\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Message</th><th>Role</th><th>State</th><th>Work item</th>"
+        "<th>Missing predicate</th><th>Next action</th><th>Updated</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _decision_attention_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        work_item_id = str(item.get("work_item_id") or "")
+        work_cell = (
+            f"<a href=\"/work-item/{html.escape(work_item_id)}\">{html.escape(work_item_id)}</a>"
+            if work_item_id
+            else ""
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('decision_id') or ''))}</td>"
+            f"<td>{work_cell}</td>"
+            f"<td>{html.escape(str(item.get('decision_type') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('title') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('authority_label') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('status') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('sla_state') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('reason') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('next_action') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"9\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Decision</th><th>Work item</th><th>Type</th><th>Title</th>"
+        "<th>Authority</th><th>Status</th><th>SLA</th><th>Reason</th><th>Next action</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _active_owner_path_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('work_item_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('handoff_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('from_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('to_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('state') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('next_action') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('conflict_count') or 0))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"7\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Work item</th><th>Handoff</th><th>From</th><th>To</th>"
+        "<th>State</th><th>Next action</th><th>Active paths</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _blocked_handoff_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('handoff_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('work_item_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('owner_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('reason') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('next_action') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"6\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Blocked handoff</th><th>Work item</th><th>Owner</th>"
+        "<th>Reason</th><th>Next action</th><th>Updated</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _document_merge_task_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        if str(item.get("state") or "") != "open":
+            continue
+        diagnostic = _json_object(str(item.get("diagnostic_json") or ""))
+        path = str(item.get("path") or "")
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('merge_task_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('work_item_id') or ''))}</td>"
+            f"<td><a href=\"/artifact-viewer/{html.escape(path)}\">{html.escape(path)}</a></td>"
+            f"<td>{html.escape(str(item.get('owner_role') or ''))}</td>"
+            f"<td>{html.escape(str(diagnostic.get('reason') or 'merge_required'))}</td>"
+            f"<td>{html.escape(_short_hash(str(item.get('current_sha256') or '')))}</td>"
+            f"<td>{html.escape(_short_hash(str(item.get('proposed_sha256') or '')))}</td>"
+            f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"8\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Document merge</th><th>Work item</th><th>Path</th><th>Owner</th>"
+        "<th>Reason</th><th>Current</th><th>Proposed</th><th>Updated</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _document_warning_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        diagnostic = _json_object(str(item.get("diagnostic_json") or ""))
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('warning_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('work_item_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('path') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('warning_type') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('severity') or ''))}</td>"
+            f"<td>{html.escape(str(diagnostic.get('comment_metadata_detail') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('created_at') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"7\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Document warning</th><th>Work item</th><th>Path</th><th>Type</th>"
+        "<th>Severity</th><th>Detail</th><th>Created</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _preflight_attention_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('message_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('role_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('service_name') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('work_item_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('check_name') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('status') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('canonical_path') or item.get('required_path') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('stderr_excerpt') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('remediation') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"9\">{html.escape(empty)}</td></tr>")
+    return (
+        "<h3>Role Artifact Preflight</h3>"
+        "<table><thead><tr><th>Message</th><th>Role</th><th>Service</th><th>Work item</th>"
+        "<th>Check</th><th>Status</th><th>Path</th><th>Error</th><th>Remediation</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _evidence_contract_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('contract_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('message_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('work_item_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('owner_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('lifecycle_state') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('predicate') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('path') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('remediation') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"8\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Evidence contract</th><th>Message</th><th>Work item</th><th>Owner</th>"
+        "<th>Lifecycle</th><th>Predicate</th><th>Path</th><th>Remediation</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _handoff_conflict_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('work_item_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('handoff_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('to_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('conflict_count') or 0))}</td>"
+            f"<td>{html.escape(', '.join(str(value) for value in item.get('conflict_handoff_ids') or []))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"5\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Work item</th><th>Tentative handoff</th><th>Tentative owner</th>"
+        "<th>Conflict count</th><th>Active handoffs</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _decision_history_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('decision_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('work_item_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('decision_type') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('status') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('selected_option') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('responder_ref') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"7\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Decision</th><th>Work item</th><th>Type</th><th>Status</th>"
+        "<th>Selected</th><th>Responder</th><th>Updated</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _watchdog_finding_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items:
+        work_item_id = str(item.get("work_item_id") or "")
+        work_cell = (
+            f"<a href=\"/work-item/{html.escape(work_item_id)}\">{html.escape(work_item_id)}</a>"
+            if work_item_id
+            else ""
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('finding_key') or ''))}<br><small>{html.escape(str(item.get('finding_type') or ''))}</small></td>"
+            f"<td>{html.escape(str(item.get('severity') or ''))}</td>"
+            f"<td>{work_cell}</td>"
+            f"<td>{html.escape(str(item.get('handoff_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('message_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('owner_role') or item.get('target_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('target_role') or ''))}</td>"
+            f"<td>{html.escape(_age_label(item))}</td>"
+            f"<td>{html.escape(str(item.get('next_action') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"10\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Finding</th><th>Severity</th><th>Work item</th><th>Handoff</th><th>Message</th>"
+        "<th>Owner/role</th><th>Target</th><th>Age</th><th>Next action</th><th>Updated</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _watchdog_sweep_table(items: list[dict[str, Any]], *, empty: str) -> str:
+    rows = []
+    for item in items[:10]:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('sweep_run_id') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('initiator_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('mode') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('status') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('started_at') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('completed_at') or ''))}</td>"
+            f"<td><pre>{html.escape(_pretty_json(str(item.get('summary_json') or '{}')))}</pre></td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f"<tr><td colspan=\"7\">{html.escape(empty)}</td></tr>")
+    return (
+        "<table><thead><tr><th>Sweep</th><th>Initiator</th><th>Mode</th><th>Status</th>"
+        "<th>Started</th><th>Completed</th><th>Summary</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _age_label(item: dict[str, Any]) -> str:
+    age = item.get("age_seconds")
+    threshold = item.get("threshold_seconds")
+    if age is None:
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        age = evidence.get("age_seconds")
+        threshold = evidence.get("threshold_seconds")
+    if age is None:
+        return ""
+    if threshold is None:
+        return f"{age}s"
+    return f"{age}s / threshold {threshold}s"
+
+
+
+
+def _pretty_json(value: str) -> str:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return value
+    return json.dumps(parsed, indent=2, sort_keys=True)
+
+def _short_hash(value: str) -> str:
+    return value[:12] if value else ""
+
+
+def _json_object(value: str) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _nav() -> str:
     return '<nav><a href="/status">Status</a> <a href="/agents">Agents</a> <a href="/status.json">JSON</a></nav>'
-
-
-def _state_label(item: dict[str, Any]) -> str:
-    display_state = str(item.get("display_state") or item.get("state") or "")
-    raw_state = str(item.get("state") or "")
-    if display_state and raw_state and display_state != raw_state:
-        return f"{display_state} (raw: {raw_state})"
-    return display_state or raw_state
-
-
-def _reason_line(item: dict[str, Any]) -> str:
-    reason = str(item.get("display_reason") or "")
-    if not reason:
-        return ""
-    return f"<br><small>{html.escape(reason)}</small>"
 
 
 def _short_id(value: str) -> str:
@@ -242,146 +660,6 @@ def _truncate(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 1].rstrip() + "…"
-
-
-def _pretty_json(value: str) -> str:
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return value
-    return json.dumps(parsed, indent=2, sort_keys=True)
-
-
-def _agent_thread_live_script() -> str:
-    return r"""
-<script>
-const eventSource = new EventSource("thread/events");
-
-function setText(element, value) {
-  element.textContent = value == null ? "" : String(value);
-  return element;
-}
-
-function makeCell(value, tag = "td") {
-  return setText(document.createElement(tag), value);
-}
-
-function makeCode(value) {
-  const code = document.createElement("code");
-  return setText(code, value);
-}
-
-function makePre(value) {
-  const pre = document.createElement("pre");
-  return setText(pre, value);
-}
-
-function renderMessages(messages) {
-  const body = document.getElementById("agent-messages");
-  body.replaceChildren();
-  if (!messages.length) {
-    const row = document.createElement("tr");
-    const cell = makeCell("No messages recorded for this role.");
-    cell.colSpan = 4;
-    row.appendChild(cell);
-    body.appendChild(row);
-    return;
-  }
-  for (const item of messages) {
-    const row = document.createElement("tr");
-    row.appendChild(makeCell(item.updated_at));
-    row.appendChild(makeCell(item.state));
-    const message = document.createElement("td");
-    message.appendChild(makeCode(item.message_id));
-    row.appendChild(message);
-    row.appendChild(makeCell(item.text));
-    body.appendChild(row);
-  }
-}
-
-function renderOutput(events) {
-  const output = document.getElementById("agent-output");
-  const chunks = [];
-  for (const item of events.slice().reverse()) {
-    if (item.event_type === "item/agentMessage/delta" && item.content) {
-      chunks.push(item.content);
-    }
-    if (item.event_type === "item/completed" && item.content && !chunks.length) {
-      chunks.push(item.content);
-    }
-  }
-  output.textContent = chunks.join("");
-}
-
-function renderEvents(events) {
-  const body = document.getElementById("agent-events");
-  body.replaceChildren();
-  if (!events.length) {
-    const row = document.createElement("tr");
-    const cell = makeCell("No stream events recorded.");
-    cell.colSpan = 4;
-    row.appendChild(cell);
-    body.appendChild(row);
-    return;
-  }
-  for (const item of events.slice().reverse()) {
-    const row = document.createElement("tr");
-    row.appendChild(makeCell(item.created_at));
-    row.appendChild(makeCell(item.event_type));
-    const turn = document.createElement("td");
-    turn.appendChild(makeCode(item.turn_id || ""));
-    turn.appendChild(document.createElement("br"));
-    const small = document.createElement("small");
-    small.appendChild(makeCode(item.message_id || ""));
-    turn.appendChild(small);
-    row.appendChild(turn);
-
-    const content = document.createElement("td");
-    content.appendChild(makePre(item.content || ""));
-    const details = document.createElement("details");
-    const summary = document.createElement("summary");
-    summary.textContent = "Raw event";
-    details.appendChild(summary);
-    let raw = item.payload_json || "{}";
-    try {
-      raw = JSON.stringify(JSON.parse(raw), null, 2);
-    } catch (_) {}
-    details.appendChild(makePre(raw));
-    content.appendChild(details);
-    row.appendChild(content);
-    body.appendChild(row);
-  }
-}
-
-eventSource.addEventListener("snapshot", (event) => {
-  const snapshot = JSON.parse(event.data);
-  renderOutput(snapshot.events || []);
-  renderMessages(snapshot.messages || []);
-  renderEvents(snapshot.events || []);
-});
-
-eventSource.onerror = () => {
-  const marker = document.getElementById("live-status");
-  if (marker) marker.textContent = "Live stream disconnected; reload to reconnect.";
-};
-</script>
-"""
-
-
-def _agent_output(events: list[dict[str, Any]]) -> str:
-    deltas = [
-        str(item.get("content") or "")
-        for item in reversed(events)
-        if item.get("event_type") == "item/agentMessage/delta" and item.get("content")
-    ]
-    if deltas:
-        return "".join(deltas)
-    completed = [
-        str(item.get("content") or "")
-        for item in reversed(events)
-        if item.get("event_type") == "item/completed" and item.get("content")
-    ]
-    return "\n".join(item for item in completed if item)
 
 
 def _page(title: str, parts: list[str]) -> str:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -15,12 +14,15 @@ from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
 from agentic_mesh_v4.codex_protocol import WebSocketTransport
 from agentic_mesh_v4.db import V4Database
+from agentic_mesh_v4.decision_records import DecisionRecordError
+from agentic_mesh_v4.decision_records import resolve_decision_and_update_card
 from agentic_mesh_v4.reporting import render_agent_thread
 from agentic_mesh_v4.reporting import render_agents
 from agentic_mesh_v4.reporting import render_artifact
 from agentic_mesh_v4.reporting import render_status
 from agentic_mesh_v4.reporting import render_work_item
 from agentic_mesh_v4.runtime import V4Runtime
+from agentic_mesh_v4.teams_delivery import TeamsReplySender
 
 
 class V4Handler(BaseHTTPRequestHandler):
@@ -32,10 +34,6 @@ class V4Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/healthz":
             self._json({"status": "ok", "runtime": "agentic_mesh_v4"})
-            return
-        if path.startswith("/agent/") and path.endswith("/thread/events"):
-            role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread/events")).strip("/")
-            self._agent_thread_events(role_id)
             return
         db = V4Database(self.db_path)
         try:
@@ -51,23 +49,18 @@ class V4Handler(BaseHTTPRequestHandler):
                 return
             if path.startswith("/agent/") and path.endswith("/thread"):
                 role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread")).strip("/")
-                self._html(
-                    render_agent_thread(
-                        role_id=role_id,
-                        events=db.list_agent_events_for_role(role_id=role_id, limit=250),
-                        messages=db.list_messages_for_role(role_id=role_id, limit=20),
+                events = [
+                    dict(row)
+                    for row in db.connection.execute(
+                        """
+                        SELECT * FROM agent_events
+                        WHERE role_instance_id LIKE ?
+                        ORDER BY created_at DESC LIMIT 200
+                        """,
+                        (f"%.{role_id}.%",),
                     )
-                )
-                return
-            if path.startswith("/agent/") and path.endswith("/thread.json"):
-                role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread.json")).strip("/")
-                self._json(
-                    {
-                        "role_id": role_id,
-                        "messages": db.list_messages_for_role(role_id=role_id, limit=20),
-                        "events": db.list_agent_events_for_role(role_id=role_id, limit=250),
-                    }
-                )
+                ]
+                self._html(render_agent_thread(role_id, events))
                 return
             if path.startswith("/work-item/"):
                 work_item_id = unquote(path.removeprefix("/work-item/")).strip("/")
@@ -93,6 +86,9 @@ class V4Handler(BaseHTTPRequestHandler):
         if path == "/teams/activity":
             self._handle_teams_activity()
             return
+        if path == "/teams/decision-callback":
+            self._handle_decision_callback()
+            return
         if path == "/api/messages":
             self._handle_api_message()
             return
@@ -103,6 +99,9 @@ class V4Handler(BaseHTTPRequestHandler):
 
     def _handle_teams_activity(self) -> None:
         payload = _normalise_teams_activity_payload(self._read_json())
+        if _is_decision_callback_activity(payload):
+            self._process_decision_callback(payload)
+            return
         text = str(payload.get("text") or payload.get("message") or "")
         target_role = _target_role(payload, self.project_config)
         conversation_ref = str(payload.get("conversation_ref") or payload.get("conversation", {}).get("id") or "")
@@ -127,6 +126,55 @@ class V4Handler(BaseHTTPRequestHandler):
         finally:
             db.close()
         self._json({"message_id": message_id, "target_role": target_role, "status": "queued"}, status=HTTPStatus.ACCEPTED)
+
+    def _handle_decision_callback(self) -> None:
+        payload = self._read_json()
+        self._process_decision_callback(payload)
+
+    def _process_decision_callback(self, payload: dict[str, object]) -> None:
+        value = payload.get("value") if isinstance(payload.get("value"), dict) else payload
+        if not isinstance(value, dict):
+            value = payload
+        decision_id = _string_value(value.get("decision_id"))
+        selected_option = _string_value(value.get("selected_option") or value.get("option"))
+        if decision_id is None or selected_option is None:
+            self._json({"status": "failed", "error": "decision_id and selected_option are required"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        responder_ref = (
+            _string_value(value.get("responder_ref"))
+            or _nested_string(payload.get("from"), "aadObjectId")
+            or _nested_string(payload.get("from"), "id")
+            or _string_value(payload.get("from"))
+            or "unknown"
+        )
+        idempotency_key = (
+            _string_value(value.get("idempotency_key"))
+            or _string_value(payload.get("replyToId"))
+            or _string_value(payload.get("id"))
+            or f"{decision_id}:{responder_ref}:{selected_option}"
+        )
+        db = V4Database(self.db_path)
+        try:
+            db.migrate()
+            try:
+                result = resolve_decision_and_update_card(
+                    db=db,
+                    decision_id=decision_id,
+                    responder_ref=responder_ref,
+                    selected_option=selected_option,
+                    sender=TeamsReplySender.from_env(),
+                    rationale=str(value.get("rationale") or ""),
+                    idempotency_key=idempotency_key,
+                    delivery_id=_string_value(value.get("delivery_id")),
+                    raw_payload=payload,
+                )
+            except DecisionRecordError as exc:
+                self._json({"status": "failed", "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+        finally:
+            db.close()
+        status = HTTPStatus.OK if result.get("state") in {"accepted", "callback_failed"} else HTTPStatus.ACCEPTED
+        self._json(result, status=status)
 
     def _handle_api_message(self) -> None:
         payload = self._read_json()
@@ -177,40 +225,6 @@ class V4Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _agent_thread_events(self, role_id: str) -> None:
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-        previous_payload = ""
-        deadline = time.monotonic() + 1800
-        while time.monotonic() < deadline:
-            db = V4Database(self.db_path)
-            try:
-                db.migrate()
-                payload = json.dumps(
-                    {
-                        "role_id": role_id,
-                        "messages": db.list_messages_for_role(role_id=role_id, limit=20),
-                        "events": db.list_agent_events_for_role(role_id=role_id, limit=250),
-                    },
-                    sort_keys=True,
-                )
-            finally:
-                db.close()
-            try:
-                if payload != previous_payload:
-                    self.wfile.write(f"event: snapshot\ndata: {payload}\n\n".encode("utf-8"))
-                    self.wfile.flush()
-                    previous_payload = payload
-                else:
-                    self.wfile.write(b": keepalive\n\n")
-                    self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                return
-            time.sleep(2)
-
 
 def serve(
     *,
@@ -247,6 +261,46 @@ def _target_role(payload: dict[str, object], project_config: V4ProjectConfig) ->
         if role_id in text or role_id.replace("-", " ") in text:
             return role_id
     return "project-manager"
+
+
+def _is_decision_callback_activity(payload: dict[str, object]) -> bool:
+    value = payload.get("value") if isinstance(payload.get("value"), dict) else payload
+    if not isinstance(value, dict):
+        return False
+    if value.get("action") == "decision_callback":
+        return True
+    return "decision_id" in value and ("selected_option" in value or "option" in value)
+
+
+def _normalise_teams_activity_payload(payload: dict[str, object]) -> dict[str, object]:
+    normalised = dict(payload)
+    conversation = normalised.get("conversation")
+    if not isinstance(conversation, dict):
+        return normalised
+    if str(conversation.get("conversationType") or "").casefold() != "personal":
+        return normalised
+    graph_chat_id = (
+        _string_value(normalised.get("graph_chat_id"))
+        or _string_value(normalised.get("chat_id"))
+        or _nested_string(normalised.get("channelData"), "graph", "chatId")
+        or _nested_string(normalised.get("channelData"), "graph", "chat_id")
+        or _nested_string(normalised.get("channelData"), "graphChatId")
+    )
+    graph_message_id = (
+        _string_value(normalised.get("graph_chat_message_id"))
+        or _string_value(normalised.get("graph_message_id"))
+        or _string_value(normalised.get("chatMessageId"))
+        or _nested_string(normalised.get("channelData"), "graph", "chatMessageId")
+        or _nested_string(normalised.get("channelData"), "graph", "messageId")
+        or _nested_string(normalised.get("channelData"), "graphChatMessageId")
+    )
+    if graph_chat_id and graph_message_id:
+        original_activity_id = _string_value(normalised.get("id"))
+        if original_activity_id and original_activity_id != graph_message_id:
+            normalised.setdefault("bot_framework_activity_id", original_activity_id)
+        normalised["graph_chat_id"] = graph_chat_id
+        normalised["id"] = graph_message_id
+    return normalised
 
 
 def _target_role_from_recipient(payload: dict[str, object], project_config: V4ProjectConfig) -> str | None:

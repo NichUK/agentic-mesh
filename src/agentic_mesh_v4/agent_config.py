@@ -58,16 +58,6 @@ Role tool-profile boundary:
 Ask sponsors or stakeholders when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitments change.
 
 Do not claim a durable action happened unless the corresponding tool call or evidence exists.
-
-Runtime path map:
-- `/mesh/agent` is your mounted role identity/configuration folder. It contains generated role instructions, token/config metadata, and container identity. Treat it as configuration, not as a workspace. Do not create Git repositories, work trees, build outputs, or project artifacts there.
-- `/mesh/agent-workspace` is your writable current working directory and scratch area. It is safe for Codex runtime metadata, temporary notes, local scratch files, and short-lived command output. Do not treat it as the canonical project document library.
-- `/mesh/workspaces/agentic-mesh` is the mounted target source checkout for Agentic Mesh code work. Use this path when your role is expected to inspect, modify, test, or release source code.
-- `/documents` is the canonical project document/artifact library. Work-item dossiers and durable project documentation belong here.
-- `/mesh/project` contains project configuration and runtime state. Use it for runtime/database/config inspection when your role authority allows it, but do not write canonical documents there.
-- `/mesh/worker-auth/codex` is the mounted Codex runtime home. It contains authentication, sessions, memories, and other provider metadata. Do not create project artifacts or source checkouts there. Writable runtime subdirectories such as `memories`, `tmp`, `sessions`, `cache`, and `shell_snapshots` should be prepared by container startup; if they are not writable, report a platform mount-permission defect with the exact path.
-
-Start every investigation by orienting yourself with `pwd` and the path map above. If `pwd` is `/mesh/agent`, report a platform configuration defect; role agents should normally start in `/mesh/agent-workspace`.
 """
 
 
@@ -201,6 +191,10 @@ def _authority_markdown(role: V4RoleConfig) -> str:
                 "- Authority level: `full`.",
                 "- Sandbox: `danger-full-access` unless project config narrows it.",
                 "- You may perform host, Git, Docker, SSH, deployment, and operational actions when they are within your role and project instructions.",
+                "- `/mesh/agent` is your mounted role identity/configuration folder; do not use it as a working tree.",
+                "- `/mesh/agent-workspace` is your writable current working directory for role-local scratch files, temporary notes, and command context.",
+                "- If `pwd` is `/mesh/agent`, report a platform configuration defect before doing role work.",
+                "- `/mesh/worker-auth/codex` is the mounted Codex runtime home. It contains authentication, sessions, memories, and other provider metadata. Do not create project artifacts or source checkouts there. If expected runtime subdirectories are not writable, report a platform mount-permission defect with the exact path.",
                 "- For approved implementation or operational work, assume `/mesh/workspaces/agentic-mesh`, `/documents`, and `/mesh/project` are writable unless a shell check proves otherwise.",
                 "- If you believe a writable mount is unavailable, run a minimal write/access probe before reporting a blocker; do not infer read-only status from missing safe-output tools or from the read-only `/mesh/agent` configuration mount.",
                 "- The project document library is mounted at `/documents`.",
