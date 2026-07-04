@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -730,18 +731,29 @@ class V4Database:
         ).fetchone()
         return _row_dict(row) if row is not None else None
 
-    def requeue_active_messages_for_role(self, *, target_role: str, summary: str) -> int:
-        rows = list(
-            self.connection.execute(
-                """
-                SELECT message_id, correlation_id, locked_by
-                FROM message_queue
-                WHERE target_role=? AND state IN ('delivering', 'active_turn')
-                ORDER BY updated_at ASC
-                """,
-                (target_role,),
+    def requeue_active_messages_for_role(
+        self,
+        *,
+        target_role: str,
+        summary: str,
+        stale_after_seconds: float | None = None,
+    ) -> int:
+        rows = [
+            row
+            for row in list(
+                self.connection.execute(
+                    """
+                    SELECT message_id, correlation_id, locked_by, updated_at
+                    FROM message_queue
+                    WHERE target_role=? AND state IN ('delivering', 'active_turn')
+                    ORDER BY updated_at ASC
+                    """,
+                    (target_role,),
+                )
             )
-        )
+            if stale_after_seconds is None
+            or _is_stale_timestamp(str(row["updated_at"]), stale_after_seconds=stale_after_seconds)
+        ]
         if not rows:
             return 0
         now = utc_now()
@@ -1525,6 +1537,16 @@ def _payload_hash(payload: dict[str, Any]) -> str:
 
 def _row_dict(row: dict[str, Any]) -> dict[str, Any]:
     return dict(row)
+
+
+def _is_stale_timestamp(value: str, *, stale_after_seconds: float) -> bool:
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return datetime.now(UTC) - timestamp >= timedelta(seconds=stale_after_seconds)
 
 
 def _completion_attention_items(
