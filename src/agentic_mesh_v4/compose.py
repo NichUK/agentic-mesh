@@ -50,13 +50,18 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    env_file:",
         "      - path: .env",
         "        required: false",
-        "    command: python -m agentic_mesh_v4.cli --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 --project-config /mesh/project/agentic-mesh/project-v4.yaml serve --host 0.0.0.0 --port 8100 --document-root /documents",
+        "    command: python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml serve --host 0.0.0.0 --port 8100 --document-root /documents",
         "    ports:",
         "      - \"${AGENTIC_MESH_V4_STATUS_PORT:-8100}:8100\"",
         "    environment:",
         "      AGENTIC_MESH_RUNTIME_VERSION: v4",
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
         "      PYTHONPATH: /mesh/system/src",
+        "      AGENTIC_MESH_DATABASE_HOST: ${AGENTIC_MESH_DATABASE_HOST:-agentic-mesh-postgres}",
+        "      AGENTIC_MESH_DATABASE_PORT: ${AGENTIC_MESH_DATABASE_PORT:-5432}",
+        "      AGENTIC_MESH_DATABASE_NAME: ${AGENTIC_MESH_DATABASE_NAME:-agentic_mesh_v4}",
+        "      AGENTIC_MESH_DATABASE_USER: ${AGENTIC_MESH_DATABASE_USER:-agentic_mesh}",
+        "      AGENTIC_MESH_DATABASE_PASSWORD_FILE: /mesh/project/state/secrets/postgres-password",
         "    volumes:",
         "      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro",
         "      - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents",
@@ -69,11 +74,16 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    env_file:",
         "      - path: .env",
         "        required: false",
-        "    command: python -m agentic_mesh_v4.cli --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 --project-config /mesh/project/agentic-mesh/project-v4.yaml dispatch-loop --agent-config-root /mesh/project/state/v4/agent-configs --compose-file /mesh/project/deploy/compose/docker-compose.v4.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --compose-env-file /mesh/project/deploy/compose/.env --compose-working-directory /mesh/project/deploy/compose --active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900} --dispatch-workers ${AGENTIC_MESH_DISPATCH_WORKERS:-8} --wake",
+        "    command: python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml dispatch-loop --agent-config-root /mesh/project/state/v4/agent-configs --compose-file /mesh/project/deploy/compose/docker-compose.v4.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --compose-env-file /mesh/project/deploy/compose/.env --compose-working-directory /mesh/project/deploy/compose --active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900} --dispatch-workers ${AGENTIC_MESH_DISPATCH_WORKERS:-8} --wake",
         "    environment:",
         "      AGENTIC_MESH_RUNTIME_VERSION: v4",
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
         "      PYTHONPATH: /mesh/system/src",
+        "      AGENTIC_MESH_DATABASE_HOST: ${AGENTIC_MESH_DATABASE_HOST:-agentic-mesh-postgres}",
+        "      AGENTIC_MESH_DATABASE_PORT: ${AGENTIC_MESH_DATABASE_PORT:-5432}",
+        "      AGENTIC_MESH_DATABASE_NAME: ${AGENTIC_MESH_DATABASE_NAME:-agentic_mesh_v4}",
+        "      AGENTIC_MESH_DATABASE_USER: ${AGENTIC_MESH_DATABASE_USER:-agentic_mesh}",
+        "      AGENTIC_MESH_DATABASE_PASSWORD_FILE: /mesh/project/state/secrets/postgres-password",
         "      AGENTIC_MESH_SYSTEM_HOST_PATH: ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}",
         "      AGENTIC_MESH_PROJECT_HOST_PATH: ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}",
         "      AGENTIC_MESH_WORKSPACE_HOST_PATH: ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}",
@@ -96,11 +106,16 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    env_file:",
         "      - path: .env",
         "        required: false",
-        "    command: python -m agentic_mesh_v4.cli --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 --project-config /mesh/project/agentic-mesh/project-v4.yaml watchdog-loop --compose-file /mesh/project/deploy/compose/docker-compose.v4.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --compose-env-file /mesh/project/deploy/compose/.env --compose-working-directory /mesh/project/deploy/compose --service runtime --service dispatcher --poll-interval-seconds ${AGENTIC_MESH_WATCHDOG_INTERVAL_SECONDS:-30}",
+        "    command: python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml watchdog-loop --compose-file /mesh/project/deploy/compose/docker-compose.v4.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --compose-env-file /mesh/project/deploy/compose/.env --compose-working-directory /mesh/project/deploy/compose --service runtime --service dispatcher --poll-interval-seconds ${AGENTIC_MESH_WATCHDOG_INTERVAL_SECONDS:-30}",
         "    environment:",
         "      AGENTIC_MESH_RUNTIME_VERSION: v4",
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
         "      PYTHONPATH: /mesh/system/src",
+        "      AGENTIC_MESH_DATABASE_HOST: ${AGENTIC_MESH_DATABASE_HOST:-agentic-mesh-postgres}",
+        "      AGENTIC_MESH_DATABASE_PORT: ${AGENTIC_MESH_DATABASE_PORT:-5432}",
+        "      AGENTIC_MESH_DATABASE_NAME: ${AGENTIC_MESH_DATABASE_NAME:-agentic_mesh_v4}",
+        "      AGENTIC_MESH_DATABASE_USER: ${AGENTIC_MESH_DATABASE_USER:-agentic_mesh}",
+        "      AGENTIC_MESH_DATABASE_PASSWORD_FILE: /mesh/project/state/secrets/postgres-password",
         "      AGENTIC_MESH_SYSTEM_HOST_PATH: ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}",
         "      AGENTIC_MESH_PROJECT_HOST_PATH: ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}",
         "      AGENTIC_MESH_WORKSPACE_HOST_PATH: ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}",
@@ -144,27 +159,26 @@ def validate_v4_compose(rendered: str) -> None:
 
 
 def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
-    writable_codex_subdirs = "memories tmp sessions cache shell_snapshots"
-    start_codex = (
-        "mkdir -p /mesh/agent-workspace /documents/work-items; "
-        "chmod -R a+rwX /mesh/agent-workspace /documents 2>/dev/null || true; "
-        f"for d in {writable_codex_subdirs}; do "
-        "mkdir -p /mesh/worker-auth/codex/$$d; "
-        "chmod -R a+rwX /mesh/worker-auth/codex/$$d 2>/dev/null || true; "
-        "done; "
+    app_server = f"codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+    command = (
+        "sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; "
+        "chmod -R a+rwX /mesh/agent-workspace /documents; "
+        "for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; "
         "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; "
-        "cp /mesh/agent/container.json /mesh/agent-workspace/container.json 2>/dev/null || true; "
-        f"exec codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+        f"exec {app_server}'"
     )
-    command = f"sh -lc '{start_codex}'"
     if role_id in SSH_ROLES:
         command = (
-            "sh -lc 'mkdir -p /root/.ssh; "
+            "sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; "
+            "chmod -R a+rwX /mesh/agent-workspace /documents; "
+            "for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; "
+            "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; "
+            "mkdir -p /root/.ssh; "
             "if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; "
             "if [ -f /root/.ssh/config ]; then sed -i \"s#/mesh/home/.ssh#/root/.ssh#g\" /root/.ssh/config; fi; "
             "chmod 700 /root/.ssh; "
             "find /root/.ssh -type f -exec chmod 600 {} \\; 2>/dev/null || true; "
-            f"{start_codex}'"
+            f"exec {app_server}'"
         )
     lines = [
         f"  {service_name}:",
@@ -188,12 +202,17 @@ def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
         "      PYTHONPATH: /mesh/system/src",
         "      CODEX_HOME: /mesh/worker-auth/codex",
         "      HOME: /mesh/home",
+        "      AGENTIC_MESH_DATABASE_HOST: ${AGENTIC_MESH_DATABASE_HOST:-agentic-mesh-postgres}",
+        "      AGENTIC_MESH_DATABASE_PORT: ${AGENTIC_MESH_DATABASE_PORT:-5432}",
+        "      AGENTIC_MESH_DATABASE_NAME: ${AGENTIC_MESH_DATABASE_NAME:-agentic_mesh_v4}",
+        "      AGENTIC_MESH_DATABASE_USER: ${AGENTIC_MESH_DATABASE_USER:-agentic_mesh}",
+        "      AGENTIC_MESH_DATABASE_PASSWORD_FILE: /mesh/project/state/secrets/postgres-password",
         "    volumes:",
         f"      - ${{AGENTIC_MESH_PROJECT_HOST_PATH:-../..}}/state/v4/agent-configs/{role_id}/1:/mesh/agent",
         f"      - ${{AGENTIC_MESH_PROJECT_HOST_PATH:-../..}}/state/v4/agent-workspaces/{role_id}/1:/mesh/agent-workspace",
-        "      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro",
         "      - ${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents",
         "      - ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}:/mesh/project",
+        "      - ${AGENTIC_MESH_SYSTEM_HOST_PATH:-../../../../..}:/mesh/system:ro",
         "      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:-../../../../..}:/mesh/workspaces/agentic-mesh",
         "      - ${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-../../state/worker_mounts/codex-agentic-mesh-dev-team-home-q}:/mesh/worker-auth/codex",
     ]

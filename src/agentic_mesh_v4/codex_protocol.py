@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -95,7 +96,14 @@ class InMemoryTransport(AppServerTransport):
 class WebSocketTransport(AppServerTransport):
     """Thin runtime transport for Codex app-server WebSocket JSON-RPC."""
 
-    def __init__(self, endpoint: str, *, bearer_token: str | None = None, timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        bearer_token: str | None = None,
+        timeout_seconds: int = 30,
+        read_timeout_seconds: int | None = None,
+    ) -> None:
         try:
             import websocket  # type: ignore[import-not-found]
         except ImportError as exc:  # pragma: no cover - depends on optional runtime package.
@@ -103,6 +111,19 @@ class WebSocketTransport(AppServerTransport):
         headers = []
         if bearer_token:
             headers.append(f"Authorization: Bearer {bearer_token}")
+        if read_timeout_seconds is None:
+            _raw = os.environ.get("AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS", "14400")
+            try:
+                _parsed = int(_raw)
+            except ValueError as exc:
+                raise ValueError(
+                    f"AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS must be a positive integer; got {_raw!r}"
+                ) from exc
+            if _parsed <= 0:
+                raise ValueError(
+                    f"AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS must be a positive integer; got {_raw!r}"
+                )
+            read_timeout_seconds = _parsed
         # Codex app-server rejects browser-style Origin headers on internal
         # capability-token WebSocket connections.
         self._socket = websocket.create_connection(
@@ -111,6 +132,7 @@ class WebSocketTransport(AppServerTransport):
             timeout=timeout_seconds,
             suppress_origin=True,
         )
+        self._socket.settimeout(read_timeout_seconds)
 
     def send(self, message: dict[str, Any]) -> dict[str, Any] | None:
         self._socket.send(json.dumps(message, sort_keys=True))
@@ -191,11 +213,11 @@ class CodexAppServerClient:
             return str(turn["id"])
         return None
 
-    def steer_turn(self, *, thread_id: str, text: str, expected_turn_id: str | None = None) -> dict[str, Any]:
-        params: dict[str, Any] = {"threadId": thread_id, "input": [{"type": "text", "text": text}]}
-        if expected_turn_id:
-            params["expectedTurnId"] = expected_turn_id
-        return self._request("turn/steer", params)
+    def steer_turn(self, *, thread_id: str, text: str) -> dict[str, Any]:
+        return self._request(
+            "turn/steer",
+            {"threadId": thread_id, "input": [{"type": "text", "text": text}]},
+        )
 
     def interrupt_turn(self, *, thread_id: str, turn_id: str) -> dict[str, Any]:
         return self._request("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})

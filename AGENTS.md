@@ -36,17 +36,17 @@ Core principles:
 - The active implementation is V4. Runtime code lives under
   `src/agentic_mesh_v4`.
 - Do not add new runtime code under removed or legacy package paths. V2 and V3
-  packages may exist only as historical source until removed by an explicit
-  cleanup slice; no active deployment, prompt, Compose profile, or role workflow
-  should depend on them.
+  implementation packages and tests have been removed; no active deployment,
+  prompt, Compose profile, or role workflow should depend on them or recreate
+  them.
 - V4 agents own work progression. The runtime provides platform services such
   as startup, hibernation, connector bridges, document-library access,
   reporting, config materialisation, telemetry, and reliable handoff delivery.
 - Governance is explicit. Agents must consult required RACI roles and
   stakeholders before completing phases, inform roles that must be informed,
   and record governance exceptions when consultation is intentionally skipped.
-- Runtime operational state and read models are stored in the V4 database, with
-  repository interfaces kept suitable for Postgres later.
+- Runtime operational state and read models are stored in Postgres through the
+  V4 database repository interface.
 - The document library remains the canonical project knowledge base. Runtime
   database records make work inspectable, recoverable, and observable; they do
   not replace durable project documentation.
@@ -245,10 +245,13 @@ Before committing:
 - Run `python scripts/check-pr-size.py --base origin/develop --committed-only` before pushing
   a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
-- Run `python -m agentic_mesh_v4.cli --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml --db .tmp/v4/agentic-mesh-v4.sqlite3 status-json`
-  for a basic V4 runtime read-model smoke.
-- Run `agentic-mesh validate-topology ...` for source/runtime/project boundary
-  changes.
+- Run `python -m agentic_mesh_v4.cli --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json`
+  for a basic V4 runtime read-model smoke after configuring
+  `AGENTIC_MESH_DATABASE_URL` or the `AGENTIC_MESH_DATABASE_*` Postgres
+  environment variables.
+- For source/runtime/project boundary changes, add or update V4 topology tests
+  and run the relevant `tests/test_v4_*.py` coverage. The legacy
+  `validate-topology` command was removed with the V2/V3 packages.
 - Run `docker compose ... config --quiet` when Compose outputs change.
 - Update `MEMORY.md` when future agents need the context.
 - Update ADRs or implementation-slice docs when a design decision or accepted

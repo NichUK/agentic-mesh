@@ -21,7 +21,7 @@ CMD ["python", "-m", "agentic_mesh.cli", "status"]
 FROM base-agent AS ops-agent
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends docker-cli docker-compose docker.io iproute2 lsof netcat-openbsd openssh-client procps sqlite3 \
+  && apt-get install -y --no-install-recommends docker-cli docker-compose docker.io iproute2 lsof netcat-openbsd openssh-client procps \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
@@ -35,7 +35,7 @@ RUN apt-get update \
 FROM base-agent AS qa-agent
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends chromium chromium-driver procps sqlite3 \
+  && apt-get install -y --no-install-recommends chromium chromium-driver procps \
   && npm install -g playwright \
   && npx playwright install --with-deps chromium \
   && apt-get clean \

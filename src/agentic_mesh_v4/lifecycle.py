@@ -19,7 +19,7 @@ class ComposeLifecycle:
         subprocess.run(
             command,
             cwd=self.working_directory,
-            env=self._compose_environment(),
+            env=self._compose_env(),
             check=True,
             capture_output=True,
             text=True,
@@ -31,7 +31,7 @@ class ComposeLifecycle:
         subprocess.run(
             command,
             cwd=self.working_directory,
-            env=self._compose_environment(),
+            env=self._compose_env(),
             check=True,
             capture_output=True,
             text=True,
@@ -43,7 +43,7 @@ class ComposeLifecycle:
         result = subprocess.run(
             command,
             cwd=self.working_directory,
-            env=self._compose_environment(),
+            env=self._compose_env(),
             check=False,
             capture_output=True,
             text=True,
@@ -51,6 +51,18 @@ class ComposeLifecycle:
         if result.returncode != 0:
             return False
         return service_name in {line.strip() for line in result.stdout.splitlines()}
+
+    def exec_service(self, service_name: str, command_args: list[str]) -> subprocess.CompletedProcess[str]:
+        command = self._base_command()
+        command.extend(["exec", "-T", service_name, *command_args])
+        return subprocess.run(
+            command,
+            cwd=self.working_directory,
+            env=self._compose_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
     def _base_command(self) -> list[str]:
         command = ["docker", "compose"]
@@ -62,30 +74,23 @@ class ComposeLifecycle:
             command.extend(["-f", str(compose_file)])
         return command
 
-    def _compose_environment(self) -> dict[str, str]:
-        environment = os.environ.copy()
-        if self.env_file is not None:
-            environment.update(_read_compose_env_file(self.env_file))
-        return environment
-
-
-def _read_compose_env_file(path: Path) -> dict[str, str]:
-    if not path.exists():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not key:
-            continue
-        values[key] = _strip_env_quotes(value.strip())
-    return values
-
-
-def _strip_env_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
+    def _compose_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        if self.env_file is None or not self.env_file.exists():
+            return env
+        for line in self.env_file.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if (
+                len(value) >= 2
+                and value[0] == value[-1]
+                and value[0] in {"'", '"'}
+            ):
+                value = value[1:-1]
+            if key:
+                env[key] = value
+        return env

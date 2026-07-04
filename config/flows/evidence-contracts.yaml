@@ -1,0 +1,25 @@
+flow_id: agentic-mesh-sdlc-v0
+flow_hash: 8e948cccbba54927ea833dd75809d80d7b4421ced7a1e8a53598911d33022355
+evidence_contracts:
+  - contract_id: quality_review.qa_evidence.v1
+    work_item_types:
+      - slice
+      - subslice
+      - feature
+      - spike
+    lifecycle_state: quality_review
+    owner_role: qa-engineer
+    enforcement: warn
+    required:
+      - predicate: artifact_exists
+        path: work-items/{work_item_id}/110-quality-evidence.md
+        remediation: Create quality evidence before completing QA review.
+      - predicate: artifact_linked
+        tool_name: document.link_artifact
+        payload_match:
+          work_item_id: "{work_item_id}"
+          path: work-items/{work_item_id}/110-quality-evidence.md
+        remediation: Link quality evidence through safe-output.
+    exception:
+      enabled: false
+      reason: Durable exception/blocker safe-output is unavailable in V4 P0.

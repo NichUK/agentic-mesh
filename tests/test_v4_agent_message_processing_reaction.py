@@ -9,6 +9,7 @@ from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.runtime import V4Runtime
 from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_GLYPH
 from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_NAME
+from v4_postgres import make_v4_db
 
 
 class FakeCodexClient:
@@ -199,8 +200,7 @@ def test_v4_runtime_adds_processing_reaction_before_turn_steer(tmp_path: Path) -
 
 
 def _db(tmp_path: Path) -> V4Database:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     return db
 
 
@@ -247,3 +247,4 @@ def _journal(db: V4Database, message_id: str) -> list[tuple[str, str]]:
             (message_id,),
         )
     ]
+

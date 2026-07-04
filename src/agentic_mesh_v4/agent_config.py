@@ -22,10 +22,10 @@ Tooling boundary: safe-output tools are required to record durable Agentic Mesh 
 The V4 safe-output CLI is available inside role containers:
 
 ```bash
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 safe-output work-item-update --role-id <your-role-id> --work-item-id <work-id> --state <state> --owner-role <role-id> --next-action "<next action>"
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 safe-output artifact-link --role-id <your-role-id> --work-item-id <work-id> --path "work-items/<work-id>/<artifact.md>" --title "<artifact title>"
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 safe-output handoff --from-role <your-role-id> --to-role <next-role-id> --work-item-id <work-id> --state <next-state> --next-action "<required next action>" --reason "<why this role owns the next step>"
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 safe-output memory-record --role-id <your-role-id> --summary "<source-linked memory>" --source-ref "<document/work/event/conversation ref>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output work-item-update --role-id <your-role-id> --work-item-id <work-id> --state <state> --owner-role <role-id> --next-action "<next action>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output artifact-link --role-id <your-role-id> --work-item-id <work-id> --path "work-items/<work-id>/<artifact.md>" --title "<artifact title>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output handoff --from-role <your-role-id> --to-role <next-role-id> --work-item-id <work-id> --state <next-state> --next-action "<required next action>" --reason "<why this role owns the next step>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output memory-record --role-id <your-role-id> --summary "<source-linked memory>" --source-ref "<document/work/event/conversation ref>"
 ```
 
 When work must continue with another role, use `safe-output handoff` before replying. When you create or update an artifact, use `safe-output artifact-link`. When you materially change status, owner, or next action, use `safe-output work-item-update`.
@@ -50,7 +50,7 @@ Document naming rules:
 
 Role tool-profile boundary:
 - `base-agent` roles have common document, Git, search, JSON/YAML, HTTP, and runtime client tooling for role-scoped work.
-- `ops-agent` roles may use SSH, Docker/Compose, SQLite, process/network diagnostics, and host/runtime inspection when their charter requires governance, delivery, platform, or release evidence.
+- `ops-agent` roles may use SSH, Docker/Compose, Postgres, process/network diagnostics, and host/runtime inspection when their charter requires governance, delivery, platform, or release evidence.
 - `dev-agent` roles may use build, test, package, and repository tooling for implementation and verification.
 - `qa-agent` roles may use test runners, Playwright/browser tooling, screenshot/artifact capture, and HTTP/API validation for quality evidence.
 - Installed tools do not grant authority by themselves; role charter, project config, safe-output policy, and sponsor decisions still govern use.
@@ -58,16 +58,6 @@ Role tool-profile boundary:
 Ask sponsors or stakeholders when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitments change.
 
 Do not claim a durable action happened unless the corresponding tool call or evidence exists.
-
-Runtime path map:
-- `/mesh/agent` is your mounted role identity/configuration folder. It contains generated role instructions, token/config metadata, and container identity. Treat it as configuration, not as a workspace. Do not create Git repositories, work trees, build outputs, or project artifacts there.
-- `/mesh/agent-workspace` is your writable current working directory and scratch area. It is safe for Codex runtime metadata, temporary notes, local scratch files, and short-lived command output. Do not treat it as the canonical project document library.
-- `/mesh/workspaces/agentic-mesh` is the mounted target source checkout for Agentic Mesh code work. Use this path when your role is expected to inspect, modify, test, or release source code.
-- `/documents` is the canonical project document/artifact library. Work-item dossiers and durable project documentation belong here.
-- `/mesh/project` contains project configuration and runtime state. Use it for runtime/database/config inspection when your role authority allows it, but do not write canonical documents there.
-- `/mesh/worker-auth/codex` is the mounted Codex runtime home. It contains authentication, sessions, memories, and other provider metadata. Do not create project artifacts or source checkouts there. Writable runtime subdirectories such as `memories`, `tmp`, `sessions`, `cache`, and `shell_snapshots` should be prepared by container startup; if they are not writable, report a platform mount-permission defect with the exact path.
-
-Start every investigation by orienting yourself with `pwd` and the path map above. If `pwd` is `/mesh/agent`, report a platform configuration defect; role agents should normally start in `/mesh/agent-workspace`.
 """
 
 
@@ -201,11 +191,15 @@ def _authority_markdown(role: V4RoleConfig) -> str:
                 "- Authority level: `full`.",
                 "- Sandbox: `danger-full-access` unless project config narrows it.",
                 "- You may perform host, Git, Docker, SSH, deployment, and operational actions when they are within your role and project instructions.",
+                "- `/mesh/agent` is your mounted role identity/configuration folder; do not use it as a working tree.",
+                "- `/mesh/agent-workspace` is your writable current working directory for role-local scratch files, temporary notes, and command context.",
+                "- If `pwd` is `/mesh/agent`, report a platform configuration defect before doing role work.",
+                "- `/mesh/worker-auth/codex` is the mounted Codex runtime home. It contains authentication, sessions, memories, and other provider metadata. Do not create project artifacts or source checkouts there. If expected runtime subdirectories are not writable, report a platform mount-permission defect with the exact path.",
                 "- For approved implementation or operational work, assume `/mesh/workspaces/agentic-mesh`, `/documents`, and `/mesh/project` are writable unless a shell check proves otherwise.",
                 "- If you believe a writable mount is unavailable, run a minimal write/access probe before reporting a blocker; do not infer read-only status from missing safe-output tools or from the read-only `/mesh/agent` configuration mount.",
                 "- The project document library is mounted at `/documents`.",
                 "- Your mounted home directory is `/mesh/home`; SSH credentials are expected at `/mesh/home/.ssh` and are copied to `/root/.ssh` at container startup for OpenSSH default lookup. Project environment details may be available at `/mesh/home/.env`.",
-                "- If an Agentic Mesh safe-output/runtime tool mentioned in your instructions is not available in the Codex tool surface, continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection where appropriate. Report the missing tool as a tool-wiring gap only for the durable state change it would have recorded.",
+                "- If an Agentic Mesh safe-output/runtime tool mentioned in your instructions is not available in the Codex tool surface, continue with shell, filesystem, Postgres, dashboard/API, Git, Docker, or SSH inspection where appropriate. Report the missing tool as a tool-wiring gap only for the durable state change it would have recorded.",
                 "- Record risky actions, evidence, and next owner clearly.",
             ]
         )

@@ -18,17 +18,16 @@ classifiers = [
 dependencies = [
   "bleach>=6.1",
   "Markdown>=3.7",
-  "nats-py>=2.7",
   "opentelemetry-api==1.42.1",
   "opentelemetry-exporter-otlp-proto-grpc==1.42.1",
   "opentelemetry-sdk==1.42.1",
+  "psycopg[binary]>=3.2",
   "PyYAML>=6.0",
   "websocket-client>=1.8",
 ]
 
 [project.scripts]
 agentic-mesh = "agentic_mesh_v4.cli:main"
-agentic-mesh-v3 = "agentic_mesh_v3.cli:main"
 agentic-mesh-v4 = "agentic_mesh_v4.cli:main"
 
 [project.optional-dependencies]

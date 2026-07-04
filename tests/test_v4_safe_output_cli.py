@@ -7,13 +7,14 @@ from agentic_mesh_v4.agent_config import materialize_agent_configs
 from agentic_mesh_v4.cli import main
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.db import V4Database
+from v4_postgres import make_v4_db_url
 
 
 PROJECT_CONFIG = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml")
 
 
 def test_v4_safe_output_work_item_update_records_state_and_call(tmp_path: Path, capsys) -> None:
-    db_path = tmp_path / "v4.sqlite3"
+    db_path = make_v4_db_url()
 
     main(
         [
@@ -53,7 +54,7 @@ def test_v4_safe_output_work_item_update_records_state_and_call(tmp_path: Path, 
 
 
 def test_v4_safe_output_handoff_moves_work_item_and_queues_target_role(tmp_path: Path, capsys) -> None:
-    db_path = tmp_path / "v4.sqlite3"
+    db_path = make_v4_db_url()
     main(
         [
             "--project-config",
@@ -138,3 +139,4 @@ def test_v4_materialized_agents_md_names_safe_output_cli(tmp_path: Path) -> None
     assert "safe-output handoff" in text
     assert "safe-output artifact-link" in text
     assert "safe-output work-item-update" in text
+
