@@ -225,9 +225,15 @@ class V4Runtime:
                     if turn_id is not None:
                         self.db.connection.execute(
                             """
-                            INSERT OR REPLACE INTO codex_turns(
+                            INSERT INTO codex_turns(
                               turn_id, thread_id, message_id, status, started_at, completed_at
                             ) VALUES(?,?,?,?,?,NULL)
+                            ON CONFLICT(turn_id) DO UPDATE SET
+                              thread_id=excluded.thread_id,
+                              message_id=excluded.message_id,
+                              status=excluded.status,
+                              started_at=excluded.started_at,
+                              completed_at=NULL
                             """,
                             (turn_id, thread_id, message.message_id, "active", now),
                         )
@@ -472,9 +478,10 @@ class V4Runtime:
             )
             self.db.connection.execute(
                 """
-                INSERT OR IGNORE INTO codex_threads(
+                INSERT INTO codex_threads(
                   thread_id, role_instance_id, agent_config_hash, sandbox_mode, approval_policy, status, created_at, updated_at
                 ) VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(thread_id) DO NOTHING
                 """,
                 (
                     thread_id,

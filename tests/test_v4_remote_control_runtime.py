@@ -49,6 +49,13 @@ def test_v4_loads_full_sdlc_team_without_broker() -> None:
     assert config.role("qa-engineer").approval_policy == "never"
 
 
+def test_v4_runtime_source_does_not_use_sqlite_only_upsert_syntax() -> None:
+    runtime_source = Path("src/agentic_mesh_v4/runtime.py").read_text(encoding="utf-8")
+
+    assert "INSERT OR IGNORE" not in runtime_source
+    assert "INSERT OR REPLACE" not in runtime_source
+
+
 def test_v4_postgres_queue_claims_steering_first(tmp_path: Path) -> None:
     db = make_v4_db()
     runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
