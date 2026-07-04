@@ -10,10 +10,10 @@ from agentic_mesh_v4.codex_protocol import InMemoryTransport
 from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 from agentic_mesh_v4.config import load_project_config
-from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.reporting import render_agent_thread
 from agentic_mesh_v4.reporting import render_status
 from agentic_mesh_v4.runtime import V4Runtime
+from v4_postgres import make_v4_db
 
 
 PROJECT_CONFIG = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml")
@@ -49,9 +49,8 @@ def test_v4_loads_full_sdlc_team_without_broker() -> None:
     assert config.role("qa-engineer").approval_policy == "never"
 
 
-def test_v4_sqlite_queue_claims_steering_first(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+def test_v4_postgres_queue_claims_steering_first(tmp_path: Path) -> None:
+    db = make_v4_db()
     runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
     runtime.register_roles()
     runtime.enqueue_conversation(target_role="project-manager", text="normal")
@@ -64,9 +63,8 @@ def test_v4_sqlite_queue_claims_steering_first(tmp_path: Path) -> None:
     assert claimed.steering is True
 
 
-def test_v4_sqlite_queue_prioritizes_human_teams_messages_after_steering(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+def test_v4_postgres_queue_prioritizes_human_teams_messages_after_steering(tmp_path: Path) -> None:
+    db = make_v4_db()
     runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
     runtime.register_roles()
     runtime.enqueue_conversation(target_role="release-manager", text="internal handoff", source="safe-output")
@@ -79,9 +77,8 @@ def test_v4_sqlite_queue_prioritizes_human_teams_messages_after_steering(tmp_pat
     assert claimed.source == "teams"
 
 
-def test_v4_sqlite_queue_claims_ready_messages_as_deliverable_work(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+def test_v4_postgres_queue_claims_ready_messages_as_deliverable_work(tmp_path: Path) -> None:
+    db = make_v4_db()
     runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
     runtime.register_roles()
     message_id = runtime.enqueue_conversation(target_role="ux-designer", text="Review UX handoff")
@@ -173,8 +170,7 @@ def test_v4_codex_protocol_preserves_server_requests_with_ids_as_events() -> Non
 
 
 def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -204,8 +200,7 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
 
 
 def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -243,8 +238,7 @@ def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: 
 
 
 def test_v4_runtime_keeps_started_turn_active_after_read_timeout(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = TimeoutAfterNotificationTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -282,8 +276,7 @@ def test_v4_runtime_keeps_started_turn_active_after_read_timeout(tmp_path: Path)
 
 
 def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     runtime = V4Runtime(db=db, project_config=config)
     runtime.register_roles()
@@ -311,8 +304,7 @@ def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> No
 
 
 def test_v4_snapshot_marks_active_turn_as_finalizing_after_handoff(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     runtime = V4Runtime(db=db, project_config=config)
     runtime.register_roles()
@@ -349,8 +341,7 @@ def test_v4_snapshot_marks_active_turn_as_finalizing_after_handoff(tmp_path: Pat
 
 
 def test_v4_same_conversation_message_steers_into_active_turn(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role_instance_id = "agentic-mesh-dev.project-manager.1"
     runtime = V4Runtime(db=db, project_config=config)
@@ -406,8 +397,7 @@ def test_v4_same_conversation_message_steers_into_active_turn(tmp_path: Path) ->
 
 
 def test_v4_failed_immediate_steering_downgrades_to_normal_queue(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role_instance_id = "agentic-mesh-dev.project-manager.1"
     runtime = V4Runtime(db=db, project_config=config)
@@ -467,8 +457,7 @@ def test_v4_failed_immediate_steering_downgrades_to_normal_queue(tmp_path: Path)
 
 
 def test_v4_orphaned_steering_message_dispatches_as_normal_turn(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     runtime = V4Runtime(db=db, project_config=config)
     runtime.register_roles()
@@ -506,8 +495,7 @@ def test_v4_orphaned_steering_message_dispatches_as_normal_turn(tmp_path: Path) 
 
 
 def test_v4_cross_conversation_active_turn_does_not_trigger_steering(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role_instance_id = "agentic-mesh-dev.project-manager.1"
     runtime = V4Runtime(db=db, project_config=config)
@@ -546,8 +534,7 @@ def test_v4_cross_conversation_active_turn_does_not_trigger_steering(tmp_path: P
 
 
 def test_v4_queue_directive_overrides_same_conversation_steering(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role_instance_id = "agentic-mesh-dev.project-manager.1"
     runtime = V4Runtime(db=db, project_config=config)
@@ -584,8 +571,7 @@ def test_v4_queue_directive_overrides_same_conversation_steering(tmp_path: Path)
 
 
 def test_v4_dispatch_does_not_claim_second_message_while_role_has_active_turn(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role_instance_id = "agentic-mesh-dev.project-manager.1"
     runtime = V4Runtime(db=db, project_config=config)
@@ -618,8 +604,7 @@ def test_v4_dispatch_does_not_claim_second_message_while_role_has_active_turn(tm
 
 
 def test_v4_requeues_orphaned_active_messages_for_stopped_role(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role_instance_id = "agentic-mesh-dev.project-manager.1"
     runtime = V4Runtime(db=db, project_config=config)
@@ -654,8 +639,7 @@ def test_v4_requeues_orphaned_active_messages_for_stopped_role(tmp_path: Path) -
 
 
 def test_v4_requeues_stale_active_messages_but_keeps_fresh_active_turns(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role_instance_id = "agentic-mesh-dev.release-manager.1"
     runtime = V4Runtime(db=db, project_config=config)
@@ -699,8 +683,7 @@ def test_v4_requeues_stale_active_messages_but_keeps_fresh_active_turns(tmp_path
 
 
 def test_v4_agent_events_refresh_active_message_heartbeat(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role_instance_id = "agentic-mesh-dev.release-manager.1"
     runtime = V4Runtime(db=db, project_config=config)
@@ -743,8 +726,7 @@ def test_v4_dispatch_scheduler_schedules_queued_role_while_another_role_is_activ
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     runtime = V4Runtime(db=db, project_config=config)
     runtime.register_roles()
@@ -801,8 +783,7 @@ def test_v4_dispatch_scheduler_schedules_queued_role_while_another_role_is_activ
 
 
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -841,8 +822,7 @@ def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) 
 
 
 def test_v4_runtime_retires_thread_when_sandbox_metadata_does_not_match(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     role = config.role("project-manager")
     role_instance_id = "agentic-mesh-dev.project-manager.1"
@@ -897,8 +877,7 @@ def test_v4_runtime_retires_thread_when_sandbox_metadata_does_not_match(tmp_path
 
 
 def test_v4_runtime_retires_thread_when_agent_config_changes(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     agent_config_root = tmp_path / "agents"
     materialize_agent_configs(
@@ -965,8 +944,7 @@ def test_v4_runtime_retires_thread_when_agent_config_changes(tmp_path: Path) -> 
 
 
 def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -1017,8 +995,7 @@ def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
 
 
 def test_v4_runtime_ignores_foreign_turn_events_for_current_message(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -1113,8 +1090,7 @@ def test_v4_runtime_ignores_foreign_turn_events_for_current_message(tmp_path: Pa
 
 
 def test_v4_runtime_delivers_commentary_progress_to_teams(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -1216,8 +1192,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
 
 
 def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -1263,8 +1238,7 @@ def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None
 
 
 def test_v4_runtime_records_document_sync_failure_without_failing_message(tmp_path: Path) -> None:
-    db = V4Database(tmp_path / "v4.sqlite3")
-    db.migrate()
+    db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
     transport.queue_response({"id": 1, "result": {}})
@@ -1340,7 +1314,7 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "run a minimal write/access probe before reporting a blocker" in text
     assert "SSH credentials are expected at `/mesh/home/.ssh`" in text
     assert "copied to `/root/.ssh` at container startup for OpenSSH default lookup" in text
-    assert "continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection" in text
+    assert "continue with shell, filesystem, Postgres, dashboard/API, Git, Docker, or SSH inspection" in text
 
 
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
@@ -1367,3 +1341,4 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
     assert "v3-supervisor" not in rendered
     assert "run-agent-service" not in rendered
     assert "nats://" not in rendered
+

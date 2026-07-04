@@ -1,7 +1,7 @@
 project_id: agentic-mesh-dev
 name: Agentic Mesh Development V4
 goal:
-  description: Prove the V4 Codex remote-control agent runtime with one Codex app-server container per role, SQLite message queues, Teams routing, external role configuration, DB-backed memory, and safe-output tools for durable workflow effects.
+  description: Prove the V4 Codex remote-control agent runtime with one Codex app-server container per role, Postgres message queues, Teams routing, external role configuration, DB-backed memory, and safe-output tools for durable workflow effects.
 document_library:
   adapter: onedrive
   drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}

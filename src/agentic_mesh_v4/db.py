@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
+import os
+import re
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 
@@ -35,11 +37,10 @@ class QueuedMessage:
 
 
 class V4Database:
-    def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path, timeout=30)
-        self.connection.row_factory = sqlite3.Row
+    def __init__(self, database_url: str | Path | None = None) -> None:
+        self.database_url = _resolve_database_url(database_url)
+        self.path = self.database_url
+        self.connection = _PostgresConnection(self.database_url)
 
     def close(self) -> None:
         self.connection.close()
@@ -224,6 +225,10 @@ class V4Database:
             _ensure_column(self.connection, "codex_threads", "sandbox_mode", "TEXT")
             _ensure_column(self.connection, "codex_threads", "approval_policy", "TEXT")
             _ensure_column(self.connection, "codex_threads", "agent_config_hash", "TEXT")
+            self.connection.execute("ALTER TABLE role_instances ALTER COLUMN inbox_depth SET DEFAULT 0")
+            self.connection.execute("ALTER TABLE role_instances ALTER COLUMN memory_version SET DEFAULT 0")
+            self.connection.execute("ALTER TABLE message_queue ALTER COLUMN steering SET DEFAULT 0")
+            self.connection.execute("ALTER TABLE message_queue ALTER COLUMN delivery_attempts SET DEFAULT 0")
 
     def upsert_role_instance(
         self,
@@ -242,8 +247,8 @@ class V4Database:
                 """
                 INSERT INTO role_instances(
                   role_instance_id, role_id, display_name, service_name, state,
-                  authority, codex_endpoint, updated_at
-                ) VALUES(?,?,?,?,?,?,?,?)
+                  authority, codex_endpoint, inbox_depth, memory_version, updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(role_instance_id) DO UPDATE SET
                   role_id=excluded.role_id,
                   display_name=excluded.display_name,
@@ -252,7 +257,7 @@ class V4Database:
                   codex_endpoint=excluded.codex_endpoint,
                   updated_at=excluded.updated_at
                 """,
-                (role_instance_id, role_id, display_name, service_name, state, authority, codex_endpoint, now),
+                (role_instance_id, role_id, display_name, service_name, state, authority, codex_endpoint, 0, 0, now),
             )
 
     def enqueue_message(
@@ -277,10 +282,11 @@ class V4Database:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT OR IGNORE INTO message_queue(
+                INSERT INTO message_queue(
                   message_id, correlation_id, source, target_role, conversation_ref,
-                  thread_ref, text, payload_json, state, steering, created_at, updated_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                  thread_ref, text, payload_json, state, steering, delivery_attempts, created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(message_id) DO NOTHING
                 """,
                 (
                     message_id,
@@ -293,6 +299,7 @@ class V4Database:
                     json.dumps(payload, sort_keys=True),
                     "queued",
                     1 if steering else 0,
+                    0,
                     now,
                     now,
                 ),
@@ -660,8 +667,9 @@ class V4Database:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT OR IGNORE INTO artifacts(artifact_id, work_item_id, path, title, created_at)
+                INSERT INTO artifacts(artifact_id, work_item_id, path, title, created_at)
                 VALUES(?,?,?,?,?)
+                ON CONFLICT(artifact_id) DO NOTHING
                 """,
                 (artifact_id, work_item_id, path, title, utc_now()),
             )
@@ -854,7 +862,7 @@ def _payload_dict(value: object) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _queued_message(row: sqlite3.Row, *, state: str, delivery_attempts: int) -> QueuedMessage:
+def _queued_message(row: dict[str, Any], *, state: str, delivery_attempts: int) -> QueuedMessage:
     return QueuedMessage(
         message_id=str(row["message_id"]),
         source=str(row["source"]),
@@ -875,8 +883,8 @@ def _payload_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
-    return {key: row[key] for key in row.keys()}
+def _row_dict(row: dict[str, Any]) -> dict[str, Any]:
+    return dict(row)
 
 
 def _is_stale_timestamp(value: str, *, stale_after_seconds: float) -> bool:
@@ -889,7 +897,104 @@ def _is_stale_timestamp(value: str, *, stale_after_seconds: float) -> bool:
     return datetime.now(UTC) - timestamp >= timedelta(seconds=stale_after_seconds)
 
 
-def _ensure_column(connection: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
-    columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
+def _ensure_column(connection: _PostgresConnection, table: str, column: str, declaration: str) -> None:
+    columns = {
+        str(row["column_name"])
+        for row in connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name=? 
+            """,
+            (table,),
+        )
+    }
     if column not in columns:
         connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+
+def _resolve_database_url(value: str | Path | None) -> str:
+    raw = str(value) if value is not None else ""
+    if raw:
+        if raw.endswith(".sqlite") or raw.endswith(".sqlite3") or raw.startswith("sqlite:"):
+            raise ValueError("V4 no longer supports SQLite. Configure Postgres via AGENTIC_MESH_DATABASE_URL or AGENTIC_MESH_DATABASE_*.")
+        if raw.startswith(("postgresql://", "postgres://")):
+            return raw
+    env_url = os.environ.get("AGENTIC_MESH_DATABASE_URL", "")
+    if env_url:
+        return env_url
+    host = os.environ.get("AGENTIC_MESH_DATABASE_HOST", "postgres")
+    port = os.environ.get("AGENTIC_MESH_DATABASE_PORT", "5432")
+    name = os.environ.get("AGENTIC_MESH_DATABASE_NAME", "agentic_mesh_v4")
+    user = os.environ.get("AGENTIC_MESH_DATABASE_USER", "agentic_mesh")
+    password = os.environ.get("AGENTIC_MESH_DATABASE_PASSWORD", "")
+    password_file = os.environ.get("AGENTIC_MESH_DATABASE_PASSWORD_FILE", "")
+    if not password and password_file:
+        password = Path(password_file).read_text(encoding="utf-8").strip()
+    if not password:
+        raise ValueError("AGENTIC_MESH_DATABASE_PASSWORD or AGENTIC_MESH_DATABASE_PASSWORD_FILE is required for V4 Postgres.")
+    return (
+        f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}"
+        f"@{host}:{port}/{quote(name, safe='')}"
+    )
+
+
+class _PostgresConnection:
+    _qmark_pattern = re.compile(r"\?")
+
+    def __init__(self, database_url: str) -> None:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        self._connection = psycopg.connect(database_url, row_factory=dict_row, connect_timeout=30)
+        self._connection.autocommit = True
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> "_PostgresConnection":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if not self._connection.autocommit:
+            if exc_type is None:
+                self._connection.commit()
+            else:
+                self._connection.rollback()
+        return False
+
+    def execute(self, sql: str, params: tuple[object, ...] | list[object] = ()) -> Any:
+        cursor = self._connection.execute(self._translate_sql(sql), tuple(params))
+        return cursor
+
+    def executescript(self, script: str) -> None:
+        for statement in _split_sql_script(script):
+            stripped = statement.strip()
+            if stripped:
+                self.execute(stripped)
+
+    @classmethod
+    def _translate_sql(cls, sql: str) -> str:
+        return cls._qmark_pattern.sub("%s", sql)
+
+
+def _split_sql_script(script: str) -> list[str]:
+    statements: list[str] = []
+    current: list[str] = []
+    in_single = False
+    in_double = False
+    previous = ""
+    for char in script:
+        if char == "'" and not in_double and previous != "\\":
+            in_single = not in_single
+        elif char == '"' and not in_single and previous != "\\":
+            in_double = not in_double
+        if char == ";" and not in_single and not in_double:
+            statements.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        previous = char
+    if current:
+        statements.append("".join(current))
+    return statements

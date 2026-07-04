@@ -22,10 +22,10 @@ Tooling boundary: safe-output tools are required to record durable Agentic Mesh 
 The V4 safe-output CLI is available inside role containers:
 
 ```bash
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 safe-output work-item-update --role-id <your-role-id> --work-item-id <work-id> --state <state> --owner-role <role-id> --next-action "<next action>"
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 safe-output artifact-link --role-id <your-role-id> --work-item-id <work-id> --path "work-items/<work-id>/<artifact.md>" --title "<artifact title>"
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 safe-output handoff --from-role <your-role-id> --to-role <next-role-id> --work-item-id <work-id> --state <next-state> --next-action "<required next action>" --reason "<why this role owns the next step>"
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml --db /mesh/project/state/v4/agentic-mesh-v4.sqlite3 safe-output memory-record --role-id <your-role-id> --summary "<source-linked memory>" --source-ref "<document/work/event/conversation ref>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output work-item-update --role-id <your-role-id> --work-item-id <work-id> --state <state> --owner-role <role-id> --next-action "<next action>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output artifact-link --role-id <your-role-id> --work-item-id <work-id> --path "work-items/<work-id>/<artifact.md>" --title "<artifact title>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output handoff --from-role <your-role-id> --to-role <next-role-id> --work-item-id <work-id> --state <next-state> --next-action "<required next action>" --reason "<why this role owns the next step>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output memory-record --role-id <your-role-id> --summary "<source-linked memory>" --source-ref "<document/work/event/conversation ref>"
 ```
 
 When work must continue with another role, use `safe-output handoff` before replying. When you create or update an artifact, use `safe-output artifact-link`. When you materially change status, owner, or next action, use `safe-output work-item-update`.
@@ -50,7 +50,7 @@ Document naming rules:
 
 Role tool-profile boundary:
 - `base-agent` roles have common document, Git, search, JSON/YAML, HTTP, and runtime client tooling for role-scoped work.
-- `ops-agent` roles may use SSH, Docker/Compose, SQLite, process/network diagnostics, and host/runtime inspection when their charter requires governance, delivery, platform, or release evidence.
+- `ops-agent` roles may use SSH, Docker/Compose, Postgres, process/network diagnostics, and host/runtime inspection when their charter requires governance, delivery, platform, or release evidence.
 - `dev-agent` roles may use build, test, package, and repository tooling for implementation and verification.
 - `qa-agent` roles may use test runners, Playwright/browser tooling, screenshot/artifact capture, and HTTP/API validation for quality evidence.
 - Installed tools do not grant authority by themselves; role charter, project config, safe-output policy, and sponsor decisions still govern use.
@@ -205,7 +205,7 @@ def _authority_markdown(role: V4RoleConfig) -> str:
                 "- If you believe a writable mount is unavailable, run a minimal write/access probe before reporting a blocker; do not infer read-only status from missing safe-output tools or from the read-only `/mesh/agent` configuration mount.",
                 "- The project document library is mounted at `/documents`.",
                 "- Your mounted home directory is `/mesh/home`; SSH credentials are expected at `/mesh/home/.ssh` and are copied to `/root/.ssh` at container startup for OpenSSH default lookup. Project environment details may be available at `/mesh/home/.env`.",
-                "- If an Agentic Mesh safe-output/runtime tool mentioned in your instructions is not available in the Codex tool surface, continue with shell, filesystem, SQLite, dashboard/API, Git, Docker, or SSH inspection where appropriate. Report the missing tool as a tool-wiring gap only for the durable state change it would have recorded.",
+                "- If an Agentic Mesh safe-output/runtime tool mentioned in your instructions is not available in the Codex tool surface, continue with shell, filesystem, Postgres, dashboard/API, Git, Docker, or SSH inspection where appropriate. Report the missing tool as a tool-wiring gap only for the durable state change it would have recorded.",
                 "- Record risky actions, evidence, and next owner clearly.",
             ]
         )

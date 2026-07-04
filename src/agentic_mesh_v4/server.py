@@ -24,7 +24,7 @@ from agentic_mesh_v4.runtime import V4Runtime
 
 
 class V4Handler(BaseHTTPRequestHandler):
-    db_path: Path
+    db_path: str | None
     project_config: V4ProjectConfig
     document_root: Path
 
@@ -102,7 +102,7 @@ class V4Handler(BaseHTTPRequestHandler):
         return
 
     def _handle_teams_activity(self) -> None:
-        payload = self._read_json()
+        payload = _normalise_teams_activity_payload(self._read_json())
         text = str(payload.get("text") or payload.get("message") or "")
         target_role = _target_role(payload, self.project_config)
         conversation_ref = str(payload.get("conversation_ref") or payload.get("conversation", {}).get("id") or "")
@@ -214,7 +214,7 @@ class V4Handler(BaseHTTPRequestHandler):
 
 def serve(
     *,
-    db_path: Path,
+    db_path: str | None,
     project_config: V4ProjectConfig,
     document_root: Path,
     host: str,
@@ -272,6 +272,52 @@ def _target_role_from_recipient(payload: dict[str, object], project_config: V4Pr
 
 def _normalise_role_label(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _normalise_teams_activity_payload(payload: dict[str, object]) -> dict[str, object]:
+    normalised = dict(payload)
+    conversation = normalised.get("conversation")
+    if not isinstance(conversation, dict):
+        return normalised
+    if str(conversation.get("conversationType") or "").casefold() != "personal":
+        return normalised
+    graph_chat_id = (
+        _string_value(normalised.get("graph_chat_id"))
+        or _string_value(normalised.get("chat_id"))
+        or _nested_string(normalised.get("channelData"), "graph", "chatId")
+        or _nested_string(normalised.get("channelData"), "graph", "chat_id")
+        or _nested_string(normalised.get("channelData"), "graphChatId")
+    )
+    graph_message_id = (
+        _string_value(normalised.get("graph_chat_message_id"))
+        or _string_value(normalised.get("graph_message_id"))
+        or _string_value(normalised.get("chatMessageId"))
+        or _nested_string(normalised.get("channelData"), "graph", "chatMessageId")
+        or _nested_string(normalised.get("channelData"), "graph", "messageId")
+        or _nested_string(normalised.get("channelData"), "graphChatMessageId")
+    )
+    if graph_chat_id and graph_message_id:
+        original_activity_id = _string_value(normalised.get("id"))
+        if original_activity_id and original_activity_id != graph_message_id:
+            normalised.setdefault("bot_framework_activity_id", original_activity_id)
+        normalised["graph_chat_id"] = graph_chat_id
+        normalised["id"] = graph_message_id
+    return normalised
+
+
+def _nested_string(data: object, *path: str) -> str | None:
+    current = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return _string_value(current)
+
+
+def _string_value(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _safe_artifact_path(root: Path, relative_path: str) -> Path:

@@ -24,7 +24,7 @@ from agentic_mesh_v4.server import serve
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agentic-mesh-v4")
-    parser.add_argument("--db", type=Path, default=Path(".tmp/agentic-mesh-v4.sqlite3"))
+    parser.add_argument("--db", default=os.environ.get("AGENTIC_MESH_DATABASE_URL"))
     parser.add_argument("--project-config", type=Path, required=True)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -119,6 +119,20 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     project_config = load_project_config(args.project_config)
+    if args.command == "materialize-agent-configs":
+        written = materialize_agent_configs(
+            project_config=project_config,
+            output_root=args.agent_config_root,
+            role_templates_dir=args.role_templates_dir,
+        )
+        _ensure_ws_tokens(args.agent_config_root, project_config)
+        _print_json({"written": len(written)})
+        return
+    if args.command == "render-compose":
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(render_compose(project_config), encoding="utf-8")
+        _print_json({"output": str(args.output)})
+        return
     db = V4Database(args.db)
     try:
         db.migrate()
@@ -126,20 +140,6 @@ def main(argv: list[str] | None = None) -> None:
         runtime.register_roles()
         if args.command == "init-db":
             _print_json({"status": "ok", "roles": len(project_config.roles)})
-            return
-        if args.command == "materialize-agent-configs":
-            written = materialize_agent_configs(
-                project_config=project_config,
-                output_root=args.agent_config_root,
-                role_templates_dir=args.role_templates_dir,
-            )
-            _ensure_ws_tokens(args.agent_config_root, project_config)
-            _print_json({"written": len(written)})
-            return
-        if args.command == "render-compose":
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(render_compose(project_config), encoding="utf-8")
-            _print_json({"output": str(args.output)})
             return
         if args.command == "serve":
             serve(
@@ -512,7 +512,7 @@ def _schedule_available_dispatches(
 
 def _dispatch_role_message(
     *,
-    db_path: Path,
+    db_path: str,
     project_config_path: Path,
     agent_config_root: Path,
     role_id: str,
