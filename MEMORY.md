@@ -9,7 +9,7 @@ The active implementation direction is now V4 on branch
 `codex/v4-remote-control-reset`. V4 replaces the V3 broker/role-service loop
 with one Codex app-server remote-control container per configured role
 instance. The runtime should be thin infrastructure: Teams/API ingress,
-SQLite-backed message queues, Codex app-server WebSocket delivery,
+Postgres-backed message queues, Codex app-server WebSocket delivery,
 safe-output tools for durable workflow effects, dashboard/reporting,
 hibernation/wake coordination, and telemetry.
 
@@ -23,9 +23,10 @@ Important V4 decisions:
 - Each role instance gets an externally materialized `AGENTS.md` under the
   project runtime state tree and starts Codex app-server from that folder so
   the role identity is visible to Codex without baking prompts into the image.
-- Runtime state and delivery queues are SQLite-first. There is no active V4
+- Runtime state and delivery queues are Postgres-backed. SQLite is no longer
+  supported for active V4 runtime state. There is no active V4
   NATS broker, V3 supervisor, or `run-agent-service` path.
-- The V4 dispatcher polls SQLite, wakes the relevant role service through
+- The V4 dispatcher polls Postgres, wakes the relevant role service through
   Compose when needed, connects over the role's authenticated internal
   WebSocket, and delivers queued messages through Codex thread/turn methods.
 - Conversational replies come from Codex streamed output. Durable work effects

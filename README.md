@@ -10,7 +10,7 @@ remote-control container per configured role instance.
 ## Current Runtime Direction
 
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
-infrastructure: Teams/API ingress, SQLite-backed message queues, Codex
+infrastructure: Teams/API ingress, Postgres-backed message queues, Codex
 app-server WebSocket routing, safe-output tools for durable workflow effects,
 dashboard/reporting, hibernation/wake coordination, and telemetry.
 
@@ -19,7 +19,7 @@ The V4 spine currently provides:
 - the full SDLC starter role set
 - one generated external `AGENTS.md` per role instance
 - one Codex app-server container per role instance
-- SQLite queue/state tables for messages, sessions, threads, turns, events,
+- Postgres queue/state tables for messages, sessions, threads, turns, events,
   safe-output calls, memory, artifacts, approvals, handoffs, and releases
 - app-server protocol client boundaries for `thread/start`, `thread/resume`,
   `turn/start`, `turn/steer`, `turn/interrupt`, `thread/read`, and paginated
@@ -38,15 +38,17 @@ Useful local commands:
 ```powershell
 pip install -e .[dev]
 pytest -q
-agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml init-db
-agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml materialize-agent-configs --agent-config-root .tmp/v4-agents --role-templates-dir config/roles
-agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml render-compose --output .tmp/docker-compose.v4.yml
-agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml enqueue-message --target-role project-manager --text "Give me a status update"
-agentic-mesh-v4 --db .tmp/v4.sqlite3 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json
+$env:AGENTIC_MESH_DATABASE_URL="postgresql://agentic_mesh:password@localhost:5432/agentic_mesh_v4"
+agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml init-db
+agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml materialize-agent-configs --agent-config-root .tmp/v4-agents --role-templates-dir config/roles
+agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml render-compose --output .tmp/docker-compose.v4.yml
+agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml enqueue-message --target-role project-manager --text "Give me a status update"
+agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json
 ```
 
 The `project-v4.yaml` dogfood command expects the V4 environment to provide
-Graph/Teams credentials, Codex auth mounts, `AGENTIC_MESH_ONEDRIVE_TOKEN`,
+Postgres connection settings, Graph/Teams credentials, Codex auth mounts,
+`AGENTIC_MESH_ONEDRIVE_TOKEN`,
 `AGENTIC_MESH_ONEDRIVE_DRIVE_ID`, and `AGENTIC_MESH_SPONSOR_TEAMS_USER_ID`.
 
 Validate source/runtime/project boundaries with the active V4 topology rules:
@@ -108,7 +110,7 @@ Open source core should remain useful on its own:
 - V4 remote-control runtime kernel
 - Teams connector, document-library, safe-output, and Codex app-server adapter ports
 - governance-aware role agents and RACI
-- SQLite local backend
+- Postgres local backend
 - Docker Compose deployment profile
 - documentation framework primitives
 - status/reporting dashboard

@@ -45,8 +45,8 @@ Core principles:
 - Governance is explicit. Agents must consult required RACI roles and
   stakeholders before completing phases, inform roles that must be informed,
   and record governance exceptions when consultation is intentionally skipped.
-- Runtime operational state and read models are stored in the V4 database, with
-  repository interfaces kept suitable for Postgres later.
+- Runtime operational state and read models are stored in Postgres through the
+  V4 database repository interface.
 - The document library remains the canonical project knowledge base. Runtime
   database records make work inspectable, recoverable, and observable; they do
   not replace durable project documentation.
@@ -245,8 +245,10 @@ Before committing:
 - Run `python scripts/check-pr-size.py --base origin/develop --committed-only` before pushing
   a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
-- Run `python -m agentic_mesh_v4.cli --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml --db .tmp/v4/agentic-mesh-v4.sqlite3 status-json`
-  for a basic V4 runtime read-model smoke.
+- Run `python -m agentic_mesh_v4.cli --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json`
+  for a basic V4 runtime read-model smoke after configuring
+  `AGENTIC_MESH_DATABASE_URL` or the `AGENTIC_MESH_DATABASE_*` Postgres
+  environment variables.
 - Run `agentic-mesh validate-topology ...` for source/runtime/project boundary
   changes.
 - Run `docker compose ... config --quiet` when Compose outputs change.
