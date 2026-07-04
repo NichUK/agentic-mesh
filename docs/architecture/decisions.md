@@ -328,6 +328,9 @@ unless an accountable role records a justified governance exception.
 
 ### Consequences
 
+- Superseded by V4. The V2 and V3 runtime packages, legacy scripts, and tests
+  have been removed from the active source tree; this ADR is retained as a
+  historical design record only.
 - V3 code lives under `src/agentic_mesh_v3`.
 - V2 is frozen except for emergency operational fixes while V3 is proved.
 - Broker, document library, connector, and worker providers are ports first.

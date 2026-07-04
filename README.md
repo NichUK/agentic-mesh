@@ -57,16 +57,13 @@ Validate source/runtime/project boundaries with the active V4 topology rules:
 agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json
 ```
 
-The earlier `validate-topology` command remains in legacy packages until it is
-ported to V4, but new work should target the V4 package and project topology.
+The V2 and V3 runtime packages and tests have been removed. New work should
+target the V4 package and project topology.
 
 ## Repository Layout
 
 - `src/agentic_mesh_v4/`: active V4 remote-control runtime package
-- `src/agentic_mesh_v3/`: previous V3 runtime package, retained temporarily
-- `src/agentic_mesh_v2/`: frozen V2 runtime package, retained temporarily
 - `tests/test_v4_*.py`: active V4 regression tests
-- `tests/test_v3_*.py` and `tests/test_v2_*.py`: legacy regression coverage
 - `examples/projects/agentic-mesh-dev/deploy/compose/`: dogfood compose
   deployment, currently V4-first
 - `docs/architecture/v4-remote-control-runtime.md`: V4 reset architecture

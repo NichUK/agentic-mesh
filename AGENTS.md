@@ -36,9 +36,9 @@ Core principles:
 - The active implementation is V4. Runtime code lives under
   `src/agentic_mesh_v4`.
 - Do not add new runtime code under removed or legacy package paths. V2 and V3
-  packages may exist only as historical source until removed by an explicit
-  cleanup slice; no active deployment, prompt, Compose profile, or role workflow
-  should depend on them.
+  implementation packages and tests have been removed; no active deployment,
+  prompt, Compose profile, or role workflow should depend on them or recreate
+  them.
 - V4 agents own work progression. The runtime provides platform services such
   as startup, hibernation, connector bridges, document-library access,
   reporting, config materialisation, telemetry, and reliable handoff delivery.
@@ -249,8 +249,9 @@ Before committing:
   for a basic V4 runtime read-model smoke after configuring
   `AGENTIC_MESH_DATABASE_URL` or the `AGENTIC_MESH_DATABASE_*` Postgres
   environment variables.
-- Run `agentic-mesh validate-topology ...` for source/runtime/project boundary
-  changes.
+- For source/runtime/project boundary changes, add or update V4 topology tests
+  and run the relevant `tests/test_v4_*.py` coverage. The legacy
+  `validate-topology` command was removed with the V2/V3 packages.
 - Run `docker compose ... config --quiet` when Compose outputs change.
 - Update `MEMORY.md` when future agents need the context.
 - Update ADRs or implementation-slice docs when a design decision or accepted

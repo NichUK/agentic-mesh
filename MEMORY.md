@@ -70,93 +70,63 @@ Important V3 decisions:
 
 ## Current State
 
-Agentic Mesh is now progressing through stacked V3 implementation branches.
-The V2 console entry point remains present for compatibility while V3 is
-proved, but new runtime-reset work should land under the V3 package:
+Agentic Mesh is active on the V4 remote-control runtime. V2 and V3 runtime
+packages, legacy console scripts, installer scripts, and tests have been
+removed from the active source tree. New runtime work must land under:
 
 ```text
-src/agentic_mesh_v3
-tests/test_v3_*.py
+src/agentic_mesh_v4
+tests/test_v4_*.py
 ```
 
-The installed V3 console script is:
+The active console scripts are:
 
 ```text
-agentic-mesh-v3 = agentic_mesh_v3.cli:main
+agentic-mesh = agentic_mesh_v4.cli:main
+agentic-mesh-v4 = agentic_mesh_v4.cli:main
 ```
 
-Use feature branches stacked from the latest V3 PR branch, then promote through
-PRs with Copilot review. Do not restart broad V1/V2 dogfood work unless the
-sponsor explicitly asks for an operational fix.
-
-The legacy V2 console script still exists as:
-
-```text
-agentic-mesh = agentic_mesh_v2.cli:main
-```
+Use feature branches from `develop`, then promote through PRs with Copilot
+review unless the sponsor explicitly directs an operational exception.
 
 ## Dogfood Deployment
 
-The linuxch dogfood deployment runs v2 only on the existing port:
+The linuxch dogfood deployment runs V4 on the existing status port:
 
 ```text
 http://linuxch:8100/status
 ```
 
-The compose stack should contain only:
+The compose stack should contain V4 runtime services such as:
 
-- `agentic-mesh-v2-runtime-1`
+- `agentic-mesh-runtime-1`
+- `agentic-mesh-dispatcher-1`
+- `agentic-mesh-postgres-1`
 - `agentic-mesh-otel-collector-1`
 - external `agentic-mesh-cloudflared`
 
-Old v1 runtime/project output on linuxch was backed up to:
+Runtime state is Postgres-backed. SQLite files are not active V4 runtime state.
 
-```text
-/home/nich/agentic-mesh-v1-backups/v1-cutover-20260612T080527Z.tar.gz
-```
+## Removed Legacy Runtime Code
 
-Secrets and worker credential homes were left in place.
-
-## V2 Runtime Shape
-
-V2 currently provides:
-
-- SQLite runtime database
-- explicit work-item state machine
-- safe-output service and role-scoped tool policy
-- role-service run wrapper with terminal safe-output enforcement
-- TOGAF-aligned document framework primitives
-- release service requiring deployment or no-deployment disposition before
-  closure
-- v2 HTTP status/reporting server
-- v2 CLI commands: `init-db`, `demo-slice`, `status-json`,
-  `validate-topology`, and `serve`
-
-The live v2 smoke slice is:
-
-```text
-work-v2-demo-slice
-```
-
-It proves queue capture, work item promotion, product/engineering/QA/release
-role runs, safe-output recording, artifact records, release evidence, and
-closed work-item state.
+The V2 and V3 source packages and regression tests were removed after V4 became
+the active runtime. Keep historical V2/V3 architecture and QA documents as
+records, but do not add active code, tests, deployment paths, or prompts that
+import `agentic_mesh_v2` or `agentic_mesh_v3`.
 
 ## Useful Commands
 
 ```powershell
 pip install -e .[dev]
 pytest -q
-agentic-mesh --db .tmp/v2.sqlite3 init-db
-agentic-mesh --db .tmp/v2.sqlite3 demo-slice
-agentic-mesh --db .tmp/v2.sqlite3 status-json
+agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json
 docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml config --quiet
 ```
 
 Linuxch deploy:
 
 ```powershell
-ssh nich@linuxch 'cd /home/nich/agentic-mesh && git pull --ff-only origin codex/v2-runtime-reset && sh scripts/release-linuxch-compose.sh'
+ssh nich@linuxch 'cd /home/nich/agentic-mesh && git pull --ff-only && sh scripts/release-linuxch-compose.sh'
 ```
 
 ## Teams Installation Notes

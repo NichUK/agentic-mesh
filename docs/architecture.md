@@ -62,8 +62,9 @@ operational support.
   reporting, and telemetry services.
 - Worker adapter: executes model or CLI work through Codex, OpenAI, Anthropic,
   Claude Code, MiniMax, DeepSeek, or future providers.
-- Broker: provides durable inbox/outbox delivery behind an adapter interface,
-  initially NATS JetStream.
+- Message queue: provides durable inbox/outbox delivery. The active V4 runtime
+  uses Postgres-backed queues; other queue backends remain future adapter
+  options.
 - Connector bridge: maps Teams, Slack, web, CLI, or other surfaces to the
   internal message/action model. It is transparent plumbing, not a manager.
 - Control-plane: supervises topology, role-instance lifecycle, hibernation,

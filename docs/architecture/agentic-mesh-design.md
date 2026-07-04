@@ -583,8 +583,8 @@ Purpose:
 
 Local backend:
 
-- YAML or JSON state files
-- optional SQLite only where transactional local behavior is required
+- Postgres for active runtime state, queues, and read models
+- YAML or JSON files only for static configuration or exported snapshots
 
 Azure backend:
 
@@ -980,12 +980,12 @@ types.
 
 - Should the router be one container per project or a shared multi-project
   service?
-- Should v2 connector routing and runtime supervision be separate services, or
-  one deployable module until multi-project scale requires separation?
+- Should connector routing and runtime supervision be separate services, or one
+  deployable module until multi-project scale requires separation?
 - Should each role-agent instance support multiple concurrent claims, or should
   horizontal scale be expressed only by adding more instances of the role?
-- What is the right Postgres compatibility boundary for the SQLite-first v2
-  repository interfaces?
+- What is the right repository boundary for future Postgres-compatible managed
+  database backends?
 - What minimum Teams permissions are required for channel messages, DMs,
   Adaptive Cards, and channel creation?
 - Should project Teams be created by Agentic Mesh, or should the first version
