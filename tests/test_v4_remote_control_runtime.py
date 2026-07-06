@@ -1229,6 +1229,46 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"turn/completed"}',
             },
             {
+                "created_at": "2026-06-24T10:00:06.100000+00:00",
+                "event_type": "turn/diff/updated",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "turn/diff/updated",
+                "payload_json": '{"method":"turn/diff/updated"}',
+            },
+            {
+                "created_at": "2026-06-24T10:00:06.200000+00:00",
+                "event_type": "item/started",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "item/started",
+                "payload_json": '{"method":"item/started"}',
+            },
+            {
+                "created_at": "2026-06-24T10:00:06.300000+00:00",
+                "event_type": "item/commandExecution/requestApproval/autoAccepted",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "Auto-accepted server approval request for approval_policy=never.",
+                "payload_json": '{"method":"item/commandExecution/requestApproval/autoAccepted"}',
+            },
+            {
+                "created_at": "2026-06-24T10:00:06.400000+00:00",
+                "event_type": "item/commandExecution/requestApproval",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "item/commandExecution/requestApproval",
+                "payload_json": '{"method":"item/commandExecution/requestApproval"}',
+            },
+            {
+                "created_at": "2026-06-24T10:00:06.500000+00:00",
+                "event_type": "serverRequest/resolved",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "serverRequest/resolved",
+                "payload_json": '{"method":"serverRequest/resolved"}',
+            },
+            {
                 "created_at": "2026-06-24T10:00:07+00:00",
                 "event_type": "item/agentMessage/delta",
                 "turn_id": "turn-1",
@@ -1255,6 +1295,11 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
     assert "account/rateLimits/updated account/rateLimits/updated" not in html
     assert "thread/status/changed thread/status/changed" not in html
     assert "turn/completed turn/completed" not in html
+    assert "turn/diff/updated turn/diff/updated" not in html
+    assert "item/started item/started" not in html
+    assert "Auto-accepted server approval request" not in html
+    assert "item/commandExecution/requestApproval item/commandExecution/requestApproval" not in html
+    assert "serverRequest/resolved serverRequest/resolved" not in html
 
 
 def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:
