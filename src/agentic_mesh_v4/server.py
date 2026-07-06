@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
@@ -47,6 +48,10 @@ class V4Handler(BaseHTTPRequestHandler):
             if path == "/agents":
                 self._html(render_agents(db.snapshot()))
                 return
+            if path.startswith("/agent/") and path.endswith("/thread/events"):
+                role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread/events")).strip("/")
+                self._handle_agent_thread_events(db, role_id)
+                return
             if path.startswith("/agent/") and path.endswith("/thread"):
                 role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread")).strip("/")
                 events = [
@@ -60,6 +65,7 @@ class V4Handler(BaseHTTPRequestHandler):
                         (f"%.{role_id}.%",),
                     )
                 ]
+                events.reverse()
                 self._html(render_agent_thread(role_id, events))
                 return
             if path.startswith("/work-item/"):
@@ -96,6 +102,51 @@ class V4Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         return
+
+    def _handle_agent_thread_events(self, db: V4Database, role_id: str) -> None:
+        role_pattern = f"%.{role_id}.%"
+        latest = db.connection.execute(
+            """
+            SELECT created_at, event_id FROM agent_events
+            WHERE role_instance_id LIKE ?
+            ORDER BY created_at DESC, event_id DESC LIMIT 1
+            """,
+            (role_pattern,),
+        ).fetchone()
+        last_created_at = str(latest["created_at"]) if latest else ""
+        last_event_id = str(latest["event_id"]) if latest else ""
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        for _ in range(300):
+            rows = [
+                dict(row)
+                for row in db.connection.execute(
+                    """
+                    SELECT event_id, created_at, event_type, turn_id, message_id, content
+                    FROM agent_events
+                    WHERE role_instance_id LIKE ?
+                      AND (created_at > ? OR (created_at = ? AND event_id > ?))
+                    ORDER BY created_at ASC, event_id ASC
+                    LIMIT 100
+                    """,
+                    (role_pattern, last_created_at, last_created_at, last_event_id),
+                )
+            ]
+            try:
+                if rows:
+                    for row in rows:
+                        last_created_at = str(row.get("created_at") or last_created_at)
+                        last_event_id = str(row.get("event_id") or last_event_id)
+                        self.wfile.write(f"data: {json.dumps(row)}\n\n".encode("utf-8"))
+                else:
+                    self.wfile.write(b": keep-alive\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            time.sleep(1)
 
     def _handle_teams_activity(self) -> None:
         payload = _normalise_teams_activity_payload(self._read_json())
