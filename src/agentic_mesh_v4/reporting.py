@@ -200,11 +200,20 @@ function consoleFragment(item) {
 
 function isConsoleNoise(eventType, content) {
   if (!eventType) return !content;
-  if (eventType === "item/completed" || eventType === "turn/completed") return true;
+  if (eventType === "item/completed" || eventType === "item/started") return true;
+  if (eventType === "turn/completed" || eventType === "turn/diff/updated") return true;
+  if (eventType === "serverRequest/resolved") return true;
+  if (eventType === "item/commandExecution/requestApproval") return true;
+  if (eventType === "item/commandExecution/requestApproval/autoAccepted") return true;
+  if (eventType === "item/fileChange/requestApproval") return true;
+  if (eventType === "item/fileChange/requestApproval/autoAccepted") return true;
+  if (eventType === "item/permissions/requestApproval") return true;
+  if (eventType === "item/permissions/requestApproval/autoAccepted") return true;
   if (eventType.startsWith("thread/tokenUsage/")) return true;
   if (eventType.startsWith("account/rateLimits/")) return true;
   if (eventType.startsWith("thread/status/") || eventType === "thread/status") return true;
   if (eventType.startsWith("turn/status/") || eventType === "turn/status") return true;
+  if (content && content === eventType && !eventType.endsWith("/outputDelta")) return true;
   return false;
 }
 
@@ -250,7 +259,21 @@ def _agent_console(events: list[dict[str, Any]]) -> dict[str, str]:
 def _is_console_noise(event_type: str, content: str) -> bool:
     if not event_type:
         return not content
-    if event_type in {"item/completed", "turn/completed"}:
+    if event_type in {
+        "item/completed",
+        "item/started",
+        "turn/completed",
+        "turn/diff/updated",
+        "serverRequest/resolved",
+        "item/commandExecution/requestApproval",
+        "item/commandExecution/requestApproval/autoAccepted",
+        "item/fileChange/requestApproval",
+        "item/fileChange/requestApproval/autoAccepted",
+        "item/permissions/requestApproval",
+        "item/permissions/requestApproval/autoAccepted",
+    }:
+        return True
+    if content and content == event_type and not event_type.endswith("/outputDelta"):
         return True
     return any(
         event_type == prefix.removesuffix("/")
