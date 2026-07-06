@@ -13,6 +13,7 @@ from typing import Protocol
 
 from agentic_mesh_v4.auto_dispatch import WorkItemDispatchContext
 from agentic_mesh_v4.auto_dispatch import resolve_auto_dispatch
+from agentic_mesh_v4.auto_dispatch import without_self_dispatch_targets
 from agentic_mesh_v4.auto_handoff import create_auto_dispatch_handoffs
 from agentic_mesh_v4.artifact_preflight import RoleArtifactPreflight
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
@@ -669,6 +670,7 @@ class V4Runtime:
                 remaining.append(finding)
                 continue
             resolution = resolve_auto_dispatch(payload=source_payload, work_item=context)
+            resolution = without_self_dispatch_targets(resolution=resolution, source_role=from_role)
             if not resolution.should_dispatch:
                 remaining.append(finding)
                 continue
