@@ -137,22 +137,7 @@ def render_agent_thread(
             f"<td>{html.escape(item.get('text') or '')}</td>"
             "</tr>"
         )
-    rows = []
-    for item in events:
-        rows.append(
-            "<tr>"
-            f"<td>{html.escape(item['created_at'])}</td>"
-            f"<td>{html.escape(item['event_type'])}</td>"
-            f"<td>{html.escape(item.get('turn_id') or '')}</td>"
-            f"<td>{html.escape(item.get('content') or '')}</td>"
-            "</tr>"
-        )
-    event_lines = [
-        f"{html.escape(item.get('created_at') or '')} "
-        f"{html.escape(item.get('event_type') or '')}: "
-        f"{html.escape(item.get('content') or '')}"
-        for item in events
-    ]
+    console_text = _agent_console_text(events)
     return _page(
         f"{role_id} Thread",
         [
@@ -162,27 +147,63 @@ def render_agent_thread(
             "<table><thead><tr><th>Updated</th><th>State</th><th>Message</th><th>Text</th></tr></thead>"
             f"<tbody>{''.join(message_rows) or '<tr><td colspan=\"4\">No active messages.</td></tr>'}</tbody></table>",
             "<h2>Live Output</h2>",
-            f"<pre id=\"agent-output\">{html.escape(chr(10).join(event_lines))}</pre>",
             "<p id=\"stream-state\">Connecting live push stream...</p>",
-            "<table><thead><tr><th>Time</th><th>Event</th><th>Turn</th><th>Content</th></tr></thead>"
-            f"<tbody>{''.join(rows) or '<tr><td colspan=\"4\">No stream events recorded.</td></tr>'}</tbody></table>",
+            f"<pre id=\"agent-output\" class=\"agent-console\" aria-live=\"polite\">{html.escape(console_text)}</pre>",
             """
 <script>
 const streamState = document.getElementById("stream-state");
 const output = document.getElementById("agent-output");
+const maxConsoleChars = 120000;
 const events = new EventSource("thread/events");
 events.onopen = () => { streamState.textContent = "Live push stream connected."; };
 events.onmessage = (event) => {
   if (!event.data) return;
-  const line = document.createElement("div");
-  line.textContent = event.data;
-  output.appendChild(line);
+  let fragment = event.data;
+  try {
+    const parsed = JSON.parse(event.data);
+    fragment = consoleFragment(parsed);
+  } catch (_) {
+    fragment = event.data + "\\n";
+  }
+  if (!fragment) return;
+  output.textContent += fragment;
+  if (output.textContent.length > maxConsoleChars) {
+    output.textContent = output.textContent.slice(-maxConsoleChars);
+  }
+  output.scrollTop = output.scrollHeight;
 };
 events.onerror = () => { streamState.textContent = "Live push stream disconnected; retrying."; };
+
+function consoleFragment(item) {
+  const eventType = String(item.event_type || item.method || "");
+  const content = String(item.content || item.delta || item.text || "");
+  if (eventType === "item/agentMessage/delta") {
+    return content;
+  }
+  const createdAt = String(item.created_at || "");
+  const prefix = createdAt ? `[${createdAt}] ` : "";
+  const suffix = content ? ` ${content}` : "";
+  return `\\n${prefix}${eventType}${suffix}\\n`;
+}
 </script>
 """,
         ],
     )
+
+
+def _agent_console_text(events: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for item in events:
+        event_type = str(item.get("event_type") or "")
+        content = str(item.get("content") or "")
+        if event_type == "item/agentMessage/delta":
+            parts.append(content)
+            continue
+        created_at = str(item.get("created_at") or "")
+        prefix = f"[{created_at}] " if created_at else ""
+        suffix = f" {content}" if content else ""
+        parts.append(f"\n{prefix}{event_type}{suffix}\n")
+    return "".join(parts)
 
 
 def render_work_item(work_item_id: str, rows: list[dict[str, Any]]) -> str:
@@ -663,12 +684,25 @@ def _truncate(value: str, limit: int) -> str:
 
 
 def _page(title: str, parts: list[str]) -> str:
+    styles = (
+        "body{font-family:system-ui,Segoe UI,sans-serif;margin:2rem}"
+        "table{border-collapse:collapse;width:100%;margin:1rem 0}"
+        "th,td{border:1px solid #d0d7de;padding:.45rem;text-align:left;vertical-align:top}"
+        "th{background:#f6f8fa}"
+        "pre{white-space:pre-wrap;background:#f6f8fa;padding:1rem}"
+        ".agent-console{"
+        "box-sizing:border-box;min-height:24rem;max-height:65vh;overflow:auto;"
+        "background:#0d1117;color:#d6deeb;border:1px solid #30363d;border-radius:6px;"
+        "font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,Liberation Mono,Menlo,monospace;"
+        "white-space:pre-wrap;overflow-wrap:anywhere;"
+        "}"
+    )
     return "\n".join(
         [
             "<!doctype html>",
             "<html><head>",
             f"<title>{html.escape(title)}</title>",
-            "<style>body{font-family:system-ui,Segoe UI,sans-serif;margin:2rem}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border:1px solid #d0d7de;padding:.45rem;text-align:left;vertical-align:top}th{background:#f6f8fa}pre{white-space:pre-wrap;background:#f6f8fa;padding:1rem}</style>",
+            f"<style>{styles}</style>",
             "</head><body>",
             *parts,
             "</body></html>",

@@ -1187,6 +1187,14 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "message_id": "msg-1",
                 "content": "No-cache rebuild started.",
                 "payload_json": '{"method":"item/agentMessage/delta"}',
+            },
+            {
+                "created_at": "2026-06-24T10:00:02+00:00",
+                "event_type": "item/agentMessage/delta",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": " Still running.",
+                "payload_json": '{"method":"item/agentMessage/delta"}',
             }
         ],
     )
@@ -1194,8 +1202,11 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
     assert "new EventSource(\"thread/events\")" in html
     assert "http-equiv=\"refresh\"" not in html
     assert 'id="agent-output"' in html
-    assert "No-cache rebuild started." in html
+    assert 'class="agent-console"' in html
+    assert "No-cache rebuild started. Still running." in html
     assert "Live push stream connected." in html
+    assert "<th>Event</th>" not in html
+    assert "output.textContent += fragment" in html
 
 
 def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:
