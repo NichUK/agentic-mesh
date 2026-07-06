@@ -177,7 +177,7 @@ events.onerror = () => { streamState.textContent = "Live push stream disconnecte
 
 function consoleFragment(item) {
   const eventType = String(item.event_type || item.method || "");
-  const content = String(item.content || item.delta || item.text || "");
+  const content = normalizeConsoleText(String(item.content || item.delta || item.text || ""));
   if (isConsoleNoise(eventType, content)) {
     return "";
   }
@@ -207,6 +207,16 @@ function isConsoleNoise(eventType, content) {
   if (eventType.startsWith("turn/status/") || eventType === "turn/status") return true;
   return false;
 }
+
+function normalizeConsoleText(value) {
+  return value
+    .replace(/\\\\r\\\\n/g, "\\n")
+    .replace(/\\\\n/g, "\\n")
+    .replace(/\\\\r/g, "\\r")
+    .replace(/\\\\t/g, "\\t")
+    .replace(/\\\\\"/g, '"')
+    .replace(/\\\\'/g, "'");
+}
 </script>
 """.replace("__INITIAL_TURN_ID__", json.dumps(console["last_turn_id"])),
         ],
@@ -218,7 +228,7 @@ def _agent_console(events: list[dict[str, Any]]) -> dict[str, str]:
     current_turn_id = ""
     for item in events:
         event_type = str(item.get("event_type") or "")
-        content = str(item.get("content") or "")
+        content = _normalise_console_text(str(item.get("content") or ""))
         if _is_console_noise(event_type, content):
             continue
         turn_id = str(item.get("turn_id") or "")
@@ -251,6 +261,17 @@ def _is_console_noise(event_type: str, content: str) -> bool:
             "thread/status/",
             "turn/status/",
         )
+    )
+
+
+def _normalise_console_text(value: str) -> str:
+    return (
+        value.replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\r", "\r")
+        .replace("\\t", "\t")
+        .replace('\\"', '"')
+        .replace("\\'", "'")
     )
 
 
