@@ -2,6 +2,7 @@
 set -eu
 
 MOUNT_POINT="${AGENTIC_MESH_STORAGE_MOUNT:-/mnt/agentic-mesh}"
+STORAGE_DEVICE="${AGENTIC_MESH_STORAGE_DEVICE:-}"
 SYSTEM_SOURCE="${AGENTIC_MESH_SYSTEM_SOURCE:-/home/nich/agentic-mesh-system-clean}"
 PROJECTS_SOURCE="${AGENTIC_MESH_PROJECTS_SOURCE:-/home/nich/agentic-mesh-projects}"
 DOCKER_ROOT="${AGENTIC_MESH_DOCKER_ROOT:-/var/snap/docker/common/var-lib-docker}"
@@ -24,8 +25,25 @@ require_command() {
 }
 
 detect_agentic_mesh_disk() {
+    if [ -n "$STORAGE_DEVICE" ]; then
+        if [ ! -b "$STORAGE_DEVICE" ]; then
+            echo "Configured storage device $STORAGE_DEVICE is not a block device." >&2
+            return 1
+        fi
+        printf '%s\n' "$STORAGE_DEVICE"
+        return 0
+    fi
+
     lsblk -b -dn -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT |
-        awk '$3 == "disk" && $4 == "" && $5 == "" && $2 >= 450000000000 && $2 <= 600000000000 { print "/dev/" $1; exit }'
+        awk '$3 == "disk" && $4 == "" && $5 == "" && $2 >= 450000000000 && $2 <= 600000000000 { print $1 }' |
+        while IFS= read -r name; do
+            device="/dev/$name"
+            child_count="$(lsblk -nr "$device" | wc -l)"
+            if [ "$child_count" -eq 1 ]; then
+                printf '%s\n' "$device"
+                break
+            fi
+        done
 }
 
 ensure_mount() {
@@ -42,6 +60,21 @@ ensure_mount() {
     fi
 
     part="${disk}1"
+    if [ -b "$part" ] && blkid "$part" >/dev/null 2>&1; then
+        echo "Using existing filesystem on $part for $MOUNT_POINT."
+        uuid="$(blkid -s UUID -o value "$part")"
+        if [ -z "$uuid" ]; then
+            echo "Could not determine UUID for $part." >&2
+            exit 1
+        fi
+        run_sudo mkdir -p "$MOUNT_POINT"
+        if ! grep -q "$uuid" /etc/fstab; then
+            echo "UUID=$uuid $MOUNT_POINT ext4 defaults,nofail 0 2" | run_sudo tee -a /etc/fstab >/dev/null
+        fi
+        run_sudo mount "$MOUNT_POINT"
+        return
+    fi
+
     echo "Preparing Agentic Mesh disk $disk at $MOUNT_POINT."
     run_sudo parted -s "$disk" mklabel gpt
     run_sudo parted -s "$disk" mkpart primary ext4 0% 100%
@@ -54,12 +87,29 @@ ensure_mount() {
     fi
 
     run_sudo mkfs.ext4 -F -L agentic-mesh "$part"
-    uuid="$(blkid -s UUID -o value "$part")"
+    uuid=""
+    attempts=0
+    while [ -z "$uuid" ] && [ "$attempts" -lt 10 ]; do
+        uuid="$(blkid -s UUID -o value "$part" || true)"
+        attempts=$((attempts + 1))
+        [ -n "$uuid" ] || sleep 1
+    done
+    if [ -z "$uuid" ]; then
+        echo "Could not determine UUID for $part after formatting." >&2
+        exit 1
+    fi
     run_sudo mkdir -p "$MOUNT_POINT"
     if ! grep -q "$uuid" /etc/fstab; then
         echo "UUID=$uuid $MOUNT_POINT ext4 defaults,nofail 0 2" | run_sudo tee -a /etc/fstab >/dev/null
     fi
     run_sudo mount "$MOUNT_POINT"
+}
+
+allow_snap_docker_mnt_access() {
+    if command -v snap >/dev/null 2>&1 && snap list docker >/dev/null 2>&1; then
+        echo "Allowing snap Docker to access removable media mount paths."
+        run_sudo snap connect docker:removable-media || true
+    fi
 }
 
 grow_root() {
@@ -83,6 +133,7 @@ stop_agentic_mesh() {
         fi
         cd "$old_pwd" || return
     fi
+    docker ps --filter "name=agentic-mesh" -q | xargs -r docker stop || true
 }
 
 stop_docker() {
@@ -156,6 +207,7 @@ main() {
     require_command rsync
 
     ensure_mount
+    allow_snap_docker_mnt_access
     grow_root
     stop_agentic_mesh
 
