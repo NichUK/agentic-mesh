@@ -1233,7 +1233,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "event_type": "item/agentMessage/delta",
                 "turn_id": "turn-1",
                 "message_id": "msg-1",
-                "content": " Still running.",
+                "content": " Still running.\\nNext line with \\\"quoted\\\" value and\\ttab.",
                 "payload_json": '{"method":"item/agentMessage/delta"}',
             }
         ],
@@ -1243,7 +1243,9 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
     assert "http-equiv=\"refresh\"" not in html
     assert 'id="agent-output"' in html
     assert 'class="agent-console"' in html
-    assert "No-cache rebuild started. Still running." in html
+    assert "No-cache rebuild started. Still running.\nNext line with &quot;quoted&quot; value and\ttab." in html
+    assert "Still running.\\nNext line" not in html
+    assert "\\&quot;quoted\\&quot;" not in html
     assert html.count("[2026-06-24T10:00:01+00:00]") == 1
     assert "Live push stream connected." in html
     assert "<th>Event</th>" not in html
