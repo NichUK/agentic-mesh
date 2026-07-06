@@ -137,7 +137,7 @@ def render_agent_thread(
             f"<td>{html.escape(item.get('text') or '')}</td>"
             "</tr>"
         )
-    console_text = _agent_console_text(events)
+    console = _agent_console(events)
     return _page(
         f"{role_id} Thread",
         [
@@ -148,12 +148,13 @@ def render_agent_thread(
             f"<tbody>{''.join(message_rows) or '<tr><td colspan=\"4\">No active messages.</td></tr>'}</tbody></table>",
             "<h2>Live Output</h2>",
             "<p id=\"stream-state\">Connecting live push stream...</p>",
-            f"<pre id=\"agent-output\" class=\"agent-console\" aria-live=\"polite\">{html.escape(console_text)}</pre>",
+            f"<pre id=\"agent-output\" class=\"agent-console\" aria-live=\"polite\">{html.escape(console['text'])}</pre>",
             """
 <script>
 const streamState = document.getElementById("stream-state");
 const output = document.getElementById("agent-output");
 const maxConsoleChars = 120000;
+let currentTurnId = __INITIAL_TURN_ID__;
 const events = new EventSource("thread/events");
 events.onopen = () => { streamState.textContent = "Live push stream connected."; };
 events.onmessage = (event) => {
@@ -177,33 +178,80 @@ events.onerror = () => { streamState.textContent = "Live push stream disconnecte
 function consoleFragment(item) {
   const eventType = String(item.event_type || item.method || "");
   const content = String(item.content || item.delta || item.text || "");
-  if (eventType === "item/agentMessage/delta") {
-    return content;
+  if (isConsoleNoise(eventType, content)) {
+    return "";
   }
+  const turnId = String(item.turn_id || item.turnId || "");
   const createdAt = String(item.created_at || "");
-  const prefix = createdAt ? `[${createdAt}] ` : "";
+  let prefix = "";
+  if (turnId && turnId !== currentTurnId) {
+    currentTurnId = turnId;
+    prefix = createdAt ? `\\n[${createdAt}]\\n` : "\\n";
+  }
+  if (eventType === "item/agentMessage/delta") {
+    return prefix + content;
+  }
+  if (eventType === "item/commandExecution/outputDelta" || eventType.endsWith("/outputDelta")) {
+    return prefix + content;
+  }
   const suffix = content ? ` ${content}` : "";
-  return `\\n${prefix}${eventType}${suffix}\\n`;
+  return `${prefix}\\n${eventType}${suffix}\\n`;
+}
+
+function isConsoleNoise(eventType, content) {
+  if (!eventType) return !content;
+  if (eventType === "item/completed" || eventType === "turn/completed") return true;
+  if (eventType.startsWith("thread/tokenUsage/")) return true;
+  if (eventType.startsWith("account/rateLimits/")) return true;
+  if (eventType.startsWith("thread/status/") || eventType === "thread/status") return true;
+  if (eventType.startsWith("turn/status/") || eventType === "turn/status") return true;
+  return false;
 }
 </script>
-""",
+""".replace("__INITIAL_TURN_ID__", json.dumps(console["last_turn_id"])),
         ],
     )
 
 
-def _agent_console_text(events: list[dict[str, Any]]) -> str:
+def _agent_console(events: list[dict[str, Any]]) -> dict[str, str]:
     parts: list[str] = []
+    current_turn_id = ""
     for item in events:
         event_type = str(item.get("event_type") or "")
         content = str(item.get("content") or "")
+        if _is_console_noise(event_type, content):
+            continue
+        turn_id = str(item.get("turn_id") or "")
+        if turn_id and turn_id != current_turn_id:
+            current_turn_id = turn_id
+            created_at = str(item.get("created_at") or "")
+            parts.append(f"\n[{created_at}]\n" if created_at else "\n")
         if event_type == "item/agentMessage/delta":
             parts.append(content)
             continue
-        created_at = str(item.get("created_at") or "")
-        prefix = f"[{created_at}] " if created_at else ""
+        if event_type == "item/commandExecution/outputDelta" or event_type.endswith("/outputDelta"):
+            parts.append(content)
+            continue
         suffix = f" {content}" if content else ""
-        parts.append(f"\n{prefix}{event_type}{suffix}\n")
-    return "".join(parts)
+        parts.append(f"\n{event_type}{suffix}\n")
+    return {"text": "".join(parts).lstrip(), "last_turn_id": current_turn_id}
+
+
+def _is_console_noise(event_type: str, content: str) -> bool:
+    if not event_type:
+        return not content
+    if event_type in {"item/completed", "turn/completed"}:
+        return True
+    return any(
+        event_type == prefix.removesuffix("/")
+        or event_type.startswith(prefix)
+        for prefix in (
+            "thread/tokenUsage/",
+            "account/rateLimits/",
+            "thread/status/",
+            "turn/status/",
+        )
+    )
 
 
 def render_work_item(work_item_id: str, rows: list[dict[str, Any]]) -> str:
