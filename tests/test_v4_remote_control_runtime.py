@@ -206,6 +206,58 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["events"][1]["content"] == "Done"
 
 
+def test_v4_missing_required_handoff_escalates_to_project_manager(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Done"}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+    runtime.register_roles()
+    db.upsert_work_item(
+        work_item_id="work-needs-handoff",
+        title="Needs handoff",
+        state="product_definition",
+        owner_role="product-manager",
+        next_action="Hand off to UX.",
+    )
+    runtime.enqueue_conversation(
+        target_role="product-manager",
+        text="Complete product definition and hand off.",
+        source="api",
+        payload={
+            "work_item_id": "work-needs-handoff",
+            "from_role": "product-manager",
+            "to_role": "ux-designer",
+            "state": "experience_design",
+            "next_action": "UX owns design.",
+        },
+    )
+
+    result = runtime.dispatch_once(role_id="product-manager")
+
+    assert result is not None
+    assert result.state == "completed_with_missing_output"
+    pm_messages = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT * FROM message_queue WHERE target_role='project-manager' AND source='runtime-escalation'"
+        )
+    ]
+    assert len(pm_messages) == 1
+    assert "Runtime obligation failure" in pm_messages[0]["text"]
+    assert pm_messages[0]["state"] == "queued"
+
+
 def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: Path) -> None:
     db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)

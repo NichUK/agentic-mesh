@@ -171,8 +171,10 @@ class V4Handler(BaseHTTPRequestHandler):
         values = tuple(str(row["role_instance_id"]) for row in rows)
         if values:
             return values
-        if self.project_config.project_id:
-            return (f"{self.project_config.project_id}.{role_id}.1",)
+        try:
+            return (self.project_config.role(role_id).role_instance_id,)
+        except KeyError:
+            pass
         return ()
 
     def _handle_teams_activity(self) -> None:

@@ -1,28 +1,66 @@
 # Agentic Mesh Development Project
 
-This folder is the dogfood project for building Agentic Mesh with Agentic Mesh.
+This folder is the checked-in example configuration for dogfooding Agentic Mesh
+with the V4 remote-control runtime.
 
-It is intentionally a project workspace nested under the system repository.
-The system repository still owns reusable runtime code, stock role templates,
-flow templates, schemas, and product documentation. This project folder owns the
-project-specific network definition, connector/team bindings, deployment
-outputs, runtime state location, and future generated infrastructure artifacts.
+In live operation the project repository, deployed runtime, runtime state, and
+document library should be separate mounted locations. This example remains in
+the system repository only as a reusable project configuration/template.
+
+## Identity Model
+
+V4 separates project identity from agent-network identity:
+
+- `project_id` names the project context, document library, work items, target
+  repositories, and project-scoped institutional memory.
+- `agent_network_id` names the reusable agent mesh/team. The same configured
+  role agents can work across multiple projects unless a project explicitly
+  configures its own dedicated agent network.
+
+The dogfood project currently uses:
+
+```yaml
+project_id: agentic-mesh-dev
+agent_network_id: agentic-mesh-dev
+```
+
+Another project can use a different `project_id` with the same
+`agent_network_id` to share the agents while keeping documents, work items, and
+project memory separate.
 
 ## Layout
 
 ```text
 examples/projects/agentic-mesh-dev/
   agentic-mesh/
-    project.yaml              # project overlay and role network
-    project-v3.yaml           # V3 dogfood overlay with OneDrive documents
-  documents/
-    requirements/             # generated role adoption and analysis outputs
+    project-v4.yaml           # V4 project overlay and role network binding
   deploy/
     compose/
-      docker-compose.yml      # local dogfood Compose output
+      docker-compose.yml      # local V4 Compose output
       docker-compose.linuxch.yml
-  state/                      # ignored local runtime queues, journal, secrets
+  state/                      # ignored local runtime state and secrets
 ```
+
+## Container Boundaries
+
+The live dogfood deployment should mount:
+
+```text
+/mesh/system                  # installed system source/runtime code
+/mesh/project                 # project configuration and runtime state
+/mesh/workspaces/agentic-mesh # target source repository for Agentic Mesh work
+/documents                    # canonical document library, OneDrive-backed in live use
+```
+
+Generated work-item documents must land under:
+
+```text
+/documents/work-items/{work_item_id}
+```
+
+The document library is the canonical project memory. Runtime database rows make
+work inspectable and recoverable, but they do not replace durable project
+documentation.
 
 ## Compose
 
@@ -38,90 +76,12 @@ Use the Linux VM overlay for the `linuxch` dogfood deployment:
 docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml up -d
 ```
 
-Build the shared local runtime image only when system runtime code or runtime
-dependencies change:
+Build runtime images only when system runtime code or runtime dependencies
+change:
 
 ```powershell
-docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml --profile build-image build runtime-image
+docker compose -f examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.yml --profile build-image build
 ```
 
-Configuration, state, project files, and secrets are mounted at runtime. They
-must not be baked into the image.
-
-## Container Boundaries
-
-The dogfood Compose output mounts:
-
-```text
-/mesh/system                    # system repository, read-only
-/mesh/project                   # this project folder
-/mesh/workspaces/agentic-mesh   # mounted repository root used to resolve workspace.root
-```
-
-The project file is:
-
-```text
-/mesh/project/agentic-mesh/project.yaml
-```
-
-The V3 dogfood proof uses:
-
-```text
-/mesh/project/agentic-mesh/project-v3.yaml
-```
-
-That file is the V3-oriented project overlay. It uses OneDrive/Teams Shared
-Files under `/documents` as the document-library source, records work-item
-dossiers under `/documents/work-items/{work_item_id}`, routes sponsor approval
-and closure notifications through configured stakeholder contacts, and uses a
-configured release deployment target for the dogfood Compose activation.
-The `v3-dogfood-proof` Compose profile runs the agent-service dogfood path, so
-the proof progresses through role inboxes, safe-output tool calls, handoffs,
-QA, release deployment, Project Manager closure, and document-index updates.
-Runtime tokens such as `AGENTIC_MESH_ONEDRIVE_TOKEN` and Graph/Teams
-credentials are supplied by the deployment environment, not committed to the
-project file.
-
-For linuxch, copy `deploy/compose/.env.example` to `deploy/compose/.env` or
-export equivalent environment values before running
-`scripts/release-linuxch-compose.sh`. The V3 release path now rebuilds the
-runtime image, runs `preflight-live` inside the V3 container, and only starts
-`v3-nats` plus `v3-runtime` when the required OneDrive, Teams, sponsor, broker,
-and deployment-target configuration is present. Use `AGENTIC_MESH_RELEASE_SERVICES`
-only when intentionally overriding the default V3 service set.
-The OneDrive token must carry delegated `Files.ReadWrite.All` or
-`Sites.ReadWrite.All`. The Teams token must carry delegated `Chat.Create` or
-`Chat.ReadWrite`, plus `ChatMessage.Send` or `ChannelMessage.Send`, so agents
-can send sponsor DMs and channel notifications during the live proof.
-Refresh the linuxch `.env` tokens from Windows with:
-
-```powershell
-.\scripts\update-linuxch-v3-graph-env.ps1 -GraphClientId <agentic-mesh-public-client-app-id>
-```
-
-The helper uses the Microsoft identity platform device-code flow through the
-configured Agentic Mesh public-client app registration when the scoped token is
-not already available. Azure CLI's first-party client cannot request these
-Graph scopes directly.
-The app registration must allow public-client/device-code flow and expose
-delegated Microsoft Graph permissions for the scopes listed above.
-
-Runtime state is:
-
-```text
-/mesh/project/state
-```
-
-The effective project workspace is:
-
-```text
-/mesh/workspaces/agentic-mesh/examples/projects/agentic-mesh-dev
-```
-
-Generated project artifacts such as `documents/analysis/*.md` must land
-inside that effective project workspace. The system repository remains
-available to dogfood agents through the configured `agentic-mesh` repository
-path.
-
-This keeps project deployment artifacts and runtime state inside the project
-folder while still allowing dogfood role agents to work on the system repo.
+Configuration, state, project files, document library, and secrets are mounted
+at runtime. They must not be baked into an image.

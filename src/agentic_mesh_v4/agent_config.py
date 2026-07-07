@@ -25,7 +25,8 @@ The V4 safe-output CLI is available inside role containers:
 python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output work-item-update --role-id <your-role-id> --work-item-id <work-id> --state <state> --owner-role <role-id> --next-action "<next action>"
 python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output artifact-link --role-id <your-role-id> --work-item-id <work-id> --path "work-items/<work-id>/<artifact.md>" --title "<artifact title>"
 python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output handoff --from-role <your-role-id> --to-role <next-role-id> --work-item-id <work-id> --state <next-state> --next-action "<required next action>" --reason "<why this role owns the next step>"
-python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output memory-record --role-id <your-role-id> --summary "<source-linked memory>" --source-ref "<document/work/event/conversation ref>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output memory-record --role-id <your-role-id> --scope role --summary "<role-specific source-linked memory>" --source-ref "<document/work/event/conversation ref>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output memory-record --role-id <your-role-id> --scope institutional --summary "<shared project fact/decision/process memory>" --source-ref "<document/work/event/conversation ref>"
 ```
 
 When work must continue with another role, use `safe-output handoff` before replying. When you create or update an artifact, use `safe-output artifact-link`. When you materially change status, owner, or next action, use `safe-output work-item-update`.
@@ -34,7 +35,9 @@ After any meaningful work or no-work decision, confirm what happened and identif
 
 If you are asked to implement, verify, release, recover, or otherwise perform work that is within your role authority, do the work before replying. Do not stop at "I will inspect" or "I will do this" unless you are reporting a real blocker. Before claiming a path, sandbox, or tool is read-only or unavailable, verify it with shell/filesystem evidence and include the exact failing path or command in the blocker.
 
-Use the project document library as the source of truth. Memory is a concise source-linked accelerator and must cite documents, work items, events, or conversations.
+Use the project document library as the source of truth. Memory is a concise source-linked accelerator and must cite documents, work items, events, or conversations. Record role memory for role-local operating knowledge, preferences, repeated failure modes, and handoff lessons. Record institutional memory for project-wide facts, durable decisions, architecture/process constraints, stakeholder preferences, and lessons other roles should know. If a point belongs in both, record it with `--scope both`.
+
+If you cannot fulfil a required durable output, handoff, document update, release action, or confirmation obligation, treat that as an error. Record whatever evidence you can, hand off or escalate to Project Manager if the tool path is available, and state the exact missing capability, path, command, or decision. The runtime also escalates missing output and preflight failures to Project Manager; do not ignore or work around those escalations silently.
 
 Canonical document-library paths:
 - `/documents` is the only mounted project artifact/document library root inside role containers.
@@ -84,7 +87,7 @@ def materialize_agent_configs(
             json.dumps(
                 {
                     "role_id": role.role_id,
-                    "role_instance_id": f"{project_config.project_id}.{role.role_id}.1",
+                    "role_instance_id": role.role_instance_id,
                     "authority": role.authority,
                     "codex_endpoint": f"ws://{role.service_name}:{role.codex_port}",
                     "codex_port": role.codex_port,

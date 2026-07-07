@@ -140,3 +140,48 @@ def test_v4_materialized_agents_md_names_safe_output_cli(tmp_path: Path) -> None
     assert "safe-output artifact-link" in text
     assert "safe-output work-item-update" in text
 
+
+def test_v4_safe_output_memory_record_can_write_role_and_institutional_memory(tmp_path: Path, capsys) -> None:
+    db_path = make_v4_db_url()
+
+    main(
+        [
+            "--project-config",
+            str(PROJECT_CONFIG),
+            "--db",
+            str(db_path),
+            "safe-output",
+            "memory-record",
+            "--role-id",
+            "project-manager",
+            "--scope",
+            "both",
+            "--summary",
+            "Sponsor wants durable handoffs to be treated as mandatory.",
+            "--source-ref",
+            "conversation:test",
+            "--tags",
+            "governance",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    db = V4Database(db_path)
+    try:
+        db.migrate()
+        role_memory = db.connection.execute(
+            "SELECT * FROM role_memory WHERE memory_id=?",
+            (output["role_memory_id"],),
+        ).fetchone()
+        project_memory = db.connection.execute(
+            "SELECT * FROM project_memory WHERE memory_id=?",
+            (output["project_memory_id"],),
+        ).fetchone()
+    finally:
+        db.close()
+    assert role_memory["project_id"] == "agentic-mesh-dev"
+    assert role_memory["role_id"] == "project-manager"
+    assert role_memory["scope"] == "role"
+    assert project_memory["project_id"] == "agentic-mesh-dev"
+    assert project_memory["created_by_role_id"] == "project-manager"
+

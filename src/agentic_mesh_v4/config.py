@@ -43,6 +43,7 @@ class V4RoleConfig:
     role_id: str
     display_name: str
     template: str
+    agent_network_id: str = "agentic-mesh-dev"
     instances: int = 1
     authority: str = "scoped"
     model: str = "gpt-5.5"
@@ -55,16 +56,17 @@ class V4RoleConfig:
 
     @property
     def role_instance_id(self) -> str:
-        return f"{self.role_id}.1"
+        return f"{self.agent_network_id}.{self.role_id}.1"
 
     @property
     def service_name(self) -> str:
-        return f"agentic-mesh-dev-{self.role_id}-1"
+        return f"{_service_project_id(self.agent_network_id)}-{self.role_id}-1"
 
 
 @dataclass(frozen=True)
 class V4ProjectConfig:
     project_id: str
+    agent_network_id: str
     name: str
     goal: str
     roles: tuple[V4RoleConfig, ...]
@@ -86,9 +88,12 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"project config must be a mapping: {config_path}")
 
-    roles = _roles_from_raw(raw.get("roles"))
+    project_id = str(raw.get("project_id") or "agentic-mesh-dev")
+    agent_network_id = str(raw.get("agent_network_id") or _nested(raw, ("agent_mesh", "id")) or "agentic-mesh-dev")
+    roles = _roles_from_raw(raw.get("roles"), agent_network_id=agent_network_id)
     return V4ProjectConfig(
-        project_id=str(raw.get("project_id") or "agentic-mesh-dev"),
+        project_id=project_id,
+        agent_network_id=agent_network_id,
         name=str(raw.get("name") or raw.get("project_id") or "Agentic Mesh"),
         goal=_goal_description(raw.get("goal")),
         roles=roles,
@@ -99,19 +104,20 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
     )
 
 
-def _roles_from_raw(raw_roles: object) -> tuple[V4RoleConfig, ...]:
+def _roles_from_raw(raw_roles: object, *, agent_network_id: str) -> tuple[V4RoleConfig, ...]:
     if not isinstance(raw_roles, dict) or not raw_roles:
-        return tuple(_default_role(role_id, index) for index, role_id in enumerate(DEFAULT_ROLE_IDS))
+        return tuple(_default_role(role_id, index, agent_network_id=agent_network_id) for index, role_id in enumerate(DEFAULT_ROLE_IDS))
 
     roles: list[V4RoleConfig] = []
     for index, role_id in enumerate(DEFAULT_ROLE_IDS):
         item = raw_roles.get(role_id)
         if not isinstance(item, dict):
-            roles.append(_default_role(role_id, index))
+            roles.append(_default_role(role_id, index, agent_network_id=agent_network_id))
             continue
         worker = item.get("worker") if isinstance(item.get("worker"), dict) else {}
         roles.append(
             V4RoleConfig(
+                agent_network_id=agent_network_id,
                 role_id=role_id,
                 display_name=_display_name(role_id),
                 template=str(item.get("template") or role_id),
@@ -129,8 +135,9 @@ def _roles_from_raw(raw_roles: object) -> tuple[V4RoleConfig, ...]:
     return tuple(roles)
 
 
-def _default_role(role_id: str, index: int) -> V4RoleConfig:
+def _default_role(role_id: str, index: int, *, agent_network_id: str) -> V4RoleConfig:
     return V4RoleConfig(
+        agent_network_id=agent_network_id,
         role_id=role_id,
         display_name=_display_name(role_id),
         template=role_id,
@@ -161,6 +168,11 @@ def _display_name(role_id: str) -> str:
     for part in role_id.split("-"):
         parts.append(acronyms.get(part, part.capitalize()))
     return " ".join(parts)
+
+
+def _service_project_id(project_id: str) -> str:
+    safe = "".join(char if char.isalnum() or char in "-_" else "-" for char in project_id.lower())
+    return safe.strip("-_") or "agentic-mesh"
 
 
 def _goal_description(raw_goal: object) -> str:

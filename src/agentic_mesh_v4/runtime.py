@@ -84,7 +84,7 @@ class V4Runtime:
     def register_roles(self) -> None:
         for role in self.project_config.roles:
             self.db.upsert_role_instance(
-                role_instance_id=f"{self.project_config.project_id}.{role.role_id}.1",
+                role_instance_id=role.role_instance_id,
                 role_id=role.role_id,
                 display_name=role.display_name,
                 service_name=role.service_name,
@@ -143,7 +143,7 @@ class V4Runtime:
         )
         if not should_steer or self.client_factory is None:
             return message_id
-        role_instance_id = f"{self.project_config.project_id}.{role.role_id}.1"
+        role_instance_id = role.role_instance_id
         thread_id = self._active_thread_id(role_instance_id)
         if not thread_id:
             return message_id
@@ -177,7 +177,7 @@ class V4Runtime:
 
     def dispatch_once(self, *, role_id: str) -> DispatchResult | None:
         role = self.project_config.role(role_id)
-        role_instance_id = f"{self.project_config.project_id}.{role.role_id}.1"
+        role_instance_id = role.role_instance_id
         active = self.db.active_message_for_role(target_role=role.role_id)
         if active is not None:
             if str(active.get("state") or "") == "active_turn":
@@ -201,6 +201,13 @@ class V4Runtime:
                 message.message_id,
                 state="failed",
                 summary="No Codex app-server client factory is configured.",
+            )
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary="No Codex app-server client factory is configured.",
+                reason="runtime_missing_client_factory",
+                message_id=message.message_id,
+                payload={"target_role": role.role_id},
             )
             return DispatchResult(message_id=message.message_id, state="failed", error="missing client factory")
         try:
@@ -375,6 +382,18 @@ class V4Runtime:
                     state=completion_evaluation.state,
                     summary=completion_evaluation.next_action,
                 )
+                self._escalate_to_project_manager(
+                    role_instance_id=role_instance_id,
+                    summary=completion_evaluation.next_action,
+                    reason=completion_evaluation.state,
+                    work_item_id=completion_evaluation.work_item_id,
+                    message_id=message.message_id,
+                    payload={
+                        "diagnostic_id": diagnostic_id,
+                        "missing_predicates": list(completion_evaluation.missing_predicates),
+                        "observed_outputs": completion_evaluation.observed_outputs or {},
+                    },
+                )
                 return DispatchResult(
                     message_id=message.message_id,
                     state=completion_evaluation.state,
@@ -448,11 +467,18 @@ class V4Runtime:
                 )
                 return DispatchResult(message_id=message.message_id, state="queued", error=str(exc))
             self.db.mark_message_state(message.message_id, state="failed", summary=str(exc))
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary=str(exc),
+                reason="runtime_dispatch_failed",
+                message_id=message.message_id,
+                payload={"target_role": role.role_id},
+            )
             return DispatchResult(message_id=message.message_id, state="failed", error=str(exc))
 
     def _continue_active_turn(self, *, role: object, active: dict[str, Any]) -> DispatchResult:
         message_id = str(active["message_id"])
-        role_instance_id = str(active.get("locked_by") or f"{self.project_config.project_id}.{getattr(role, 'role_id')}.1")
+        role_instance_id = str(active.get("locked_by") or getattr(role, "role_instance_id", ""))
         thread_id = self._active_thread_id(role_instance_id)
         turn_id = self._active_turn_id(role_instance_id) or self._turn_id_for_message(message_id)
         correlation_id = str(active.get("correlation_id") or f"corr-{message_id}")
@@ -461,6 +487,12 @@ class V4Runtime:
                 message_id,
                 state="failed",
                 summary="No Codex app-server client factory is configured for active-turn continuation.",
+            )
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary="No Codex app-server client factory is configured for active-turn continuation.",
+                reason="runtime_missing_client_factory",
+                message_id=message_id,
             )
             return DispatchResult(message_id=message_id, state="failed", error="missing client factory")
         if not thread_id or not turn_id:
@@ -531,6 +563,17 @@ class V4Runtime:
                         (completion_evaluation.state, now, turn_id),
                     )
                 self.db.mark_message_state(message_id, state=completion_evaluation.state, summary=completion_evaluation.next_action)
+                self._escalate_to_project_manager(
+                    role_instance_id=role_instance_id,
+                    summary=completion_evaluation.next_action,
+                    reason=completion_evaluation.state,
+                    work_item_id=completion_evaluation.work_item_id,
+                    message_id=message_id,
+                    payload={
+                        "missing_predicates": list(completion_evaluation.missing_predicates),
+                        "observed_outputs": completion_evaluation.observed_outputs or {},
+                    },
+                )
                 return DispatchResult(message_id=message_id, state=completion_evaluation.state, thread_id=thread_id, turn_id=turn_id)
             self._record_evidence_contract_warnings(
                 message=SimpleNamespace(message_id=message_id, payload=payload),
@@ -576,6 +619,12 @@ class V4Runtime:
                 )
                 return DispatchResult(message_id=message_id, state="queued", thread_id=thread_id, turn_id=turn_id, error=str(exc))
             self.db.mark_message_state(message_id, state="failed", summary=str(exc))
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary=str(exc),
+                reason="runtime_active_turn_failed",
+                message_id=message_id,
+            )
             with self.db.connection:
                 self.db.connection.execute(
                     """
@@ -699,6 +748,18 @@ class V4Runtime:
             },
             message_id=getattr(message, "message_id"),
         )
+        self._escalate_to_project_manager(
+            role_instance_id=role_instance_id,
+            summary=outcome.summary,
+            reason=state,
+            work_item_id=outcome.work_item_id,
+            message_id=getattr(message, "message_id"),
+            handoff_id=outcome.handoff_id,
+            payload={
+                "required_path": outcome.required_path,
+                "canonical_path": outcome.canonical_path,
+            },
+        )
         return DispatchResult(message_id=getattr(message, "message_id"), state=state, error=outcome.summary)
 
     def _record_dispatch_invariant_findings(
@@ -756,7 +817,41 @@ class V4Runtime:
             "counts_by_severity": _counts_by_attribute(findings, "severity"),
         }
         self.db.finish_watchdog_sweep(sweep_run_id=sweep_run_id, status="completed", summary=summary)
+        high_findings = [finding for finding in findings if getattr(finding, "severity", "") == "high"]
+        if high_findings:
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary="Dispatch invariant failure: non-terminal work lacks a queued or active next-agent path.",
+                reason="dispatch_invariant",
+                message_id=message_id,
+                payload={
+                    "finding_keys": [getattr(finding, "finding_key", "") for finding in high_findings],
+                    "work_item_ids": [getattr(finding, "work_item_id", None) for finding in high_findings],
+                },
+            )
         return findings
+
+    def _escalate_to_project_manager(
+        self,
+        *,
+        role_instance_id: str | None,
+        summary: str,
+        reason: str,
+        work_item_id: str | None = None,
+        message_id: str | None = None,
+        handoff_id: str | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        self.db.enqueue_project_manager_attention(
+            project_id=self.project_config.project_id,
+            source_role_instance_id=role_instance_id,
+            summary=summary,
+            reason=reason,
+            work_item_id=work_item_id,
+            message_id=message_id,
+            handoff_id=handoff_id,
+            payload=payload,
+        )
 
     def _auto_dispatch_planned_findings(
         self,
@@ -793,7 +888,7 @@ class V4Runtime:
             try:
                 create_auto_dispatch_handoffs(
                     db=self.db,
-                    project_id=self.project_config.project_id,
+                    project_id=self.project_config.agent_network_id,
                     from_role=from_role,
                     work_item=context,
                     resolution=resolution,
