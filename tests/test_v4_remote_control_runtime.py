@@ -10,6 +10,7 @@ from agentic_mesh_v4.codex_protocol import InMemoryTransport
 from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 from agentic_mesh_v4.config import load_project_config
+from agentic_mesh_v4.reporting import render_agents
 from agentic_mesh_v4.reporting import render_agent_thread
 from agentic_mesh_v4.reporting import render_status
 from agentic_mesh_v4.runtime import V4Runtime
@@ -1562,6 +1563,40 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
     assert "Auto-accepted server approval request" not in html
     assert "item/commandExecution/requestApproval item/commandExecution/requestApproval" not in html
     assert "serverRequest/resolved serverRequest/resolved" not in html
+
+
+def test_v4_agents_page_uses_live_push_stream_without_auto_refresh() -> None:
+    html = render_agents(
+        {
+            "roles": [
+                {
+                    "role_id": "project-manager",
+                    "display_name": "Project Manager",
+                    "state": "ready",
+                    "effective_state": "busy",
+                    "authority": "full",
+                    "codex_endpoint": "ws://project-manager:4700",
+                    "active_thread_id": "019f2e477d9344bd8aa1bb2d43bf1a9",
+                    "memory_count": 3,
+                    "queued_messages": 0,
+                    "current_message": {
+                        "message_id": "msg-1234567890abcdef",
+                        "state": "active_turn",
+                        "text": "Checking the live dashboard stream.",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert 'id="agents-body"' in html
+    assert 'new EventSource("/agents/events")' in html
+    assert "Live agent state stream connected." in html
+    assert "replaceChildren" in html
+    assert "http-equiv=\"refresh\"" not in html
+    assert '<a href="/agent/project-manager/thread">Project Manager</a>' in html
+    assert "019f2e47...3bf1a9" in html
+    assert "Checking the live dashboard stream." in html
 
 
 def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:

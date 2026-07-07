@@ -47,6 +47,9 @@ class V4Handler(BaseHTTPRequestHandler):
             if path == "/status.json":
                 self._json(db.snapshot())
                 return
+            if path == "/agents/events":
+                self._handle_agents_events(db)
+                return
             if path == "/agents":
                 self._html(render_agents(db.snapshot()))
                 return
@@ -156,6 +159,34 @@ class V4Handler(BaseHTTPRequestHandler):
                         last_event_id = str(row.get("event_id") or last_event_id)
                         self.wfile.write(f"id: {last_event_id}\n".encode("utf-8"))
                         self.wfile.write(f"data: {json.dumps(row)}\n\n".encode("utf-8"))
+                else:
+                    self.wfile.write(b": keep-alive\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            time.sleep(1)
+
+    def _handle_agents_events(self, db: V4Database) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        previous_payload = ""
+        for _ in range(300):
+            snapshot = db.snapshot()
+            payload = json.dumps(
+                {
+                    "roles": snapshot.get("roles", []),
+                    "institutional_memory_total": snapshot.get("institutional_memory_total", 0),
+                },
+                sort_keys=True,
+            )
+            try:
+                if payload != previous_payload:
+                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                    previous_payload = payload
                 else:
                     self.wfile.write(b": keep-alive\n\n")
                 self.wfile.flush()
