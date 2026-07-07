@@ -403,6 +403,28 @@ def test_v4_same_conversation_message_steers_into_active_turn(tmp_path: Path) ->
     ]
 
 
+def test_v4_status_does_not_show_steered_messages_as_active_turns(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Add this note to the current turn",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+    db.mark_message_state(message_id, state="steered", summary="Steered into active turn")
+
+    status_html = render_status(db.snapshot())
+
+    active_section = status_html.split("<h2>Active Agent Turns</h2>", 1)[1].split("<h2>Attention Needed</h2>", 1)[0]
+    completions_section = status_html.split("<h2>Recent Completions</h2>", 1)[1]
+    assert "No active turns." in active_section
+    assert message_id not in active_section
+    assert message_id in completions_section
+
+
 def test_v4_failed_immediate_steering_downgrades_to_normal_queue(tmp_path: Path) -> None:
     db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)

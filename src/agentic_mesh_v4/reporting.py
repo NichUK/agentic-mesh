@@ -8,10 +8,10 @@ from typing import Any
 
 def render_status(snapshot: dict[str, Any]) -> str:
     messages = snapshot["messages"]
-    active = [item for item in messages if item["state"] in {"delivering", "active_turn", "steered"}]
+    active = [item for item in messages if item["state"] in {"delivering", "active_turn"}]
     queued = [item for item in messages if item["state"] == "queued"]
     failed = [item for item in messages if item["state"] in {"failed", "dead_lettered"}]
-    completed = [item for item in messages if item["state"] == "completed"]
+    completed = [item for item in messages if item["state"] in {"completed", "steered"}]
     completion_attention = snapshot.get("completion_attention") or []
     decision_attention = snapshot.get("decision_attention") or []
     decision_records = snapshot.get("decision_records") or []
