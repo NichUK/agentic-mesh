@@ -452,6 +452,8 @@ class V4Database:
                   ON message_journal(message_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_agent_events_thread
                   ON agent_events(thread_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_events_role_created
+                  ON agent_events(role_instance_id, created_at, event_id);
                 CREATE INDEX IF NOT EXISTS idx_turn_completion_diagnostics_message
                   ON turn_completion_diagnostics(message_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_turn_completion_diagnostics_work_item

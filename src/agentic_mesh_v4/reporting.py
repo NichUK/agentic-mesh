@@ -155,7 +155,9 @@ const streamState = document.getElementById("stream-state");
 const output = document.getElementById("agent-output");
 const maxConsoleChars = 120000;
 let currentTurnId = __INITIAL_TURN_ID__;
-const events = new EventSource("thread/events");
+const initialEventId = __INITIAL_EVENT_ID__;
+const eventUrl = initialEventId ? `thread/events?after_event_id=${encodeURIComponent(initialEventId)}` : "thread/events";
+const events = new EventSource(eventUrl);
 events.onopen = () => { streamState.textContent = "Live push stream connected."; };
 events.onmessage = (event) => {
   if (!event.data) return;
@@ -227,7 +229,9 @@ function normalizeConsoleText(value) {
     .replace(/\\\\'/g, "'");
 }
 </script>
-""".replace("__INITIAL_TURN_ID__", json.dumps(console["last_turn_id"])),
+"""
+            .replace("__INITIAL_TURN_ID__", json.dumps(console["last_turn_id"]))
+            .replace("__INITIAL_EVENT_ID__", json.dumps(console["last_event_id"])),
         ],
     )
 
@@ -235,6 +239,7 @@ function normalizeConsoleText(value) {
 def _agent_console(events: list[dict[str, Any]]) -> dict[str, str]:
     parts: list[str] = []
     current_turn_id = ""
+    last_event_id = str(events[-1].get("event_id") or "") if events else ""
     for item in events:
         event_type = str(item.get("event_type") or "")
         content = _normalise_console_text(str(item.get("content") or ""))
@@ -253,7 +258,7 @@ def _agent_console(events: list[dict[str, Any]]) -> dict[str, str]:
             continue
         suffix = f" {content}" if content else ""
         parts.append(f"\n{event_type}{suffix}\n")
-    return {"text": "".join(parts).lstrip(), "last_turn_id": current_turn_id}
+    return {"text": "".join(parts).lstrip(), "last_turn_id": current_turn_id, "last_event_id": last_event_id}
 
 
 def _is_console_noise(event_type: str, content: str) -> bool:

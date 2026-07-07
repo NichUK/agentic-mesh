@@ -1181,6 +1181,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
         ],
         events=[
             {
+                "event_id": "event-1",
                 "created_at": "2026-06-24T10:00:01+00:00",
                 "event_type": "item/agentMessage/delta",
                 "turn_id": "turn-1",
@@ -1189,6 +1190,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/agentMessage/delta"}',
             },
             {
+                "event_id": "event-2",
                 "created_at": "2026-06-24T10:00:02+00:00",
                 "event_type": "item/completed",
                 "turn_id": "turn-1",
@@ -1197,6 +1199,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/completed"}',
             },
             {
+                "event_id": "event-3",
                 "created_at": "2026-06-24T10:00:03+00:00",
                 "event_type": "thread/tokenUsage/updated",
                 "turn_id": "turn-1",
@@ -1205,6 +1208,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"thread/tokenUsage/updated"}',
             },
             {
+                "event_id": "event-4",
                 "created_at": "2026-06-24T10:00:04+00:00",
                 "event_type": "account/rateLimits/updated",
                 "turn_id": "turn-1",
@@ -1213,6 +1217,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"account/rateLimits/updated"}',
             },
             {
+                "event_id": "event-5",
                 "created_at": "2026-06-24T10:00:05+00:00",
                 "event_type": "thread/status/changed",
                 "turn_id": "turn-1",
@@ -1221,6 +1226,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"thread/status/changed"}',
             },
             {
+                "event_id": "event-6",
                 "created_at": "2026-06-24T10:00:06+00:00",
                 "event_type": "turn/completed",
                 "turn_id": "turn-1",
@@ -1229,6 +1235,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"turn/completed"}',
             },
             {
+                "event_id": "event-7",
                 "created_at": "2026-06-24T10:00:06.100000+00:00",
                 "event_type": "turn/diff/updated",
                 "turn_id": "turn-1",
@@ -1237,6 +1244,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"turn/diff/updated"}',
             },
             {
+                "event_id": "event-8",
                 "created_at": "2026-06-24T10:00:06.200000+00:00",
                 "event_type": "item/started",
                 "turn_id": "turn-1",
@@ -1245,6 +1253,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/started"}',
             },
             {
+                "event_id": "event-9",
                 "created_at": "2026-06-24T10:00:06.300000+00:00",
                 "event_type": "item/commandExecution/requestApproval/autoAccepted",
                 "turn_id": "turn-1",
@@ -1253,6 +1262,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/commandExecution/requestApproval/autoAccepted"}',
             },
             {
+                "event_id": "event-10",
                 "created_at": "2026-06-24T10:00:06.400000+00:00",
                 "event_type": "item/commandExecution/requestApproval",
                 "turn_id": "turn-1",
@@ -1261,6 +1271,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/commandExecution/requestApproval"}',
             },
             {
+                "event_id": "event-11",
                 "created_at": "2026-06-24T10:00:06.500000+00:00",
                 "event_type": "serverRequest/resolved",
                 "turn_id": "turn-1",
@@ -1269,6 +1280,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"serverRequest/resolved"}',
             },
             {
+                "event_id": "event-12",
                 "created_at": "2026-06-24T10:00:07+00:00",
                 "event_type": "item/agentMessage/delta",
                 "turn_id": "turn-1",
@@ -1279,7 +1291,9 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
         ],
     )
 
-    assert "new EventSource(\"thread/events\")" in html
+    assert 'const events = new EventSource(eventUrl)' in html
+    assert "thread/events?after_event_id=" in html
+    assert '"event-12"' in html
     assert "http-equiv=\"refresh\"" not in html
     assert 'id="agent-output"' in html
     assert 'class="agent-console"' in html
