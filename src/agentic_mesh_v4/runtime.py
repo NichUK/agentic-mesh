@@ -616,30 +616,6 @@ class V4Runtime:
             "counts_by_severity": _counts_by_attribute(findings, "severity"),
         }
         self.db.finish_watchdog_sweep(sweep_run_id=sweep_run_id, status="completed", summary=summary)
-        self.db.record_message_journal(
-            message_id=message_id,
-            correlation_id=correlation_id,
-            role_instance_id=role_instance_id,
-            stage="dispatch_invariant",
-            status="planned_not_dispatched",
-            summary="Non-terminal work lacks a queued or active next-agent path.",
-            payload={
-                "sweep_run_id": sweep_run_id,
-                "findings": [finding.finding_key for finding in findings],
-            },
-        )
-        self.db.record_agent_event(
-            role_instance_id=role_instance_id,
-            event_type="dispatch_invariant/planned_not_dispatched",
-            content="Non-terminal work lacks a queued or active next-agent path.",
-            payload={
-                "sweep_run_id": sweep_run_id,
-                "findings": [finding.finding_key for finding in findings],
-            },
-            thread_id=thread_id,
-            turn_id=turn_id,
-            message_id=message_id,
-        )
         return findings
 
     def _auto_dispatch_planned_findings(

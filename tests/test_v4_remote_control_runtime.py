@@ -425,6 +425,50 @@ def test_v4_status_does_not_show_steered_messages_as_active_turns(tmp_path: Path
     assert message_id in completions_section
 
 
+def test_v4_dispatch_invariants_do_not_pollute_agent_thread_events(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Give me a status update",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+    db.upsert_work_item(
+        work_item_id="work-needs-owner-path",
+        title="Needs owner path",
+        state="implementation",
+        owner_role="project-manager",
+        next_action="review current status",
+    )
+
+    findings = runtime._record_dispatch_invariant_findings(  # noqa: SLF001 - regression for runtime completion side effects.
+        message_id=message_id,
+        correlation_id=f"corr-{message_id}",
+        role_instance_id="agentic-mesh-dev.project-manager.1",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert any(getattr(item, "finding_type", "") == "planned_not_dispatched" for item in findings)
+    watchdog_row = db.connection.execute(
+        "SELECT finding_type FROM watchdog_findings WHERE finding_key=?",
+        ("planned_not_dispatched:work-needs-owner-path",),
+    ).fetchone()
+    assert watchdog_row is not None
+    assert watchdog_row["finding_type"] == "planned_not_dispatched"
+    assert db.connection.execute(
+        "SELECT 1 FROM agent_events WHERE message_id=? AND event_type='dispatch_invariant/planned_not_dispatched'",
+        (message_id,),
+    ).fetchone() is None
+    assert db.connection.execute(
+        "SELECT 1 FROM message_journal WHERE message_id=? AND stage='dispatch_invariant'",
+        (message_id,),
+    ).fetchone() is None
+
+
 def test_v4_failed_immediate_steering_downgrades_to_normal_queue(tmp_path: Path) -> None:
     db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
