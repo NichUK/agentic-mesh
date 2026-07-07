@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from typing import Callable
 from typing import Iterable
@@ -179,6 +180,8 @@ class V4Runtime:
         role_instance_id = f"{self.project_config.project_id}.{role.role_id}.1"
         active = self.db.active_message_for_role(target_role=role.role_id)
         if active is not None:
+            if str(active.get("state") or "") == "active_turn":
+                return self._continue_active_turn(role=role, active=active)
             return None
         message = self.db.claim_next_message(role_id=role.role_id, worker_id=role_instance_id)
         if message is None:
@@ -446,6 +449,143 @@ class V4Runtime:
                 return DispatchResult(message_id=message.message_id, state="queued", error=str(exc))
             self.db.mark_message_state(message.message_id, state="failed", summary=str(exc))
             return DispatchResult(message_id=message.message_id, state="failed", error=str(exc))
+
+    def _continue_active_turn(self, *, role: object, active: dict[str, Any]) -> DispatchResult:
+        message_id = str(active["message_id"])
+        role_instance_id = str(active.get("locked_by") or f"{self.project_config.project_id}.{getattr(role, 'role_id')}.1")
+        thread_id = self._active_thread_id(role_instance_id)
+        turn_id = self._active_turn_id(role_instance_id) or self._turn_id_for_message(message_id)
+        correlation_id = str(active.get("correlation_id") or f"corr-{message_id}")
+        if self.client_factory is None:
+            self.db.mark_message_state(
+                message_id,
+                state="failed",
+                summary="No Codex app-server client factory is configured for active-turn continuation.",
+            )
+            return DispatchResult(message_id=message_id, state="failed", error="missing client factory")
+        if not thread_id or not turn_id:
+            self.db.mark_message_state(
+                message_id,
+                state="queued",
+                summary="Recovered active turn with missing thread/turn metadata; queued for normal delivery.",
+            )
+            return DispatchResult(message_id=message_id, state="queued", error="missing active turn metadata")
+        try:
+            client = self.client_factory(getattr(role, "role_id"))
+            if not client.initialized:
+                client.initialize()
+            client.resume_thread(thread_id)
+            self.db.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                role_instance_id=role_instance_id,
+                stage="active_turn_continue",
+                status="draining",
+                summary=f"Continuing active Codex turn {turn_id} for {role_instance_id}.",
+            )
+            self._drain_available_events(
+                client=client,
+                role_instance_id=role_instance_id,
+                approval_policy=getattr(role, "approval_policy"),
+                thread_id=thread_id,
+                turn_id=turn_id,
+                message_id=message_id,
+            )
+            reply_text = self._recorded_agent_reply_text(message_id=message_id)
+            payload = _json_mapping(active.get("payload_json"))
+            if str(active.get("source") or "") == "teams" and reply_text.strip() and not self._reply_already_delivered(message_id=message_id):
+                self._deliver_teams_reply(
+                    role=role,
+                    role_instance_id=role_instance_id,
+                    message_id=message_id,
+                    correlation_id=correlation_id,
+                    payload=payload,
+                    reply_text=reply_text,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
+            completion_evaluation = evaluate_completion_contract(
+                db=self.db,
+                contract=resolve_completion_contract(payload),
+                role_instance_id=role_instance_id,
+                message_id=message_id,
+                turn_id=turn_id,
+            )
+            if completion_evaluation.state != "completed":
+                now = utc_now()
+                with self.db.connection:
+                    self.db.connection.execute(
+                        """
+                        UPDATE role_instances
+                        SET active_turn_id=NULL, state='ready', updated_at=?
+                        WHERE role_instance_id=?
+                        """,
+                        (now, role_instance_id),
+                    )
+                    self.db.connection.execute(
+                        """
+                        UPDATE codex_turns
+                        SET status=?, completed_at=?
+                        WHERE turn_id=?
+                        """,
+                        (completion_evaluation.state, now, turn_id),
+                    )
+                self.db.mark_message_state(message_id, state=completion_evaluation.state, summary=completion_evaluation.next_action)
+                return DispatchResult(message_id=message_id, state=completion_evaluation.state, thread_id=thread_id, turn_id=turn_id)
+            self._record_evidence_contract_warnings(
+                message=SimpleNamespace(message_id=message_id, payload=payload),
+                role_id=getattr(role, "role_id"),
+                role_instance_id=role_instance_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
+            now = utc_now()
+            with self.db.connection:
+                self.db.connection.execute(
+                    """
+                    UPDATE role_instances
+                    SET active_turn_id=NULL, state='ready', updated_at=?
+                    WHERE role_instance_id=?
+                    """,
+                    (now, role_instance_id),
+                )
+                self.db.connection.execute(
+                    """
+                    UPDATE codex_turns
+                    SET status='completed', completed_at=?
+                    WHERE turn_id=?
+                    """,
+                    (now, turn_id),
+                )
+            self.db.mark_message_state(message_id, state="completed", summary=f"Completed active-turn continuation for {role_instance_id}")
+            self._sync_documents_after_turn(message_id=message_id, correlation_id=correlation_id, role_instance_id=role_instance_id)
+            return DispatchResult(message_id=message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
+        except AgentTurnStillRunning as exc:
+            self.db.mark_message_state(
+                message_id,
+                state="active_turn",
+                summary=f"Agent turn is still running for {role_instance_id}: {exc}",
+            )
+            return DispatchResult(message_id=message_id, state="active_turn", thread_id=thread_id, turn_id=turn_id, error=str(exc))
+        except Exception as exc:
+            if _looks_like_agent_unavailable(exc):
+                self.db.mark_message_state(
+                    message_id,
+                    state="queued",
+                    summary=f"Agent app-server unavailable while continuing active turn; queued for retry: {exc}",
+                )
+                return DispatchResult(message_id=message_id, state="queued", thread_id=thread_id, turn_id=turn_id, error=str(exc))
+            self.db.mark_message_state(message_id, state="failed", summary=str(exc))
+            with self.db.connection:
+                self.db.connection.execute(
+                    """
+                    UPDATE role_instances
+                    SET active_turn_id=NULL, state='ready', updated_at=?
+                    WHERE role_instance_id=?
+                    """,
+                    (utc_now(), role_instance_id),
+                )
+            return DispatchResult(message_id=message_id, state="failed", thread_id=thread_id, turn_id=turn_id, error=str(exc))
 
     def _record_evidence_contract_warnings(
         self,
@@ -868,6 +1008,34 @@ class V4Runtime:
             return None
         return str(row["active_thread_id"])
 
+    def _active_turn_id(self, role_instance_id: str) -> str | None:
+        row = self.db.connection.execute(
+            """
+            SELECT active_turn_id
+            FROM role_instances
+            WHERE role_instance_id=?
+            """,
+            (role_instance_id,),
+        ).fetchone()
+        if row is None or row["active_turn_id"] is None:
+            return None
+        return str(row["active_turn_id"])
+
+    def _turn_id_for_message(self, message_id: str) -> str | None:
+        row = self.db.connection.execute(
+            """
+            SELECT turn_id
+            FROM codex_turns
+            WHERE message_id=? AND status='active'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["turn_id"])
+
     def _thread_matches_role(
         self,
         *,
@@ -913,6 +1081,95 @@ class V4Runtime:
         digest.update(str(role.model).encode("utf-8"))
         digest.update(str(role.reasoning_effort).encode("utf-8"))
         return digest.hexdigest()
+
+    def _recorded_agent_reply_text(self, *, message_id: str) -> str:
+        rows = self.db.connection.execute(
+            """
+            SELECT content
+            FROM agent_events
+            WHERE message_id=? AND event_type='item/agentMessage/delta'
+            ORDER BY created_at ASC, event_id ASC
+            """,
+            (message_id,),
+        )
+        return "".join(str(row["content"]) for row in rows)
+
+    def _reply_already_delivered(self, *, message_id: str) -> bool:
+        row = self.db.connection.execute(
+            """
+            SELECT 1
+            FROM message_journal
+            WHERE message_id=? AND stage='reply_delivered' AND status='delivered'
+            LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+        return row is not None
+
+    def _deliver_teams_reply(
+        self,
+        *,
+        role: object,
+        role_instance_id: str,
+        message_id: str,
+        correlation_id: str,
+        payload: dict[str, object],
+        reply_text: str,
+        thread_id: str,
+        turn_id: str | None,
+    ) -> None:
+        mismatch = _teams_recipient_role_mismatch(
+            target_role=getattr(role, "role_id"),
+            activity=payload,
+            roles=self.project_config.roles,
+        )
+        if mismatch is not None:
+            self.db.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                stage="teams_recipient_role_mismatch",
+                status="failed",
+                summary=(
+                    "Teams reply skipped: teams_recipient_role_mismatch; "
+                    f"target_role={mismatch.target_role}; "
+                    f"recipient_role={mismatch.recipient_role}; "
+                    f"recipient_id={mismatch.recipient_id}; "
+                    f"recipient_name={mismatch.recipient_name}."
+                ),
+                role_instance_id=role_instance_id,
+            )
+            self.db.record_agent_event(
+                role_instance_id=role_instance_id,
+                event_type="teams_recipient_role_mismatch",
+                content="Teams reply skipped because queued target_role does not match payload recipient bot identity.",
+                payload={
+                    "target_role": mismatch.target_role,
+                    "recipient_role": mismatch.recipient_role,
+                    "recipient_id": mismatch.recipient_id,
+                    "recipient_name": mismatch.recipient_name,
+                },
+                thread_id=thread_id,
+                turn_id=turn_id,
+                message_id=message_id,
+            )
+            raise RuntimeError(
+                "teams_recipient_role_mismatch: "
+                f"target_role={mismatch.target_role}; recipient_role={mismatch.recipient_role}"
+            )
+        sender = self.teams_reply_sender or TeamsReplySender.from_env()
+        delivery_id = sender.send_reply(
+            role_id=getattr(role, "role_id"),
+            activity=payload,
+            text_markdown=reply_text.strip(),
+        )
+        self.db.record_message_journal(
+            message_id=message_id,
+            correlation_id=correlation_id,
+            stage="reply_delivered",
+            status="delivered",
+            summary=f"Delivered Teams reply {delivery_id}",
+            role_instance_id=role_instance_id,
+        )
 
     def _retire_thread(self, *, role_instance_id: str, thread_id: str) -> None:
         now = utc_now()

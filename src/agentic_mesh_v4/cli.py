@@ -614,7 +614,8 @@ def _schedule_available_dispatches(
     for role in project_config.roles:
         if role.role_id in active:
             continue
-        if db.active_message_for_role(target_role=role.role_id) is not None:
+        active_message = db.active_message_for_role(target_role=role.role_id)
+        if active_message is not None:
             recovered_stale = db.requeue_active_messages_for_role(
                 target_role=role.role_id,
                 stale_after_seconds=active_turn_stale_seconds,
@@ -625,7 +626,8 @@ def _schedule_available_dispatches(
             )
             if recovered_stale and lifecycle is not None:
                 _hibernate_recovered_role(lifecycle=lifecycle, role=role, recovered=recovered_stale)
-        if lifecycle is not None and db.active_message_for_role(target_role=role.role_id) is not None:
+            active_message = db.active_message_for_role(target_role=role.role_id)
+        if lifecycle is not None and active_message is not None:
             if not lifecycle.is_service_running(role.service_name):
                 recovered = db.requeue_active_messages_for_role(
                     target_role=role.role_id,
@@ -647,9 +649,11 @@ def _schedule_available_dispatches(
                         ),
                         file=sys.stderr,
                     )
-        if not db.has_queued_messages(role_id=role.role_id):
+                active_message = db.active_message_for_role(target_role=role.role_id)
+        has_queued_message = db.has_queued_messages(role_id=role.role_id)
+        if active_message is None and not has_queued_message:
             continue
-        if lifecycle is not None:
+        if lifecycle is not None and active_message is None:
             try:
                 lifecycle.wake_service(role.service_name)
             except subprocess.CalledProcessError as exc:

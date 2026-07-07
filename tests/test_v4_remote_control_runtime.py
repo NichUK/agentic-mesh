@@ -855,6 +855,136 @@ def test_v4_dispatch_scheduler_schedules_queued_role_while_another_role_is_activ
     assert queued_row["state"] == "queued"
 
 
+def test_v4_dispatch_continues_active_turn_and_delivers_recorded_reply(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    activity = {
+        "serviceUrl": "https://smba.test/tenant/",
+        "conversation": {"id": "conversation-1"},
+        "id": "activity-1",
+        "recipient": {"name": "AM-Project Manager"},
+    }
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="This is taking a while",
+        source="teams",
+        payload=activity,
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered to Project Manager")
+    with db.connection:
+        db.connection.execute(
+            "UPDATE role_instances SET active_thread_id=?, active_turn_id=?, state='active' WHERE role_instance_id=?",
+            ("thread-1", "turn-1", role_instance_id),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_threads(thread_id, role_instance_id, status, created_at, updated_at, sandbox_mode, approval_policy)
+            VALUES(?,?,?,?,?,?,?)
+            """,
+            ("thread-1", role_instance_id, "active", "now", "now", "danger-full-access", "never"),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_turns(turn_id, thread_id, message_id, status, started_at, completed_at)
+            VALUES(?,?,?,?,?,NULL)
+            """,
+            ("turn-1", "thread-1", message_id, "active", "now"),
+        )
+    db.record_agent_event(
+        role_instance_id=role_instance_id,
+        event_type="item/agentMessage/delta",
+        content="Already said. ",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        message_id=message_id,
+    )
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {}})
+    transport.queue_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {"threadId": "thread-1", "turnId": "turn-1", "delta": "Now complete."},
+        }
+    )
+    transport.queue_notification(
+        {"method": "turn/completed", "params": {"threadId": "thread-1", "turnId": "turn-1"}}
+    )
+    teams_sender = FakeTeamsReplySender()
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        teams_reply_sender=teams_sender,  # type: ignore[arg-type]
+    )
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    row = db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    assert row["state"] == "completed"
+    role_row = db.connection.execute(
+        "SELECT state, active_turn_id FROM role_instances WHERE role_instance_id=?",
+        (role_instance_id,),
+    ).fetchone()
+    assert role_row["state"] == "ready"
+    assert role_row["active_turn_id"] is None
+    assert [call["text_markdown"] for call in teams_sender.calls] == ["Already said. Now complete."]
+    assert [item["method"] for item in transport.sent if "method" in item] == [
+        "initialize",
+        "initialized",
+        "thread/resume",
+    ]
+
+
+def test_v4_dispatch_scheduler_schedules_active_turn_continuation(tmp_path: Path, monkeypatch) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    active_message = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Long PM turn",
+        source="teams",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id="agentic-mesh-dev.project-manager.1")
+    db.mark_message_state(active_message, state="active_turn", summary="Project Manager is still working.")
+    dispatched_roles: list[str] = []
+
+    def fake_dispatch_role_message(**kwargs) -> int:
+        dispatched_roles.append(kwargs["role_id"])
+        return 1
+
+    monkeypatch.setattr(v4_cli, "_dispatch_role_message", fake_dispatch_role_message)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        active: dict[str, concurrent.futures.Future[int]] = {}
+        scheduled = v4_cli._schedule_available_dispatches(  # noqa: SLF001 - regression for active-turn continuation.
+            db=db,
+            project_config=config,
+            project_config_path=PROJECT_CONFIG,
+            agent_config_root=tmp_path / "agents",
+            lifecycle=None,
+            active_turn_stale_seconds=3600,
+            executor=executor,
+            active=active,
+        )
+        processed = v4_cli._collect_completed_dispatches(active)  # noqa: SLF001
+
+    assert scheduled == 1
+    assert processed == 1
+    assert dispatched_roles == ["project-manager"]
+
+
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
     db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
