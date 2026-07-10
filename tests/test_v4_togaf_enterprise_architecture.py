@@ -264,7 +264,7 @@ def test_postgres_architecture_guards_proportional_flow_and_release(tmp_path: Pa
                 actor_role="product-manager",
             )
 
-        db.record_architecture_impact(
+        initial_impact_id = db.record_architecture_impact(
             work_item_id="work-material",
             classification="material",
             rationale="Changes the shared identity boundary.",
@@ -306,6 +306,27 @@ def test_postgres_architecture_guards_proportional_flow_and_release(tmp_path: Pa
             rationale="Solution conforms to the enterprise identity requirements.",
             actor_role="enterprise-architect",
         )
+        updated_impact_id = db.record_architecture_impact(
+            work_item_id="work-material",
+            classification="material",
+            rationale="Changes the shared identity boundary; evidence wording was clarified.",
+            affected_domains=["application", "security"],
+            actor_role="enterprise-architect",
+        )
+        repeated_impact_id = db.record_architecture_impact(
+            work_item_id="work-material",
+            classification="material",
+            rationale="Changes the shared identity boundary; evidence wording was clarified.",
+            affected_domains=["security", "application"],
+            actor_role="enterprise-architect",
+        )
+        assert initial_impact_id != updated_impact_id
+        assert repeated_impact_id == updated_impact_id
+        preserved = db.connection.execute(
+            "SELECT architecture_conformance FROM work_items WHERE work_item_id=?",
+            ("work-material",),
+        ).fetchone()
+        assert preserved["architecture_conformance"] == "approved"
         db.upsert_work_item(
             work_item_id="work-material",
             state="implementation_planning",
@@ -317,5 +338,52 @@ def test_postgres_architecture_guards_proportional_flow_and_release(tmp_path: Pa
         ).fetchone()
         assert item["architecture_impact"] == "material"
         assert item["architecture_conformance"] == "approved"
+    finally:
+        db.close()
+
+
+def test_postgres_deduplicates_artifact_paths_and_role_memory_sources() -> None:
+    db = V4Database(make_v4_db_url())
+    try:
+        db.migrate()
+        db.upsert_work_item(
+            work_item_id="work-idempotent",
+            title="Idempotent records",
+            state="active",
+            owner_role="enterprise-architect",
+        )
+        first_artifact = db.record_artifact(
+            work_item_id="work-idempotent",
+            path="work-items/work-idempotent/040-enterprise-alignment.md",
+            title="Initial title",
+        )
+        second_artifact = db.record_artifact(
+            work_item_id="work-idempotent",
+            path="work-items/work-idempotent/040-enterprise-alignment.md",
+            title="Enterprise alignment",
+        )
+        first_memory = db.record_memory(
+            role_instance_id="agentic-mesh-dev.enterprise-architect.1",
+            summary="Initial wording",
+            source_ref="work-items/work-idempotent/040-enterprise-alignment.md",
+        )
+        second_memory = db.record_memory(
+            role_instance_id="agentic-mesh-dev.enterprise-architect.1",
+            summary="Current wording",
+            source_ref="work-items/work-idempotent/040-enterprise-alignment.md",
+        )
+
+        assert first_artifact == second_artifact
+        assert first_memory == second_memory
+        artifact = db.connection.execute(
+            "SELECT title FROM artifacts WHERE work_item_id=?",
+            ("work-idempotent",),
+        ).fetchone()
+        memory = db.connection.execute(
+            "SELECT summary FROM role_memory WHERE memory_id=?",
+            (first_memory,),
+        ).fetchone()
+        assert artifact["title"] == "Enterprise alignment"
+        assert memory["summary"] == "Current wording"
     finally:
         db.close()

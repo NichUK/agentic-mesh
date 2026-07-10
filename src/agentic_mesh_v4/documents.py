@@ -198,6 +198,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_path, path)
+        path.chmod(0o666)
         try:
             directory_fd = os.open(path.parent, os.O_DIRECTORY)
         except OSError:
