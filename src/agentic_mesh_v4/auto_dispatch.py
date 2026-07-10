@@ -66,6 +66,32 @@ class DispatchResolution:
         return self.status == "dispatch_ready" and bool(self.targets)
 
 
+def without_self_dispatch_targets(*, resolution: DispatchResolution, source_role: str) -> DispatchResolution:
+    if not resolution.targets:
+        return resolution
+    filtered = tuple(target for target in resolution.targets if target.target_role != source_role)
+    if filtered == resolution.targets:
+        return resolution
+    if filtered:
+        return DispatchResolution(
+            status=resolution.status,
+            source=resolution.source,
+            targets=filtered,
+            attention_owner=resolution.attention_owner,
+            attention_reason=resolution.attention_reason,
+            evidence={**(resolution.evidence or {}), "self_dispatch_targets_removed": True},
+        )
+    return DispatchResolution(
+        status="excluded",
+        source="self_dispatch_exclusion",
+        evidence={
+            **(resolution.evidence or {}),
+            "source_role": source_role,
+            "exclusion": "self_dispatch",
+        },
+    )
+
+
 def resolve_auto_dispatch(
     *,
     payload: dict[str, Any],

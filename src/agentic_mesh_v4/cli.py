@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init-db")
 
+    reset_state = subparsers.add_parser("reset-state")
+    reset_state.add_argument("--confirm", required=True)
+    reset_state.add_argument("--document-root", type=Path)
+
     materialize = subparsers.add_parser("materialize-agent-configs")
     materialize.add_argument("--agent-config-root", type=Path, required=True)
     materialize.add_argument("--role-templates-dir", type=Path, default=Path("config/roles"))
@@ -211,6 +215,9 @@ def build_parser() -> argparse.ArgumentParser:
     memory.add_argument("--role-id", required=True)
     memory.add_argument("--summary", required=True)
     memory.add_argument("--source-ref", required=True)
+    memory.add_argument("--scope", choices=("role", "institutional", "both"), default="role")
+    memory.add_argument("--tags", action="append", default=[])
+    memory.add_argument("--status", default="active")
     memory.add_argument("--message-id")
     memory.add_argument("--turn-id")
 
@@ -314,6 +321,14 @@ def main(argv: list[str] | None = None) -> None:
         runtime.register_roles()
         if args.command == "init-db":
             _print_json({"status": "ok", "roles": len(project_config.roles)})
+            return
+        if args.command == "reset-state":
+            if args.confirm != "CLEAN-SLATE":
+                raise ValueError("reset-state requires --confirm CLEAN-SLATE")
+            db.reset_runtime_state()
+            runtime.register_roles()
+            deleted_paths = _reset_document_state(args.document_root)
+            _print_json({"status": "reset", "registered_roles": len(project_config.roles), "deleted_paths": deleted_paths})
             return
         if args.command == "serve":
             serve(
@@ -447,6 +462,44 @@ def _ensure_ws_tokens(root: Path, project_config) -> None:
         token_path = root / role.role_id / "1" / "ws-token"
         if not token_path.exists():
             token_path.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+
+
+def _role_instance_id(project_config, role_id: str) -> str:
+    return project_config.role(role_id).role_instance_id
+
+
+def _reset_document_state(document_root: Path | None) -> list[str]:
+    if document_root is None:
+        return []
+    root = document_root.resolve()
+    if not root.exists():
+        return []
+    deleted: list[str] = []
+    allowed = {
+        (root / "work-items").resolve(),
+        (root / "delivery").resolve(),
+        (root / "debug").resolve(),
+    }
+    for path in allowed:
+        if not str(path).startswith(str(root)):
+            raise ValueError(f"refusing to delete outside document root: {path}")
+        if not path.exists():
+            continue
+        if path.is_dir():
+            import shutil
+
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        deleted.append(str(path))
+    for filename in ("work-items.md", "index.md"):
+        path = (root / filename).resolve()
+        if path.exists() and str(path).startswith(str(root)):
+            path.unlink()
+            deleted.append(str(path))
+    (root / "work-items").mkdir(parents=True, exist_ok=True)
+    (root / "work-items" / "index.md").write_text("# Work Items\n\nNo active work items.\n", encoding="utf-8")
+    return deleted
 
 
 def _dispatch_available_messages(
@@ -614,7 +667,8 @@ def _schedule_available_dispatches(
     for role in project_config.roles:
         if role.role_id in active:
             continue
-        if db.active_message_for_role(target_role=role.role_id) is not None:
+        active_message = db.active_message_for_role(target_role=role.role_id)
+        if active_message is not None:
             recovered_stale = db.requeue_active_messages_for_role(
                 target_role=role.role_id,
                 stale_after_seconds=active_turn_stale_seconds,
@@ -625,7 +679,8 @@ def _schedule_available_dispatches(
             )
             if recovered_stale and lifecycle is not None:
                 _hibernate_recovered_role(lifecycle=lifecycle, role=role, recovered=recovered_stale)
-        if lifecycle is not None and db.active_message_for_role(target_role=role.role_id) is not None:
+            active_message = db.active_message_for_role(target_role=role.role_id)
+        if lifecycle is not None and active_message is not None:
             if not lifecycle.is_service_running(role.service_name):
                 recovered = db.requeue_active_messages_for_role(
                     target_role=role.role_id,
@@ -647,9 +702,11 @@ def _schedule_available_dispatches(
                         ),
                         file=sys.stderr,
                     )
-        if not db.has_queued_messages(role_id=role.role_id):
+                active_message = db.active_message_for_role(target_role=role.role_id)
+        has_queued_message = db.has_queued_messages(role_id=role.role_id)
+        if active_message is None and not has_queued_message:
             continue
-        if lifecycle is not None:
+        if lifecycle is not None and active_message is None:
             try:
                 lifecycle.wake_service(role.service_name)
             except subprocess.CalledProcessError as exc:
@@ -875,7 +932,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         project_config.role(args.role_id)
         if args.owner_role:
             project_config.role(args.owner_role)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         existing_work = db.connection.execute("SELECT * FROM work_items WHERE work_item_id=?", (args.work_item_id,)).fetchone()
         effective_state = args.state or (str(existing_work["state"]) if existing_work is not None else None)
         effective_next_action = args.next_action or (str(existing_work["next_action"]) if existing_work is not None else None)
@@ -957,7 +1014,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "artifact-link":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         artifact_id = db.record_artifact(work_item_id=args.work_item_id, path=args.path, title=args.title)
         call_id = db.record_safe_output_call(
             role_instance_id=role_instance_id,
@@ -976,7 +1033,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "document-write-artifact":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         call_id = f"call-{secrets.token_hex(16)}"
         request = DocumentWriteRequest(
             role_instance_id=role_instance_id,
@@ -1026,7 +1083,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
     if command == "handoff":
         project_config.role(args.from_role)
         project_config.role(args.to_role)
-        from_role_instance_id = f"{project_config.project_id}.{args.from_role}.1"
+        from_role_instance_id = _role_instance_id(project_config, args.from_role)
         call_id = f"call-{secrets.token_hex(16)}"
         lifecycle_result = create_handoff(
             db=db,
@@ -1070,7 +1127,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command in {"handoff-accept", "handoff-complete", "handoff-supersede", "handoff-cancel", "handoff-block"}:
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         call_id = f"call-{secrets.token_hex(16)}"
         if command == "handoff-accept":
             result = accept_handoff(db=db, handoff_id=args.handoff_id, actor_role=args.role_id, reason=args.reason, safe_output_call_id=call_id)
@@ -1135,25 +1192,49 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "memory-record":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
-        memory_id = db.record_memory(
-            role_instance_id=role_instance_id,
-            summary=args.summary,
-            source_ref=args.source_ref,
-        )
+        role_instance_id = _role_instance_id(project_config, args.role_id)
+        role_memory_id = None
+        project_memory_id = None
+        if args.scope in {"role", "both"}:
+            role_memory_id = db.record_memory(
+                role_instance_id=role_instance_id,
+                project_id=project_config.project_id,
+                summary=args.summary,
+                source_ref=args.source_ref,
+                scope="role",
+                tags=list(args.tags or []),
+                status=args.status,
+            )
+        if args.scope in {"institutional", "both"}:
+            project_memory_id = db.record_project_memory(
+                project_id=project_config.project_id,
+                summary=args.summary,
+                source_ref=args.source_ref,
+                created_by_role_instance_id=role_instance_id,
+                tags=list(args.tags or []),
+                status=args.status,
+            )
         call_id = db.record_safe_output_call(
             role_instance_id=role_instance_id,
             tool_name="memory.propose_update",
-            payload={"memory_id": memory_id, "summary": args.summary, "source_ref": args.source_ref},
+            payload={
+                "role_memory_id": role_memory_id,
+                "project_memory_id": project_memory_id,
+                "scope": args.scope,
+                "summary": args.summary,
+                "source_ref": args.source_ref,
+                "tags": list(args.tags or []),
+                "status": args.status,
+            },
             message_id=args.message_id,
             turn_id=args.turn_id,
         )
-        _print_json({"call_id": call_id, "memory_id": memory_id})
+        _print_json({"call_id": call_id, "role_memory_id": role_memory_id, "project_memory_id": project_memory_id})
         return
     if command == "decision-request":
         project_config.role(args.role_id)
         project_config.role(args.owner_role)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         result = request_decision(
             db=db,
             request=DecisionRequest(
@@ -1224,7 +1305,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "decision-resolve":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         result = resolve_decision(
             db=db,
             decision_id=args.decision_id,
@@ -1253,7 +1334,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "decision-cancel":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         result = cancel_decision(
             db=db,
             decision_id=args.decision_id,
@@ -1274,7 +1355,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "decision-link":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         result = link_decision(
             db=db,
             decision_id=args.decision_id,
@@ -1298,7 +1379,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "decision-sla-sweep":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         result = recalculate_sla_states(
             db=db,
             now=args.now,
@@ -1317,7 +1398,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "decision-delivery-sweep":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         result = deliver_pending_decision_cards(
             db=db,
             sender=TeamsReplySender.from_env(),
@@ -1336,7 +1417,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         return
     if command == "decision-update-retry":
         project_config.role(args.role_id)
-        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        role_instance_id = _role_instance_id(project_config, args.role_id)
         result = retry_failed_card_updates(
             db=db,
             sender=TeamsReplySender.from_env(),
@@ -1388,3 +1469,4 @@ def _json_list_arg(value: str) -> list[object]:
 
 if __name__ == "__main__":
     main()
+

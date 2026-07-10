@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,8 @@ def load_evidence_contracts(
     contracts_path: Path = DEFAULT_CONTRACTS_PATH,
     flow_path: Path = DEFAULT_FLOW_PATH,
 ) -> tuple[EvidenceContract, ...]:
+    contracts_path = _runtime_config_path(contracts_path)
+    flow_path = _runtime_config_path(flow_path)
     flow = _yaml_mapping(flow_path)
     raw = _yaml_mapping(contracts_path)
     _validate_flow_binding(raw=raw, flow=flow, flow_path=flow_path)
@@ -344,6 +347,20 @@ def _normalize_path(path: str | None) -> str | None:
 def _yaml_mapping(path: Path) -> dict[str, Any]:
     parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return _mapping_required(parsed)
+
+
+def _runtime_config_path(path: Path) -> Path:
+    if path.is_absolute() or path.exists():
+        return path
+    system_root = os.environ.get("AGENTIC_MESH_SYSTEM_ROOT")
+    candidates = []
+    if system_root:
+        candidates.append(Path(system_root) / path)
+    candidates.append(Path("/mesh/system") / path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return path
 
 
 def _mapping(value: object) -> dict[str, Any]:

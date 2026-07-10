@@ -137,14 +137,11 @@ python -m agentic_mesh_v4.cli \
 container. Do not leave it blank, substitute another role, or invent a role
 instance id.
 
-The CLI returns JSON containing `call_id`, `tool_name`, and `terminal`. Keep
-those call IDs. If your final answer is going to be prose, stop and use
-`status.reply` first. After all required safe-output calls succeed, write only
-the small operational envelope to stdout, for example:
-
-```json
-{"tool_calls":[{"tool_name":"handoff.require","call_id":"call-...","terminal":false},{"tool_name":"status.reply","call_id":"call-...","terminal":true}]}
-```
+The CLI returns JSON containing the recorded call IDs. Keep those call IDs for
+your own traceability, but do not invent a separate final JSON result envelope.
+In V4, the durable record is the safe-output call itself. Ordinary
+remote-control conversation can remain natural language, but durable work is
+valid only when the safe-output call succeeded first.
 
 Do not invent call IDs. Do not claim a handoff, work-item update, document,
 approval, reply, deployment, or release exists unless the CLI or MCP safe-output

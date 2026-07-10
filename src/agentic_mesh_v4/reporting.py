@@ -8,10 +8,10 @@ from typing import Any
 
 def render_status(snapshot: dict[str, Any]) -> str:
     messages = snapshot["messages"]
-    active = [item for item in messages if item["state"] in {"delivering", "active_turn", "steered"}]
+    active = [item for item in messages if item["state"] in {"delivering", "active_turn"}]
     queued = [item for item in messages if item["state"] == "queued"]
     failed = [item for item in messages if item["state"] in {"failed", "dead_lettered"}]
-    completed = [item for item in messages if item["state"] == "completed"]
+    completed = [item for item in messages if item["state"] in {"completed", "steered"}]
     completion_attention = snapshot.get("completion_attention") or []
     decision_attention = snapshot.get("decision_attention") or []
     decision_records = snapshot.get("decision_records") or []
@@ -80,45 +80,140 @@ def render_status(snapshot: dict[str, Any]) -> str:
     )
 
 def render_agents(snapshot: dict[str, Any]) -> str:
-    rows = []
-    for item in snapshot["roles"]:
-        role_id = str(item["role_id"])
-        thread_id = str(item.get("active_thread_id") or "")
-        thread_cell = (
-            f"<a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(_short_id(thread_id))}</a>"
-            if thread_id
-            else ""
-        )
-        current = item.get("current_message")
-        if isinstance(current, dict):
-            current_cell = (
-                f"<a href=\"/status#{html.escape(str(current.get('message_id') or ''))}\">"
-                f"{html.escape(_short_id(str(current.get('message_id') or '')))}</a>"
-                f"<br><small>{html.escape(str(current.get('state') or ''))}</small>"
-                f"<br>{html.escape(_truncate(str(current.get('text') or ''), 120))}"
-            )
-        else:
-            queued = int(item.get("queued_messages") or 0)
-            current_cell = f"{queued} queued" if queued else ""
-        rows.append(
-            "<tr>"
-            f"<td><a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(item['display_name'])}</a></td>"
-            f"<td>{html.escape(str(item.get('effective_state') or item['state']))}</td>"
-            f"<td>{html.escape(item['authority'])}</td>"
-            f"<td>{html.escape(item['codex_endpoint'])}</td>"
-            f"<td>{thread_cell}</td>"
-            f"<td>{current_cell}</td>"
-            f"<td>{html.escape(str(item.get('memory_count') or 0))}</td>"
-            "</tr>"
-        )
+    rows = [_agent_row_html(item) for item in snapshot["roles"]]
     return _page(
         "Agentic Mesh V4 Agents",
         [
             "<h1>Agents</h1>",
             _nav(),
-            "<table><thead><tr><th>Agent</th><th>State</th><th>Authority</th><th>Codex endpoint</th><th>Thread</th><th>Current message</th><th>Memory</th></tr></thead>"
-            f"<tbody>{''.join(rows) or '<tr><td colspan=\"7\">No roles configured.</td></tr>'}</tbody></table>",
+            "<p id=\"agents-stream-state\">Connecting live agent state stream...</p>",
+            "<table id=\"agents-table\"><thead><tr><th>Agent</th><th>State</th><th>Authority</th><th>Codex endpoint</th><th>Thread</th><th>Current message</th><th>Memory</th></tr></thead>"
+            f"<tbody id=\"agents-body\">{''.join(rows) or '<tr><td colspan=\"7\">No roles configured.</td></tr>'}</tbody></table>",
+            """
+<script>
+const agentsStreamState = document.getElementById("agents-stream-state");
+const agentsBody = document.getElementById("agents-body");
+const agentsEvents = new EventSource("/agents/events");
+agentsEvents.onopen = () => { agentsStreamState.textContent = "Live agent state stream connected."; };
+agentsEvents.onmessage = (event) => {
+  if (!event.data) return;
+  const payload = JSON.parse(event.data);
+  renderAgents(payload.roles || []);
+};
+agentsEvents.onerror = () => { agentsStreamState.textContent = "Live agent state stream disconnected; retrying."; };
+
+function renderAgents(roles) {
+  agentsBody.replaceChildren(...roles.map(agentRow));
+  if (!roles.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "No roles configured.";
+    row.appendChild(cell);
+    agentsBody.appendChild(row);
+  }
+}
+
+function agentRow(item) {
+  const row = document.createElement("tr");
+  appendLinkedCell(row, `/agent/${encodeURIComponent(String(item.role_id || ""))}/thread`, String(item.display_name || item.role_id || ""));
+  appendTextCell(row, String(item.effective_state || item.state || ""));
+  appendTextCell(row, String(item.authority || ""));
+  appendTextCell(row, String(item.codex_endpoint || ""));
+  const threadId = String(item.active_thread_id || "");
+  appendLinkedCell(row, threadId ? `/agent/${encodeURIComponent(String(item.role_id || ""))}/thread` : "", threadId ? shortId(threadId) : "");
+  appendCurrentMessageCell(row, item.current_message, Number(item.queued_messages || 0));
+  appendTextCell(row, String(item.memory_count || 0));
+  return row;
+}
+
+function appendTextCell(row, text) {
+  const cell = document.createElement("td");
+  cell.textContent = text;
+  row.appendChild(cell);
+}
+
+function appendLinkedCell(row, href, text) {
+  const cell = document.createElement("td");
+  if (href && text) {
+    const link = document.createElement("a");
+    link.href = href;
+    link.textContent = text;
+    cell.appendChild(link);
+  } else {
+    cell.textContent = text || "";
+  }
+  row.appendChild(cell);
+}
+
+function appendCurrentMessageCell(row, current, queued) {
+  const cell = document.createElement("td");
+  if (current && typeof current === "object") {
+    const messageId = String(current.message_id || "");
+    if (messageId) {
+      const link = document.createElement("a");
+      link.href = `/status#${encodeURIComponent(messageId)}`;
+      link.textContent = shortId(messageId);
+      cell.appendChild(link);
+    }
+    appendBreakText(cell, String(current.state || ""), "small");
+    appendBreakText(cell, truncate(String(current.text || ""), 120));
+  } else if (queued) {
+    cell.textContent = `${queued} queued`;
+  }
+  row.appendChild(cell);
+}
+
+function appendBreakText(cell, text, tagName = "") {
+  if (!text) return;
+  if (cell.childNodes.length) cell.appendChild(document.createElement("br"));
+  const node = tagName ? document.createElement(tagName) : document.createTextNode(text);
+  if (tagName) node.textContent = text;
+  cell.appendChild(node);
+}
+
+function shortId(value) {
+  return value.length <= 18 ? value : `${value.slice(0, 8)}...${value.slice(-6)}`;
+}
+
+function truncate(value, limit) {
+  return value.length <= limit ? value : `${value.slice(0, limit - 1).trimEnd()}…`;
+}
+</script>
+""",
         ],
+    )
+
+
+def _agent_row_html(item: dict[str, Any]) -> str:
+    role_id = str(item["role_id"])
+    thread_id = str(item.get("active_thread_id") or "")
+    thread_cell = (
+        f"<a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(_short_id(thread_id))}</a>"
+        if thread_id
+        else ""
+    )
+    current = item.get("current_message")
+    if isinstance(current, dict):
+        current_cell = (
+            f"<a href=\"/status#{html.escape(str(current.get('message_id') or ''))}\">"
+            f"{html.escape(_short_id(str(current.get('message_id') or '')))}</a>"
+            f"<br><small>{html.escape(str(current.get('state') or ''))}</small>"
+            f"<br>{html.escape(_truncate(str(current.get('text') or ''), 120))}"
+        )
+    else:
+        queued = int(item.get("queued_messages") or 0)
+        current_cell = f"{queued} queued" if queued else ""
+    return (
+        "<tr>"
+        f"<td><a href=\"/agent/{html.escape(role_id)}/thread\">{html.escape(item['display_name'])}</a></td>"
+        f"<td>{html.escape(str(item.get('effective_state') or item['state']))}</td>"
+        f"<td>{html.escape(item['authority'])}</td>"
+        f"<td>{html.escape(item['codex_endpoint'])}</td>"
+        f"<td>{thread_cell}</td>"
+        f"<td>{current_cell}</td>"
+        f"<td>{html.escape(str(item.get('memory_count') or 0))}</td>"
+        "</tr>"
     )
 
 
@@ -155,7 +250,9 @@ const streamState = document.getElementById("stream-state");
 const output = document.getElementById("agent-output");
 const maxConsoleChars = 120000;
 let currentTurnId = __INITIAL_TURN_ID__;
-const events = new EventSource("thread/events");
+const initialEventId = __INITIAL_EVENT_ID__;
+const eventUrl = initialEventId ? `thread/events?after_event_id=${encodeURIComponent(initialEventId)}` : "thread/events";
+const events = new EventSource(eventUrl);
 events.onopen = () => { streamState.textContent = "Live push stream connected."; };
 events.onmessage = (event) => {
   if (!event.data) return;
@@ -227,7 +324,9 @@ function normalizeConsoleText(value) {
     .replace(/\\\\'/g, "'");
 }
 </script>
-""".replace("__INITIAL_TURN_ID__", json.dumps(console["last_turn_id"])),
+"""
+            .replace("__INITIAL_TURN_ID__", json.dumps(console["last_turn_id"]))
+            .replace("__INITIAL_EVENT_ID__", json.dumps(console["last_event_id"])),
         ],
     )
 
@@ -235,6 +334,7 @@ function normalizeConsoleText(value) {
 def _agent_console(events: list[dict[str, Any]]) -> dict[str, str]:
     parts: list[str] = []
     current_turn_id = ""
+    last_event_id = str(events[-1].get("event_id") or "") if events else ""
     for item in events:
         event_type = str(item.get("event_type") or "")
         content = _normalise_console_text(str(item.get("content") or ""))
@@ -253,7 +353,7 @@ def _agent_console(events: list[dict[str, Any]]) -> dict[str, str]:
             continue
         suffix = f" {content}" if content else ""
         parts.append(f"\n{event_type}{suffix}\n")
-    return {"text": "".join(parts).lstrip(), "last_turn_id": current_turn_id}
+    return {"text": "".join(parts).lstrip(), "last_turn_id": current_turn_id, "last_event_id": last_event_id}
 
 
 def _is_console_noise(event_type: str, content: str) -> bool:

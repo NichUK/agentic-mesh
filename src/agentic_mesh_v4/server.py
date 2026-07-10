@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
+from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
 from agentic_mesh_v4.config import V4ProjectConfig
@@ -32,7 +33,8 @@ class V4Handler(BaseHTTPRequestHandler):
     document_root: Path
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed_url = urlparse(self.path)
+        path = parsed_url.path
         if path == "/healthz":
             self._json({"status": "ok", "runtime": "agentic_mesh_v4"})
             return
@@ -45,26 +47,30 @@ class V4Handler(BaseHTTPRequestHandler):
             if path == "/status.json":
                 self._json(db.snapshot())
                 return
+            if path == "/agents/events":
+                self._handle_agents_events(db)
+                return
             if path == "/agents":
                 self._html(render_agents(db.snapshot()))
                 return
             if path.startswith("/agent/") and path.endswith("/thread/events"):
                 role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread/events")).strip("/")
-                self._handle_agent_thread_events(db, role_id)
+                self._handle_agent_thread_events(db, role_id, query=parsed_url.query)
                 return
             if path.startswith("/agent/") and path.endswith("/thread"):
                 role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread")).strip("/")
+                role_instance_ids = self._role_instance_ids(db, role_id)
                 events = [
                     dict(row)
                     for row in db.connection.execute(
-                        """
+                        f"""
                         SELECT * FROM agent_events
-                        WHERE role_instance_id LIKE ?
-                        ORDER BY created_at DESC LIMIT 200
+                        WHERE role_instance_id IN ({_placeholders(role_instance_ids)})
+                        ORDER BY created_at DESC, event_id DESC LIMIT 200
                         """,
-                        (f"%.{role_id}.%",),
+                        tuple(role_instance_ids),
                     )
-                ]
+                ] if role_instance_ids else []
                 events.reverse()
                 self._html(render_agent_thread(role_id, events))
                 return
@@ -103,43 +109,55 @@ class V4Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         return
 
-    def _handle_agent_thread_events(self, db: V4Database, role_id: str) -> None:
-        role_pattern = f"%.{role_id}.%"
-        latest = db.connection.execute(
-            """
-            SELECT created_at, event_id FROM agent_events
-            WHERE role_instance_id LIKE ?
-            ORDER BY created_at DESC, event_id DESC LIMIT 1
-            """,
-            (role_pattern,),
-        ).fetchone()
+    def _handle_agent_thread_events(self, db: V4Database, role_id: str, *, query: str = "") -> None:
+        role_instance_ids = self._role_instance_ids(db, role_id)
+        after_event_id = self.headers.get("Last-Event-ID") or _first_query_value(query, "after_event_id")
+        latest = None
+        if after_event_id:
+            latest = db.connection.execute(
+                "SELECT created_at, event_id FROM agent_events WHERE event_id=?",
+                (after_event_id,),
+            ).fetchone()
+        if latest is None and role_instance_ids:
+            latest = db.connection.execute(
+                f"""
+                SELECT created_at, event_id FROM agent_events
+                WHERE role_instance_id IN ({_placeholders(role_instance_ids)})
+                ORDER BY created_at DESC, event_id DESC LIMIT 1
+                """,
+                tuple(role_instance_ids),
+            ).fetchone()
         last_created_at = str(latest["created_at"]) if latest else ""
         last_event_id = str(latest["event_id"]) if latest else ""
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
         for _ in range(300):
-            rows = [
-                dict(row)
-                for row in db.connection.execute(
-                    """
-                    SELECT event_id, created_at, event_type, turn_id, message_id, content
-                    FROM agent_events
-                    WHERE role_instance_id LIKE ?
-                      AND (created_at > ? OR (created_at = ? AND event_id > ?))
-                    ORDER BY created_at ASC, event_id ASC
-                    LIMIT 100
-                    """,
-                    (role_pattern, last_created_at, last_created_at, last_event_id),
-                )
-            ]
+            rows = []
+            if role_instance_ids:
+                rows = [
+                    dict(row)
+                    for row in db.connection.execute(
+                        f"""
+                        SELECT event_id, created_at, event_type, turn_id, message_id, content
+                        FROM agent_events
+                        WHERE role_instance_id IN ({_placeholders(role_instance_ids)})
+                          AND (created_at > ? OR (created_at = ? AND event_id > ?))
+                        ORDER BY created_at ASC, event_id ASC
+                        LIMIT 100
+                        """,
+                        (*role_instance_ids, last_created_at, last_created_at, last_event_id),
+                    )
+                ]
             try:
                 if rows:
                     for row in rows:
                         last_created_at = str(row.get("created_at") or last_created_at)
                         last_event_id = str(row.get("event_id") or last_event_id)
+                        self.wfile.write(f"id: {last_event_id}\n".encode("utf-8"))
                         self.wfile.write(f"data: {json.dumps(row)}\n\n".encode("utf-8"))
                 else:
                     self.wfile.write(b": keep-alive\n\n")
@@ -147,6 +165,48 @@ class V4Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 return
             time.sleep(1)
+
+    def _handle_agents_events(self, db: V4Database) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        previous_payload = ""
+        for _ in range(300):
+            snapshot = db.snapshot()
+            payload = json.dumps(
+                {
+                    "roles": snapshot.get("roles", []),
+                    "institutional_memory_total": snapshot.get("institutional_memory_total", 0),
+                },
+                sort_keys=True,
+            )
+            try:
+                if payload != previous_payload:
+                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                    previous_payload = payload
+                else:
+                    self.wfile.write(b": keep-alive\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            time.sleep(1)
+
+    def _role_instance_ids(self, db: V4Database, role_id: str) -> tuple[str, ...]:
+        rows = db.connection.execute(
+            "SELECT role_instance_id FROM role_instances WHERE role_id=? ORDER BY role_instance_id",
+            (role_id,),
+        ).fetchall()
+        values = tuple(str(row["role_instance_id"]) for row in rows)
+        if values:
+            return values
+        try:
+            return (self.project_config.role(role_id).role_instance_id,)
+        except KeyError:
+            pass
+        return ()
 
     def _handle_teams_activity(self) -> None:
         payload = _normalise_teams_activity_payload(self._read_json())
@@ -377,6 +437,15 @@ def _target_role_from_recipient(payload: dict[str, object], project_config: V4Pr
 
 def _normalise_role_label(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _placeholders(values: tuple[object, ...] | list[object]) -> str:
+    return ", ".join("?" for _ in values) or "?"
+
+
+def _first_query_value(query: str, key: str) -> str:
+    values = parse_qs(query).get(key) or []
+    return str(values[0]) if values else ""
 
 
 def _normalise_teams_activity_payload(payload: dict[str, object]) -> dict[str, object]:

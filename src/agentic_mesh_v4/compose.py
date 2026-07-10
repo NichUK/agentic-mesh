@@ -56,6 +56,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    environment:",
         "      AGENTIC_MESH_RUNTIME_VERSION: v4",
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
+        "      AGENTIC_MESH_SYSTEM_ROOT: /mesh/system",
         "      PYTHONPATH: /mesh/system/src",
         "      AGENTIC_MESH_DATABASE_HOST: ${AGENTIC_MESH_DATABASE_HOST:-agentic-mesh-postgres}",
         "      AGENTIC_MESH_DATABASE_PORT: ${AGENTIC_MESH_DATABASE_PORT:-5432}",
@@ -78,6 +79,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    environment:",
         "      AGENTIC_MESH_RUNTIME_VERSION: v4",
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
+        "      AGENTIC_MESH_SYSTEM_ROOT: /mesh/system",
         "      PYTHONPATH: /mesh/system/src",
         "      AGENTIC_MESH_DATABASE_HOST: ${AGENTIC_MESH_DATABASE_HOST:-agentic-mesh-postgres}",
         "      AGENTIC_MESH_DATABASE_PORT: ${AGENTIC_MESH_DATABASE_PORT:-5432}",
@@ -110,6 +112,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    environment:",
         "      AGENTIC_MESH_RUNTIME_VERSION: v4",
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
+        "      AGENTIC_MESH_SYSTEM_ROOT: /mesh/system",
         "      PYTHONPATH: /mesh/system/src",
         "      AGENTIC_MESH_DATABASE_HOST: ${AGENTIC_MESH_DATABASE_HOST:-agentic-mesh-postgres}",
         "      AGENTIC_MESH_DATABASE_PORT: ${AGENTIC_MESH_DATABASE_PORT:-5432}",
@@ -144,7 +147,14 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "",
     ]
     for role in project_config.roles:
-        lines.extend(_role_service(role_id=role.role_id, service_name=role.service_name, port=role.codex_port))
+        lines.extend(
+            _role_service(
+                role_id=role.role_id,
+                role_instance_id=role.role_instance_id,
+                service_name=role.service_name,
+                port=role.codex_port,
+            )
+        )
         lines.append("")
     rendered = "\n".join(lines).rstrip() + "\n"
     validate_v4_compose(rendered)
@@ -158,7 +168,7 @@ def validate_v4_compose(rendered: str) -> None:
         raise ValueError(f"V4 compose contains V3-only components: {', '.join(found)}")
 
 
-def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
+def _role_service(*, role_id: str, role_instance_id: str, service_name: str, port: int) -> list[str]:
     app_server = f"codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
     command = (
         "sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; "
@@ -197,8 +207,9 @@ def _role_service(*, role_id: str, service_name: str, port: int) -> list[str]:
         f"    command: {command}",
         "    environment:",
         f"      AGENTIC_MESH_ROLE_ID: {role_id}",
-        f"      AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.{role_id}.1",
+        f"      AGENTIC_MESH_ROLE_INSTANCE_ID: {role_instance_id}",
         f"      AGENTIC_MESH_TOOL_PROFILE: {_tool_profile(role_id)}",
+        "      AGENTIC_MESH_SYSTEM_ROOT: /mesh/system",
         "      PYTHONPATH: /mesh/system/src",
         "      CODEX_HOME: /mesh/worker-auth/codex",
         "      HOME: /mesh/home",

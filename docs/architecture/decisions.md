@@ -331,7 +331,8 @@ unless an accountable role records a justified governance exception.
 - Superseded by V4. The V2 and V3 runtime packages, legacy scripts, and tests
   have been removed from the active source tree; this ADR is retained as a
   historical design record only.
-- V3 code lives under `src/agentic_mesh_v3`.
+- Historical V3 implementation code has been removed from the active tree after
+  V4 superseded it.
 - V2 is frozen except for emergency operational fixes while V3 is proved.
 - Broker, document library, connector, and worker providers are ports first.
 - Project Manager and Delivery Manager remain separate active roles.

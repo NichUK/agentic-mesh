@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from typing import Callable
 from typing import Iterable
@@ -13,6 +14,7 @@ from typing import Protocol
 
 from agentic_mesh_v4.auto_dispatch import WorkItemDispatchContext
 from agentic_mesh_v4.auto_dispatch import resolve_auto_dispatch
+from agentic_mesh_v4.auto_dispatch import without_self_dispatch_targets
 from agentic_mesh_v4.auto_handoff import create_auto_dispatch_handoffs
 from agentic_mesh_v4.artifact_preflight import RoleArtifactPreflight
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
@@ -82,7 +84,7 @@ class V4Runtime:
     def register_roles(self) -> None:
         for role in self.project_config.roles:
             self.db.upsert_role_instance(
-                role_instance_id=f"{self.project_config.project_id}.{role.role_id}.1",
+                role_instance_id=role.role_instance_id,
                 role_id=role.role_id,
                 display_name=role.display_name,
                 service_name=role.service_name,
@@ -141,7 +143,7 @@ class V4Runtime:
         )
         if not should_steer or self.client_factory is None:
             return message_id
-        role_instance_id = f"{self.project_config.project_id}.{role.role_id}.1"
+        role_instance_id = role.role_instance_id
         thread_id = self._active_thread_id(role_instance_id)
         if not thread_id:
             return message_id
@@ -175,9 +177,11 @@ class V4Runtime:
 
     def dispatch_once(self, *, role_id: str) -> DispatchResult | None:
         role = self.project_config.role(role_id)
-        role_instance_id = f"{self.project_config.project_id}.{role.role_id}.1"
+        role_instance_id = role.role_instance_id
         active = self.db.active_message_for_role(target_role=role.role_id)
         if active is not None:
+            if str(active.get("state") or "") == "active_turn":
+                return self._continue_active_turn(role=role, active=active)
             return None
         message = self.db.claim_next_message(role_id=role.role_id, worker_id=role_instance_id)
         if message is None:
@@ -197,6 +201,13 @@ class V4Runtime:
                 message.message_id,
                 state="failed",
                 summary="No Codex app-server client factory is configured.",
+            )
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary="No Codex app-server client factory is configured.",
+                reason="runtime_missing_client_factory",
+                message_id=message.message_id,
+                payload={"target_role": role.role_id},
             )
             return DispatchResult(message_id=message.message_id, state="failed", error="missing client factory")
         try:
@@ -371,6 +382,18 @@ class V4Runtime:
                     state=completion_evaluation.state,
                     summary=completion_evaluation.next_action,
                 )
+                self._escalate_to_project_manager(
+                    role_instance_id=role_instance_id,
+                    summary=completion_evaluation.next_action,
+                    reason=completion_evaluation.state,
+                    work_item_id=completion_evaluation.work_item_id,
+                    message_id=message.message_id,
+                    payload={
+                        "diagnostic_id": diagnostic_id,
+                        "missing_predicates": list(completion_evaluation.missing_predicates),
+                        "observed_outputs": completion_evaluation.observed_outputs or {},
+                    },
+                )
                 return DispatchResult(
                     message_id=message.message_id,
                     state=completion_evaluation.state,
@@ -444,7 +467,174 @@ class V4Runtime:
                 )
                 return DispatchResult(message_id=message.message_id, state="queued", error=str(exc))
             self.db.mark_message_state(message.message_id, state="failed", summary=str(exc))
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary=str(exc),
+                reason="runtime_dispatch_failed",
+                message_id=message.message_id,
+                payload={"target_role": role.role_id},
+            )
             return DispatchResult(message_id=message.message_id, state="failed", error=str(exc))
+
+    def _continue_active_turn(self, *, role: object, active: dict[str, Any]) -> DispatchResult:
+        message_id = str(active["message_id"])
+        role_instance_id = str(active.get("locked_by") or getattr(role, "role_instance_id", ""))
+        thread_id = self._active_thread_id(role_instance_id)
+        turn_id = self._active_turn_id(role_instance_id) or self._turn_id_for_message(message_id)
+        correlation_id = str(active.get("correlation_id") or f"corr-{message_id}")
+        if self.client_factory is None:
+            self.db.mark_message_state(
+                message_id,
+                state="failed",
+                summary="No Codex app-server client factory is configured for active-turn continuation.",
+            )
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary="No Codex app-server client factory is configured for active-turn continuation.",
+                reason="runtime_missing_client_factory",
+                message_id=message_id,
+            )
+            return DispatchResult(message_id=message_id, state="failed", error="missing client factory")
+        if not thread_id or not turn_id:
+            self.db.mark_message_state(
+                message_id,
+                state="queued",
+                summary="Recovered active turn with missing thread/turn metadata; queued for normal delivery.",
+            )
+            return DispatchResult(message_id=message_id, state="queued", error="missing active turn metadata")
+        try:
+            client = self.client_factory(getattr(role, "role_id"))
+            if not client.initialized:
+                client.initialize()
+            client.resume_thread(thread_id)
+            self.db.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                role_instance_id=role_instance_id,
+                stage="active_turn_continue",
+                status="draining",
+                summary=f"Continuing active Codex turn {turn_id} for {role_instance_id}.",
+            )
+            self._drain_available_events(
+                client=client,
+                role_instance_id=role_instance_id,
+                approval_policy=getattr(role, "approval_policy"),
+                thread_id=thread_id,
+                turn_id=turn_id,
+                message_id=message_id,
+            )
+            reply_text = self._recorded_agent_reply_text(message_id=message_id)
+            payload = _json_mapping(active.get("payload_json"))
+            if str(active.get("source") or "") == "teams" and reply_text.strip() and not self._reply_already_delivered(message_id=message_id):
+                self._deliver_teams_reply(
+                    role=role,
+                    role_instance_id=role_instance_id,
+                    message_id=message_id,
+                    correlation_id=correlation_id,
+                    payload=payload,
+                    reply_text=reply_text,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
+            completion_evaluation = evaluate_completion_contract(
+                db=self.db,
+                contract=resolve_completion_contract(payload),
+                role_instance_id=role_instance_id,
+                message_id=message_id,
+                turn_id=turn_id,
+            )
+            if completion_evaluation.state != "completed":
+                now = utc_now()
+                with self.db.connection:
+                    self.db.connection.execute(
+                        """
+                        UPDATE role_instances
+                        SET active_turn_id=NULL, state='ready', updated_at=?
+                        WHERE role_instance_id=?
+                        """,
+                        (now, role_instance_id),
+                    )
+                    self.db.connection.execute(
+                        """
+                        UPDATE codex_turns
+                        SET status=?, completed_at=?
+                        WHERE turn_id=?
+                        """,
+                        (completion_evaluation.state, now, turn_id),
+                    )
+                self.db.mark_message_state(message_id, state=completion_evaluation.state, summary=completion_evaluation.next_action)
+                self._escalate_to_project_manager(
+                    role_instance_id=role_instance_id,
+                    summary=completion_evaluation.next_action,
+                    reason=completion_evaluation.state,
+                    work_item_id=completion_evaluation.work_item_id,
+                    message_id=message_id,
+                    payload={
+                        "missing_predicates": list(completion_evaluation.missing_predicates),
+                        "observed_outputs": completion_evaluation.observed_outputs or {},
+                    },
+                )
+                return DispatchResult(message_id=message_id, state=completion_evaluation.state, thread_id=thread_id, turn_id=turn_id)
+            self._record_evidence_contract_warnings(
+                message=SimpleNamespace(message_id=message_id, payload=payload),
+                role_id=getattr(role, "role_id"),
+                role_instance_id=role_instance_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+            )
+            now = utc_now()
+            with self.db.connection:
+                self.db.connection.execute(
+                    """
+                    UPDATE role_instances
+                    SET active_turn_id=NULL, state='ready', updated_at=?
+                    WHERE role_instance_id=?
+                    """,
+                    (now, role_instance_id),
+                )
+                self.db.connection.execute(
+                    """
+                    UPDATE codex_turns
+                    SET status='completed', completed_at=?
+                    WHERE turn_id=?
+                    """,
+                    (now, turn_id),
+                )
+            self.db.mark_message_state(message_id, state="completed", summary=f"Completed active-turn continuation for {role_instance_id}")
+            self._sync_documents_after_turn(message_id=message_id, correlation_id=correlation_id, role_instance_id=role_instance_id)
+            return DispatchResult(message_id=message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
+        except AgentTurnStillRunning as exc:
+            self.db.mark_message_state(
+                message_id,
+                state="active_turn",
+                summary=f"Agent turn is still running for {role_instance_id}: {exc}",
+            )
+            return DispatchResult(message_id=message_id, state="active_turn", thread_id=thread_id, turn_id=turn_id, error=str(exc))
+        except Exception as exc:
+            if _looks_like_agent_unavailable(exc):
+                self.db.mark_message_state(
+                    message_id,
+                    state="queued",
+                    summary=f"Agent app-server unavailable while continuing active turn; queued for retry: {exc}",
+                )
+                return DispatchResult(message_id=message_id, state="queued", thread_id=thread_id, turn_id=turn_id, error=str(exc))
+            self.db.mark_message_state(message_id, state="failed", summary=str(exc))
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary=str(exc),
+                reason="runtime_active_turn_failed",
+                message_id=message_id,
+            )
+            with self.db.connection:
+                self.db.connection.execute(
+                    """
+                    UPDATE role_instances
+                    SET active_turn_id=NULL, state='ready', updated_at=?
+                    WHERE role_instance_id=?
+                    """,
+                    (utc_now(), role_instance_id),
+                )
+            return DispatchResult(message_id=message_id, state="failed", thread_id=thread_id, turn_id=turn_id, error=str(exc))
 
     def _record_evidence_contract_warnings(
         self,
@@ -558,6 +748,18 @@ class V4Runtime:
             },
             message_id=getattr(message, "message_id"),
         )
+        self._escalate_to_project_manager(
+            role_instance_id=role_instance_id,
+            summary=outcome.summary,
+            reason=state,
+            work_item_id=outcome.work_item_id,
+            message_id=getattr(message, "message_id"),
+            handoff_id=outcome.handoff_id,
+            payload={
+                "required_path": outcome.required_path,
+                "canonical_path": outcome.canonical_path,
+            },
+        )
         return DispatchResult(message_id=getattr(message, "message_id"), state=state, error=outcome.summary)
 
     def _record_dispatch_invariant_findings(
@@ -615,31 +817,41 @@ class V4Runtime:
             "counts_by_severity": _counts_by_attribute(findings, "severity"),
         }
         self.db.finish_watchdog_sweep(sweep_run_id=sweep_run_id, status="completed", summary=summary)
-        self.db.record_message_journal(
-            message_id=message_id,
-            correlation_id=correlation_id,
-            role_instance_id=role_instance_id,
-            stage="dispatch_invariant",
-            status="planned_not_dispatched",
-            summary="Non-terminal work lacks a queued or active next-agent path.",
-            payload={
-                "sweep_run_id": sweep_run_id,
-                "findings": [finding.finding_key for finding in findings],
-            },
-        )
-        self.db.record_agent_event(
-            role_instance_id=role_instance_id,
-            event_type="dispatch_invariant/planned_not_dispatched",
-            content="Non-terminal work lacks a queued or active next-agent path.",
-            payload={
-                "sweep_run_id": sweep_run_id,
-                "findings": [finding.finding_key for finding in findings],
-            },
-            thread_id=thread_id,
-            turn_id=turn_id,
-            message_id=message_id,
-        )
+        high_findings = [finding for finding in findings if getattr(finding, "severity", "") == "high"]
+        if high_findings:
+            self._escalate_to_project_manager(
+                role_instance_id=role_instance_id,
+                summary="Dispatch invariant failure: non-terminal work lacks a queued or active next-agent path.",
+                reason="dispatch_invariant",
+                message_id=message_id,
+                payload={
+                    "finding_keys": [getattr(finding, "finding_key", "") for finding in high_findings],
+                    "work_item_ids": [getattr(finding, "work_item_id", None) for finding in high_findings],
+                },
+            )
         return findings
+
+    def _escalate_to_project_manager(
+        self,
+        *,
+        role_instance_id: str | None,
+        summary: str,
+        reason: str,
+        work_item_id: str | None = None,
+        message_id: str | None = None,
+        handoff_id: str | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        self.db.enqueue_project_manager_attention(
+            project_id=self.project_config.project_id,
+            source_role_instance_id=role_instance_id,
+            summary=summary,
+            reason=reason,
+            work_item_id=work_item_id,
+            message_id=message_id,
+            handoff_id=handoff_id,
+            payload=payload,
+        )
 
     def _auto_dispatch_planned_findings(
         self,
@@ -669,13 +881,14 @@ class V4Runtime:
                 remaining.append(finding)
                 continue
             resolution = resolve_auto_dispatch(payload=source_payload, work_item=context)
+            resolution = without_self_dispatch_targets(resolution=resolution, source_role=from_role)
             if not resolution.should_dispatch:
                 remaining.append(finding)
                 continue
             try:
                 create_auto_dispatch_handoffs(
                     db=self.db,
-                    project_id=self.project_config.project_id,
+                    project_id=self.project_config.agent_network_id,
                     from_role=from_role,
                     work_item=context,
                     resolution=resolution,
@@ -890,6 +1103,34 @@ class V4Runtime:
             return None
         return str(row["active_thread_id"])
 
+    def _active_turn_id(self, role_instance_id: str) -> str | None:
+        row = self.db.connection.execute(
+            """
+            SELECT active_turn_id
+            FROM role_instances
+            WHERE role_instance_id=?
+            """,
+            (role_instance_id,),
+        ).fetchone()
+        if row is None or row["active_turn_id"] is None:
+            return None
+        return str(row["active_turn_id"])
+
+    def _turn_id_for_message(self, message_id: str) -> str | None:
+        row = self.db.connection.execute(
+            """
+            SELECT turn_id
+            FROM codex_turns
+            WHERE message_id=? AND status='active'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["turn_id"])
+
     def _thread_matches_role(
         self,
         *,
@@ -935,6 +1176,95 @@ class V4Runtime:
         digest.update(str(role.model).encode("utf-8"))
         digest.update(str(role.reasoning_effort).encode("utf-8"))
         return digest.hexdigest()
+
+    def _recorded_agent_reply_text(self, *, message_id: str) -> str:
+        rows = self.db.connection.execute(
+            """
+            SELECT content
+            FROM agent_events
+            WHERE message_id=? AND event_type='item/agentMessage/delta'
+            ORDER BY created_at ASC, event_id ASC
+            """,
+            (message_id,),
+        )
+        return "".join(str(row["content"]) for row in rows)
+
+    def _reply_already_delivered(self, *, message_id: str) -> bool:
+        row = self.db.connection.execute(
+            """
+            SELECT 1
+            FROM message_journal
+            WHERE message_id=? AND stage='reply_delivered' AND status='delivered'
+            LIMIT 1
+            """,
+            (message_id,),
+        ).fetchone()
+        return row is not None
+
+    def _deliver_teams_reply(
+        self,
+        *,
+        role: object,
+        role_instance_id: str,
+        message_id: str,
+        correlation_id: str,
+        payload: dict[str, object],
+        reply_text: str,
+        thread_id: str,
+        turn_id: str | None,
+    ) -> None:
+        mismatch = _teams_recipient_role_mismatch(
+            target_role=getattr(role, "role_id"),
+            activity=payload,
+            roles=self.project_config.roles,
+        )
+        if mismatch is not None:
+            self.db.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                stage="teams_recipient_role_mismatch",
+                status="failed",
+                summary=(
+                    "Teams reply skipped: teams_recipient_role_mismatch; "
+                    f"target_role={mismatch.target_role}; "
+                    f"recipient_role={mismatch.recipient_role}; "
+                    f"recipient_id={mismatch.recipient_id}; "
+                    f"recipient_name={mismatch.recipient_name}."
+                ),
+                role_instance_id=role_instance_id,
+            )
+            self.db.record_agent_event(
+                role_instance_id=role_instance_id,
+                event_type="teams_recipient_role_mismatch",
+                content="Teams reply skipped because queued target_role does not match payload recipient bot identity.",
+                payload={
+                    "target_role": mismatch.target_role,
+                    "recipient_role": mismatch.recipient_role,
+                    "recipient_id": mismatch.recipient_id,
+                    "recipient_name": mismatch.recipient_name,
+                },
+                thread_id=thread_id,
+                turn_id=turn_id,
+                message_id=message_id,
+            )
+            raise RuntimeError(
+                "teams_recipient_role_mismatch: "
+                f"target_role={mismatch.target_role}; recipient_role={mismatch.recipient_role}"
+            )
+        sender = self.teams_reply_sender or TeamsReplySender.from_env()
+        delivery_id = sender.send_reply(
+            role_id=getattr(role, "role_id"),
+            activity=payload,
+            text_markdown=reply_text.strip(),
+        )
+        self.db.record_message_journal(
+            message_id=message_id,
+            correlation_id=correlation_id,
+            stage="reply_delivered",
+            status="delivered",
+            summary=f"Delivered Teams reply {delivery_id}",
+            role_instance_id=role_instance_id,
+        )
 
     def _retire_thread(self, *, role_instance_id: str, thread_id: str) -> None:
         now = utc_now()

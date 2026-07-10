@@ -10,6 +10,7 @@ from agentic_mesh_v4.codex_protocol import InMemoryTransport
 from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 from agentic_mesh_v4.config import load_project_config
+from agentic_mesh_v4.reporting import render_agents
 from agentic_mesh_v4.reporting import render_agent_thread
 from agentic_mesh_v4.reporting import render_status
 from agentic_mesh_v4.runtime import V4Runtime
@@ -204,6 +205,58 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["messages"][0]["state"] == "completed"
     assert snapshot["events"][0]["event_type"] == "turn/completed"
     assert snapshot["events"][1]["content"] == "Done"
+
+
+def test_v4_missing_required_handoff_escalates_to_project_manager(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Done"}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+    runtime.register_roles()
+    db.upsert_work_item(
+        work_item_id="work-needs-handoff",
+        title="Needs handoff",
+        state="product_definition",
+        owner_role="product-manager",
+        next_action="Hand off to UX.",
+    )
+    runtime.enqueue_conversation(
+        target_role="product-manager",
+        text="Complete product definition and hand off.",
+        source="api",
+        payload={
+            "work_item_id": "work-needs-handoff",
+            "from_role": "product-manager",
+            "to_role": "ux-designer",
+            "state": "experience_design",
+            "next_action": "UX owns design.",
+        },
+    )
+
+    result = runtime.dispatch_once(role_id="product-manager")
+
+    assert result is not None
+    assert result.state == "completed_with_missing_output"
+    pm_messages = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT * FROM message_queue WHERE target_role='project-manager' AND source='runtime-escalation'"
+        )
+    ]
+    assert len(pm_messages) == 1
+    assert "Runtime obligation failure" in pm_messages[0]["text"]
+    assert pm_messages[0]["state"] == "queued"
 
 
 def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: Path) -> None:
@@ -401,6 +454,72 @@ def test_v4_same_conversation_message_steers_into_active_turn(tmp_path: Path) ->
         "thread/resume",
         "turn/steer",
     ]
+
+
+def test_v4_status_does_not_show_steered_messages_as_active_turns(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Add this note to the current turn",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+    db.mark_message_state(message_id, state="steered", summary="Steered into active turn")
+
+    status_html = render_status(db.snapshot())
+
+    active_section = status_html.split("<h2>Active Agent Turns</h2>", 1)[1].split("<h2>Attention Needed</h2>", 1)[0]
+    completions_section = status_html.split("<h2>Recent Completions</h2>", 1)[1]
+    assert "No active turns." in active_section
+    assert message_id not in active_section
+    assert message_id in completions_section
+
+
+def test_v4_dispatch_invariants_do_not_pollute_agent_thread_events(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Give me a status update",
+        source="teams",
+        conversation_ref="conversation-1",
+    )
+    db.upsert_work_item(
+        work_item_id="work-needs-owner-path",
+        title="Needs owner path",
+        state="implementation",
+        owner_role="project-manager",
+        next_action="review current status",
+    )
+
+    findings = runtime._record_dispatch_invariant_findings(  # noqa: SLF001 - regression for runtime completion side effects.
+        message_id=message_id,
+        correlation_id=f"corr-{message_id}",
+        role_instance_id="agentic-mesh-dev.project-manager.1",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert any(getattr(item, "finding_type", "") == "planned_not_dispatched" for item in findings)
+    watchdog_row = db.connection.execute(
+        "SELECT finding_type FROM watchdog_findings WHERE finding_key=?",
+        ("planned_not_dispatched:work-needs-owner-path",),
+    ).fetchone()
+    assert watchdog_row is not None
+    assert watchdog_row["finding_type"] == "planned_not_dispatched"
+    assert db.connection.execute(
+        "SELECT 1 FROM agent_events WHERE message_id=? AND event_type='dispatch_invariant/planned_not_dispatched'",
+        (message_id,),
+    ).fetchone() is None
+    assert db.connection.execute(
+        "SELECT 1 FROM message_journal WHERE message_id=? AND stage='dispatch_invariant'",
+        (message_id,),
+    ).fetchone() is None
 
 
 def test_v4_failed_immediate_steering_downgrades_to_normal_queue(tmp_path: Path) -> None:
@@ -787,6 +906,136 @@ def test_v4_dispatch_scheduler_schedules_queued_role_while_another_role_is_activ
     ).fetchone()
     assert active_row["state"] == "active_turn"
     assert queued_row["state"] == "queued"
+
+
+def test_v4_dispatch_continues_active_turn_and_delivers_recorded_reply(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    activity = {
+        "serviceUrl": "https://smba.test/tenant/",
+        "conversation": {"id": "conversation-1"},
+        "id": "activity-1",
+        "recipient": {"name": "AM-Project Manager"},
+    }
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="This is taking a while",
+        source="teams",
+        payload=activity,
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered to Project Manager")
+    with db.connection:
+        db.connection.execute(
+            "UPDATE role_instances SET active_thread_id=?, active_turn_id=?, state='active' WHERE role_instance_id=?",
+            ("thread-1", "turn-1", role_instance_id),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_threads(thread_id, role_instance_id, status, created_at, updated_at, sandbox_mode, approval_policy)
+            VALUES(?,?,?,?,?,?,?)
+            """,
+            ("thread-1", role_instance_id, "active", "now", "now", "danger-full-access", "never"),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_turns(turn_id, thread_id, message_id, status, started_at, completed_at)
+            VALUES(?,?,?,?,?,NULL)
+            """,
+            ("turn-1", "thread-1", message_id, "active", "now"),
+        )
+    db.record_agent_event(
+        role_instance_id=role_instance_id,
+        event_type="item/agentMessage/delta",
+        content="Already said. ",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        message_id=message_id,
+    )
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {}})
+    transport.queue_notification(
+        {
+            "method": "item/agentMessage/delta",
+            "params": {"threadId": "thread-1", "turnId": "turn-1", "delta": "Now complete."},
+        }
+    )
+    transport.queue_notification(
+        {"method": "turn/completed", "params": {"threadId": "thread-1", "turnId": "turn-1"}}
+    )
+    teams_sender = FakeTeamsReplySender()
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+        teams_reply_sender=teams_sender,  # type: ignore[arg-type]
+    )
+
+    result = runtime.dispatch_once(role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    row = db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    assert row["state"] == "completed"
+    role_row = db.connection.execute(
+        "SELECT state, active_turn_id FROM role_instances WHERE role_instance_id=?",
+        (role_instance_id,),
+    ).fetchone()
+    assert role_row["state"] == "ready"
+    assert role_row["active_turn_id"] is None
+    assert [call["text_markdown"] for call in teams_sender.calls] == ["Already said. Now complete."]
+    assert [item["method"] for item in transport.sent if "method" in item] == [
+        "initialize",
+        "initialized",
+        "thread/resume",
+    ]
+
+
+def test_v4_dispatch_scheduler_schedules_active_turn_continuation(tmp_path: Path, monkeypatch) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    active_message = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Long PM turn",
+        source="teams",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id="agentic-mesh-dev.project-manager.1")
+    db.mark_message_state(active_message, state="active_turn", summary="Project Manager is still working.")
+    dispatched_roles: list[str] = []
+
+    def fake_dispatch_role_message(**kwargs) -> int:
+        dispatched_roles.append(kwargs["role_id"])
+        return 1
+
+    monkeypatch.setattr(v4_cli, "_dispatch_role_message", fake_dispatch_role_message)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        active: dict[str, concurrent.futures.Future[int]] = {}
+        scheduled = v4_cli._schedule_available_dispatches(  # noqa: SLF001 - regression for active-turn continuation.
+            db=db,
+            project_config=config,
+            project_config_path=PROJECT_CONFIG,
+            agent_config_root=tmp_path / "agents",
+            lifecycle=None,
+            active_turn_stale_seconds=3600,
+            executor=executor,
+            active=active,
+        )
+        processed = v4_cli._collect_completed_dispatches(active)  # noqa: SLF001
+
+    assert scheduled == 1
+    assert processed == 1
+    assert dispatched_roles == ["project-manager"]
 
 
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
@@ -1181,6 +1430,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
         ],
         events=[
             {
+                "event_id": "event-1",
                 "created_at": "2026-06-24T10:00:01+00:00",
                 "event_type": "item/agentMessage/delta",
                 "turn_id": "turn-1",
@@ -1189,6 +1439,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/agentMessage/delta"}',
             },
             {
+                "event_id": "event-2",
                 "created_at": "2026-06-24T10:00:02+00:00",
                 "event_type": "item/completed",
                 "turn_id": "turn-1",
@@ -1197,6 +1448,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/completed"}',
             },
             {
+                "event_id": "event-3",
                 "created_at": "2026-06-24T10:00:03+00:00",
                 "event_type": "thread/tokenUsage/updated",
                 "turn_id": "turn-1",
@@ -1205,6 +1457,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"thread/tokenUsage/updated"}',
             },
             {
+                "event_id": "event-4",
                 "created_at": "2026-06-24T10:00:04+00:00",
                 "event_type": "account/rateLimits/updated",
                 "turn_id": "turn-1",
@@ -1213,6 +1466,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"account/rateLimits/updated"}',
             },
             {
+                "event_id": "event-5",
                 "created_at": "2026-06-24T10:00:05+00:00",
                 "event_type": "thread/status/changed",
                 "turn_id": "turn-1",
@@ -1221,6 +1475,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"thread/status/changed"}',
             },
             {
+                "event_id": "event-6",
                 "created_at": "2026-06-24T10:00:06+00:00",
                 "event_type": "turn/completed",
                 "turn_id": "turn-1",
@@ -1229,6 +1484,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"turn/completed"}',
             },
             {
+                "event_id": "event-7",
                 "created_at": "2026-06-24T10:00:06.100000+00:00",
                 "event_type": "turn/diff/updated",
                 "turn_id": "turn-1",
@@ -1237,6 +1493,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"turn/diff/updated"}',
             },
             {
+                "event_id": "event-8",
                 "created_at": "2026-06-24T10:00:06.200000+00:00",
                 "event_type": "item/started",
                 "turn_id": "turn-1",
@@ -1245,6 +1502,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/started"}',
             },
             {
+                "event_id": "event-9",
                 "created_at": "2026-06-24T10:00:06.300000+00:00",
                 "event_type": "item/commandExecution/requestApproval/autoAccepted",
                 "turn_id": "turn-1",
@@ -1253,6 +1511,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/commandExecution/requestApproval/autoAccepted"}',
             },
             {
+                "event_id": "event-10",
                 "created_at": "2026-06-24T10:00:06.400000+00:00",
                 "event_type": "item/commandExecution/requestApproval",
                 "turn_id": "turn-1",
@@ -1261,6 +1520,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"item/commandExecution/requestApproval"}',
             },
             {
+                "event_id": "event-11",
                 "created_at": "2026-06-24T10:00:06.500000+00:00",
                 "event_type": "serverRequest/resolved",
                 "turn_id": "turn-1",
@@ -1269,6 +1529,7 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
                 "payload_json": '{"method":"serverRequest/resolved"}',
             },
             {
+                "event_id": "event-12",
                 "created_at": "2026-06-24T10:00:07+00:00",
                 "event_type": "item/agentMessage/delta",
                 "turn_id": "turn-1",
@@ -1279,7 +1540,9 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
         ],
     )
 
-    assert "new EventSource(\"thread/events\")" in html
+    assert 'const events = new EventSource(eventUrl)' in html
+    assert "thread/events?after_event_id=" in html
+    assert '"event-12"' in html
     assert "http-equiv=\"refresh\"" not in html
     assert 'id="agent-output"' in html
     assert 'class="agent-console"' in html
@@ -1300,6 +1563,40 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
     assert "Auto-accepted server approval request" not in html
     assert "item/commandExecution/requestApproval item/commandExecution/requestApproval" not in html
     assert "serverRequest/resolved serverRequest/resolved" not in html
+
+
+def test_v4_agents_page_uses_live_push_stream_without_auto_refresh() -> None:
+    html = render_agents(
+        {
+            "roles": [
+                {
+                    "role_id": "project-manager",
+                    "display_name": "Project Manager",
+                    "state": "ready",
+                    "effective_state": "busy",
+                    "authority": "full",
+                    "codex_endpoint": "ws://project-manager:4700",
+                    "active_thread_id": "019f2e477d9344bd8aa1bb2d43bf1a9",
+                    "memory_count": 3,
+                    "queued_messages": 0,
+                    "current_message": {
+                        "message_id": "msg-1234567890abcdef",
+                        "state": "active_turn",
+                        "text": "Checking the live dashboard stream.",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert 'id="agents-body"' in html
+    assert 'new EventSource("/agents/events")' in html
+    assert "Live agent state stream connected." in html
+    assert "replaceChildren" in html
+    assert "http-equiv=\"refresh\"" not in html
+    assert '<a href="/agent/project-manager/thread">Project Manager</a>' in html
+    assert "019f2e47...3bf1a9" in html
+    assert "Checking the live dashboard stream." in html
 
 
 def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:

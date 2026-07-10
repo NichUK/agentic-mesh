@@ -3,7 +3,7 @@ FROM python:3.12-slim AS base-agent
 WORKDIR /workspace
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl git jq nodejs npm ripgrep \
+  && apt-get install -y --no-install-recommends bubblewrap ca-certificates curl git iproute2 jq lsof netcat-openbsd nodejs npm openssh-client procps ripgrep sqlite3 \
   && npm install -g @openai/codex@0.135.0 \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*

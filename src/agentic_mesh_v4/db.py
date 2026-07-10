@@ -184,9 +184,28 @@ class V4Database:
                 CREATE TABLE IF NOT EXISTS role_memory (
                   memory_id TEXT PRIMARY KEY,
                   role_instance_id TEXT NOT NULL,
+                  project_id TEXT,
+                  role_id TEXT,
+                  scope TEXT NOT NULL DEFAULT 'role',
                   summary TEXT NOT NULL,
                   source_ref TEXT NOT NULL,
+                  tags_json TEXT NOT NULL DEFAULT '[]',
+                  status TEXT NOT NULL DEFAULT 'active',
+                  updated_at TEXT,
                   created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS project_memory (
+                  memory_id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  source_ref TEXT NOT NULL,
+                  created_by_role_instance_id TEXT,
+                  created_by_role_id TEXT,
+                  tags_json TEXT NOT NULL DEFAULT '[]',
+                  status TEXT NOT NULL DEFAULT 'active',
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS summaries (
@@ -452,6 +471,8 @@ class V4Database:
                   ON message_journal(message_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_agent_events_thread
                   ON agent_events(thread_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_events_role_created
+                  ON agent_events(role_instance_id, created_at, event_id);
                 CREATE INDEX IF NOT EXISTS idx_turn_completion_diagnostics_message
                   ON turn_completion_diagnostics(message_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_turn_completion_diagnostics_work_item
@@ -496,6 +517,12 @@ class V4Database:
             _ensure_column(self.connection, "safe_output_calls", "message_id", "TEXT")
             _ensure_column(self.connection, "safe_output_calls", "turn_id", "TEXT")
             _ensure_column(self.connection, "safe_output_calls", "work_item_id", "TEXT")
+            _ensure_column(self.connection, "role_memory", "project_id", "TEXT")
+            _ensure_column(self.connection, "role_memory", "role_id", "TEXT")
+            _ensure_column(self.connection, "role_memory", "scope", "TEXT NOT NULL DEFAULT 'role'")
+            _ensure_column(self.connection, "role_memory", "tags_json", "TEXT NOT NULL DEFAULT '[]'")
+            _ensure_column(self.connection, "role_memory", "status", "TEXT NOT NULL DEFAULT 'active'")
+            _ensure_column(self.connection, "role_memory", "updated_at", "TEXT")
             _ensure_column(self.connection, "handoffs", "state", "TEXT")
             _ensure_column(self.connection, "handoffs", "accepted_at", "TEXT")
             _ensure_column(self.connection, "handoffs", "completed_at", "TEXT")
@@ -542,6 +569,18 @@ class V4Database:
                 """
                 CREATE INDEX IF NOT EXISTS idx_handoff_transitions_handoff
                   ON handoff_transitions(handoff_id, created_at)
+                """
+            )
+            self.connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_role_memory_scope
+                  ON role_memory(project_id, role_id, scope, status, updated_at)
+                """
+            )
+            self.connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_project_memory_project
+                  ON project_memory(project_id, status, updated_at)
                 """
             )
 
@@ -1100,15 +1139,44 @@ class V4Database:
             )
         return handoff_id
 
-    def record_memory(self, *, role_instance_id: str, summary: str, source_ref: str) -> str:
+    def record_memory(
+        self,
+        *,
+        role_instance_id: str,
+        summary: str,
+        source_ref: str,
+        project_id: str | None = None,
+        scope: str = "role",
+        tags: list[str] | None = None,
+        status: str = "active",
+    ) -> str:
+        if scope not in {"role", "work", "conversation"}:
+            raise ValueError(f"unsupported role memory scope: {scope}")
         memory_id = f"mem-{uuid4().hex}"
+        now = utc_now()
+        role_id = _role_from_instance_id(role_instance_id)
+        project_id = project_id or _project_from_instance_id(role_instance_id)
         with self.connection:
             self.connection.execute(
                 """
-                INSERT INTO role_memory(memory_id, role_instance_id, summary, source_ref, created_at)
-                VALUES(?,?,?,?,?)
+                INSERT INTO role_memory(
+                  memory_id, role_instance_id, project_id, role_id, scope,
+                  summary, source_ref, tags_json, status, updated_at, created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """,
-                (memory_id, role_instance_id, summary, source_ref, utc_now()),
+                (
+                    memory_id,
+                    role_instance_id,
+                    project_id,
+                    role_id,
+                    scope,
+                    summary,
+                    source_ref,
+                    json.dumps(tags or [], sort_keys=True),
+                    status,
+                    now,
+                    now,
+                ),
             )
             self.connection.execute(
                 """
@@ -1117,9 +1185,140 @@ class V4Database:
                     updated_at=?
                 WHERE role_instance_id=?
                 """,
-                (utc_now(), role_instance_id),
+                (now, role_instance_id),
             )
         return memory_id
+
+    def record_project_memory(
+        self,
+        *,
+        project_id: str,
+        summary: str,
+        source_ref: str,
+        created_by_role_instance_id: str | None = None,
+        tags: list[str] | None = None,
+        status: str = "active",
+    ) -> str:
+        memory_id = f"pmem-{uuid4().hex}"
+        now = utc_now()
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO project_memory(
+                  memory_id, project_id, summary, source_ref,
+                  created_by_role_instance_id, created_by_role_id,
+                  tags_json, status, created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    memory_id,
+                    project_id,
+                    summary,
+                    source_ref,
+                    created_by_role_instance_id,
+                    _role_from_instance_id(created_by_role_instance_id) if created_by_role_instance_id else None,
+                    json.dumps(tags or [], sort_keys=True),
+                    status,
+                    now,
+                    now,
+                ),
+            )
+        return memory_id
+
+    def enqueue_project_manager_attention(
+        self,
+        *,
+        project_id: str,
+        source_role_instance_id: str | None,
+        summary: str,
+        reason: str,
+        work_item_id: str | None = None,
+        message_id: str | None = None,
+        handoff_id: str | None = None,
+        severity: str = "high",
+        payload: dict[str, Any] | None = None,
+    ) -> str | None:
+        target_role = "project-manager"
+        source_role = _role_from_instance_id(source_role_instance_id) if source_role_instance_id else None
+        attention_payload = {
+            "attention_type": "runtime_obligation_failure",
+            "project_id": project_id,
+            "source_role_instance_id": source_role_instance_id,
+            "source_role": source_role,
+            "reason": reason,
+            "severity": severity,
+            "work_item_id": work_item_id,
+            "message_id": message_id,
+            "handoff_id": handoff_id,
+            **(payload or {}),
+        }
+        if source_role == target_role:
+            self.record_agent_event(
+                role_instance_id=source_role_instance_id or f"{project_id}.project-manager.1",
+                event_type="project_manager_attention/self_escalation_recorded",
+                content=summary,
+                payload=attention_payload,
+                message_id=message_id,
+            )
+            return None
+        text = (
+            "Runtime obligation failure requires Project Manager action.\n\n"
+            f"Summary: {summary}\n"
+            f"Reason: {reason}\n"
+            f"Source role: {source_role or 'runtime'}\n"
+            f"Work item: {work_item_id or 'none'}"
+        )
+        queued_message_id = self.enqueue_message(
+            target_role=target_role,
+            text=text,
+            source="runtime-escalation",
+            payload=attention_payload,
+        )
+        self.record_message_journal(
+            message_id=queued_message_id,
+            correlation_id=f"corr-{queued_message_id}",
+            role_instance_id=source_role_instance_id,
+            stage="project_manager_attention",
+            status="queued",
+            summary=summary,
+            payload=attention_payload,
+        )
+        return queued_message_id
+
+    def reset_runtime_state(self) -> None:
+        tables = (
+            "decision_links",
+            "decision_callbacks",
+            "decision_card_deliveries",
+            "decision_records",
+            "watchdog_findings",
+            "watchdog_sweep_runs",
+            "handoff_transitions",
+            "handoffs",
+            "releases",
+            "approvals",
+            "preflight_results",
+            "document_write_warnings",
+            "document_merge_tasks",
+            "document_revisions",
+            "artifacts",
+            "work_items",
+            "summaries",
+            "project_memory",
+            "role_memory",
+            "turn_completion_diagnostics",
+            "safe_output_calls",
+            "agent_events",
+            "message_journal",
+            "message_queue",
+            "codex_turns",
+            "codex_threads",
+            "agent_sessions",
+            "role_instances",
+        )
+        with self.connection:
+            for table in tables:
+                self.connection.execute(f"DELETE FROM {table}")
 
     def start_watchdog_sweep(
         self,
@@ -1255,9 +1454,16 @@ class V4Database:
         memory_counts = {
             str(row["role_instance_id"]): int(row["count"])
             for row in self.connection.execute(
-                "SELECT role_instance_id, COUNT(*) AS count FROM role_memory GROUP BY role_instance_id"
+                "SELECT role_instance_id, COUNT(*) AS count FROM role_memory WHERE status='active' GROUP BY role_instance_id"
             )
         }
+        project_memory_counts = {
+            str(row["project_id"]): int(row["count"])
+            for row in self.connection.execute(
+                "SELECT project_id, COUNT(*) AS count FROM project_memory WHERE status='active' GROUP BY project_id"
+            )
+        }
+        institutional_memory_total = sum(project_memory_counts.values())
         active_messages: dict[str, dict[str, Any]] = {}
         for item in messages:
             if item["state"] not in {"delivering", "active_turn"}:
@@ -1279,6 +1485,7 @@ class V4Database:
         for role in roles:
             role_instance_id = str(role["role_instance_id"])
             role["memory_count"] = memory_counts.get(role_instance_id, 0)
+            role["institutional_memory_count"] = institutional_memory_total
             role["queued_messages"] = queued_counts.get(str(role["role_id"]), 0)
             active_message = active_messages.get(role_instance_id)
             if active_message is not None:
@@ -1443,6 +1650,8 @@ class V4Database:
         preflight_attention = _preflight_attention_items(preflight_results)
         return {
             "roles": roles,
+            "project_memory_counts": project_memory_counts,
+            "institutional_memory_total": institutional_memory_total,
             "messages": messages,
             "work_items": work_items,
             "handoffs": handoffs,
@@ -1830,6 +2039,13 @@ def _role_from_instance_id(role_instance_id: str) -> str:
     if len(parts) >= 3:
         return parts[-2]
     return role_instance_id
+
+
+def _project_from_instance_id(role_instance_id: str) -> str:
+    parts = role_instance_id.split(".")
+    if len(parts) >= 3:
+        return ".".join(parts[:-2])
+    return "default"
 
 
 def _excerpt(value: str | None, *, limit: int = 500) -> str | None:
