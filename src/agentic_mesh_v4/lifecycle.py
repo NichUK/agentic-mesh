@@ -15,7 +15,7 @@ class ComposeLifecycle:
 
     def wake_service(self, service_name: str) -> None:
         command = self._base_command()
-        command.extend(["up", "-d", "--no-deps", "--no-recreate", service_name])
+        command.extend(["up", "-d", "--no-deps", service_name])
         subprocess.run(
             command,
             cwd=self.working_directory,
