@@ -1745,6 +1745,8 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
     assert "working_dir: /mesh/agent-workspace" in rendered
     assert "${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/state/v4/agent-workspaces/project-manager/1:/mesh/agent-workspace" in rendered
     assert "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md" in rendered
+    assert "agentic_mesh_v4.safe_output_proxy" in rendered
+    assert "AGENTIC_MESH_SAFE_OUTPUT_SOCKET: /mesh/agent-workspace/.agentic-mesh/safe-output.sock" in rendered
     assert "v3-nats" not in rendered
     assert "v3-supervisor" not in rendered
     assert "run-agent-service" not in rendered
