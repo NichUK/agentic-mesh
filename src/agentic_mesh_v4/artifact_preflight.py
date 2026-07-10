@@ -19,7 +19,8 @@ from agentic_mesh_v4.lifecycle import ComposeLifecycle
 STATE_ARTIFACT_PATHS = {
     "product_definition": "020-product-definition.md",
     "experience_design": "030-experience-design.md",
-    "solution_design": "030-solution-design.md",
+    "enterprise_alignment": "040-enterprise-alignment.md",
+    "solution_design": "050-solution-design.md",
     "security_review": "050-security-review.md",
     "prompt_contract": "060-prompt-contract.md",
     "implementation": "100-implementation-log.md",
@@ -435,11 +436,19 @@ def _role_config_hash(role: object) -> str:
 
 def _normalize_slot_alias(path: str) -> str:
     aliases = {
+        "/10-business-brief.md": "/010-business-brief.md",
         "/20-product-definition.md": "/020-product-definition.md",
         "/30-experience-design.md": "/030-experience-design.md",
-        "/30-solution-design.md": "/030-solution-design.md",
-        "/50-security-review.md": "/050-security-review.md",
+        "/30-solution-design.md": "/050-solution-design.md",
+        "/030-solution-design.md": "/050-solution-design.md",
+        "/40-enterprise-alignment.md": "/040-enterprise-alignment.md",
+        "/50-solution-design.md": "/050-solution-design.md",
+        "/50-security-review.md": "/060-security-review.md",
+        "/60-security-review.md": "/060-security-review.md",
         "/60-prompt-contract.md": "/060-prompt-contract.md",
+        "/70-platform-readiness.md": "/070-platform-readiness.md",
+        "/80-implementation-plan.md": "/080-implementation-plan.md",
+        "/90-quality-plan.md": "/090-quality-plan.md",
     }
     for old, new in aliases.items():
         if path.endswith(old):

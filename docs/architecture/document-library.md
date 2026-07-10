@@ -1,6 +1,6 @@
 # Document Library
 
-Status: draft design
+Status: active V4 guidance
 
 Date: 2026-06-04
 
@@ -28,9 +28,10 @@ document_library:
   versioning: backend
 ```
 
-Supported v2 MVP backends are `git` and `filesystem`. `onedrive` and
-`sharepoint` are reserved adapter targets. Versioning belongs to the backend:
-Git history for Git-backed libraries and Microsoft version history for
+V4 supports the document library through an adapter boundary. The dogfood
+project uses OneDrive so the same canonical files are visible to role agents,
+the dashboard, Teams Shared Files, and humans. Versioning belongs to the
+backend: Git history for Git-backed libraries and Microsoft version history for
 OneDrive or SharePoint.
 
 ## Organization
@@ -38,21 +39,56 @@ OneDrive or SharePoint.
 The `togaf-sdlc-v1` policy uses numbered durable areas:
 
 ```text
-00-index/
-10-business/
-20-architecture/
-30-product/
-40-delivery/
-50-engineering/
-60-quality/
-70-operations/
-80-release/
+000-index/
+010-business/
+020-architecture/
+030-product/
+040-delivery/
+050-engineering/
+060-quality/
+070-operations/
+080-release/
 work-items/{work_item_id}/
 ```
 
 Existing repositories may keep established folders such as `docs/product/` or
 `docs/architecture/`. New project libraries should prefer the numbered layout
 when starting clean.
+
+Three-digit prefixes are mandatory for new ordered areas and documents. This
+keeps `010`, `100`, and `110` in lifecycle order in filesystem, OneDrive, and
+rendered index listings.
+
+## Enterprise Architecture Portfolio
+
+The TOGAF-aligned project portfolio lives under:
+
+```text
+020-architecture/enterprise/
+  000-index.md
+  010-architecture-principles.md
+  020-architecture-vision.md
+  030-business-capability-map.md
+  040-target-operating-model.md
+  050-business-architecture.md
+  060-data-architecture.md
+  070-application-architecture.md
+  080-technology-architecture.md
+  090-architecture-requirements.md
+  100-standards-and-reference-architectures.md
+  110-gap-analysis.md
+  120-transition-architectures.md
+  130-architecture-roadmap.md
+  140-conformance-and-exceptions.md
+  150-architecture-change-log.md
+  160-architecture-decision-register.md
+```
+
+Enterprise Architect is accountable for the portfolio. Project configuration
+names contributing roles and required sections for each document. Domain views
+record baseline, target, gaps, decisions, dependencies, and freshness. A domain
+may be declared not applicable only with an evidence-based reason and review
+date; generated prose must not be used to disguise an unassessed domain.
 
 ## Slice Documentation
 
@@ -73,15 +109,15 @@ Slice documents should be ordered so the work item reads as a coherent dossier,
 for example:
 
 ```text
-work-items/{work_item_id}/10-business-brief.md
-work-items/{work_item_id}/20-product-definition.md
-work-items/{work_item_id}/30-experience-design.md
-work-items/{work_item_id}/40-enterprise-alignment.md
-work-items/{work_item_id}/50-solution-design.md
-work-items/{work_item_id}/60-security-review.md
-work-items/{work_item_id}/70-platform-readiness.md
-work-items/{work_item_id}/80-implementation-plan.md
-work-items/{work_item_id}/90-quality-plan.md
+work-items/{work_item_id}/010-business-brief.md
+work-items/{work_item_id}/020-product-definition.md
+work-items/{work_item_id}/030-experience-design.md
+work-items/{work_item_id}/040-enterprise-alignment.md
+work-items/{work_item_id}/050-solution-design.md
+work-items/{work_item_id}/060-security-review.md
+work-items/{work_item_id}/070-platform-readiness.md
+work-items/{work_item_id}/080-implementation-plan.md
+work-items/{work_item_id}/090-quality-plan.md
 work-items/{work_item_id}/100-implementation-log.md
 work-items/{work_item_id}/110-quality-evidence.md
 work-items/{work_item_id}/120-documentation-readiness.md
@@ -120,6 +156,9 @@ manifest and project configuration. The minimum metadata is:
 - review status
 - canonical backend path or URL
 - last review result
+
+Enterprise architecture documents also record last-reviewed/freshness data,
+baseline and target scope, and the decisions or work items that changed them.
 
 The manifest is generated from configuration first and can later be enriched by
 journal events, backend URLs, and review state.

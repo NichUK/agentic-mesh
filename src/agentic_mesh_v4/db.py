@@ -13,6 +13,8 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
+from agentic_mesh_v4.flow import ARCHITECTURE_DOMAINS
+
 
 COMPLETION_ATTENTION_MESSAGE_STATES = {
     "blocked",
@@ -223,8 +225,28 @@ class V4Database:
                   state TEXT NOT NULL,
                   owner_role TEXT NOT NULL,
                   next_action TEXT NOT NULL DEFAULT '',
+                  architecture_impact TEXT NOT NULL DEFAULT 'not_assessed',
+                  architecture_impact_rationale TEXT NOT NULL DEFAULT '',
+                  architecture_domains_json TEXT NOT NULL DEFAULT '[]',
+                  architecture_reviewer_role TEXT,
+                  architecture_decision_ref TEXT,
+                  architecture_conformance TEXT NOT NULL DEFAULT 'not_required',
+                  architecture_conformance_rationale TEXT NOT NULL DEFAULT '',
+                  architecture_conformance_decision_ref TEXT,
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS architecture_governance_records (
+                  record_id TEXT PRIMARY KEY,
+                  work_item_id TEXT NOT NULL,
+                  record_type TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  rationale TEXT NOT NULL,
+                  affected_domains_json TEXT NOT NULL DEFAULT '[]',
+                  actor_role TEXT NOT NULL,
+                  decision_ref TEXT,
+                  created_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS artifacts (
@@ -505,6 +527,8 @@ class V4Database:
                   ON preflight_results(message_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_preflight_results_work_item
                   ON preflight_results(work_item_id, status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_architecture_governance_work_item
+                  ON architecture_governance_records(work_item_id, record_type, created_at);
                 """
             )
             _ensure_column(self.connection, "codex_threads", "sandbox_mode", "TEXT")
@@ -523,6 +547,39 @@ class V4Database:
             _ensure_column(self.connection, "role_memory", "tags_json", "TEXT NOT NULL DEFAULT '[]'")
             _ensure_column(self.connection, "role_memory", "status", "TEXT NOT NULL DEFAULT 'active'")
             _ensure_column(self.connection, "role_memory", "updated_at", "TEXT")
+            _ensure_column(
+                self.connection,
+                "work_items",
+                "architecture_impact",
+                "TEXT NOT NULL DEFAULT 'not_assessed'",
+            )
+            _ensure_column(
+                self.connection,
+                "work_items",
+                "architecture_impact_rationale",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            _ensure_column(
+                self.connection,
+                "work_items",
+                "architecture_domains_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+            _ensure_column(self.connection, "work_items", "architecture_reviewer_role", "TEXT")
+            _ensure_column(self.connection, "work_items", "architecture_decision_ref", "TEXT")
+            _ensure_column(
+                self.connection,
+                "work_items",
+                "architecture_conformance",
+                "TEXT NOT NULL DEFAULT 'not_required'",
+            )
+            _ensure_column(
+                self.connection,
+                "work_items",
+                "architecture_conformance_rationale",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            _ensure_column(self.connection, "work_items", "architecture_conformance_decision_ref", "TEXT")
             _ensure_column(self.connection, "handoffs", "state", "TEXT")
             _ensure_column(self.connection, "handoffs", "accepted_at", "TEXT")
             _ensure_column(self.connection, "handoffs", "completed_at", "TEXT")
@@ -1064,6 +1121,12 @@ class V4Database:
         ).fetchone()
         if existing is None and (title is None or state is None or owner_role is None):
             raise ValueError("new work items require title, state, and owner_role")
+        if existing is not None:
+            _validate_architecture_transition(
+                existing=_row_dict(existing),
+                target_state=state if state is not None else str(existing["state"]),
+                target_owner=owner_role if owner_role is not None else str(existing["owner_role"]),
+            )
         now = utc_now()
         with self.connection:
             if existing is None:
@@ -1115,6 +1178,136 @@ class V4Database:
                 (artifact_id, work_item_id, path, title, utc_now()),
             )
         return artifact_id
+
+    def record_architecture_impact(
+        self,
+        *,
+        work_item_id: str,
+        classification: str,
+        rationale: str,
+        affected_domains: list[str],
+        actor_role: str,
+        decision_ref: str | None = None,
+    ) -> str:
+        allowed = {"none", "material", "uncertain"}
+        if classification not in allowed:
+            raise ValueError(f"unsupported architecture impact classification: {classification}")
+        if not rationale.strip():
+            raise ValueError("architecture impact rationale is required")
+        existing = self.connection.execute(
+            "SELECT work_item_id FROM work_items WHERE work_item_id=?",
+            (work_item_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(f"unknown work item: {work_item_id}")
+        domains = sorted({str(value).strip() for value in affected_domains if str(value).strip()})
+        unsupported_domains = set(domains) - ARCHITECTURE_DOMAINS
+        if unsupported_domains:
+            raise ValueError(f"unsupported architecture domains: {sorted(unsupported_domains)}")
+        if classification in {"material", "uncertain"} and not domains:
+            raise ValueError("material or uncertain architecture impact requires at least one affected domain")
+        conformance = "pending" if classification in {"material", "uncertain"} else "not_required"
+        record_id = f"architecture-{uuid4().hex}"
+        now = utc_now()
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE work_items
+                SET architecture_impact=?, architecture_impact_rationale=?,
+                    architecture_domains_json=?, architecture_reviewer_role=?,
+                    architecture_decision_ref=?, architecture_conformance=?,
+                    architecture_conformance_rationale='',
+                    architecture_conformance_decision_ref=NULL, updated_at=?
+                WHERE work_item_id=?
+                """,
+                (
+                    classification,
+                    rationale.strip(),
+                    json.dumps(domains),
+                    actor_role,
+                    decision_ref,
+                    conformance,
+                    now,
+                    work_item_id,
+                ),
+            )
+            self.connection.execute(
+                """
+                INSERT INTO architecture_governance_records(
+                  record_id, work_item_id, record_type, status, rationale,
+                  affected_domains_json, actor_role, decision_ref, created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record_id,
+                    work_item_id,
+                    "impact",
+                    classification,
+                    rationale.strip(),
+                    json.dumps(domains),
+                    actor_role,
+                    decision_ref,
+                    now,
+                ),
+            )
+        return record_id
+
+    def record_architecture_conformance(
+        self,
+        *,
+        work_item_id: str,
+        status: str,
+        rationale: str,
+        actor_role: str,
+        decision_ref: str | None = None,
+    ) -> str:
+        allowed = {"approved", "changes_requested", "exception"}
+        if status not in allowed:
+            raise ValueError(f"unsupported architecture conformance status: {status}")
+        if not rationale.strip():
+            raise ValueError("architecture conformance rationale is required")
+        if status == "exception" and not decision_ref:
+            raise ValueError("architecture conformance exceptions require a sponsor decision reference")
+        existing = self.connection.execute(
+            "SELECT architecture_impact FROM work_items WHERE work_item_id=?",
+            (work_item_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(f"unknown work item: {work_item_id}")
+        if str(existing["architecture_impact"]) not in {"material", "uncertain"}:
+            raise ValueError("architecture conformance is only recorded for material or uncertain impact")
+        record_id = f"architecture-{uuid4().hex}"
+        now = utc_now()
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE work_items
+                SET architecture_conformance=?, architecture_conformance_rationale=?,
+                    architecture_conformance_decision_ref=?, updated_at=?
+                WHERE work_item_id=?
+                """,
+                (status, rationale.strip(), decision_ref, now, work_item_id),
+            )
+            self.connection.execute(
+                """
+                INSERT INTO architecture_governance_records(
+                  record_id, work_item_id, record_type, status, rationale,
+                  affected_domains_json, actor_role, decision_ref, created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record_id,
+                    work_item_id,
+                    "conformance",
+                    status,
+                    rationale.strip(),
+                    "[]",
+                    actor_role,
+                    decision_ref,
+                    now,
+                ),
+            )
+        return record_id
 
     def record_handoff(
         self,
@@ -1506,6 +1699,14 @@ class V4Database:
                 "SELECT * FROM work_items ORDER BY updated_at DESC"
             )
         ]
+        for item in work_items:
+            item["architecture_domains"] = _json_list(item.get("architecture_domains_json"))
+        architecture_governance_records = [
+            _row_dict(row)
+            for row in self.connection.execute(
+                "SELECT * FROM architecture_governance_records ORDER BY created_at DESC"
+            )
+        ]
         handoffs = [
             _row_dict(row)
             for row in self.connection.execute(
@@ -1654,6 +1855,7 @@ class V4Database:
             "institutional_memory_total": institutional_memory_total,
             "messages": messages,
             "work_items": work_items,
+            "architecture_governance_records": architecture_governance_records,
             "handoffs": handoffs,
             "handoff_transitions": handoff_transitions,
             "active_owner_paths": active_owner_paths,
@@ -1860,6 +2062,46 @@ def _json_list(value: object) -> list[object]:
     return parsed if isinstance(parsed, list) else []
 
 
+def _validate_architecture_transition(
+    *,
+    existing: dict[str, Any],
+    target_state: str,
+    target_owner: str,
+) -> None:
+    current_state = str(existing.get("state") or "")
+    impact = str(existing.get("architecture_impact") or "not_assessed")
+    conformance = str(existing.get("architecture_conformance") or "not_required")
+    if current_state == "product_definition" and target_state != current_state and impact == "not_assessed":
+        raise ValueError("product definition cannot complete until architecture impact is recorded")
+    if (
+        current_state == "experience_design"
+        and target_state == "solution_design"
+        and impact in {"material", "uncertain"}
+        and target_owner == "solution-architect"
+    ):
+        raise ValueError("material or uncertain architecture impact must route through enterprise_alignment")
+    conformance_required_states = {
+        "implementation_planning",
+        "quality_planning",
+        "implementation",
+        "quality_review",
+        "documentation_readiness",
+        "delivery_readiness",
+        "release_review",
+        "released",
+        "closed",
+        "completed",
+    }
+    if (
+        impact in {"material", "uncertain"}
+        and target_state in conformance_required_states
+        and conformance not in {"approved", "exception"}
+    ):
+        raise ValueError(
+            "material or uncertain architecture impact requires approved conformance or a sponsor-approved exception"
+        )
+
+
 def _decision_attention_items(
     *,
     decisions: list[dict[str, Any]],
@@ -2056,19 +2298,9 @@ def _excerpt(value: str | None, *, limit: int = 500) -> str | None:
 
 
 def _ensure_column(connection: _PostgresConnection, table: str, column: str, declaration: str) -> None:
-    columns = {
-        str(row["column_name"])
-        for row in connection.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema='public' AND table_name=? 
-            """,
-            (table,),
-        )
-    }
-    if column not in columns:
-        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+    if not table.replace("_", "").isalnum() or not column.replace("_", "").isalnum():
+        raise ValueError("table and column names must be simple identifiers")
+    connection.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {declaration}")
 
 
 def _resolve_database_url(value: str | Path | None) -> str:

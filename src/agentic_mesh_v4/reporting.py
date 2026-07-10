@@ -398,7 +398,11 @@ def _normalise_console_text(value: str) -> str:
     )
 
 
-def render_work_item(work_item_id: str, rows: list[dict[str, Any]]) -> str:
+def render_work_item(
+    work_item_id: str,
+    rows: list[dict[str, Any]],
+    architecture_records: list[dict[str, Any]] | None = None,
+) -> str:
     if not rows:
         body = [f"<h1>{html.escape(work_item_id)}</h1>", _nav(), "<p>Work item not found.</p>"]
     else:
@@ -411,8 +415,35 @@ def render_work_item(work_item_id: str, rows: list[dict[str, Any]]) -> str:
             f"<tr><th>State</th><td>{html.escape(item['state'])}</td></tr>"
             f"<tr><th>Owner</th><td>{html.escape(item['owner_role'])}</td></tr>"
             f"<tr><th>Next action</th><td>{html.escape(item['next_action'])}</td></tr>"
+            f"<tr><th>Architecture impact</th><td>{html.escape(str(item.get('architecture_impact') or 'not_assessed'))}</td></tr>"
+            f"<tr><th>Impact rationale</th><td>{html.escape(str(item.get('architecture_impact_rationale') or ''))}</td></tr>"
+            f"<tr><th>Affected domains</th><td>{html.escape(', '.join(_json_string_list(item.get('architecture_domains_json'))))}</td></tr>"
+            f"<tr><th>Architecture reviewer</th><td>{html.escape(str(item.get('architecture_reviewer_role') or ''))}</td></tr>"
+            f"<tr><th>Architecture conformance</th><td>{html.escape(str(item.get('architecture_conformance') or 'not_required'))}</td></tr>"
+            f"<tr><th>Conformance rationale</th><td>{html.escape(str(item.get('architecture_conformance_rationale') or ''))}</td></tr>"
             "</tbody></table>",
         ]
+        records = architecture_records or []
+        record_rows = []
+        for record in records:
+            record_rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(record.get('record_type') or ''))}</td>"
+                f"<td>{html.escape(str(record.get('status') or ''))}</td>"
+                f"<td>{html.escape(str(record.get('actor_role') or ''))}</td>"
+                f"<td>{html.escape(str(record.get('rationale') or ''))}</td>"
+                f"<td>{html.escape(str(record.get('decision_ref') or ''))}</td>"
+                f"<td>{html.escape(str(record.get('created_at') or ''))}</td>"
+                "</tr>"
+            )
+        body.extend(
+            [
+                "<h2>Architecture Governance History</h2>",
+                "<table><thead><tr><th>Record</th><th>Status</th><th>Role</th><th>Rationale</th>"
+                "<th>Decision</th><th>Recorded</th></tr></thead>"
+                f"<tbody>{''.join(record_rows) or '<tr><td colspan=\"6\">No architecture governance records.</td></tr>'}</tbody></table>",
+            ]
+        )
     return _page(f"Work item {work_item_id}", body)
 
 
@@ -465,18 +496,32 @@ def _work_item_table(items: list[dict[str, Any]], artifacts: list[dict[str, Any]
             f"<td>{html.escape(str(item.get('title') or ''))}</td>"
             f"<td>{html.escape(str(item.get('state') or ''))}</td>"
             f"<td>{html.escape(str(item.get('owner_role') or ''))}</td>"
+            f"<td>{html.escape(str(item.get('architecture_impact') or 'not_assessed'))}<br>"
+            f"<small>{html.escape(str(item.get('architecture_conformance') or 'not_required'))}</small></td>"
             f"<td>{html.escape(str(item.get('next_action') or ''))}</td>"
             f"<td>{artifact_cell}</td>"
             f"<td>{html.escape(str(item.get('updated_at') or ''))}</td>"
             "</tr>"
         )
     if not rows:
-        rows.append(f"<tr><td colspan=\"7\">{html.escape(empty)}</td></tr>")
+        rows.append(f"<tr><td colspan=\"8\">{html.escape(empty)}</td></tr>")
     return (
         "<table><thead><tr><th>Work item</th><th>Title</th><th>State</th><th>Owner</th>"
-        "<th>Next action</th><th>Artifacts</th><th>Updated</th></tr></thead>"
+        "<th>Architecture</th><th>Next action</th><th>Artifacts</th><th>Updated</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
+
+
+def _json_string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if not isinstance(value, str) or not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    return [str(item) for item in parsed] if isinstance(parsed, list) else []
 
 
 def _active_handoffs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:

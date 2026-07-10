@@ -554,3 +554,22 @@ Release Manager have reopen authority; the tool requires a reason, records a
 `work_item.reopened` event, syncs linked queue/backlog state, and moves the item
 to a controlled non-terminal state such as `shaping`, `active`, `recovering`,
 or `release_review`.
+
+## 2026-07-10 TOGAF-Aligned Enterprise Architecture Upgrade
+
+- V4 Product Definition records structured architecture impact as `none`,
+  `material`, or `uncertain`; Product Definition cannot complete while impact
+  remains unassessed.
+- Material or uncertain work routes through Enterprise Alignment and requires
+  Enterprise Architect conformance approval or a sponsor-approved exception
+  before implementation planning and release.
+- Enterprise Architect now owns the durable project architecture portfolio at
+  `/documents/020-architecture/enterprise/`, including the target operating
+  model, Business/Data/Application/Technology views, requirements, gaps,
+  transitions, roadmap, conformance, exceptions, and change log.
+- V4 prompt materialisation includes full core workflows, standards,
+  project-specific instructions, document accountabilities, and resolved
+  RACI/consult/gate/handoff guidance.
+- Ordered project documents use three-digit prefixes. Slice-specific evidence
+  remains in the work-item dossier; durable architecture knowledge belongs in
+  the portfolio.

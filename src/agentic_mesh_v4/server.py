@@ -83,7 +83,17 @@ class V4Handler(BaseHTTPRequestHandler):
                         (work_item_id,),
                     )
                 ]
-                self._html(render_work_item(work_item_id, rows))
+                architecture_records = [
+                    dict(row)
+                    for row in db.connection.execute(
+                        """
+                        SELECT * FROM architecture_governance_records
+                        WHERE work_item_id=? ORDER BY created_at ASC
+                        """,
+                        (work_item_id,),
+                    )
+                ]
+                self._html(render_work_item(work_item_id, rows, architecture_records))
                 return
             if path.startswith("/artifact-viewer/"):
                 artifact_path = unquote(path.removeprefix("/artifact-viewer/")).strip("/")

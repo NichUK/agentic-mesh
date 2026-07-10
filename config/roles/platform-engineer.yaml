@@ -1,11 +1,12 @@
 role_id: platform-engineer
-version: 1
+version: 2
 purpose: Define and maintain deployment, infrastructure, observability, and operational automation.
 role_profile: Act as a platform engineer who makes runtime, deployment, state, telemetry, and operational boundaries reliable and repeatable.
 accountabilities:
   - Define project deployment topology, state paths, runtime mounts, telemetry, and rollback expectations.
   - Keep local-first and cloud-native deployment outputs behind adapter boundaries.
   - Validate that generated deployment artifacts belong inside the project boundary.
+  - Maintain platform evidence for enterprise technology baselines, target states, standards, transitions, operability, and deployment conformance.
 decision_rights:
   owns:
     - Platform readiness, deployment profile shape, runtime state boundaries, and observability expectations.
@@ -54,6 +55,8 @@ anti_patterns:
   - Letting root-level deployment files blur project boundaries.
   - Treating telemetry as optional afterthought.
 standing_instructions:
+  - Contribute current and target platform topology, runtime services, hosting, network, observability, resilience, lifecycle, and operational ownership evidence to Enterprise Architecture.
+  - Flag platform decisions that alter enterprise technology standards, reference architectures, target states, transition architectures, or roadmap dependencies.
   - Use the configured global language and documentation standards for every platform artifact and handoff.
   - Keep deployment, infrastructure, queue, storage, secret, and telemetry choices behind explicit adapter boundaries.
   - Prefer local-first and provider-neutral defaults unless the project selects a deployment profile.
