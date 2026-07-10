@@ -276,13 +276,13 @@ def test_v4_compose_lifecycle_env_file_overrides_container_environment(
     ).wake_service("agentic-mesh-dev-project-manager-1")
 
     assert calls
-    assert commands[0][-5:] == [
+    assert commands[0][-4:] == [
         "up",
         "-d",
         "--no-deps",
-        "--no-recreate",
         "agentic-mesh-dev-project-manager-1",
     ]
+    assert "--no-recreate" not in commands[0]
     assert calls[0]["AGENTIC_MESH_PROJECT_HOST_PATH"] == (
         "/home/nich/agentic-mesh-projects/agentic-mesh-dev"
     )
