@@ -636,6 +636,60 @@ class V4Database:
             )
             self.connection.execute(
                 """
+                DO $migration$
+                BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes
+                    WHERE schemaname=current_schema() AND indexname='idx_role_memory_source'
+                  ) THEN
+                    DELETE FROM role_memory
+                    WHERE memory_id IN (
+                      SELECT memory_id FROM (
+                        SELECT memory_id,
+                               ROW_NUMBER() OVER (
+                                 PARTITION BY project_id, role_id, scope, source_ref
+                                 ORDER BY updated_at DESC NULLS LAST, created_at DESC, memory_id DESC
+                               ) AS duplicate_number
+                        FROM role_memory
+                      ) duplicate_memories
+                      WHERE duplicate_number > 1
+                    );
+                    CREATE UNIQUE INDEX idx_role_memory_source
+                      ON role_memory(project_id, role_id, scope, source_ref);
+                  END IF;
+                END
+                $migration$
+                """
+            )
+            self.connection.execute(
+                """
+                DO $migration$
+                BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes
+                    WHERE schemaname=current_schema() AND indexname='idx_artifacts_work_path'
+                  ) THEN
+                    DELETE FROM artifacts
+                    WHERE artifact_id IN (
+                      SELECT artifact_id FROM (
+                        SELECT artifact_id,
+                               ROW_NUMBER() OVER (
+                                 PARTITION BY work_item_id, path
+                                 ORDER BY created_at DESC, artifact_id DESC
+                               ) AS duplicate_number
+                        FROM artifacts
+                      ) duplicate_artifacts
+                      WHERE duplicate_number > 1
+                    );
+                    CREATE UNIQUE INDEX idx_artifacts_work_path
+                      ON artifacts(work_item_id, path);
+                  END IF;
+                END
+                $migration$
+                """
+            )
+            self.connection.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_project_memory_project
                   ON project_memory(project_id, status, updated_at)
                 """
@@ -1169,15 +1223,16 @@ class V4Database:
     ) -> str:
         artifact_id = artifact_id or f"artifact-{uuid4().hex}"
         with self.connection:
-            self.connection.execute(
+            row = self.connection.execute(
                 """
                 INSERT INTO artifacts(artifact_id, work_item_id, path, title, created_at)
                 VALUES(?,?,?,?,?)
-                ON CONFLICT(artifact_id) DO NOTHING
+                ON CONFLICT(work_item_id, path) DO UPDATE SET title=excluded.title
+                RETURNING artifact_id
                 """,
                 (artifact_id, work_item_id, path, title, utc_now()),
-            )
-        return artifact_id
+            ).fetchone()
+        return str(row["artifact_id"])
 
     def record_architecture_impact(
         self,
@@ -1195,7 +1250,14 @@ class V4Database:
         if not rationale.strip():
             raise ValueError("architecture impact rationale is required")
         existing = self.connection.execute(
-            "SELECT work_item_id FROM work_items WHERE work_item_id=?",
+            """
+            SELECT architecture_impact, architecture_impact_rationale,
+                   architecture_domains_json, architecture_reviewer_role,
+                   architecture_decision_ref, architecture_conformance,
+                   architecture_conformance_rationale,
+                   architecture_conformance_decision_ref
+            FROM work_items WHERE work_item_id=?
+            """,
             (work_item_id,),
         ).fetchone()
         if existing is None:
@@ -1206,7 +1268,42 @@ class V4Database:
             raise ValueError(f"unsupported architecture domains: {sorted(unsupported_domains)}")
         if classification in {"material", "uncertain"} and not domains:
             raise ValueError("material or uncertain architecture impact requires at least one affected domain")
-        conformance = "pending" if classification in {"material", "uncertain"} else "not_required"
+        normalized_rationale = rationale.strip()
+        normalized_decision_ref = decision_ref or None
+        existing_domains = _json_list(existing["architecture_domains_json"])
+        semantic_impact_changed = (
+            str(existing["architecture_impact"]) != classification
+            or existing_domains != domains
+            or (existing["architecture_decision_ref"] or None) != normalized_decision_ref
+        )
+        exact_repeat = (
+            not semantic_impact_changed
+            and str(existing["architecture_impact_rationale"]) == normalized_rationale
+            and str(existing["architecture_reviewer_role"] or "") == actor_role
+        )
+        if exact_repeat:
+            latest = self.connection.execute(
+                """
+                SELECT record_id FROM architecture_governance_records
+                WHERE work_item_id=? AND record_type='impact'
+                ORDER BY created_at DESC, record_id DESC LIMIT 1
+                """,
+                (work_item_id,),
+            ).fetchone()
+            if latest is not None:
+                return str(latest["record_id"])
+        if classification not in {"material", "uncertain"}:
+            conformance = "not_required"
+            conformance_rationale = ""
+            conformance_decision_ref = None
+        elif semantic_impact_changed:
+            conformance = "pending"
+            conformance_rationale = ""
+            conformance_decision_ref = None
+        else:
+            conformance = str(existing["architecture_conformance"])
+            conformance_rationale = str(existing["architecture_conformance_rationale"] or "")
+            conformance_decision_ref = existing["architecture_conformance_decision_ref"]
         record_id = f"architecture-{uuid4().hex}"
         now = utc_now()
         with self.connection:
@@ -1216,17 +1313,19 @@ class V4Database:
                 SET architecture_impact=?, architecture_impact_rationale=?,
                     architecture_domains_json=?, architecture_reviewer_role=?,
                     architecture_decision_ref=?, architecture_conformance=?,
-                    architecture_conformance_rationale='',
-                    architecture_conformance_decision_ref=NULL, updated_at=?
+                    architecture_conformance_rationale=?,
+                    architecture_conformance_decision_ref=?, updated_at=?
                 WHERE work_item_id=?
                 """,
                 (
                     classification,
-                    rationale.strip(),
+                    normalized_rationale,
                     json.dumps(domains),
                     actor_role,
-                    decision_ref,
+                    normalized_decision_ref,
                     conformance,
+                    conformance_rationale,
+                    conformance_decision_ref,
                     now,
                     work_item_id,
                 ),
@@ -1243,10 +1342,10 @@ class V4Database:
                     work_item_id,
                     "impact",
                     classification,
-                    rationale.strip(),
+                    normalized_rationale,
                     json.dumps(domains),
                     actor_role,
-                    decision_ref,
+                    normalized_decision_ref,
                     now,
                 ),
             )
@@ -1350,12 +1449,19 @@ class V4Database:
         role_id = _role_from_instance_id(role_instance_id)
         project_id = project_id or _project_from_instance_id(role_instance_id)
         with self.connection:
-            self.connection.execute(
+            row = self.connection.execute(
                 """
                 INSERT INTO role_memory(
                   memory_id, role_instance_id, project_id, role_id, scope,
                   summary, source_ref, tags_json, status, updated_at, created_at
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(project_id, role_id, scope, source_ref) DO UPDATE SET
+                  role_instance_id=excluded.role_instance_id,
+                  summary=excluded.summary,
+                  tags_json=excluded.tags_json,
+                  status=excluded.status,
+                  updated_at=excluded.updated_at
+                RETURNING memory_id
                 """,
                 (
                     memory_id,
@@ -1370,7 +1476,7 @@ class V4Database:
                     now,
                     now,
                 ),
-            )
+            ).fetchone()
             self.connection.execute(
                 """
                 UPDATE role_instances
@@ -1380,7 +1486,7 @@ class V4Database:
                 """,
                 (now, role_instance_id),
             )
-        return memory_id
+        return str(row["memory_id"])
 
     def record_project_memory(
         self,
