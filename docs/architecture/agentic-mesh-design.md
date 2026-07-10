@@ -611,6 +611,19 @@ Purpose:
 - release records
 - generated reports
 
+The project document library includes a durable Enterprise Architecture
+portfolio under `020-architecture/enterprise/`. Enterprise Architect is
+accountable for principles, vision, capability and target-operating-model
+views, Business/Data/Application/Technology architectures, requirements,
+gaps, transitions, roadmap, conformance, exceptions, and change history.
+Work-item dossiers retain only slice-specific impact, decisions, and evidence.
+
+Architecture governance is proportional. Product Definition records a
+structured impact classification for every item. Material or uncertain changes
+route through Enterprise Alignment and require conformance or an approved
+exception before implementation/release; low-impact changes record why the
+full architecture stage is unnecessary.
+
 Local backend:
 
 - Git workspace and filesystem

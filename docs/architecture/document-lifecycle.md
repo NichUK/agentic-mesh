@@ -91,20 +91,28 @@ reviews are complete for the current work item.
 Gate evaluation should consume lifecycle events and state records, not infer
 readiness only by scanning file contents.
 
-## Enterprise Architecture Pattern Alignment
+## Proportional Enterprise Architecture Governance
 
-This maps cleanly to enterprise architecture and governance practices:
+The stock SDLC flow is TOGAF-aligned without requiring the full ADM for every
+work item:
 
-- architecture records have accountable architecture owners
-- decision records have accountable decision owners
-- security artifacts have accountable security owners
-- implementation evidence has accountable engineering owners
-- test evidence has accountable QA owners
-- release records have accountable release owners
+1. Product Definition records `architecture_impact`, rationale, affected
+   domains, reviewer, and any decision reference.
+2. `none` takes the shorter route after the rationale is recorded.
+3. `material` or `uncertain` enters `enterprise_alignment` and produces
+   `040-enterprise-alignment.md`, including durable portfolio impacts and
+   conformance requirements.
+4. Enterprise Architect reviews the solution design before implementation
+   planning. An approved conformance result or sponsor-approved exception is
+   required for downstream implementation and release.
+5. Delivery readiness and release reference the conformance disposition.
+   Release informs Enterprise Architect so baseline/target views and the
+   architecture change log can be reconciled.
 
-Future stock flow packs can align these accountabilities with TOGAF-style
-architecture governance, ITIL-style change enablement, data governance flows,
-security/compliance review, and other enterprise operating patterns.
+Structured conditions use only allow-listed `when.field` and `when.in` values.
+Arbitrary expressions are not executable configuration. Architecture,
+security, implementation, test, and release evidence retain accountable owners
+through their specialist roles.
 
 ## Non-Goals
 

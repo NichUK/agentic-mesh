@@ -89,8 +89,12 @@ into one methodology.
 - SFIA informs focused professional skill profiles.
 - BABOK informs Business Analyst work such as stakeholder context and
   requirements lifecycle thinking.
-- TOGAF informs architecture alignment, governance, capability fit, and
-  decision traceability.
+- TOGAF informs a proportional enterprise architecture practice across
+  Business, Data, Application, and Technology domains. Product Definition
+  records architecture impact for every item; material or uncertain changes
+  update the durable architecture portfolio and receive Enterprise Architect
+  conformance review, while low-impact work records why detailed review is not
+  required.
 - ISTQB and BDD practice inform QA planning and evidence handling.
 - OWASP SAMM and NIST SSDF inform secure SDLC expectations and residual-risk
   recording.
@@ -122,3 +126,10 @@ support, and assisted operations.
 The open source project should not be crippleware. Commercial features should
 improve enterprise adoption, governance, reliability, and support rather than
 locking away the basic agent network.
+
+The Enterprise Architect is the accountable steward of the project portfolio
+under `020-architecture/enterprise/`, including architecture principles and
+vision, capability map, target operating model, domain architectures,
+requirements, transition architectures, roadmap, conformance, exceptions, and
+change history. TOGAF guides these defaults without forcing every work item
+through the full ADM.

@@ -1,6 +1,6 @@
 # Role Charters And Standards
 
-Status: draft design
+Status: active V4 guidance
 
 Date: 2026-06-04
 
@@ -29,8 +29,10 @@ Role templates may declare:
 - `standards_references`: frameworks that informed the role
 - `anti_patterns`: common poor behaviours to avoid
 
-Missing fields default to empty values so older minimal role templates remain
-valid.
+V4 materialisation renders these fields explicitly into each role instance's
+external `AGENTS.md`. Project instructions, document accountabilities, and the
+resolved flow/RACI are rendered separately so template and project authority
+remain distinguishable.
 
 ## Standards Use
 
@@ -51,6 +53,30 @@ their text or enforcing a single process.
 Projects can override role instructions, tools, flows, gates, and document
 accountabilities. The stock charters are useful defaults, not a rigid operating
 model.
+
+## Enterprise Architect
+
+Enterprise Architect is the accountable steward of durable enterprise
+architecture, not merely a reviewer for one lifecycle stage. The charter owns:
+
+- architecture vision, principles, strategy, standards, and reference building blocks
+- baseline, target, and transitional states across Business, Data, Application, and Technology
+- business capability maps, value streams, organisation/process views, and target operating model
+- architecture requirements, gaps, dependencies, transition architectures, and roadmap
+- conformance findings, exceptions, implementation governance, and architecture change reconciliation
+
+Solution Architect remains accountable for solution-level design. Business
+Analyst owns business analysis, Product Manager owns product value and scope,
+Security Architect owns security architecture decisions, and Platform Engineer
+owns platform implementation evidence. These roles contribute evidence to the
+Enterprise Architect's portfolio without transferring their specialist decision
+rights.
+
+Every Product Definition records `architecture_impact` as `none`, `material`,
+or `uncertain`. Material and uncertain changes route to Enterprise Architect;
+`none` may take the shorter path only with a recorded rationale. Strategic
+target-state or operating-model changes, funded roadmap commitments, and
+high-impact exceptions require sponsor authority.
 
 ## Workflow Pattern
 

@@ -86,6 +86,26 @@ def test_v4_safe_output_handoff_moves_work_item_and_queues_target_role(tmp_path:
             "--db",
             str(db_path),
             "safe-output",
+            "architecture-impact",
+            "--role-id",
+            "product-manager",
+            "--work-item-id",
+            "work-1",
+            "--classification",
+            "none",
+            "--rationale",
+            "The isolated test work changes no enterprise architecture domain.",
+        ]
+    )
+    impact_output = json.loads(capsys.readouterr().out)
+
+    main(
+        [
+            "--project-config",
+            str(PROJECT_CONFIG),
+            "--db",
+            str(db_path),
+            "safe-output",
             "handoff",
             "--from-role",
             "product-manager",
@@ -123,6 +143,7 @@ def test_v4_safe_output_handoff_moves_work_item_and_queues_target_role(tmp_path:
     assert message["state"] == "queued"
     assert handoff["from_role"] == "product-manager"
     assert handoff["to_role"] == "ux-designer"
+    assert impact_output["architecture_impact"] == "none"
 
 
 def test_v4_materialized_agents_md_names_safe_output_cli(tmp_path: Path) -> None:
