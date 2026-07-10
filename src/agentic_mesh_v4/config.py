@@ -69,10 +69,10 @@ class V4RoleConfig:
 @dataclass(frozen=True)
 class V4ProjectConfig:
     project_id: str
-    agent_network_id: str
     name: str
     goal: str
     roles: tuple[V4RoleConfig, ...]
+    agent_network_id: str = "agentic-mesh-dev"
     document_root: str = "/documents"
     document_structure_policy: str = "togaf-sdlc-v1"
     document_accountabilities: dict[str, dict[str, Any]] | None = None
