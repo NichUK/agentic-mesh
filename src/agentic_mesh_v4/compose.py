@@ -173,6 +173,11 @@ def _role_service(*, role_id: str, role_instance_id: str, service_name: str, por
     command = (
         "sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; "
         "chmod -R a+rwX /mesh/agent-workspace /documents; "
+        "mkdir -p /mesh/agent-workspace/.agentic-mesh; "
+        "rm -f /mesh/agent-workspace/.agentic-mesh/safe-output.sock; "
+        f"python -m agentic_mesh_v4.safe_output_proxy --socket /mesh/agent-workspace/.agentic-mesh/safe-output.sock --role-id {role_id} --project-config /mesh/project/agentic-mesh/project-v4.yaml & "
+        "for i in $(seq 1 50); do [ -S /mesh/agent-workspace/.agentic-mesh/safe-output.sock ] && break; sleep 0.1; done; "
+        "[ -S /mesh/agent-workspace/.agentic-mesh/safe-output.sock ] || { echo safe-output proxy failed to start >&2; exit 1; }; "
         "for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; "
         "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; "
         f"exec {app_server}'"

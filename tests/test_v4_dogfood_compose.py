@@ -100,6 +100,12 @@ def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
         assert "chmod -R a+rwX /mesh/worker-auth/codex/$$d" in service["command"]
         assert "chmod -R a+rwX /mesh/worker-auth/codex " not in service["command"]
         assert "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md" in service["command"]
+        assert "python -m agentic_mesh_v4.safe_output_proxy" in service["command"]
+        assert f"--role-id {role_id}" in service["command"]
+        assert "safe-output.sock" in service["command"]
+        assert service["environment"]["AGENTIC_MESH_SAFE_OUTPUT_SOCKET"] == (
+            "/mesh/agent-workspace/.agentic-mesh/safe-output.sock"
+        )
         assert "--ws-auth capability-token" in service["command"]
         assert "--ws-token-file /mesh/agent/ws-token" in service["command"]
         assert service["environment"]["AGENTIC_MESH_ROLE_ID"] == role_id
