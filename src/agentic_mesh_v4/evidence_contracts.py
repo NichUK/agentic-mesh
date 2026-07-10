@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from agentic_mesh_v4.flow import condition_matches
+
 
 KNOWN_PREDICATES = {
     "artifact_exists",
@@ -18,6 +20,7 @@ KNOWN_PREDICATES = {
     "blocker_recorded",
     "exception_recorded",
     "review_status",
+    "work_item_field",
 }
 WARN_ONLY_PREDICATES = {"blocker_recorded", "review_status"}
 DISABLED_PREDICATES = {"exception_recorded"}
@@ -42,6 +45,8 @@ class EvidencePredicate:
     path: str | None = None
     tool_name: str | None = None
     payload_match: dict[str, str] | None = None
+    field: str | None = None
+    allowed_values: tuple[str, ...] = ()
     remediation: str = ""
     enabled: bool = True
 
@@ -55,6 +60,7 @@ class EvidenceContract:
     enforcement: str
     required: tuple[EvidencePredicate, ...]
     role_id: str | None = None
+    when: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -102,14 +108,16 @@ def resolve_evidence_contracts(
     lifecycle_state = _string(payload.get("lifecycle_state") or payload.get("state"))
     owner_role = target_role
     work_item_type = _string(payload.get("work_item_type")) or "slice"
+    row = None
     if work_item_id is not None:
-        row = db.connection.execute("SELECT state, owner_role FROM work_items WHERE work_item_id=?", (work_item_id,)).fetchone()
+        row = db.connection.execute("SELECT * FROM work_items WHERE work_item_id=?", (work_item_id,)).fetchone()
         if row is not None:
             lifecycle_state = lifecycle_state or str(row["state"])
             owner_role = str(row["owner_role"] or target_role)
     if work_item_id is None or lifecycle_state is None:
         return ()
     candidates = contracts if contracts is not None else load_evidence_contracts()
+    work_item_context = dict(row) if work_item_id is not None and row is not None else {}
     return tuple(
         contract
         for contract in candidates
@@ -117,6 +125,7 @@ def resolve_evidence_contracts(
         and contract.lifecycle_state == lifecycle_state
         and contract.owner_role == owner_role
         and (contract.role_id is None or contract.role_id == target_role)
+        and condition_matches(contract.when, context=work_item_context)
     )
 
 
@@ -142,12 +151,20 @@ def evaluate_evidence_contracts(
     if not calls:
         calls = db.list_safe_output_calls(role_instance_id=role_instance_id, work_item_id=work_item_id)
     artifacts = _artifacts_for_work_item(db=db, work_item_id=work_item_id)
+    work_item = _work_item(db=db, work_item_id=work_item_id)
     evaluations = []
     for contract in contracts:
         missing = tuple(
             _missing_diagnostic(contract=contract, predicate=predicate, work_item_id=work_item_id, work_item_type=work_item_type)
             for predicate in contract.required
-            if predicate.enabled and not _predicate_satisfied(predicate, work_item_id=work_item_id, calls=calls, artifacts=artifacts)
+            if predicate.enabled
+            and not _predicate_satisfied(
+                predicate,
+                work_item_id=work_item_id,
+                calls=calls,
+                artifacts=artifacts,
+                work_item=work_item,
+            )
         )
         observed = {
             "contract_id": contract.contract_id,
@@ -198,6 +215,7 @@ def _contract_from_mapping(item: dict[str, Any]) -> EvidenceContract:
         role_id=_string(item.get("role_id")),
         enforcement=enforcement,
         required=required,
+        when=_mapping(item.get("when")) or None,
     )
 
 
@@ -209,6 +227,8 @@ def _predicate_from_mapping(item: dict[str, Any]) -> EvidencePredicate:
         path=_normalize_path(_string(item.get("path"))),
         tool_name=_string(item.get("tool_name")),
         payload_match={str(key): str(value) for key, value in _mapping(item.get("payload_match")).items()},
+        field=_string(item.get("field")),
+        allowed_values=tuple(str(value) for value in _sequence(item.get("in"))),
         remediation=str(item.get("remediation") or ""),
         enabled=enabled,
     )
@@ -251,6 +271,9 @@ def _validate_contract(
             raise EvidenceContractError(f"unknown predicate: {predicate.predicate}")
         if predicate.predicate in WARN_ONLY_PREDICATES and contract.enforcement == "reject":
             raise EvidenceContractError(f"predicate {predicate.predicate} is warn-only")
+        if predicate.predicate == "work_item_field" and (predicate.field is None or not predicate.allowed_values):
+            raise EvidenceContractError("work_item_field predicates require field and in")
+    condition_matches(contract.when, context={})
 
 
 def _predicate_satisfied(
@@ -259,6 +282,7 @@ def _predicate_satisfied(
     work_item_id: str,
     calls: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
+    work_item: dict[str, Any],
 ) -> bool:
     path = _render_path(predicate.path, work_item_id=work_item_id)
     if predicate.predicate == "artifact_exists":
@@ -271,6 +295,8 @@ def _predicate_satisfied(
         )
     if predicate.predicate == "safe_output_call":
         return any(predicate.tool_name is None or item.get("tool_name") == predicate.tool_name for item in calls)
+    if predicate.predicate == "work_item_field":
+        return str(work_item.get(str(predicate.field), "")) in set(predicate.allowed_values)
     return False
 
 
@@ -307,6 +333,8 @@ def _missing_diagnostic(
         "predicate": predicate.predicate,
         "path": path,
         "tool_name": predicate.tool_name,
+        "field": predicate.field,
+        "allowed_values": list(predicate.allowed_values),
         "remediation": predicate.remediation,
         "next_action": predicate.remediation,
     }
@@ -322,6 +350,11 @@ def _artifacts_for_work_item(*, db: Any, work_item_id: str) -> list[dict[str, An
     ]
 
 
+def _work_item(*, db: Any, work_item_id: str) -> dict[str, Any]:
+    row = db.connection.execute("SELECT * FROM work_items WHERE work_item_id=?", (work_item_id,)).fetchone()
+    return dict(row) if row is not None else {}
+
+
 def _render_path(path: str | None, *, work_item_id: str) -> str | None:
     if path is None:
         return None
@@ -332,11 +365,19 @@ def _normalize_path(path: str | None) -> str | None:
     if path is None:
         return None
     aliases = {
+        "/10-business-brief.md": "/010-business-brief.md",
         "/20-product-definition.md": "/020-product-definition.md",
         "/30-experience-design.md": "/030-experience-design.md",
-        "/30-solution-design.md": "/030-solution-design.md",
-        "/50-security-review.md": "/050-security-review.md",
+        "/30-solution-design.md": "/050-solution-design.md",
+        "/030-solution-design.md": "/050-solution-design.md",
+        "/40-enterprise-alignment.md": "/040-enterprise-alignment.md",
+        "/50-solution-design.md": "/050-solution-design.md",
+        "/50-security-review.md": "/060-security-review.md",
+        "/60-security-review.md": "/060-security-review.md",
         "/60-prompt-contract.md": "/060-prompt-contract.md",
+        "/70-platform-readiness.md": "/070-platform-readiness.md",
+        "/80-implementation-plan.md": "/080-implementation-plan.md",
+        "/90-quality-plan.md": "/090-quality-plan.md",
     }
     for old, new in aliases.items():
         if path.endswith(old):

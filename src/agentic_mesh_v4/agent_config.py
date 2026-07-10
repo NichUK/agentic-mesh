@@ -27,6 +27,8 @@ python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/projec
 python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output handoff --from-role <your-role-id> --to-role <next-role-id> --work-item-id <work-id> --state <next-state> --next-action "<required next action>" --reason "<why this role owns the next step>"
 python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output memory-record --role-id <your-role-id> --scope role --summary "<role-specific source-linked memory>" --source-ref "<document/work/event/conversation ref>"
 python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output memory-record --role-id <your-role-id> --scope institutional --summary "<shared project fact/decision/process memory>" --source-ref "<document/work/event/conversation ref>"
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output architecture-impact --role-id <your-role-id> --work-item-id <work-id> --classification <none|material|uncertain> --rationale "<evidence-based rationale>" --affected-domain <domain>
+python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml safe-output architecture-conformance --role-id <your-role-id> --work-item-id <work-id> --status <approved|changes_requested|exception> --rationale "<finding and required action>" [--decision-ref <sponsor-decision-ref>]
 ```
 
 When work must continue with another role, use `safe-output handoff` before replying. When you create or update an artifact, use `safe-output artifact-link`. When you materially change status, owner, or next action, use `safe-output work-item-update`.
@@ -47,7 +49,7 @@ Canonical document-library paths:
 - `/mesh/project` contains project configuration and runtime state. Do not create canonical work-item artifacts under `/mesh/project/work-items` or under embedded system-repo example folders.
 
 Document naming rules:
-- Use framework document slots such as `020-product-definition.md`, `030-experience-design.md`, `030-solution-design.md`, `050-security-review.md`, `060-prompt-contract.md`, `100-implementation-log.md`, `110-quality-evidence.md`, and `140-release-record.md`.
+- Use framework document slots such as `020-product-definition.md`, `030-experience-design.md`, `040-enterprise-alignment.md`, `050-solution-design.md`, `060-security-review.md`, `070-platform-readiness.md`, `080-implementation-plan.md`, `090-quality-plan.md`, `100-implementation-log.md`, `110-quality-evidence.md`, and `140-release-record.md`.
 - Do not invent descriptive filenames for standard lifecycle artifacts when a framework slot exists.
 - Put detailed content in the typed lifecycle document, not in `00-index.md`.
 
@@ -118,8 +120,15 @@ def render_agents_md(
         f"- Project: {project_config.name} (`{project_config.project_id}`)",
         f"- Goal: {project_config.goal or 'No project goal configured.'}",
         f"- Document library root: `{project_config.document_root}`",
+        f"- Document structure policy: `{project_config.document_structure_policy}`",
         "## Role Charter",
         _role_template_markdown(role_template),
+        "## Project Role Instructions",
+        _project_instructions_markdown(role),
+        "## Document Accountabilities",
+        _document_accountabilities_markdown(project_config=project_config, role_id=role.role_id),
+        "## Flow And RACI Responsibilities",
+        _role_flow_markdown(project_config=project_config, role_id=role.role_id),
         "## Authority And Access",
         _authority_markdown(role),
         "## Runtime Contract",
@@ -152,6 +161,9 @@ def _role_template_markdown(template: dict[str, Any]) -> str:
         "collaboration_style",
         "quality_bar",
         "memory_focus",
+        "core_workflows",
+        "standards_references",
+        "anti_patterns",
         "standing_instructions",
         "documentation_obligations",
         "handoff_targets",
@@ -185,6 +197,81 @@ def _markdown_value(value: Any, *, indent: int = 0) -> list[str]:
                 lines.append(f"{prefix}- {key}: {child}")
         return lines
     return [f"{prefix}{value}"]
+
+
+def _project_instructions_markdown(role: V4RoleConfig) -> str:
+    if not role.instructions:
+        return "- No project-specific role overrides are configured."
+    return "\n".join(f"- {instruction}" for instruction in role.instructions)
+
+
+def _document_accountabilities_markdown(*, project_config: V4ProjectConfig, role_id: str) -> str:
+    accountabilities = project_config.accountabilities_for_role(role_id)
+    if not accountabilities:
+        return "- No durable document accountabilities are configured for this role."
+    lines: list[str] = []
+    for path, details in sorted(accountabilities.items()):
+        relationship = "accountable owner" if details.get("owner_role") == role_id else "contributor"
+        lines.append(f"- `{path}`: {relationship}.")
+        required_sections = details.get("required_sections") or []
+        if relationship == "accountable owner" and required_sections:
+            lines.append(f"  Required sections: {', '.join(str(value) for value in required_sections)}.")
+        contributors = details.get("contributing_roles") or []
+        if relationship == "accountable owner" and contributors:
+            lines.append(f"  Consult contributors: {', '.join(str(value) for value in contributors)}.")
+    return "\n".join(lines)
+
+
+def _role_flow_markdown(*, project_config: V4ProjectConfig, role_id: str) -> str:
+    flow = project_config.flow or {}
+    states = flow.get("states")
+    if not isinstance(states, dict):
+        return "- No resolved project flow is configured."
+    lines = [f"- Flow: `{flow.get('flow_id', 'unnamed')}`."]
+    found = False
+    for state_id, raw_state in states.items():
+        if not isinstance(raw_state, dict):
+            continue
+        responsibilities: list[str] = []
+        if raw_state.get("owner_role") == role_id:
+            responsibilities.append("Accountable/Responsible owner")
+        for consult_id, consult in (raw_state.get("consults") or {}).items():
+            if isinstance(consult, dict) and consult.get("target_role") == role_id:
+                responsibilities.append(f"Consulted via `{consult_id}`{_condition_suffix(consult.get('when'))}")
+        for inform_id, inform in (raw_state.get("informs") or {}).items():
+            if isinstance(inform, dict) and inform.get("target_role") == role_id:
+                responsibilities.append(f"Informed via `{inform_id}`{_condition_suffix(inform.get('when'))}")
+        for gate in raw_state.get("gates") or []:
+            if isinstance(gate, dict) and gate.get("reviewer_role") == role_id:
+                responsibilities.append(
+                    f"Gate reviewer for `{gate.get('gate_id', 'unnamed')}`{_condition_suffix(gate.get('when'))}"
+                )
+        for handoff_id, handoff in (raw_state.get("handoffs") or {}).items():
+            if not isinstance(handoff, dict):
+                continue
+            if handoff.get("target_role") == role_id:
+                responsibilities.append(f"Receives `{handoff_id}` handoff{_condition_suffix(handoff.get('when'))}")
+            if raw_state.get("owner_role") == role_id:
+                responsibilities.append(
+                    f"May hand off via `{handoff_id}` to `{handoff.get('target_role')}`"
+                    f"{_condition_suffix(handoff.get('when'))}"
+                )
+        if responsibilities:
+            found = True
+            lines.append(f"- `{state_id}`: {'; '.join(dict.fromkeys(responsibilities))}.")
+    if not found:
+        lines.append("- This role has no explicit responsibility in the resolved flow.")
+    return "\n".join(lines)
+
+
+def _condition_suffix(condition: object) -> str:
+    if not isinstance(condition, dict):
+        return ""
+    field = condition.get("field")
+    values = condition.get("in")
+    if not field or not isinstance(values, list):
+        return ""
+    return f" when `{field}` is one of {', '.join(f'`{value}`' for value in values)}"
 
 
 def _authority_markdown(role: V4RoleConfig) -> str:

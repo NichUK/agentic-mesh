@@ -25,7 +25,7 @@ states:
   business_analysis:
     owner_role: business-analyst
     purpose: Frame business context, stakeholders, constraints, and outcome measures.
-    artifact_path: work-items/{work_item_id}/10-business-brief.md
+    artifact_path: work-items/{work_item_id}/010-business-brief.md
     consults:
       research_support:
         target_state: business_analysis
@@ -36,7 +36,7 @@ states:
       - gate_id: business_brief_owner_review
         type: document_owner_review
         required_documents:
-          - work-items/{work_item_id}/10-business-brief.md
+          - work-items/{work_item_id}/010-business-brief.md
         required_review_status: approved
         reviewer_role: business-analyst
     handoffs:
@@ -47,7 +47,7 @@ states:
   product_definition:
     owner_role: product-manager
     purpose: Define product intent, slice boundaries, acceptance criteria, and sponsor-approved feature scope.
-    artifact_path: work-items/{work_item_id}/20-product-definition.md
+    artifact_path: work-items/{work_item_id}/020-product-definition.md
     consults:
       business_context:
         target_state: business_analysis
@@ -64,11 +64,26 @@ states:
         target_role: prompt-engineer
         message_type: sdlc.consult.prompt_engineering
         purpose: Ask for prompt, role-behaviour, safe-output, or conversational-agent guidance when product scope depends on reliable agent behaviour.
+      enterprise_impact:
+        target_state: enterprise_alignment
+        target_role: enterprise-architect
+        message_type: sdlc.consult.enterprise_alignment
+        purpose: Clarify whether product scope affects enterprise capabilities, operating model, data, applications, integrations, technology, governance, standards, cross-project direction, or architecture roadmaps.
     gates:
+      - gate_id: architecture_impact_assessment
+        type: architecture_impact_assessment
+        prompt: Record architecture impact as none, material, or uncertain with rationale and affected domains before Product Definition completes.
+        reviewer_role: product-manager
+        completion_criteria:
+          field: architecture_impact
+          accepted_values:
+            - none
+            - material
+            - uncertain
       - gate_id: product_story_owner_review
         type: document_owner_review
         required_documents:
-          - work-items/{work_item_id}/20-product-definition.md
+          - work-items/{work_item_id}/020-product-definition.md
         required_review_status: approved
         reviewer_role: product-manager
       - gate_id: product_definition_sponsor_signoff
@@ -90,7 +105,7 @@ states:
   experience_design:
     owner_role: ux-designer
     purpose: Define user workflows, interaction requirements, and usability implications.
-    artifact_path: work-items/{work_item_id}/30-experience-design.md
+    artifact_path: work-items/{work_item_id}/030-experience-design.md
     consults:
       product_scope:
         target_state: product_definition
@@ -106,18 +121,31 @@ states:
       - gate_id: ux_owner_review
         type: document_owner_review
         required_documents:
-          - work-items/{work_item_id}/30-experience-design.md
+          - work-items/{work_item_id}/030-experience-design.md
         required_review_status: approved
         reviewer_role: ux-designer
     handoffs:
-      completed:
+      no_material_enterprise_impact:
+        target_state: solution_design
+        target_role: solution-architect
+        message_type: sdlc.solution_design
+        when:
+          field: architecture_impact
+          in:
+            - none
+      enterprise_review_required:
         target_state: enterprise_alignment
         target_role: enterprise-architect
         message_type: sdlc.enterprise_alignment
+        when:
+          field: architecture_impact
+          in:
+            - material
+            - uncertain
   enterprise_alignment:
     owner_role: enterprise-architect
-    purpose: Review enterprise fit, governance implications, integration boundaries, and operating constraints.
-    artifact_path: work-items/{work_item_id}/40-enterprise-alignment.md
+    purpose: Assess material enterprise impact, update affected durable architecture views, define enterprise requirements and transitions, and establish solution conformance obligations.
+    artifact_path: work-items/{work_item_id}/040-enterprise-alignment.md
     consults:
       business_context:
         target_state: business_analysis
@@ -134,13 +162,30 @@ states:
         target_role: security-architect
         message_type: sdlc.consult.security_review
         purpose: Ask for early security, identity, trust boundary, or compliance-sensitive input.
+      experience_context:
+        target_state: experience_design
+        target_role: ux-designer
+        message_type: sdlc.consult.experience_design
+        purpose: Clarify user journeys, service interactions, human responsibilities, accessibility, or target-operating-model implications.
+      research_support:
+        target_state: enterprise_alignment
+        target_role: research-analyst
+        message_type: sdlc.consult.research
+        purpose: Request standards interpretation, horizon scanning, emerging technology, market, or external risk and opportunity evidence.
     gates:
       - gate_id: enterprise_architecture_owner_review
         type: document_owner_review
         required_documents:
-          - work-items/{work_item_id}/40-enterprise-alignment.md
+          - work-items/{work_item_id}/040-enterprise-alignment.md
         required_review_status: approved
         reviewer_role: enterprise-architect
+        completion_criteria:
+          required_content:
+            - architecture_impact
+            - affected_domains
+            - enterprise_requirements
+            - durable_document_impact
+            - conformance_requirements
     handoffs:
       completed:
         target_state: solution_design
@@ -149,7 +194,7 @@ states:
   solution_design:
     owner_role: solution-architect
     purpose: Define design constraints, interfaces, and implementation guidance.
-    artifact_path: work-items/{work_item_id}/50-solution-design.md
+    artifact_path: work-items/{work_item_id}/050-solution-design.md
     consults:
       enterprise_context:
         target_state: enterprise_alignment
@@ -172,10 +217,22 @@ states:
         message_type: sdlc.consult.security_review
         purpose: Ask for security and identity constraints before solution choices are locked in.
     gates:
+      - gate_id: enterprise_architecture_conformance_review
+        type: architecture_conformance
+        required_documents:
+          - work-items/{work_item_id}/040-enterprise-alignment.md
+          - work-items/{work_item_id}/050-solution-design.md
+        required_review_status: approved_or_exception
+        reviewer_role: enterprise-architect
+        when:
+          field: architecture_impact
+          in:
+            - material
+            - uncertain
       - gate_id: solution_design_owner_review
         type: document_owner_review
         required_documents:
-          - work-items/{work_item_id}/50-solution-design.md
+          - work-items/{work_item_id}/050-solution-design.md
         required_review_status: approved
         reviewer_role: solution-architect
     handoffs:
@@ -186,7 +243,7 @@ states:
   security_review:
     owner_role: security-architect
     purpose: Review security, identity, secrets, trust boundaries, and compliance-sensitive concerns.
-    artifact_path: work-items/{work_item_id}/60-security-review.md
+    artifact_path: work-items/{work_item_id}/060-security-review.md
     consults:
       solution_context:
         target_state: solution_design
@@ -207,7 +264,7 @@ states:
       - gate_id: security_owner_review
         type: document_owner_review
         required_documents:
-          - work-items/{work_item_id}/60-security-review.md
+          - work-items/{work_item_id}/060-security-review.md
         required_review_status: approved
         reviewer_role: security-architect
     handoffs:
@@ -218,7 +275,7 @@ states:
   platform_readiness:
     owner_role: platform-engineer
     purpose: Confirm local runtime, deployment, observability, and operations implications.
-    artifact_path: work-items/{work_item_id}/70-platform-readiness.md
+    artifact_path: work-items/{work_item_id}/070-platform-readiness.md
     consults:
       solution_context:
         target_state: solution_design
@@ -239,7 +296,7 @@ states:
       - gate_id: platform_owner_review
         type: document_owner_review
         required_documents:
-          - work-items/{work_item_id}/70-platform-readiness.md
+          - work-items/{work_item_id}/070-platform-readiness.md
         required_review_status: approved
         reviewer_role: platform-engineer
     handoffs:
@@ -250,7 +307,7 @@ states:
   implementation_planning:
     owner_role: engineering
     purpose: Plan the build before execution, including changed areas, affected roles, implementation sequence, risks, and test hooks.
-    artifact_path: work-items/{work_item_id}/80-implementation-plan.md
+    artifact_path: work-items/{work_item_id}/080-implementation-plan.md
     consults:
       product_scope:
         target_state: product_definition
@@ -286,7 +343,7 @@ states:
       - gate_id: implementation_plan_peer_review
         type: plan_review
         required_documents:
-          - work-items/{work_item_id}/80-implementation-plan.md
+          - work-items/{work_item_id}/080-implementation-plan.md
         required_review_status: approved
         reviewer_role: engineering
         affected_roles:
@@ -311,7 +368,7 @@ states:
   quality_planning:
     owner_role: qa-engineer
     purpose: Define BDD scenarios and the unit, integration, end-to-end, evidence, and residual-risk test strategy before implementation.
-    artifact_path: work-items/{work_item_id}/90-quality-plan.md
+    artifact_path: work-items/{work_item_id}/090-quality-plan.md
     consults:
       product_scope:
         target_state: product_definition
@@ -337,7 +394,7 @@ states:
       - gate_id: quality_plan_peer_review
         type: plan_review
         required_documents:
-          - work-items/{work_item_id}/90-quality-plan.md
+          - work-items/{work_item_id}/090-quality-plan.md
         required_review_status: approved
         reviewer_role: qa-engineer
         affected_roles:
@@ -508,6 +565,16 @@ states:
         target_role: release-manager
         message_type: sdlc.consult.release_review
         purpose: Ask for release policy, approval expectations, or scheduling constraints.
+      enterprise_conformance:
+        target_state: enterprise_alignment
+        target_role: enterprise-architect
+        message_type: sdlc.consult.enterprise_conformance
+        purpose: Confirm architecture conformance, approved exceptions, transition dependencies, and durable portfolio updates before release readiness.
+        when:
+          field: architecture_impact
+          in:
+            - material
+            - uncertain
     gates:
       - gate_id: delivery_owner_review
         type: document_owner_review
@@ -545,7 +612,26 @@ states:
         target_role: product-manager
         message_type: sdlc.consult.product_definition
         purpose: Clarify sponsor-facing scope, expected outcome, or release trade-off.
+      enterprise_conformance:
+        target_state: enterprise_alignment
+        target_role: enterprise-architect
+        message_type: sdlc.consult.enterprise_conformance
+        purpose: Clarify pending conformance, exceptions, transition state, or post-release architecture reconciliation.
+        when:
+          field: architecture_impact
+          in:
+            - material
+            - uncertain
     gates:
+      - gate_id: release_architecture_conformance
+        type: architecture_conformance
+        required_review_status: approved_or_exception
+        reviewer_role: enterprise-architect
+        when:
+          field: architecture_impact
+          in:
+            - material
+            - uncertain
       - gate_id: release_decision_response
         type: human_response
         response_type: approve_not_approve
@@ -563,4 +649,15 @@ states:
           - work-items/{work_item_id}/140-release-record.md
         required_review_status: approved
         reviewer_role: release-manager
+    informs:
+      enterprise_architecture_change:
+        target_state: enterprise_alignment
+        target_role: enterprise-architect
+        message_type: sdlc.inform.enterprise_architecture_change
+        purpose: Reconcile deployed material change with architecture baselines, targets, transitions, roadmap, and change log.
+        when:
+          field: architecture_impact
+          in:
+            - material
+            - uncertain
     handoffs: {}

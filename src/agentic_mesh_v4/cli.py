@@ -31,6 +31,8 @@ from agentic_mesh_v4.decision_records import retry_failed_card_updates
 from agentic_mesh_v4.decision_records import resolve_decision
 from agentic_mesh_v4.documents import DocumentWriteRequest
 from agentic_mesh_v4.documents import write_artifact
+from agentic_mesh_v4.enterprise_architecture import materialize_enterprise_architecture_portfolio
+from agentic_mesh_v4.flow import ARCHITECTURE_DOMAINS
 from agentic_mesh_v4.handoff_lifecycle import accept_handoff
 from agentic_mesh_v4.handoff_lifecycle import block_handoff
 from agentic_mesh_v4.handoff_lifecycle import cancel_handoff
@@ -61,6 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
     materialize = subparsers.add_parser("materialize-agent-configs")
     materialize.add_argument("--agent-config-root", type=Path, required=True)
     materialize.add_argument("--role-templates-dir", type=Path, default=Path("config/roles"))
+
+    materialize_ea = subparsers.add_parser("materialize-enterprise-architecture")
+    materialize_ea.add_argument("--document-root", type=Path)
+    materialize_ea.add_argument("--legacy-root", type=Path)
 
     compose = subparsers.add_parser("render-compose")
     compose.add_argument("--output", type=Path, required=True)
@@ -132,6 +138,34 @@ def build_parser() -> argparse.ArgumentParser:
     work_item_update.add_argument("--next-action")
     work_item_update.add_argument("--message-id")
     work_item_update.add_argument("--turn-id")
+
+    architecture_impact = safe_output_subparsers.add_parser("architecture-impact")
+    architecture_impact.add_argument("--role-id", required=True)
+    architecture_impact.add_argument("--work-item-id", required=True)
+    architecture_impact.add_argument("--classification", choices=("none", "material", "uncertain"), required=True)
+    architecture_impact.add_argument("--rationale", required=True)
+    architecture_impact.add_argument(
+        "--affected-domain",
+        action="append",
+        choices=tuple(sorted(ARCHITECTURE_DOMAINS)),
+        default=[],
+    )
+    architecture_impact.add_argument("--decision-ref")
+    architecture_impact.add_argument("--message-id")
+    architecture_impact.add_argument("--turn-id")
+
+    architecture_conformance = safe_output_subparsers.add_parser("architecture-conformance")
+    architecture_conformance.add_argument("--role-id", required=True)
+    architecture_conformance.add_argument("--work-item-id", required=True)
+    architecture_conformance.add_argument(
+        "--status",
+        choices=("approved", "changes_requested", "exception"),
+        required=True,
+    )
+    architecture_conformance.add_argument("--rationale", required=True)
+    architecture_conformance.add_argument("--decision-ref")
+    architecture_conformance.add_argument("--message-id")
+    architecture_conformance.add_argument("--turn-id")
 
     artifact_link = safe_output_subparsers.add_parser("artifact-link")
     artifact_link.add_argument("--role-id", required=True)
@@ -313,6 +347,21 @@ def main(argv: list[str] | None = None) -> None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(render_compose(project_config), encoding="utf-8")
         _print_json({"output": str(args.output)})
+        return
+    if args.command == "materialize-enterprise-architecture":
+        result = materialize_enterprise_architecture_portfolio(
+            project_config=project_config,
+            document_root=args.document_root or Path(project_config.document_root),
+            legacy_root=args.legacy_root,
+        )
+        _print_json(
+            {
+                "created": result.created,
+                "preserved": result.preserved,
+                "migrated": result.migrated,
+                "manifest_path": result.manifest_path,
+            }
+        )
         return
     db = V4Database(args.db)
     try:
@@ -1009,6 +1058,82 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
                     if queued_handoff is not None
                     else {}
                 ),
+            }
+        )
+        return
+    if command == "architecture-impact":
+        project_config.role(args.role_id)
+        if args.role_id not in {"business-analyst", "product-manager", "enterprise-architect"}:
+            raise ValueError("architecture impact may only be recorded by Business Analysis, Product, or Enterprise Architecture")
+        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        record_id = db.record_architecture_impact(
+            work_item_id=args.work_item_id,
+            classification=args.classification,
+            rationale=args.rationale,
+            affected_domains=args.affected_domain,
+            actor_role=args.role_id,
+            decision_ref=args.decision_ref,
+        )
+        call_id = db.record_safe_output_call(
+            role_instance_id=role_instance_id,
+            tool_name="architecture.record_impact",
+            payload={
+                "work_item_id": args.work_item_id,
+                "classification": args.classification,
+                "rationale": args.rationale,
+                "affected_domains": sorted(set(args.affected_domain)),
+                "decision_ref": args.decision_ref,
+                "record_id": record_id,
+            },
+            message_id=args.message_id,
+            turn_id=args.turn_id,
+            work_item_id=args.work_item_id,
+        )
+        _print_json(
+            {
+                "call_id": call_id,
+                "record_id": record_id,
+                "work_item_id": args.work_item_id,
+                "architecture_impact": args.classification,
+                "conformance_required": args.classification in {"material", "uncertain"},
+            }
+        )
+        return
+    if command == "architecture-conformance":
+        project_config.role(args.role_id)
+        allowed_roles = {"enterprise-architect"}
+        if args.status == "exception":
+            allowed_roles.add("project-manager")
+        if args.role_id not in allowed_roles:
+            raise ValueError("architecture conformance is owned by Enterprise Architecture; Project Manager may record sponsor-approved exceptions")
+        role_instance_id = f"{project_config.project_id}.{args.role_id}.1"
+        record_id = db.record_architecture_conformance(
+            work_item_id=args.work_item_id,
+            status=args.status,
+            rationale=args.rationale,
+            actor_role=args.role_id,
+            decision_ref=args.decision_ref,
+        )
+        call_id = db.record_safe_output_call(
+            role_instance_id=role_instance_id,
+            tool_name="architecture.record_conformance",
+            payload={
+                "work_item_id": args.work_item_id,
+                "status": args.status,
+                "rationale": args.rationale,
+                "decision_ref": args.decision_ref,
+                "record_id": record_id,
+            },
+            message_id=args.message_id,
+            turn_id=args.turn_id,
+            work_item_id=args.work_item_id,
+        )
+        _print_json(
+            {
+                "call_id": call_id,
+                "record_id": record_id,
+                "work_item_id": args.work_item_id,
+                "architecture_conformance": args.status,
             }
         )
         return

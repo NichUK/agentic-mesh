@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from agentic_mesh_v4.flow import validate_flow_conditions
 
 
 DEFAULT_ROLE_IDS: tuple[str, ...] = (
@@ -71,6 +74,9 @@ class V4ProjectConfig:
     goal: str
     roles: tuple[V4RoleConfig, ...]
     document_root: str = "/documents"
+    document_structure_policy: str = "togaf-sdlc-v1"
+    document_accountabilities: dict[str, dict[str, Any]] | None = None
+    flow: dict[str, Any] | None = None
     teams_public_endpoint: str | None = None
     teams_project_channel_id: str | None = None
     teams_project_team_id: str | None = None
@@ -80,6 +86,13 @@ class V4ProjectConfig:
             if role.role_id == role_id:
                 return role
         raise KeyError(role_id)
+
+    def accountabilities_for_role(self, role_id: str) -> dict[str, dict[str, Any]]:
+        return {
+            path: details
+            for path, details in (self.document_accountabilities or {}).items()
+            if details.get("owner_role") == role_id or role_id in details.get("contributing_roles", [])
+        }
 
 
 def load_project_config(path: str | Path) -> V4ProjectConfig:
@@ -91,6 +104,9 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
     project_id = str(raw.get("project_id") or "agentic-mesh-dev")
     agent_network_id = str(raw.get("agent_network_id") or _nested(raw, ("agent_mesh", "id")) or "agentic-mesh-dev")
     roles = _roles_from_raw(raw.get("roles"), agent_network_id=agent_network_id)
+    flow = _resolve_flow(raw.get("flow"), config_path=config_path)
+    if flow:
+        validate_flow_conditions(flow)
     return V4ProjectConfig(
         project_id=project_id,
         agent_network_id=agent_network_id,
@@ -98,6 +114,11 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
         goal=_goal_description(raw.get("goal")),
         roles=roles,
         document_root=str(_nested(raw, ("document_library", "root_path")) or "/documents"),
+        document_structure_policy=str(
+            _nested(raw, ("document_library", "structure_policy")) or "togaf-sdlc-v1"
+        ),
+        document_accountabilities=_mapping_of_mappings(raw.get("document_accountabilities")),
+        flow=flow,
         teams_public_endpoint=_expand_optional(_nested(raw, ("connectors", "teams", "ingress", "public_endpoint"))),
         teams_project_channel_id=_expand_optional(_nested(raw, ("connectors", "teams", "channels", "project", "id"))),
         teams_project_team_id=_expand_optional(_nested(raw, ("connectors", "teams", "team", "id"))),
@@ -195,3 +216,54 @@ def _expand_optional(value: object | None) -> str | None:
         return None
     expanded = os.path.expandvars(str(value))
     return expanded or None
+
+
+def _mapping_of_mappings(value: object) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): deepcopy(item)
+        for key, item in value.items()
+        if isinstance(item, dict)
+    }
+
+
+def _resolve_flow(value: object, *, config_path: Path) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    if "states" in value:
+        return deepcopy(value)
+    template = value.get("template")
+    if not isinstance(template, str) or not template:
+        return {}
+    if not all(character.isalnum() or character == "-" for character in template):
+        raise ValueError(f"invalid flow template: {template}")
+    candidates = []
+    system_root = os.environ.get("AGENTIC_MESH_SYSTEM_ROOT")
+    if system_root:
+        candidates.append(Path(system_root) / "config" / "flows" / f"{template}.yaml")
+    candidates.extend(
+        [
+            Path(__file__).resolve().parents[2] / "config" / "flows" / f"{template}.yaml",
+            config_path.parent / "flows" / f"{template}.yaml",
+        ]
+    )
+    flow_path = next((candidate for candidate in candidates if candidate.exists()), None)
+    if flow_path is None:
+        searched = ", ".join(str(candidate) for candidate in candidates)
+        raise ValueError(f"flow template {template!r} was not found; searched: {searched}")
+    parsed = yaml.safe_load(flow_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(parsed, dict):
+        raise ValueError(f"flow template must be a mapping: {flow_path}")
+    overrides = value.get("overrides")
+    return _deep_merge(parsed, overrides if isinstance(overrides, dict) else {})
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged

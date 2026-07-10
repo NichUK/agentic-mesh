@@ -1087,6 +1087,14 @@
           },
           "default": {}
         },
+        "informs": {
+          "type": "object",
+          "description": "Roles that must receive a concise update without becoming the work-item owner.",
+          "additionalProperties": {
+            "$ref": "#/$defs/flowConsult"
+          },
+          "default": {}
+        },
         "handoffs": {
           "type": "object",
           "additionalProperties": {
@@ -1145,6 +1153,9 @@
         },
         "purpose": {
           "type": "string"
+        },
+        "when": {
+          "$ref": "#/$defs/flowCondition"
         }
       }
     },
@@ -1219,6 +1230,9 @@
           "type": "object",
           "additionalProperties": true,
           "default": {}
+        },
+        "when": {
+          "$ref": "#/$defs/flowCondition"
         }
       }
     },
@@ -1244,6 +1258,40 @@
           "type": "boolean",
           "description": "When true, the handoff creates a new linked work item in the target mesh.",
           "default": false
+        },
+        "when": {
+          "$ref": "#/$defs/flowCondition"
+        }
+      }
+    },
+    "flowCondition": {
+      "type": "object",
+      "description": "Deterministic allow-list condition for proportional flow routes and gates; arbitrary expressions are not supported.",
+      "additionalProperties": false,
+      "required": ["field", "in"],
+      "properties": {
+        "field": {
+          "type": "string",
+          "enum": ["architecture_impact", "architecture_conformance"]
+        },
+        "in": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "not_assessed",
+              "none",
+              "material",
+              "uncertain",
+              "not_required",
+              "pending",
+              "approved",
+              "changes_requested",
+              "exception"
+            ]
+          }
         }
       }
     }

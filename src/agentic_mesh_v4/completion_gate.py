@@ -166,11 +166,19 @@ def _canonical_document_path(path: str | None) -> str | None:
     if path is None:
         return None
     replacements = {
+        "/10-business-brief.md": "/010-business-brief.md",
         "/20-product-definition.md": "/020-product-definition.md",
         "/30-experience-design.md": "/030-experience-design.md",
-        "/30-solution-design.md": "/030-solution-design.md",
-        "/50-security-review.md": "/050-security-review.md",
+        "/30-solution-design.md": "/050-solution-design.md",
+        "/030-solution-design.md": "/050-solution-design.md",
+        "/40-enterprise-alignment.md": "/040-enterprise-alignment.md",
+        "/50-solution-design.md": "/050-solution-design.md",
+        "/50-security-review.md": "/060-security-review.md",
+        "/60-security-review.md": "/060-security-review.md",
         "/60-prompt-contract.md": "/060-prompt-contract.md",
+        "/70-platform-readiness.md": "/070-platform-readiness.md",
+        "/80-implementation-plan.md": "/080-implementation-plan.md",
+        "/90-quality-plan.md": "/090-quality-plan.md",
         "/100-implementation-log.md": "/100-implementation-log.md",
         "/110-quality-evidence.md": "/110-quality-evidence.md",
         "/140-release-record.md": "/140-release-record.md",

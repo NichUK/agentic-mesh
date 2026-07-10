@@ -32,6 +32,7 @@ agentic-mesh-v4 = "agentic_mesh_v4.cli:main"
 
 [project.optional-dependencies]
 dev = [
+  "jsonschema>=4.23",
   "pytest>=8.0",
 ]
 
