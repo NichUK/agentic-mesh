@@ -5,6 +5,7 @@ import concurrent.futures
 import json
 import os
 import secrets
+import socket
 import subprocess
 import sys
 import time
@@ -333,6 +334,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    if _forward_safe_output_to_role_proxy(args=args, argv=argv):
+        return
     project_config = load_project_config(args.project_config)
     if args.command == "materialize-agent-configs":
         written = materialize_agent_configs(
@@ -504,6 +507,38 @@ def main(argv: list[str] | None = None) -> None:
             return
     finally:
         db.close()
+
+
+def _forward_safe_output_to_role_proxy(*, args, argv: list[str] | None) -> bool:
+    socket_path = os.environ.get("AGENTIC_MESH_SAFE_OUTPUT_SOCKET", "").strip()
+    if (
+        args.command != "safe-output"
+        or not socket_path
+        or os.environ.get("AGENTIC_MESH_SAFE_OUTPUT_PROXY_BYPASS") == "1"
+    ):
+        return False
+    request_argv = list(argv) if argv is not None else sys.argv[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(socket_path)
+            client.sendall(json.dumps({"argv": request_argv}).encode("utf-8") + b"\n")
+            response_file = client.makefile("rb")
+            raw_response = response_file.readline(8 * 1024 * 1024 + 1)
+    except OSError as exc:
+        raise RuntimeError(f"safe-output role proxy is unavailable at {socket_path}: {exc}") from exc
+    if not raw_response or len(raw_response) > 8 * 1024 * 1024:
+        raise RuntimeError("safe-output role proxy returned an invalid response")
+    response = json.loads(raw_response.decode("utf-8"))
+    stdout = str(response.get("stdout", ""))
+    stderr = str(response.get("stderr", ""))
+    if stdout:
+        sys.stdout.write(stdout)
+    if stderr:
+        sys.stderr.write(stderr)
+    exit_code = int(response.get("exit_code", 1))
+    if exit_code:
+        raise SystemExit(exit_code)
+    return True
 
 
 def _ensure_ws_tokens(root: Path, project_config) -> None:
