@@ -888,6 +888,7 @@ class V4Database:
         summary: str,
         stale_after_seconds: float | None = None,
     ) -> int:
+        # Psycopg uses percent-style placeholders, so the SQL LIKE wildcard is escaped here.
         rows = [
             row
             for row in list(
@@ -903,7 +904,7 @@ class V4Database:
                                SELECT MAX(e.created_at)
                                FROM agent_events e
                                WHERE e.message_id=m.message_id
-                                 AND e.event_type NOT LIKE 'turn/readTimeout%'
+                                 AND e.event_type NOT LIKE 'turn/readTimeout%%'
                              ),
                              m.locked_at,
                              m.updated_at
