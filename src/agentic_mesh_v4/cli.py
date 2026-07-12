@@ -17,6 +17,7 @@ from agentic_mesh_v4.artifact_preflight import RoleArtifactPreflight
 from agentic_mesh_v4.auto_dispatch import requires_dispatch_path
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
 from agentic_mesh_v4.codex_protocol import WebSocketTransport
+from agentic_mesh_v4.codex_protocol import app_server_healthz
 from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.db import V4Database
@@ -45,6 +46,7 @@ from agentic_mesh_v4.onedrive_sync import sync_local_documents_to_onedrive
 from agentic_mesh_v4.runtime import V4Runtime
 from agentic_mesh_v4.server import serve
 from agentic_mesh_v4.teams_delivery import TeamsReplySender
+from agentic_mesh_v4.topology import validate_runtime_topology
 from agentic_mesh_v4.watchdog import WatchdogThresholds
 from agentic_mesh_v4.watchdog import run_watchdog_sweep
 
@@ -336,6 +338,8 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if _forward_safe_output_to_role_proxy(args=args, argv=argv):
         return
+    if args.command in {"serve", "dispatch-loop", "watchdog-loop"}:
+        validate_runtime_topology()
     project_config = load_project_config(args.project_config)
     if args.command == "materialize-agent-configs":
         written = materialize_agent_configs(
@@ -790,9 +794,32 @@ def _schedule_available_dispatches(
         has_queued_message = db.has_queued_messages(role_id=role.role_id)
         if active_message is None and not has_queued_message:
             continue
-        if lifecycle is not None and active_message is None:
+        if lifecycle is not None:
             try:
-                lifecycle.wake_service(role.service_name)
+                if not _ensure_role_service_ready(lifecycle=lifecycle, role=role):
+                    if active_message is not None:
+                        recovered = db.requeue_active_messages_for_role(
+                            target_role=role.role_id,
+                            summary=(
+                                f"Recovered active delivery for {role.role_id}; "
+                                f"compose service {role.service_name} did not become healthy."
+                            ),
+                        )
+                        if recovered:
+                            _hibernate_recovered_role(lifecycle=lifecycle, role=role, recovered=recovered)
+                    print(
+                        json.dumps(
+                            {
+                                "role_id": role.role_id,
+                                "service_name": role.service_name,
+                                "state": "wake_health_timeout",
+                                "message_state": "queued" if active_message is None else active_message["state"],
+                            },
+                            sort_keys=True,
+                        ),
+                        file=sys.stderr,
+                    )
+                    continue
             except subprocess.CalledProcessError as exc:
                 print(
                     json.dumps(
@@ -816,6 +843,25 @@ def _schedule_available_dispatches(
         )
         scheduled += 1
     return scheduled
+
+
+def _ensure_role_service_ready(
+    *,
+    lifecycle: ComposeLifecycle,
+    role,
+    timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 0.5,
+) -> bool:
+    if not lifecycle.is_service_running(role.service_name):
+        lifecycle.wake_service(role.service_name)
+    endpoint = f"ws://{role.service_name}:{role.codex_port}"
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if app_server_healthz(endpoint):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_interval_seconds)
 
 
 def _dispatch_role_message(

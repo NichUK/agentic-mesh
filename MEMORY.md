@@ -29,6 +29,11 @@ Important V4 decisions:
 - The V4 dispatcher polls Postgres, wakes the relevant role service through
   Compose when needed, connects over the role's authenticated internal
   WebSocket, and delivers queued messages through Codex thread/turn methods.
+- V4 runtime, dispatcher, and watchdog startup now enforce separate mounted
+  system and project-workspace paths. Dispatcher delivery waits for a stopped
+  role's Codex app-server health endpoint before claiming work, uses bounded
+  WebSocket event reads without timing out the underlying turn, and detects
+  stale active deliveries from genuine agent events rather than polling noise.
 - Conversational replies come from Codex streamed output. Durable work effects
   such as handoffs, approvals, artifact updates, release records, and memory
   updates must still be made through safe-output tools.

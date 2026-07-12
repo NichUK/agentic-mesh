@@ -164,6 +164,14 @@ Current dogfood container paths:
 /mesh/project/state             # runtime queues, journals, lifecycle, secrets
 ```
 
+V4 operational services enforce this boundary at startup. `/mesh/system` and
+`/mesh/workspaces/agentic-mesh` must resolve to separate mounts and must not be
+nested. Runtime, dispatcher, and watchdog processes refuse to start when the
+boundary is collapsed, preventing the control plane from silently importing a
+mutable project checkout. The dispatcher also starts a stopped role service and
+waits for its Codex app-server health endpoint before claiming queued work; a
+failed wake leaves the message durably queued for retry.
+
 The project file declares the workspace and repository roots that agents use
 for real work:
 

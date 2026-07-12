@@ -893,16 +893,30 @@ class V4Database:
             for row in list(
                 self.connection.execute(
                     """
-                    SELECT message_id, correlation_id, locked_by, updated_at
-                    FROM message_queue
-                    WHERE target_role=? AND state IN ('delivering', 'active_turn')
-                    ORDER BY updated_at ASC
+                    SELECT m.message_id,
+                           m.correlation_id,
+                           m.locked_by,
+                           m.locked_at,
+                           m.updated_at,
+                           COALESCE(
+                             (
+                               SELECT MAX(e.created_at)
+                               FROM agent_events e
+                               WHERE e.message_id=m.message_id
+                                 AND e.event_type NOT LIKE 'turn/readTimeout%'
+                             ),
+                             m.locked_at,
+                             m.updated_at
+                           ) AS last_real_activity_at
+                    FROM message_queue m
+                    WHERE m.target_role=? AND m.state IN ('delivering', 'active_turn')
+                    ORDER BY last_real_activity_at ASC
                     """,
                     (target_role,),
                 )
             )
             if stale_after_seconds is None
-            or _is_stale_timestamp(str(row["updated_at"]), stale_after_seconds=stale_after_seconds)
+            or _is_stale_timestamp(str(row["last_real_activity_at"]), stale_after_seconds=stale_after_seconds)
         ]
         if not rows:
             return 0

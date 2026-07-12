@@ -112,7 +112,7 @@ class WebSocketTransport(AppServerTransport):
         if bearer_token:
             headers.append(f"Authorization: Bearer {bearer_token}")
         if read_timeout_seconds is None:
-            _raw = os.environ.get("AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS", "14400")
+            _raw = os.environ.get("AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS", "30")
             try:
                 _parsed = int(_raw)
             except ValueError as exc:

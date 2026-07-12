@@ -57,12 +57,19 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
     assert runtime["env_file"] == [{"path": ".env", "required": False}]
     assert runtime["ports"] == ["${AGENTIC_MESH_V4_STATUS_PORT:-8100}:8100"]
     assert runtime["environment"]["PYTHONPATH"] == "/mesh/system/src"
+    assert runtime["environment"]["AGENTIC_MESH_ENFORCE_RUNTIME_TOPOLOGY"] == 1
+    assert runtime["environment"]["AGENTIC_MESH_RUNTIME_SYSTEM_PATH"] == "/mesh/system"
+    assert runtime["environment"]["AGENTIC_MESH_RUNTIME_WORKSPACE_PATH"] == "/mesh/workspaces/agentic-mesh"
     assert "/var/run/docker.sock:/var/run/docker.sock" in runtime["volumes"]
 
     assert "agentic_mesh_v4.cli" in dispatcher["command"]
     assert "dispatch-loop" in dispatcher["command"]
     assert dispatcher["env_file"] == [{"path": ".env", "required": False}]
     assert dispatcher["environment"]["PYTHONPATH"] == "/mesh/system/src"
+    assert dispatcher["environment"]["AGENTIC_MESH_ENFORCE_RUNTIME_TOPOLOGY"] == 1
+    assert dispatcher["environment"]["AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS"] == (
+        "${AGENTIC_MESH_CODEX_WS_READ_TIMEOUT_SECONDS:-30}"
+    )
     assert "--wake" in dispatcher["command"]
     assert "--active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900}" in dispatcher["command"]
     assert "--dispatch-workers ${AGENTIC_MESH_DISPATCH_WORKERS:-8}" in dispatcher["command"]
@@ -74,6 +81,7 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
     assert "watchdog-loop" in watchdog["command"]
     assert watchdog["env_file"] == [{"path": ".env", "required": False}]
     assert watchdog["environment"]["PYTHONPATH"] == "/mesh/system/src"
+    assert watchdog["environment"]["AGENTIC_MESH_ENFORCE_RUNTIME_TOPOLOGY"] == 1
     assert "--service runtime" in watchdog["command"]
     assert "--service dispatcher" in watchdog["command"]
     assert "--compose-file /mesh/project/deploy/compose/docker-compose.v4.yml" in watchdog["command"]

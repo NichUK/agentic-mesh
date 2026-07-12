@@ -785,7 +785,11 @@ def test_v4_requeues_stale_active_messages_but_keeps_fresh_active_turns(tmp_path
     db.claim_next_message(role_id="release-manager", worker_id=role_instance_id)
     db.mark_message_state(fresh_message, state="active_turn", summary="Delivered to Release Manager")
     db.connection.execute(
-        "UPDATE message_queue SET updated_at='2000-01-01T00:00:00+00:00' WHERE message_id=?",
+        """
+        UPDATE message_queue
+        SET locked_at='2000-01-01T00:00:00+00:00', updated_at='2000-01-01T00:00:00+00:00'
+        WHERE message_id=?
+        """,
         (stale_message,),
     )
     db.connection.commit()
@@ -822,7 +826,11 @@ def test_v4_agent_events_refresh_active_message_heartbeat(tmp_path: Path) -> Non
     db.claim_next_message(role_id="release-manager", worker_id=role_instance_id)
     db.mark_message_state(message_id, state="active_turn", summary="Delivered to Release Manager")
     db.connection.execute(
-        "UPDATE message_queue SET updated_at='2000-01-01T00:00:00+00:00' WHERE message_id=?",
+        """
+        UPDATE message_queue
+        SET locked_at='2000-01-01T00:00:00+00:00', updated_at='2000-01-01T00:00:00+00:00'
+        WHERE message_id=?
+        """,
         (message_id,),
     )
     db.connection.commit()
@@ -846,6 +854,88 @@ def test_v4_agent_events_refresh_active_message_heartbeat(tmp_path: Path) -> Non
     ).fetchone()
     assert row is not None
     assert row["state"] == "active_turn"
+
+
+def test_v4_read_timeout_polling_does_not_keep_dead_turn_alive(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.project-manager.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Turn stopped producing real output",
+        source="teams",
+    )
+    db.claim_next_message(role_id="project-manager", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered to Project Manager")
+    db.connection.execute(
+        """
+        UPDATE message_queue
+        SET locked_at='2000-01-01T00:00:00+00:00', updated_at='2099-01-01T00:00:00+00:00'
+        WHERE message_id=?
+        """,
+        (message_id,),
+    )
+    db.connection.execute(
+        """
+        INSERT INTO agent_events(
+          event_id, role_instance_id, message_id, event_type, content, payload_json, created_at
+        ) VALUES(?,?,?,?,?,?,?)
+        """,
+        (
+            "event-timeout-only",
+            role_instance_id,
+            message_id,
+            "turn/readTimeoutStillRunning",
+            "poll",
+            "{}",
+            "2099-01-01T00:00:00+00:00",
+        ),
+    )
+    db.connection.commit()
+
+    recovered = db.requeue_active_messages_for_role(
+        target_role="project-manager",
+        stale_after_seconds=3600,
+        summary="Recovered dead active turn.",
+    )
+
+    assert recovered == 1
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "queued"
+
+
+def test_v4_stopped_role_is_started_and_health_checked_before_dispatch(monkeypatch) -> None:
+    class FakeLifecycle:
+        def __init__(self) -> None:
+            self.running = False
+            self.woken: list[str] = []
+
+        def is_service_running(self, service_name: str) -> bool:
+            return self.running
+
+        def wake_service(self, service_name: str) -> None:
+            self.woken.append(service_name)
+            self.running = True
+
+    lifecycle = FakeLifecycle()
+    checks = iter((False, True))
+    monkeypatch.setattr(v4_cli, "app_server_healthz", lambda _endpoint: next(checks))
+    monkeypatch.setattr(v4_cli.time, "sleep", lambda _seconds: None)
+    role = load_project_config(PROJECT_CONFIG).role("project-manager")
+
+    ready = v4_cli._ensure_role_service_ready(  # noqa: SLF001 - regression for stopped-agent wake contract.
+        lifecycle=lifecycle,  # type: ignore[arg-type]
+        role=role,
+        timeout_seconds=1,
+        poll_interval_seconds=0,
+    )
+
+    assert ready is True
+    assert lifecycle.woken == [role.service_name]
 
 
 def test_v4_dispatch_scheduler_schedules_queued_role_while_another_role_is_active(
