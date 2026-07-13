@@ -223,6 +223,11 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
     assert "--profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES" in script
     assert "--profile roles stop $AGENTIC_MESH_ROLE_SERVICES" in script
     assert "--profile roles rm -f $AGENTIC_MESH_ROLE_SERVICES" in script
+    assert script.index("--profile roles rm -f $AGENTIC_MESH_ROLE_SERVICES") < script.index(
+        "--profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES"
+    )
+    assert 'if [ "$AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES" != "0" ]; then' in script
+    assert "--profile roles up -d --force-recreate $AGENTIC_MESH_ROLE_SERVICES" in script
     assert "project-v4.yaml" in script
     assert "state/v4/agent-configs" in script
     assert "agentic_mesh_v4.cli" in script

@@ -144,6 +144,7 @@ sh scripts/deploy-linuxch-compose.sh --profile build-image build base-agent-imag
 
 sh scripts/deploy-linuxch-compose.sh --profile v4 stop $AGENTIC_MESH_RELEASE_SERVICES >/dev/null 2>&1 || true
 sh scripts/deploy-linuxch-compose.sh --profile roles stop $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
+sh scripts/deploy-linuxch-compose.sh --profile roles rm -f $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
 
 docker run --rm \
   --network agentic-mesh_default \
@@ -162,9 +163,6 @@ docker run --rm \
 
 sh scripts/deploy-linuxch-compose.sh --profile v4 up -d --force-recreate --remove-orphans $AGENTIC_MESH_RELEASE_SERVICES
 
-if [ "$AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES" = "0" ]; then
-  sh scripts/deploy-linuxch-compose.sh --profile roles stop $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
-  sh scripts/deploy-linuxch-compose.sh --profile roles rm -f $AGENTIC_MESH_ROLE_SERVICES >/dev/null 2>&1 || true
-else
-  sh scripts/deploy-linuxch-compose.sh --profile roles up -d $AGENTIC_MESH_ROLE_SERVICES
+if [ "$AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES" != "0" ]; then
+  sh scripts/deploy-linuxch-compose.sh --profile roles up -d --force-recreate $AGENTIC_MESH_ROLE_SERVICES
 fi
