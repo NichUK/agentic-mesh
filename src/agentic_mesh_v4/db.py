@@ -14,6 +14,8 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from agentic_mesh_v4.flow import ARCHITECTURE_DOMAINS
+from agentic_mesh_v4.persistence_policy import sanitize_json_payload
+from agentic_mesh_v4.persistence_policy import sanitize_persisted_text
 
 
 COMPLETION_ATTENTION_MESSAGE_STATES = {
@@ -744,6 +746,8 @@ class V4Database:
         payload = dict(payload or {})
         payload.setdefault("text", text)
         payload.setdefault("target_role", target_role)
+        text, _ = sanitize_persisted_text(text, path="message_queue.text")
+        payload = sanitize_json_payload(payload, path="message_queue.payload")
         with self.connection:
             self.connection.execute(
                 """
@@ -1011,6 +1015,8 @@ class V4Database:
         payload: dict[str, Any] | None = None,
     ) -> str:
         journal_id = f"journal-{uuid4().hex}"
+        summary, _ = sanitize_persisted_text(summary, path="message_journal.summary")
+        payload = sanitize_json_payload(payload, path="message_journal.payload") if payload is not None else None
         payload_hash = _payload_hash(payload) if payload is not None else None
         with self.connection:
             self.connection.execute(
@@ -1036,6 +1042,8 @@ class V4Database:
         message_id: str | None = None,
     ) -> str:
         event_id = f"event-{uuid4().hex}"
+        content, _ = sanitize_persisted_text(content, path="agent_events.content")
+        payload = sanitize_json_payload(payload or {}, path="agent_events.payload")
         with self.connection:
             self.connection.execute(
                 """
@@ -1052,7 +1060,7 @@ class V4Database:
                     message_id,
                     event_type,
                     content,
-                    json.dumps(payload or {}, sort_keys=True),
+                    json.dumps(payload, sort_keys=True),
                     utc_now(),
                 ),
             )
@@ -1111,6 +1119,7 @@ class V4Database:
         work_item_id: str | None = None,
     ) -> str:
         call_id = call_id or f"call-{uuid4().hex}"
+        payload = sanitize_json_payload(payload, path="safe_output_calls.payload")
         with self.connection:
             self.connection.execute(
                 """

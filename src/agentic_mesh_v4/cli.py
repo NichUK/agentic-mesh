@@ -44,6 +44,7 @@ from agentic_mesh_v4.handoff_lifecycle import create_handoff
 from agentic_mesh_v4.handoff_lifecycle import supersede_handoff
 from agentic_mesh_v4.lifecycle import ComposeLifecycle
 from agentic_mesh_v4.onedrive_sync import sync_local_documents_to_onedrive
+from agentic_mesh_v4.persistence_policy import reject_binary_values
 from agentic_mesh_v4.runtime import V4Runtime
 from agentic_mesh_v4.server import serve
 from agentic_mesh_v4.teams_delivery import TeamsReplySender
@@ -1154,6 +1155,7 @@ def _json_object(value: object) -> dict[str, object]:
 
 
 def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
+    reject_binary_values(vars(args), path="safe-output.request")
     command = args.safe_output_command
     if command == "work-item-update":
         project_config.role(args.role_id)
