@@ -1830,6 +1830,9 @@ class V4Database:
             if active_message is not None:
                 role["current_message"] = active_message
                 role["effective_state"] = "busy"
+            elif role["queued_messages"] > 0:
+                role["current_message"] = None
+                role["effective_state"] = "queued"
             else:
                 role["current_message"] = None
                 role["effective_state"] = role["state"]
