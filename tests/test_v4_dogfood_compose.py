@@ -31,6 +31,13 @@ V4_ROLE_IDS = {
 }
 
 
+def test_v4_agent_image_pins_codex_cli_required_by_configured_model() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+    assert "npm install -g @openai/codex@0.144.3" in dockerfile
+    assert "@openai/codex@0.135.0" not in dockerfile
+
+
 def test_dogfood_compose_does_not_define_legacy_runtime_services() -> None:
     compose = _load_dogfood_compose()
 
