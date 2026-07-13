@@ -34,6 +34,10 @@ Important V4 decisions:
   role's Codex app-server health endpoint before claiming work, uses bounded
   WebSocket event reads without timing out the underlying turn, and detects
   stale active deliveries from genuine agent events rather than polling noise.
+- LinuxCH dogfood releases refresh the reviewed Compose overlay from the
+  system source and reject any staged or merged `PYTHONPATH` that imports V4
+  control-plane code from the mutable project workspace. This prevents stale
+  project deployment files from disabling dispatcher wake and watchdog loops.
 - Conversational replies come from Codex streamed output. Durable work effects
   such as handoffs, approvals, artifact updates, release records, and memory
   updates must still be made through safe-output tools.

@@ -117,14 +117,22 @@ PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
   --project-config "$AGENTIC_MESH_PROJECT_HOST_PATH/agentic-mesh/project-v4.yaml" \
   render-compose \
   --output "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"
+
+# The LinuxCH overlay is a reviewed deployment input from the system source.
+# Refresh the dogfood project copy so a stale mutable project checkout cannot
+# change which Agentic Mesh source tree the control plane imports.
+cp "$REPO_ROOT/examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml" \
+  "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.linuxch.yml"
 export AGENTIC_MESH_DATABASE_HOST="agentic-mesh-postgres"
 export AGENTIC_MESH_DATABASE_PORT="5432"
 unset AGENTIC_MESH_DATABASE_PASSWORD
 cp "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml" \
   "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.yml"
 
-if grep -q "/mesh/workspaces/agentic-mesh/src" "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"; then
-  echo "Refusing to release: generated V4 compose points control-plane PYTHONPATH at the workspace repo." >&2
+if grep -Eq "/mesh/(workspaces/agentic-mesh|project)/src" \
+  "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml" \
+  "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.linuxch.yml"; then
+  echo "Refusing to release: V4 compose points control-plane PYTHONPATH at a mutable project or workspace source tree." >&2
   exit 1
 fi
 if ! grep -q "PYTHONPATH: /mesh/system/src" "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"; then
