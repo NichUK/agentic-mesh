@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import threading
+import time
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
@@ -1021,14 +1023,14 @@ def test_v4_dispatch_scheduler_schedules_queued_role_while_another_role_is_activ
     )
     dispatched_roles: list[str] = []
 
-    def fake_dispatch_role_message(**kwargs) -> int:
+    def fake_dispatch_role_message(**kwargs) -> v4_cli._DispatchWorkerResult:
         dispatched_roles.append(kwargs["role_id"])
-        return 1
+        return v4_cli._DispatchWorkerResult(processed=1)  # noqa: SLF001
 
     monkeypatch.setattr(v4_cli, "_dispatch_role_message", fake_dispatch_role_message)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        active: dict[str, concurrent.futures.Future[int]] = {}
+        active: dict[str, concurrent.futures.Future[v4_cli._DispatchWorkerResult]] = {}
         scheduled = v4_cli._schedule_available_dispatches(  # noqa: SLF001 - regression for dispatcher scheduling.
             db=db,
             project_config=config,
@@ -1039,10 +1041,11 @@ def test_v4_dispatch_scheduler_schedules_queued_role_while_another_role_is_activ
             executor=executor,
             active=active,
         )
-        processed = v4_cli._collect_completed_dispatches(active)  # noqa: SLF001
+        processed, sync_requested = v4_cli._collect_completed_dispatches(active)  # noqa: SLF001
 
     assert scheduled == 1
     assert processed == 1
+    assert sync_requested is False
     assert dispatched_roles == ["solution-architect"]
     active_row = db.connection.execute(
         "SELECT state FROM message_queue WHERE message_id=?",
@@ -1161,14 +1164,14 @@ def test_v4_dispatch_scheduler_schedules_active_turn_continuation(tmp_path: Path
     db.mark_message_state(active_message, state="active_turn", summary="Project Manager is still working.")
     dispatched_roles: list[str] = []
 
-    def fake_dispatch_role_message(**kwargs) -> int:
+    def fake_dispatch_role_message(**kwargs) -> v4_cli._DispatchWorkerResult:
         dispatched_roles.append(kwargs["role_id"])
-        return 1
+        return v4_cli._DispatchWorkerResult(processed=1)  # noqa: SLF001
 
     monkeypatch.setattr(v4_cli, "_dispatch_role_message", fake_dispatch_role_message)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        active: dict[str, concurrent.futures.Future[int]] = {}
+        active: dict[str, concurrent.futures.Future[v4_cli._DispatchWorkerResult]] = {}
         scheduled = v4_cli._schedule_available_dispatches(  # noqa: SLF001 - regression for active-turn continuation.
             db=db,
             project_config=config,
@@ -1179,11 +1182,84 @@ def test_v4_dispatch_scheduler_schedules_active_turn_continuation(tmp_path: Path
             executor=executor,
             active=active,
         )
-        processed = v4_cli._collect_completed_dispatches(active)  # noqa: SLF001
+        processed, sync_requested = v4_cli._collect_completed_dispatches(active)  # noqa: SLF001
 
     assert scheduled == 1
     assert processed == 1
+    assert sync_requested is False
     assert dispatched_roles == ["project-manager"]
+
+
+def test_v4_document_sync_coalesces_without_occupying_role_dispatch_workers(tmp_path: Path, monkeypatch) -> None:
+    sync_started = threading.Event()
+    release_sync = threading.Event()
+    sync_calls: list[str] = []
+    sync_release_results: list[bool] = []
+
+    def sync() -> object:
+        sync_calls.append("sync")
+        sync_started.set()
+        sync_release_results.append(release_sync.wait(timeout=2))
+        return object()
+
+    monkeypatch.setattr(v4_cli, "_document_syncer", lambda _path: sync)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as sync_executor:
+        coordinator = v4_cli._DocumentSyncCoordinator(  # noqa: SLF001 - regression for dispatcher coordination.
+            project_config_path=tmp_path / "project-v4.yaml",
+            executor=sync_executor,
+        )
+        coordinator.request()
+        assert coordinator.poll() == 1
+        assert sync_started.wait(timeout=2)
+        assert coordinator.running is True
+
+        coordinator.request()
+        coordinator.request()
+        release_sync.set()
+        for _ in range(100):
+            coordinator.poll()
+            if len(sync_calls) == 2:
+                break
+            time.sleep(0.01)
+
+    assert sync_calls == ["sync", "sync"]
+    assert sync_release_results == [True, True]
+
+
+def test_v4_dispatch_worker_requests_background_sync_only_after_completed_turn(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeDatabase:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def migrate(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+        def dispatch_once(self, *, role_id: str):
+            assert role_id == "project-manager"
+            return type("Result", (), {"state": "completed"})()
+
+    monkeypatch.setattr(v4_cli, "V4Database", FakeDatabase)
+    monkeypatch.setattr(v4_cli, "V4Runtime", FakeRuntime)
+
+    result = v4_cli._dispatch_role_message(  # noqa: SLF001 - regression for live dispatcher path.
+        db_path="postgresql://unused",
+        project_config_path=PROJECT_CONFIG,
+        agent_config_root=tmp_path / "agents",
+        role_id="project-manager",
+    )
+
+    assert "document_syncer" not in captured
+    assert result == v4_cli._DispatchWorkerResult(processed=1, request_document_sync=True)  # noqa: SLF001
 
 
 def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) -> None:
