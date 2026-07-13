@@ -906,6 +906,15 @@ class V4Database:
         ).fetchone()
         return _row_dict(row) if row is not None else None
 
+    def active_turn_id_for_role_instance(self, *, role_instance_id: str) -> str | None:
+        row = self.connection.execute(
+            "SELECT active_turn_id FROM role_instances WHERE role_instance_id=?",
+            (role_instance_id,),
+        ).fetchone()
+        if row is None or not row["active_turn_id"]:
+            return None
+        return str(row["active_turn_id"])
+
     def requeue_active_messages_for_role(
         self,
         *,
