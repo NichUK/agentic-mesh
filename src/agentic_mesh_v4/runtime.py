@@ -53,6 +53,17 @@ class AgentTurnStillRunning(RuntimeError):
     """Raised when a started Codex turn is still running after an event read timeout."""
 
 
+class AgentTerminalInterruption(RuntimeError):
+    """Raised when app-server reports that an active turn cannot continue."""
+
+    def __init__(self, event_type: str) -> None:
+        self.event_type = event_type
+        super().__init__(f"Codex app-server reported {event_type} before turn completion")
+
+
+TERMINAL_INTERRUPTION_MAX_ATTEMPTS = 3
+
+
 @dataclass(frozen=True)
 class TeamsRecipientRoleMismatch:
     target_role: str
@@ -446,17 +457,21 @@ class V4Runtime:
             self._sync_documents_after_turn(message_id=message.message_id, correlation_id=message.correlation_id, role_instance_id=role_instance_id)
             return DispatchResult(message_id=message.message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
         except AgentTurnStillRunning as exc:
-            self.db.mark_message_state(
-                message.message_id,
-                state="active_turn",
-                summary=f"Agent turn is still running for {role_instance_id}: {exc}",
-            )
             return DispatchResult(
                 message_id=message.message_id,
                 state="active_turn",
                 thread_id=self._active_thread_id(role_instance_id),
                 turn_id=self._active_turn_id(role_instance_id),
                 error=str(exc),
+            )
+        except AgentTerminalInterruption as exc:
+            return self._recover_terminal_interruption(
+                role_instance_id=role_instance_id,
+                message_id=message.message_id,
+                correlation_id=message.correlation_id,
+                thread_id=self._active_thread_id(role_instance_id),
+                turn_id=self._active_turn_id(role_instance_id),
+                event_type=exc.event_type,
             )
         except Exception as exc:
             with self.db.connection:
@@ -491,7 +506,19 @@ class V4Runtime:
         thread_id = self._active_thread_id(role_instance_id)
         turn_id = self._active_turn_id(role_instance_id) or self._turn_id_for_message(message_id)
         correlation_id = str(active.get("correlation_id") or f"corr-{message_id}")
-        if self.client_factory is None:
+        terminal_event = self.db.terminal_agent_event_for_message(message_id=message_id, turn_id=turn_id)
+        terminal_event_type = str(terminal_event.get("event_type") or "") if terminal_event else ""
+        if terminal_event_type and terminal_event_type != "turn/completed":
+            return self._recover_terminal_interruption(
+                role_instance_id=role_instance_id,
+                message_id=message_id,
+                correlation_id=correlation_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                event_type=terminal_event_type,
+            )
+        turn_already_completed = terminal_event_type == "turn/completed"
+        if not turn_already_completed and self.client_factory is None:
             self.db.mark_message_state(
                 message_id,
                 state="failed",
@@ -512,26 +539,37 @@ class V4Runtime:
             )
             return DispatchResult(message_id=message_id, state="queued", error="missing active turn metadata")
         try:
-            client = self.client_factory(getattr(role, "role_id"))
-            if not client.initialized:
-                client.initialize()
-            client.resume_thread(thread_id)
-            self.db.record_message_journal(
-                message_id=message_id,
-                correlation_id=correlation_id,
-                role_instance_id=role_instance_id,
-                stage="active_turn_continue",
-                status="draining",
-                summary=f"Continuing active Codex turn {turn_id} for {role_instance_id}.",
-            )
-            self._drain_available_events(
-                client=client,
-                role_instance_id=role_instance_id,
-                approval_policy=getattr(role, "approval_policy"),
-                thread_id=thread_id,
-                turn_id=turn_id,
-                message_id=message_id,
-            )
+            if not turn_already_completed:
+                assert self.client_factory is not None
+                client = self.client_factory(getattr(role, "role_id"))
+                if not client.initialized:
+                    client.initialize()
+                client.resume_thread(thread_id)
+                self.db.record_message_journal(
+                    message_id=message_id,
+                    correlation_id=correlation_id,
+                    role_instance_id=role_instance_id,
+                    stage="active_turn_continue",
+                    status="draining",
+                    summary=f"Continuing active Codex turn {turn_id} for {role_instance_id}.",
+                )
+                self._drain_available_events(
+                    client=client,
+                    role_instance_id=role_instance_id,
+                    approval_policy=getattr(role, "approval_policy"),
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    message_id=message_id,
+                )
+            else:
+                self.db.record_message_journal(
+                    message_id=message_id,
+                    correlation_id=correlation_id,
+                    role_instance_id=role_instance_id,
+                    stage="terminal_event_reconciled",
+                    status="completed",
+                    summary=f"Reconciled durable turn/completed evidence for {turn_id}.",
+                )
             reply_text = self._recorded_agent_reply_text(message_id=message_id)
             payload = _json_mapping(active.get("payload_json"))
             if str(active.get("source") or "") == "teams" and reply_text.strip() and not self._reply_already_delivered(message_id=message_id):
@@ -613,12 +651,16 @@ class V4Runtime:
             self._sync_documents_after_turn(message_id=message_id, correlation_id=correlation_id, role_instance_id=role_instance_id)
             return DispatchResult(message_id=message_id, state="completed", thread_id=thread_id, turn_id=turn_id)
         except AgentTurnStillRunning as exc:
-            self.db.mark_message_state(
-                message_id,
-                state="active_turn",
-                summary=f"Agent turn is still running for {role_instance_id}: {exc}",
-            )
             return DispatchResult(message_id=message_id, state="active_turn", thread_id=thread_id, turn_id=turn_id, error=str(exc))
+        except AgentTerminalInterruption as exc:
+            return self._recover_terminal_interruption(
+                role_instance_id=role_instance_id,
+                message_id=message_id,
+                correlation_id=correlation_id,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                event_type=exc.event_type,
+            )
         except Exception as exc:
             if _looks_like_agent_unavailable(exc):
                 self.db.mark_message_state(
@@ -1293,6 +1335,84 @@ class V4Runtime:
                 (now, role_instance_id, thread_id),
             )
 
+    def _recover_terminal_interruption(
+        self,
+        *,
+        role_instance_id: str,
+        message_id: str,
+        correlation_id: str,
+        thread_id: str | None,
+        turn_id: str | None,
+        event_type: str,
+    ) -> DispatchResult:
+        """Retire an unusable thread and retry its durable message once fresh."""
+
+        now = utc_now()
+        if thread_id:
+            self._retire_thread(role_instance_id=role_instance_id, thread_id=thread_id)
+        with self.db.connection:
+            if turn_id:
+                self.db.connection.execute(
+                    "UPDATE codex_turns SET status='interrupted', completed_at=? WHERE turn_id=?",
+                    (now, turn_id),
+                )
+            self.db.connection.execute(
+                "UPDATE role_instances SET active_turn_id=NULL, state='ready', updated_at=? WHERE role_instance_id=?",
+                (now, role_instance_id),
+            )
+        summary = (
+            f"Recovered {role_instance_id} after {event_type}; retired the unusable thread."
+        )
+        message_row = self.db.connection.execute(
+            "SELECT delivery_attempts FROM message_queue WHERE message_id=?",
+            (message_id,),
+        ).fetchone()
+        delivery_attempts = int(message_row["delivery_attempts"] if message_row else 0)
+        if delivery_attempts >= TERMINAL_INTERRUPTION_MAX_ATTEMPTS:
+            recovered_state = "dead_lettered"
+            summary += (
+                f" Delivery failed after {delivery_attempts} attempts; dead-lettered for "
+                "Project Manager intervention."
+            )
+        else:
+            recovered_state = "queued"
+            summary += " Queued the message for a fresh turn."
+        self.db.mark_message_state(message_id, state=recovered_state, summary=summary)
+        self.db.record_message_journal(
+            message_id=message_id,
+            correlation_id=correlation_id,
+            role_instance_id=role_instance_id,
+            stage="terminal_turn_recovery",
+            status=recovered_state,
+            summary=summary,
+            payload={
+                "event_type": event_type,
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "delivery_attempts": delivery_attempts,
+            },
+        )
+        self._escalate_to_project_manager(
+            role_instance_id=role_instance_id,
+            summary=summary,
+            reason="runtime_terminal_turn_recovered",
+            message_id=message_id,
+            payload={
+                "event_type": event_type,
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "delivery_attempts": delivery_attempts,
+                "recovered_state": recovered_state,
+            },
+        )
+        return DispatchResult(
+            message_id=message_id,
+            state=recovered_state,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            error=event_type,
+        )
+
     def _drain_available_events(
         self,
         *,
@@ -1353,6 +1473,8 @@ class V4Runtime:
             )
             if method == "turn/completed":
                 return "".join(reply_parts)
+            if method in {"turn/failed", "turn/cancelled", "turn/canceled", "thread/closed"}:
+                raise AgentTerminalInterruption(method)
 
 
 def _event_content(method: str, params: dict[str, object]) -> str:

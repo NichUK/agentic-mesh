@@ -874,7 +874,6 @@ def test_v4_requeues_stale_active_messages_but_keeps_fresh_active_turns(tmp_path
         """,
         (stale_message,),
     )
-    db.connection.commit()
 
     recovered = db.requeue_active_messages_for_role(
         target_role="release-manager",
@@ -915,7 +914,6 @@ def test_v4_agent_events_refresh_active_message_heartbeat(tmp_path: Path) -> Non
         """,
         (message_id,),
     )
-    db.connection.commit()
 
     db.record_agent_event(
         role_instance_id=role_instance_id,
@@ -975,7 +973,34 @@ def test_v4_read_timeout_polling_does_not_keep_dead_turn_alive(tmp_path: Path) -
             "2099-01-01T00:00:00+00:00",
         ),
     )
-    db.connection.commit()
+    for event_values in [
+            (
+                "event-remote-status",
+                role_instance_id,
+                message_id,
+                "remoteControl/status/changed",
+                "remoteControl/status/changed",
+                "{}",
+                "2099-01-01T00:00:01+00:00",
+            ),
+            (
+                "event-goal-cleared",
+                role_instance_id,
+                message_id,
+                "thread/goal/cleared",
+                "thread/goal/cleared",
+                "{}",
+                "2099-01-01T00:00:02+00:00",
+            ),
+        ]:
+        db.connection.execute(
+            """
+            INSERT INTO agent_events(
+              event_id, role_instance_id, message_id, event_type, content, payload_json, created_at
+            ) VALUES(?,?,?,?,?,?,?)
+            """,
+            event_values,
+        )
 
     recovered = db.requeue_active_messages_for_role(
         target_role="project-manager",
@@ -988,6 +1013,156 @@ def test_v4_read_timeout_polling_does_not_keep_dead_turn_alive(tmp_path: Path) -
         "SELECT state FROM message_queue WHERE message_id=?",
         (message_id,),
     ).fetchone()["state"] == "queued"
+
+
+def test_v4_active_turn_reconciles_persisted_completion_event(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.enterprise-architect.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="enterprise-architect",
+        text="Record architecture impact.",
+        source="api",
+    )
+    db.claim_next_message(role_id="enterprise-architect", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered")
+    with db.connection:
+        db.connection.execute(
+            "UPDATE role_instances SET active_thread_id='thread-1', active_turn_id='turn-1', state='active' WHERE role_instance_id=?",
+            (role_instance_id,),
+        )
+        db.connection.execute(
+            "INSERT INTO codex_turns(turn_id, thread_id, message_id, status, started_at) VALUES(?,?,?,?,?)",
+            ("turn-1", "thread-1", message_id, "active", "2026-01-01T00:00:00+00:00"),
+        )
+    db.record_agent_event(
+        role_instance_id=role_instance_id,
+        event_type="item/agentMessage/delta",
+        content="Architecture impact recorded.",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        message_id=message_id,
+    )
+    db.record_agent_event(
+        role_instance_id=role_instance_id,
+        event_type="turn/completed",
+        content="turn/completed",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        message_id=message_id,
+    )
+
+    result = runtime.dispatch_once(role_id="enterprise-architect")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "completed"
+    assert db.connection.execute(
+        "SELECT status FROM codex_turns WHERE turn_id='turn-1'",
+    ).fetchone()["status"] == "completed"
+    assert db.connection.execute(
+        "SELECT COUNT(*) AS count FROM message_journal WHERE message_id=? AND stage='terminal_event_reconciled'",
+        (message_id,),
+    ).fetchone()["count"] == 1
+
+
+def test_v4_closed_active_thread_is_retired_and_message_is_requeued(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    role_instance_id = "agentic-mesh-dev.solution-architect.1"
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="solution-architect",
+        text="Produce solution design.",
+        source="safe-output",
+    )
+    db.claim_next_message(role_id="solution-architect", worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Delivered")
+    with db.connection:
+        db.connection.execute(
+            "UPDATE role_instances SET active_thread_id='thread-closed', active_turn_id='turn-closed', state='active' WHERE role_instance_id=?",
+            (role_instance_id,),
+        )
+        db.connection.execute(
+            """
+            INSERT INTO codex_threads(
+              thread_id, role_instance_id, status, created_at, updated_at
+            ) VALUES(?,?,?,?,?)
+            """,
+            ("thread-closed", role_instance_id, "active", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+        )
+        db.connection.execute(
+            "INSERT INTO codex_turns(turn_id, thread_id, message_id, status, started_at) VALUES(?,?,?,?,?)",
+            ("turn-closed", "thread-closed", message_id, "active", "2026-01-01T00:00:00+00:00"),
+        )
+    db.record_agent_event(
+        role_instance_id=role_instance_id,
+        event_type="thread/closed",
+        content="thread/closed",
+        thread_id="thread-closed",
+        turn_id="turn-closed",
+        message_id=message_id,
+    )
+
+    result = runtime.dispatch_once(role_id="solution-architect")
+
+    assert result is not None
+    assert result.state == "queued"
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "queued"
+    role_row = db.connection.execute(
+        "SELECT state, active_thread_id, active_turn_id FROM role_instances WHERE role_instance_id=?",
+        (role_instance_id,),
+    ).fetchone()
+    assert dict(role_row) == {"state": "ready", "active_thread_id": None, "active_turn_id": None}
+    assert db.connection.execute(
+        "SELECT status FROM codex_threads WHERE thread_id='thread-closed'",
+    ).fetchone()["status"] == "retired"
+    assert db.connection.execute(
+        "SELECT status FROM codex_turns WHERE turn_id='turn-closed'",
+    ).fetchone()["status"] == "interrupted"
+    assert db.connection.execute(
+        "SELECT COUNT(*) AS count FROM message_queue WHERE target_role='project-manager' AND source='runtime-escalation'",
+    ).fetchone()["count"] == 1
+
+
+def test_v4_repeated_terminal_interruptions_dead_letter_instead_of_looping(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="solution-architect",
+        text="Produce solution design.",
+        source="safe-output",
+    )
+    db.connection.execute(
+        "UPDATE message_queue SET delivery_attempts=3 WHERE message_id=?",
+        (message_id,),
+    )
+
+    result = runtime._recover_terminal_interruption(  # noqa: SLF001 - recovery policy regression.
+        role_instance_id="agentic-mesh-dev.solution-architect.1",
+        message_id=message_id,
+        correlation_id=f"corr-{message_id}",
+        thread_id=None,
+        turn_id=None,
+        event_type="thread/closed",
+    )
+
+    assert result.state == "dead_lettered"
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "dead_lettered"
 
 
 def test_v4_stopped_role_is_started_and_health_checked_before_dispatch(monkeypatch) -> None:
@@ -1809,6 +1984,55 @@ def test_v4_agent_thread_page_uses_push_stream_without_auto_refresh() -> None:
     assert "Auto-accepted server approval request" not in html
     assert "item/commandExecution/requestApproval item/commandExecution/requestApproval" not in html
     assert "serverRequest/resolved serverRequest/resolved" not in html
+
+
+def test_v4_agent_thread_page_hides_timeout_and_remote_control_housekeeping() -> None:
+    html = render_agent_thread(
+        role_id="enterprise-architect",
+        messages=[],
+        events=[
+            {
+                "event_id": "event-useful",
+                "created_at": "2026-07-13T14:00:00+00:00",
+                "event_type": "item/agentMessage/delta",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "Architecture review started.",
+            },
+            {
+                "event_id": "event-timeout",
+                "created_at": "2026-07-13T14:00:30+00:00",
+                "event_type": "turn/readTimeoutStillRunning",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "Connection timed out",
+            },
+            {
+                "event_id": "event-remote",
+                "created_at": "2026-07-13T14:00:31+00:00",
+                "event_type": "remoteControl/status/changed",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "remoteControl/status/changed",
+            },
+            {
+                "event_id": "event-goal",
+                "created_at": "2026-07-13T14:00:32+00:00",
+                "event_type": "thread/goal/cleared",
+                "turn_id": "turn-1",
+                "message_id": "msg-1",
+                "content": "thread/goal/cleared",
+            },
+        ],
+    )
+
+    assert "Architecture review started." in html
+    assert "Connection timed out" not in html
+    assert "turn/readTimeoutStillRunning Connection timed out" not in html
+    assert "remoteControl/status/changed remoteControl/status/changed" not in html
+    assert "thread/goal/cleared thread/goal/cleared" not in html
+    assert 'eventType === "turn/readTimeoutStillRunning"' in html
+    assert 'eventType === "remoteControl/status/changed"' in html
 
 
 def test_v4_agents_page_uses_live_push_stream_without_auto_refresh() -> None:
