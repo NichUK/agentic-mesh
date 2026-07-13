@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from agentic_mesh_v4.agent_config import materialize_agent_configs
@@ -699,10 +700,22 @@ def _dispatch_loop_concurrent(
     poll_interval_seconds: float,
     max_workers: int,
 ) -> None:
-    active: dict[str, concurrent.futures.Future[int]] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    active: dict[str, concurrent.futures.Future[_DispatchWorkerResult]] = {}
+    with (
+        concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor,
+        concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="document-sync") as sync_executor,
+    ):
+        document_sync = _DocumentSyncCoordinator(
+            project_config_path=project_config_path,
+            executor=sync_executor,
+        )
+        # Reconcile any document changes left by an interrupted previous dispatcher.
+        document_sync.request()
         while True:
-            processed = _collect_completed_dispatches(active)
+            processed, sync_requested = _collect_completed_dispatches(active)
+            if sync_requested:
+                document_sync.request()
+            sync_activity = document_sync.poll()
             scheduled = _schedule_available_dispatches(
                 db=db,
                 project_config=project_config,
@@ -713,17 +726,85 @@ def _dispatch_loop_concurrent(
                 executor=executor,
                 active=active,
             )
-            if processed == 0 and scheduled == 0:
+            if processed == 0 and scheduled == 0 and sync_activity == 0:
                 time.sleep(poll_interval_seconds)
 
 
-def _collect_completed_dispatches(active: dict[str, concurrent.futures.Future[int]]) -> int:
+@dataclass(frozen=True)
+class _DispatchWorkerResult:
+    processed: int
+    request_document_sync: bool = False
+
+
+class _DocumentSyncCoordinator:
+    """Coalesce document-library syncs without occupying a role delivery slot."""
+
+    def __init__(
+        self,
+        *,
+        project_config_path: Path,
+        executor: concurrent.futures.Executor,
+    ) -> None:
+        self._project_config_path = project_config_path
+        self._executor = executor
+        self._future: concurrent.futures.Future[object] | None = None
+        self._requested = False
+
+    @property
+    def running(self) -> bool:
+        return self._future is not None and not self._future.done()
+
+    def request(self) -> None:
+        self._requested = True
+
+    def poll(self) -> int:
+        activity = 0
+        if self._future is not None and self._future.done():
+            try:
+                result = self._future.result()
+                print(
+                    json.dumps(
+                        {
+                            "state": "document_sync_completed",
+                            "uploaded": getattr(result, "uploaded", None),
+                            "folders_created": getattr(result, "folders_created", None),
+                            "root_path": getattr(result, "root_path", None),
+                        },
+                        sort_keys=True,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - document sync is eventually consistent.
+                print(
+                    json.dumps(
+                        {
+                            "state": "document_sync_failed",
+                            "error": str(exc),
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+            self._future = None
+            activity += 1
+        if self._future is None and self._requested:
+            self._requested = False
+            self._future = self._executor.submit(_document_syncer(self._project_config_path))
+            activity += 1
+        return activity
+
+
+def _collect_completed_dispatches(
+    active: dict[str, concurrent.futures.Future[_DispatchWorkerResult]],
+) -> tuple[int, bool]:
     processed = 0
+    sync_requested = False
     for role_id, future in list(active.items()):
         if not future.done():
             continue
         try:
-            processed += future.result()
+            result = future.result()
+            processed += result.processed
+            sync_requested = sync_requested or result.request_document_sync
         except Exception as exc:  # noqa: BLE001 - dispatcher must survive role delivery failures.
             print(
                 json.dumps(
@@ -737,7 +818,7 @@ def _collect_completed_dispatches(active: dict[str, concurrent.futures.Future[in
                 file=sys.stderr,
             )
         del active[role_id]
-    return processed
+    return processed, sync_requested
 
 
 def _schedule_available_dispatches(
@@ -749,7 +830,7 @@ def _schedule_available_dispatches(
     lifecycle: ComposeLifecycle | None,
     active_turn_stale_seconds: float,
     executor: concurrent.futures.Executor,
-    active: dict[str, concurrent.futures.Future[int]],
+    active: dict[str, concurrent.futures.Future[_DispatchWorkerResult]],
 ) -> int:
     scheduled = 0
     for role in project_config.roles:
@@ -870,7 +951,7 @@ def _dispatch_role_message(
     project_config_path: Path,
     agent_config_root: Path,
     role_id: str,
-) -> int:
+) -> _DispatchWorkerResult:
     worker_db = V4Database(db_path)
     try:
         worker_db.migrate()
@@ -891,10 +972,12 @@ def _dispatch_role_message(
             db=worker_db,
             project_config=project_config,
             client_factory=factory,
-            document_syncer=_document_syncer(project_config_path),
             agent_config_root=agent_config_root,
         ).dispatch_once(role_id=role_id)
-        return 1 if result is not None else 0
+        return _DispatchWorkerResult(
+            processed=1 if result is not None else 0,
+            request_document_sync=result is not None and result.state == "completed",
+        )
     finally:
         worker_db.close()
 
