@@ -1360,9 +1360,10 @@ class V4Runtime:
                 "UPDATE role_instances SET active_turn_id=NULL, state='ready', updated_at=? WHERE role_instance_id=?",
                 (now, role_instance_id),
             )
-        summary = (
-            f"Recovered {role_instance_id} after {event_type}; retired the unusable thread."
-        )
+        if thread_id:
+            summary = f"Recovered {role_instance_id} after {event_type}; retired the unusable thread."
+        else:
+            summary = f"Recovered {role_instance_id} after {event_type}; no active thread metadata was available."
         message_row = self.db.connection.execute(
             "SELECT delivery_attempts FROM message_queue WHERE message_id=?",
             (message_id,),
