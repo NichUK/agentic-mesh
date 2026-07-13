@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 from dataclasses import replace
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from agentic_mesh_v4.reporting import render_agents
 from agentic_mesh_v4.reporting import render_agent_thread
 from agentic_mesh_v4.reporting import render_status
 from agentic_mesh_v4.runtime import V4Runtime
+from agentic_mesh_v4.server import V4Handler
 from v4_postgres import make_v4_db
 
 
@@ -1743,6 +1745,33 @@ def test_v4_agents_page_uses_live_push_stream_without_auto_refresh() -> None:
     assert '<a href="/agent/project-manager/thread">Project Manager</a>' in html
     assert "019f2e47...3bf1a9" in html
     assert "Checking the live dashboard stream." in html
+
+
+def test_v4_event_stream_uses_proxy_safe_http11_chunked_framing() -> None:
+    handler = object.__new__(V4Handler)
+    headers: list[tuple[str, str]] = []
+    handler.send_response = lambda status: headers.append(("status", str(status)))
+    handler.send_header = lambda name, value: headers.append((name, value))
+    handler.end_headers = lambda: None
+
+    handler._start_event_stream()
+
+    assert handler.protocol_version == "HTTP/1.1"
+    assert ("Content-Type", "text/event-stream; charset=utf-8") in headers
+    assert ("Cache-Control", "no-cache, no-transform") in headers
+    assert ("Content-Encoding", "identity") in headers
+    assert ("Transfer-Encoding", "chunked") in headers
+    assert ("X-Accel-Buffering", "no") in headers
+
+
+def test_v4_event_stream_writes_and_terminates_http_chunks() -> None:
+    handler = object.__new__(V4Handler)
+    handler.wfile = BytesIO()
+
+    handler._write_event_stream_frame(b": keep-alive\n\n")
+    handler._finish_event_stream()
+
+    assert handler.wfile.getvalue() == b"E\r\n: keep-alive\n\n\r\n0\r\n\r\n"
 
 
 def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None:
