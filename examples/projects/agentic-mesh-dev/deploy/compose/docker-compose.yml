@@ -144,7 +144,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex app-server --listen ws://0.0.0.0:4700 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4700 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: project-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.project-manager.1
@@ -183,7 +183,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex app-server --listen ws://0.0.0.0:4701 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4701 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: delivery-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.delivery-manager.1
@@ -222,7 +222,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4702 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4702 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: product-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.product-manager.1
@@ -258,7 +258,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4703 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4703 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: business-analyst
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.business-analyst.1
@@ -294,7 +294,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4704 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4704 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: research-analyst
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.research-analyst.1
@@ -330,7 +330,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4705 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4705 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: enterprise-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.enterprise-architect.1
@@ -366,7 +366,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4706 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4706 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: solution-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.solution-architect.1
@@ -402,7 +402,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4707 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4707 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: security-architect
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.security-architect.1
@@ -438,7 +438,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4708 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4708 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: ux-designer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.ux-designer.1
@@ -474,7 +474,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4709 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4709 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: engineering
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.engineering.1
@@ -511,7 +511,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4710 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4710 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: qa-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.qa-engineer.1
@@ -547,7 +547,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex app-server --listen ws://0.0.0.0:4711 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4711 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: platform-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.platform-engineer.1
@@ -586,7 +586,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex app-server --listen ws://0.0.0.0:4712 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; mkdir -p /root/.ssh; if [ -d /mesh/home/.ssh ]; then cp -r /mesh/home/.ssh/. /root/.ssh/; fi; if [ -f /root/.ssh/config ]; then sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config; fi; chmod 700 /root/.ssh; find /root/.ssh -type f -exec chmod 600 {} \; 2>/dev/null || true; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4712 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: release-manager
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.release-manager.1
@@ -625,7 +625,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4713 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4713 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: technical-writer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.technical-writer.1
@@ -661,7 +661,7 @@ services:
       - seccomp=unconfined
       - apparmor=unconfined
     working_dir: /mesh/agent-workspace
-    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex app-server --listen ws://0.0.0.0:4714 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
+    command: sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; chmod -R a+rwX /mesh/agent-workspace /documents; for d in memories tmp sessions cache shell_snapshots; do mkdir -p /mesh/worker-auth/codex/$$d; chmod -R a+rwX /mesh/worker-auth/codex/$$d; done; cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; exec codex -c model=gpt-5.6-sol -c model_reasoning_effort=high -c plan_mode_reasoning_effort=xhigh -c show_raw_agent_reasoning=true app-server --listen ws://0.0.0.0:4714 --ws-auth capability-token --ws-token-file /mesh/agent/ws-token'
     environment:
       AGENTIC_MESH_ROLE_ID: prompt-engineer
       AGENTIC_MESH_ROLE_INSTANCE_ID: agentic-mesh-dev.prompt-engineer.1

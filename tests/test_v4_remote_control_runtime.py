@@ -40,6 +40,11 @@ def test_v4_loads_full_sdlc_team_without_broker() -> None:
     config = load_project_config(PROJECT_CONFIG)
 
     assert tuple(role.role_id for role in config.roles) == DEFAULT_ROLE_IDS
+    for role in config.roles:
+        assert role.model == "gpt-5.6-sol"
+        assert role.reasoning_effort == "high"
+        assert role.plan_mode_reasoning_effort == "xhigh"
+        assert role.show_raw_agent_reasoning is True
     assert config.role("project-manager").authority == "full"
     assert config.role("project-manager").sandbox_mode == "danger-full-access"
     assert config.role("project-manager").approval_policy == "never"
@@ -1851,7 +1856,11 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
     rendered = render_compose(load_project_config(PROJECT_CONFIG))
 
-    assert "codex app-server --listen ws://0.0.0.0:4700" in rendered
+    assert "codex -c model=gpt-5.6-sol" in rendered
+    assert "-c model_reasoning_effort=high" in rendered
+    assert "-c plan_mode_reasoning_effort=xhigh" in rendered
+    assert "-c show_raw_agent_reasoning=true" in rendered
+    assert "app-server --listen ws://0.0.0.0:4700" in rendered
     assert "agentic-mesh-dev-project-manager-1" in rendered
     assert "--document-root /documents" in rendered
     assert "${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents" in rendered

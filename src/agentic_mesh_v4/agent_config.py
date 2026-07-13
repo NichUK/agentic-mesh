@@ -96,6 +96,8 @@ def materialize_agent_configs(
                     "service_name": role.service_name,
                     "model": role.model,
                     "reasoning_effort": role.reasoning_effort,
+                    "plan_mode_reasoning_effort": role.plan_mode_reasoning_effort,
+                    "show_raw_agent_reasoning": role.show_raw_agent_reasoning,
                     "sandbox_mode": role.sandbox_mode,
                 },
                 sort_keys=True,

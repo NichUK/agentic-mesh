@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agentic_mesh_v4.config import V4ProjectConfig
+from agentic_mesh_v4.config import V4RoleConfig
 
 
 OPS_ROLES = {"project-manager", "delivery-manager", "platform-engineer", "release-manager"}
@@ -159,10 +160,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
     for role in project_config.roles:
         lines.extend(
             _role_service(
-                role_id=role.role_id,
-                role_instance_id=role.role_instance_id,
-                service_name=role.service_name,
-                port=role.codex_port,
+                role=role,
             )
         )
         lines.append("")
@@ -178,8 +176,19 @@ def validate_v4_compose(rendered: str) -> None:
         raise ValueError(f"V4 compose contains V3-only components: {', '.join(found)}")
 
 
-def _role_service(*, role_id: str, role_instance_id: str, service_name: str, port: int) -> list[str]:
-    app_server = f"codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+def _role_service(*, role: V4RoleConfig) -> list[str]:
+    role_id = role.role_id
+    role_instance_id = role.role_instance_id
+    service_name = role.service_name
+    port = role.codex_port
+    raw_reasoning = "true" if role.show_raw_agent_reasoning else "false"
+    app_server = (
+        f"codex -c model={role.model} "
+        f"-c model_reasoning_effort={role.reasoning_effort} "
+        f"-c plan_mode_reasoning_effort={role.plan_mode_reasoning_effort} "
+        f"-c show_raw_agent_reasoning={raw_reasoning} "
+        f"app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+    )
     command = (
         "sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; "
         "chmod -R a+rwX /mesh/agent-workspace /documents; "

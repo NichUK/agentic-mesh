@@ -161,6 +161,14 @@ def test_v4_materialized_agents_md_names_safe_output_cli(tmp_path: Path) -> None
     assert "safe-output artifact-link" in text
     assert "safe-output work-item-update" in text
 
+    container = json.loads(
+        (tmp_path / "agents" / "product-manager" / "1" / "container.json").read_text(encoding="utf-8")
+    )
+    assert container["model"] == "gpt-5.6-sol"
+    assert container["reasoning_effort"] == "high"
+    assert container["plan_mode_reasoning_effort"] == "xhigh"
+    assert container["show_raw_agent_reasoning"] is True
+
 
 def test_v4_safe_output_memory_record_can_write_role_and_institutional_memory(tmp_path: Path, capsys) -> None:
     db_path = make_v4_db_url()
