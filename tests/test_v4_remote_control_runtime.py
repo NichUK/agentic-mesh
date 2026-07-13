@@ -1194,11 +1194,12 @@ def test_v4_document_sync_coalesces_without_occupying_role_dispatch_workers(tmp_
     sync_started = threading.Event()
     release_sync = threading.Event()
     sync_calls: list[str] = []
+    sync_release_results: list[bool] = []
 
     def sync() -> object:
         sync_calls.append("sync")
         sync_started.set()
-        assert release_sync.wait(timeout=2)
+        sync_release_results.append(release_sync.wait(timeout=2))
         return object()
 
     monkeypatch.setattr(v4_cli, "_document_syncer", lambda _path: sync)
@@ -1223,6 +1224,7 @@ def test_v4_document_sync_coalesces_without_occupying_role_dispatch_workers(tmp_
             time.sleep(0.01)
 
     assert sync_calls == ["sync", "sync"]
+    assert sync_release_results == [True, True]
 
 
 def test_v4_dispatch_worker_requests_background_sync_only_after_completed_turn(tmp_path: Path, monkeypatch) -> None:
