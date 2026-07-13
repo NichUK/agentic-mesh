@@ -232,7 +232,8 @@ export AGENTIC_MESH_LIFECYCLE_WORKING_DIRECTORY
 mkdir -p "$STAGE_DIR"
 cp "$COMPOSE_SRC/$COMPOSE_FILE_NAME" "$STAGE_DIR/docker-compose.yml"
 cp "$COMPOSE_SRC/docker-compose.linuxch.yml" "$STAGE_DIR/docker-compose.linuxch.yml"
-if grep -q "/mesh/workspaces/agentic-mesh/src" "$STAGE_DIR/docker-compose.yml"; then
+if grep -Eq "/mesh/(workspaces/agentic-mesh|project)/src" \
+  "$STAGE_DIR/docker-compose.yml" "$STAGE_DIR/docker-compose.linuxch.yml"; then
   echo "Refusing to deploy: staged V4 compose points control-plane PYTHONPATH at the workspace repo." >&2
   echo "Regenerate compose from the system source before deploying." >&2
   exit 1
@@ -320,7 +321,7 @@ chmod 600 "$STAGE_DIR/.env"
 validate_effective_compose() {
   compose_bin=$1
   shift
-  if "$compose_bin" "$@" config | grep -q "PYTHONPATH: /mesh/workspaces/agentic-mesh/src"; then
+  if "$compose_bin" "$@" config | grep -Eq "PYTHONPATH:.*/mesh/(workspaces/agentic-mesh|project)/src"; then
     echo "Refusing to deploy: effective V4 compose points control-plane PYTHONPATH at the workspace repo." >&2
     echo "Regenerate compose from the system source and remove PYTHONPATH overrides from deployment env." >&2
     exit 1
