@@ -1226,13 +1226,17 @@ def test_v4_document_sync_coalesces_without_occupying_role_dispatch_workers(tmp_
 
 
 def test_v4_dispatch_worker_requests_background_sync_only_after_completed_turn(tmp_path: Path, monkeypatch) -> None:
-    db = make_v4_db()
-    config = load_project_config(PROJECT_CONFIG)
-    runtime = V4Runtime(db=db, project_config=config)
-    runtime.register_roles()
-    db_path = db.path
-    db.close()
     captured: dict[str, object] = {}
+
+    class FakeDatabase:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def migrate(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
 
     class FakeRuntime:
         def __init__(self, **kwargs) -> None:
@@ -1242,10 +1246,11 @@ def test_v4_dispatch_worker_requests_background_sync_only_after_completed_turn(t
             assert role_id == "project-manager"
             return type("Result", (), {"state": "completed"})()
 
+    monkeypatch.setattr(v4_cli, "V4Database", FakeDatabase)
     monkeypatch.setattr(v4_cli, "V4Runtime", FakeRuntime)
 
     result = v4_cli._dispatch_role_message(  # noqa: SLF001 - regression for live dispatcher path.
-        db_path=db_path,
+        db_path="postgresql://unused",
         project_config_path=PROJECT_CONFIG,
         agent_config_root=tmp_path / "agents",
         role_id="project-manager",
