@@ -390,6 +390,28 @@ def test_v4_snapshot_reports_busy_role_and_db_memory_count(tmp_path: Path) -> No
     assert project_manager["memory_count"] == 1
 
 
+def test_v4_snapshot_reports_queued_role_as_queued_instead_of_ready(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(
+        target_role="project-manager",
+        text="Please do a status sweep",
+        source="teams",
+    )
+
+    project_manager = next(
+        item for item in db.snapshot()["roles"] if item["role_instance_id"] == "agentic-mesh-dev.project-manager.1"
+    )
+
+    assert project_manager["state"] == "ready"
+    assert project_manager["effective_state"] == "queued"
+    assert project_manager["queued_messages"] == 1
+    assert project_manager["current_message"] is None
+    assert message_id
+
+
 def test_v4_snapshot_marks_active_turn_as_finalizing_after_handoff(tmp_path: Path) -> None:
     db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
