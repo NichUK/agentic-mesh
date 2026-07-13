@@ -838,14 +838,19 @@ def _schedule_available_dispatches(
             continue
         active_message = db.active_message_for_role(target_role=role.role_id)
         if active_message is not None:
-            recovered_stale = db.requeue_active_messages_for_role(
-                target_role=role.role_id,
-                stale_after_seconds=active_turn_stale_seconds,
-                summary=(
-                    f"Recovered stale active delivery for {role.role_id}; "
-                    f"message stayed active longer than {active_turn_stale_seconds:.0f} seconds."
-                ),
+            terminal_event = db.terminal_agent_event_for_message(
+                message_id=str(active_message["message_id"]),
             )
+            recovered_stale = 0
+            if terminal_event is None:
+                recovered_stale = db.requeue_active_messages_for_role(
+                    target_role=role.role_id,
+                    stale_after_seconds=active_turn_stale_seconds,
+                    summary=(
+                        f"Recovered stale active delivery for {role.role_id}; "
+                        f"message stayed active longer than {active_turn_stale_seconds:.0f} seconds."
+                    ),
+                )
             if recovered_stale and lifecycle is not None:
                 _hibernate_recovered_role(lifecycle=lifecycle, role=role, recovered=recovered_stale)
             active_message = db.active_message_for_role(target_role=role.role_id)

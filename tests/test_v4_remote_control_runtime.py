@@ -1387,6 +1387,78 @@ def test_v4_dispatch_scheduler_schedules_active_turn_continuation(tmp_path: Path
     assert dispatched_roles == ["project-manager"]
 
 
+def test_v4_dispatch_scheduler_reconciles_terminal_event_before_stale_requeue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    runtime = V4Runtime(db=db, project_config=config)
+    runtime.register_roles()
+    role_id = "enterprise-architect"
+    role_instance_id = "agentic-mesh-dev.enterprise-architect.1"
+    message_id = runtime.enqueue_conversation(
+        target_role=role_id,
+        text="Reconcile the completed architecture turn.",
+        source="safe-output",
+    )
+    db.claim_next_message(role_id=role_id, worker_id=role_instance_id)
+    db.mark_message_state(message_id, state="active_turn", summary="Enterprise Architect is still working.")
+    db.record_agent_event(
+        role_instance_id=role_instance_id,
+        event_type="turn/completed",
+        thread_id="thread-enterprise",
+        turn_id="turn-enterprise",
+        message_id=message_id,
+    )
+    old_timestamp = "2000-01-01T00:00:00+00:00"
+    with db.connection:
+        db.connection.execute(
+            "UPDATE message_queue SET locked_at=?, updated_at=? WHERE message_id=?",
+            (old_timestamp, old_timestamp, message_id),
+        )
+        db.connection.execute(
+            "UPDATE agent_events SET created_at=? WHERE message_id=?",
+            (old_timestamp, message_id),
+        )
+    dispatched_roles: list[str] = []
+
+    def fake_dispatch_role_message(**kwargs) -> v4_cli._DispatchWorkerResult:
+        dispatched_roles.append(kwargs["role_id"])
+        return v4_cli._DispatchWorkerResult(processed=1)  # noqa: SLF001
+
+    monkeypatch.setattr(v4_cli, "_dispatch_role_message", fake_dispatch_role_message)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        active: dict[str, concurrent.futures.Future[v4_cli._DispatchWorkerResult]] = {}
+        scheduled = v4_cli._schedule_available_dispatches(  # noqa: SLF001 - terminal reconciliation ordering.
+            db=db,
+            project_config=config,
+            project_config_path=PROJECT_CONFIG,
+            agent_config_root=tmp_path / "agents",
+            lifecycle=None,
+            active_turn_stale_seconds=1,
+            executor=executor,
+            active=active,
+        )
+        processed, sync_requested = v4_cli._collect_completed_dispatches(active)  # noqa: SLF001
+
+    row = db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    recovered = db.connection.execute(
+        "SELECT COUNT(*) AS total FROM message_journal WHERE message_id=? AND stage='recovered'",
+        (message_id,),
+    ).fetchone()
+    assert scheduled == 1
+    assert processed == 1
+    assert sync_requested is False
+    assert dispatched_roles == [role_id]
+    assert row["state"] == "active_turn"
+    assert recovered["total"] == 0
+
+
 def test_v4_document_sync_coalesces_without_occupying_role_dispatch_workers(tmp_path: Path, monkeypatch) -> None:
     sync_started = threading.Event()
     release_sync = threading.Event()
