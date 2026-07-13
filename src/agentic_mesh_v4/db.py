@@ -786,7 +786,12 @@ class V4Database:
                 """
                 SELECT * FROM message_queue
                 WHERE target_role=? AND state IN ('queued', 'ready')
-                ORDER BY steering DESC, created_at ASC
+                ORDER BY steering DESC,
+                         CASE
+                           WHEN source IN ('teams', 'api', 'cli') THEN 0
+                           ELSE 1
+                         END ASC,
+                         created_at ASC
                 LIMIT 1
                 """,
                 (role_id,),
@@ -826,6 +831,26 @@ class V4Database:
             (role_id,),
         ).fetchone()
         return row is not None
+
+    def downgrade_message_steering(self, message_id: str, *, summary: str) -> None:
+        now = utc_now()
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT correlation_id, locked_by, state FROM message_queue WHERE message_id=?",
+                (message_id,),
+            ).fetchone()
+            self.connection.execute(
+                "UPDATE message_queue SET steering=0, updated_at=? WHERE message_id=?",
+                (now, message_id),
+            )
+        self.record_message_journal(
+            message_id=message_id,
+            correlation_id=str(row["correlation_id"] if row else f"corr-{message_id}"),
+            role_instance_id=str(row["locked_by"]) if row and row["locked_by"] else None,
+            stage="steering_downgraded",
+            status=str(row["state"] if row else "queued"),
+            summary=summary,
+        )
 
     def mark_message_state(self, message_id: str, *, state: str, summary: str = "") -> None:
         now = utc_now()

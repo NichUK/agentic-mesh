@@ -582,3 +582,19 @@ or `release_review`.
 - Ordered project documents use three-digit prefixes. Slice-specific evidence
   remains in the work-item dossier; durable architecture knowledge belongs in
   the portfolio.
+
+## 2026-07-13 V4 Human Message Wake Recovery
+
+- A stopped Project Manager was not woken because runtime, dispatcher, and
+  watchdog had been recreated against the repository example project instead
+  of the external project root. LinuxCH control-plane services must mount
+  `/home/nich/agentic-mesh-projects/agentic-mesh-dev` and import runtime code
+  only from `/mesh/system/src`.
+- Human Teams/API/CLI conversation messages take precedence over internal
+  safe-output and runtime-escalation backlog for the same role. Explicit live
+  steering remains highest priority.
+- Codex `turn/steer` requires `expectedTurnId`. A steering message that cannot
+  reach a live turn is downgraded and delivered as a normal queued turn rather
+  than failing or remaining stranded.
+- LinuxCH release cleanup removes stopped role containers before starting the
+  dispatcher, so automatic queue-driven wake cannot race container removal.

@@ -454,6 +454,9 @@ def test_v4_same_conversation_message_steers_into_active_turn(tmp_path: Path) ->
         "thread/resume",
         "turn/steer",
     ]
+    steer_request = next(item for item in transport.sent if item.get("method") == "turn/steer")
+    assert steer_request["params"]["threadId"] == "thread-1"
+    assert steer_request["params"]["expectedTurnId"] == "turn-1"
 
 
 def test_v4_status_does_not_show_steered_messages_as_active_turns(tmp_path: Path) -> None:
@@ -580,6 +583,36 @@ def test_v4_failed_immediate_steering_downgrades_to_normal_queue(tmp_path: Path)
         )
     ]
     assert any(item["stage"] == "steering_downgraded" and "Steering failed" in item["summary"] for item in journal)
+
+
+def test_v4_steering_without_an_active_turn_queues_normal_delivery(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    client = CodexAppServerClient(InMemoryTransport())
+    runtime = V4Runtime(db=db, project_config=config, client_factory=lambda _role_id: client)
+    runtime.register_roles()
+
+    message_id = runtime.enqueue_or_steer_conversation(
+        target_role="project-manager",
+        text="Please answer this next",
+        source="teams",
+        conversation_ref="conversation-1",
+        steering=True,
+    )
+
+    row = db.connection.execute(
+        "SELECT state, steering FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    assert row["state"] == "queued"
+    assert row["steering"] == 0
+    journal = list(
+        db.connection.execute(
+            "SELECT stage FROM message_journal WHERE message_id=? ORDER BY created_at",
+            (message_id,),
+        )
+    )
+    assert any(item["stage"] == "steering_downgraded" for item in journal)
 
 
 def test_v4_orphaned_steering_message_dispatches_as_normal_turn(tmp_path: Path) -> None:
