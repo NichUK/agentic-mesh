@@ -705,7 +705,7 @@
         },
         "show_raw_agent_reasoning": {
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "sandbox_mode": {
           "type": "string",
@@ -743,7 +743,7 @@
         "show_raw_agent_reasoning": {
           "type": "boolean",
           "description": "Expose raw agent reasoning events to authenticated runtime observers.",
-          "default": true
+          "default": false
         },
         "sandbox_mode": {
           "type": "string",

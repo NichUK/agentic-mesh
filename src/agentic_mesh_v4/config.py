@@ -52,7 +52,7 @@ class V4RoleConfig:
     model: str = "gpt-5.6-sol"
     reasoning_effort: str = "high"
     plan_mode_reasoning_effort: str = "xhigh"
-    show_raw_agent_reasoning: bool = True
+    show_raw_agent_reasoning: bool = False
     sandbox_mode: str = "workspace-write"
     approval_policy: str = "never"
     codex_port: int = 4700
@@ -178,7 +178,7 @@ def _roles_from_raw(
                 model=str(worker.get("model") or "gpt-5.6-sol"),
                 reasoning_effort=str(worker.get("reasoning_effort") or "high"),
                 plan_mode_reasoning_effort=str(worker.get("plan_mode_reasoning_effort") or "xhigh"),
-                show_raw_agent_reasoning=_bool_value(worker.get("show_raw_agent_reasoning"), default=True),
+                show_raw_agent_reasoning=_bool_value(worker.get("show_raw_agent_reasoning"), default=False),
                 sandbox_mode=_sandbox_mode(role_id, str(worker.get("sandbox_mode") or "")),
                 approval_policy=_approval_policy(role_id, str(worker.get("approval_policy") or "")),
                 codex_port=4700 + index,
@@ -205,7 +205,7 @@ def _default_role(
         model=str(worker_defaults.get("model") or "gpt-5.6-sol"),
         reasoning_effort=str(worker_defaults.get("reasoning_effort") or "high"),
         plan_mode_reasoning_effort=str(worker_defaults.get("plan_mode_reasoning_effort") or "xhigh"),
-        show_raw_agent_reasoning=_bool_value(worker_defaults.get("show_raw_agent_reasoning"), default=True),
+        show_raw_agent_reasoning=_bool_value(worker_defaults.get("show_raw_agent_reasoning"), default=False),
         sandbox_mode=_sandbox_mode(role_id, str(worker_defaults.get("sandbox_mode") or "")),
         approval_policy=_approval_policy(role_id, str(worker_defaults.get("approval_policy") or "")),
         codex_port=4700 + index,
