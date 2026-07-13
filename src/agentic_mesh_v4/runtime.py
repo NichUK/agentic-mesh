@@ -145,7 +145,12 @@ class V4Runtime:
             return message_id
         role_instance_id = role.role_instance_id
         thread_id = self._active_thread_id(role_instance_id)
-        if not thread_id:
+        turn_id = self._active_turn_id(role_instance_id)
+        if not thread_id or not turn_id:
+            self.db.downgrade_message_steering(
+                message_id,
+                summary="No active Codex turn was available; queued for normal delivery.",
+            )
             return message_id
         try:
             client = self.client_factory(role.role_id)
@@ -160,8 +165,12 @@ class V4Runtime:
                 role_instance_id=role_instance_id,
             )
             client.resume_thread(thread_id)
-            client.steer_turn(thread_id=thread_id, text=text)
+            client.steer_turn(thread_id=thread_id, turn_id=turn_id, text=text)
         except Exception as exc:
+            self.db.downgrade_message_steering(
+                message_id,
+                summary=f"Steering failed; downgraded to normal delivery: {exc}",
+            )
             self.db.mark_message_state(
                 message_id,
                 state="queued",
@@ -221,37 +230,37 @@ class V4Runtime:
             )
             thread_id = self._thread_for_role(client=client, role_instance_id=role_instance_id, role=role)
             if message.steering:
-                client.steer_turn(thread_id=thread_id, text=message.text)
-                turn_id = None
-                state = "steered"
-            else:
-                turn_id = client.start_turn(thread_id=thread_id, text=message.text, model=role.model)
-                state = "active_turn"
-                now = utc_now()
-                with self.db.connection:
+                self.db.downgrade_message_steering(
+                    message.message_id,
+                    summary="Queued steering had no live turn; delivering it as a normal turn.",
+                )
+            turn_id = client.start_turn(thread_id=thread_id, text=message.text, model=role.model)
+            state = "active_turn"
+            now = utc_now()
+            with self.db.connection:
+                self.db.connection.execute(
+                    """
+                    UPDATE role_instances
+                    SET active_turn_id=?, state='active', updated_at=?
+                    WHERE role_instance_id=?
+                    """,
+                    (turn_id, now, role_instance_id),
+                )
+                if turn_id is not None:
                     self.db.connection.execute(
                         """
-                        UPDATE role_instances
-                        SET active_turn_id=?, state='active', updated_at=?
-                        WHERE role_instance_id=?
+                        INSERT INTO codex_turns(
+                          turn_id, thread_id, message_id, status, started_at, completed_at
+                        ) VALUES(?,?,?,?,?,NULL)
+                        ON CONFLICT(turn_id) DO UPDATE SET
+                          thread_id=excluded.thread_id,
+                          message_id=excluded.message_id,
+                          status=excluded.status,
+                          started_at=excluded.started_at,
+                          completed_at=NULL
                         """,
-                        (turn_id, now, role_instance_id),
+                        (turn_id, thread_id, message.message_id, "active", now),
                     )
-                    if turn_id is not None:
-                        self.db.connection.execute(
-                            """
-                            INSERT INTO codex_turns(
-                              turn_id, thread_id, message_id, status, started_at, completed_at
-                            ) VALUES(?,?,?,?,?,NULL)
-                            ON CONFLICT(turn_id) DO UPDATE SET
-                              thread_id=excluded.thread_id,
-                              message_id=excluded.message_id,
-                              status=excluded.status,
-                              started_at=excluded.started_at,
-                              completed_at=NULL
-                            """,
-                            (turn_id, thread_id, message.message_id, "active", now),
-                        )
             self.db.mark_message_state(message.message_id, state=state, summary=f"Delivered to {role_instance_id}")
             reply_text = self._drain_available_events(
                 client=client,
