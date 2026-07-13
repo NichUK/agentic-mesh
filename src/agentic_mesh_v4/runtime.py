@@ -1184,6 +1184,8 @@ class V4Runtime:
         digest.update(str(role.approval_policy).encode("utf-8"))
         digest.update(str(role.model).encode("utf-8"))
         digest.update(str(role.reasoning_effort).encode("utf-8"))
+        digest.update(str(role.plan_mode_reasoning_effort).encode("utf-8"))
+        digest.update(str(role.show_raw_agent_reasoning).encode("utf-8"))
         return digest.hexdigest()
 
     def _recorded_agent_reply_text(self, *, message_id: str) -> str:

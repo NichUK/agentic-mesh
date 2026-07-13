@@ -22,6 +22,9 @@
         "$ref": "#/$defs/projectRole"
       }
     },
+    "worker_defaults": {
+      "$ref": "#/$defs/workerDefaults"
+    },
     "goal": {
       "$ref": "#/$defs/projectGoal"
     },
@@ -682,6 +685,38 @@
       "type": "string",
       "enum": ["notify", "dashboard_only", "suppress", "blocked_unroutable"]
     },
+    "workerDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string",
+          "default": "gpt-5.6-sol"
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": ["none", "minimal", "low", "medium", "high", "xhigh"],
+          "default": "high"
+        },
+        "plan_mode_reasoning_effort": {
+          "type": "string",
+          "enum": ["none", "minimal", "low", "medium", "high", "xhigh"],
+          "default": "xhigh"
+        },
+        "show_raw_agent_reasoning": {
+          "type": "boolean",
+          "default": true
+        },
+        "sandbox_mode": {
+          "type": "string",
+          "enum": ["read-only", "workspace-write", "danger-full-access"]
+        },
+        "approval_policy": {
+          "type": "string"
+        }
+      },
+      "default": {}
+    },
     "worker": {
       "type": "object",
       "additionalProperties": false,
@@ -695,9 +730,20 @@
         },
         "reasoning_effort": {
           "type": "string",
-          "description": "Model reasoning effort hint passed to worker adapters that support it. Defaults to medium when omitted.",
+          "description": "Model reasoning effort hint passed to worker adapters that support it. Defaults to high when omitted.",
           "enum": ["none", "minimal", "low", "medium", "high", "xhigh"],
-          "default": "medium"
+          "default": "high"
+        },
+        "plan_mode_reasoning_effort": {
+          "type": "string",
+          "description": "Model reasoning effort used for plan-mode turns.",
+          "enum": ["none", "minimal", "low", "medium", "high", "xhigh"],
+          "default": "xhigh"
+        },
+        "show_raw_agent_reasoning": {
+          "type": "boolean",
+          "description": "Expose raw agent reasoning events to authenticated runtime observers.",
+          "default": true
         },
         "sandbox_mode": {
           "type": "string",

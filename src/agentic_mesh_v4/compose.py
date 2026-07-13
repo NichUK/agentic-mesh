@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
+
 from agentic_mesh_v4.config import V4ProjectConfig
+from agentic_mesh_v4.config import V4RoleConfig
 
 
 OPS_ROLES = {"project-manager", "delivery-manager", "platform-engineer", "release-manager"}
@@ -8,6 +11,7 @@ DEV_ROLES = {"engineering"}
 QA_ROLES = {"qa-engineer"}
 SSH_ROLES = OPS_ROLES
 DOCKER_SOCKET_ROLES = OPS_ROLES | DEV_ROLES
+CODEX_CONFIG_ATOM = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def render_compose(project_config: V4ProjectConfig) -> str:
@@ -159,10 +163,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
     for role in project_config.roles:
         lines.extend(
             _role_service(
-                role_id=role.role_id,
-                role_instance_id=role.role_instance_id,
-                service_name=role.service_name,
-                port=role.codex_port,
+                role=role,
             )
         )
         lines.append("")
@@ -178,8 +179,25 @@ def validate_v4_compose(rendered: str) -> None:
         raise ValueError(f"V4 compose contains V3-only components: {', '.join(found)}")
 
 
-def _role_service(*, role_id: str, role_instance_id: str, service_name: str, port: int) -> list[str]:
-    app_server = f"codex app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+def _role_service(*, role: V4RoleConfig) -> list[str]:
+    role_id = role.role_id
+    role_instance_id = role.role_instance_id
+    service_name = role.service_name
+    port = role.codex_port
+    model = _codex_config_atom(role.model, field="model")
+    reasoning_effort = _codex_config_atom(role.reasoning_effort, field="reasoning_effort")
+    plan_mode_reasoning_effort = _codex_config_atom(
+        role.plan_mode_reasoning_effort,
+        field="plan_mode_reasoning_effort",
+    )
+    raw_reasoning = "true" if role.show_raw_agent_reasoning else "false"
+    app_server = (
+        f"codex -c model={model} "
+        f"-c model_reasoning_effort={reasoning_effort} "
+        f"-c plan_mode_reasoning_effort={plan_mode_reasoning_effort} "
+        f"-c show_raw_agent_reasoning={raw_reasoning} "
+        f"app-server --listen ws://0.0.0.0:{port} --ws-auth capability-token --ws-token-file /mesh/agent/ws-token"
+    )
     command = (
         "sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; "
         "chmod -R a+rwX /mesh/agent-workspace /documents; "
@@ -256,6 +274,12 @@ def _role_service(*, role_id: str, role_instance_id: str, service_name: str, por
             "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro",
         ])
     return lines
+
+
+def _codex_config_atom(value: str, *, field: str) -> str:
+    if not CODEX_CONFIG_ATOM.fullmatch(value):
+        raise ValueError(f"invalid Codex {field}: {value!r}")
+    return value
 
 
 def _role_image(role_id: str) -> str:

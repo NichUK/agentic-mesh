@@ -3,6 +3,11 @@ agent_network_id: agentic-mesh-dev
 name: Agentic Mesh Development V4
 goal:
   description: Prove the V4 Codex remote-control agent runtime with one Codex app-server container per role, Postgres message queues, Teams routing, external role configuration, DB-backed memory, and safe-output tools for durable workflow effects.
+worker_defaults:
+  model: gpt-5.6-sol
+  reasoning_effort: high
+  plan_mode_reasoning_effort: xhigh
+  show_raw_agent_reasoning: true
 document_library:
   adapter: onedrive
   drive_id: ${AGENTIC_MESH_ONEDRIVE_DRIVE_ID}
@@ -333,36 +338,26 @@ roles:
     template: project-manager
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: danger-full-access
   delivery-manager:
     template: delivery-manager
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: danger-full-access
   product-manager:
     template: product-manager
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   business-analyst:
     template: business-analyst
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   research-analyst:
     template: research-analyst
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   enterprise-architect:
     template: enterprise-architect
@@ -371,69 +366,49 @@ roles:
       - Keep the Agentic Mesh enterprise architecture portfolio aligned with open-core positioning, provider-neutral adapter boundaries, multi-project role networks, and source/runtime/project/document separation.
       - Treat the V4 runtime as the current product baseline and record future-state changes without reviving V2 or V3 implementation paths.
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   solution-architect:
     template: solution-architect
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   security-architect:
     template: security-architect
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   ux-designer:
     template: ux-designer
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   engineering:
     template: engineering
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: danger-full-access
   qa-engineer:
     template: qa-engineer
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   platform-engineer:
     template: platform-engineer
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: danger-full-access
   release-manager:
     template: release-manager
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: danger-full-access
   technical-writer:
     template: technical-writer
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write
   prompt-engineer:
     template: prompt-engineer
     instances: 1
     worker:
-      model: gpt-5.5
-      reasoning_effort: high
       sandbox_mode: workspace-write

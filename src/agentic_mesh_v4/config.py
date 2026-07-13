@@ -49,8 +49,10 @@ class V4RoleConfig:
     agent_network_id: str = "agentic-mesh-dev"
     instances: int = 1
     authority: str = "scoped"
-    model: str = "gpt-5.5"
+    model: str = "gpt-5.6-sol"
     reasoning_effort: str = "high"
+    plan_mode_reasoning_effort: str = "xhigh"
+    show_raw_agent_reasoning: bool = True
     sandbox_mode: str = "workspace-write"
     approval_policy: str = "never"
     codex_port: int = 4700
@@ -103,7 +105,14 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
 
     project_id = str(raw.get("project_id") or "agentic-mesh-dev")
     agent_network_id = str(raw.get("agent_network_id") or _nested(raw, ("agent_mesh", "id")) or "agentic-mesh-dev")
-    roles = _roles_from_raw(raw.get("roles"), agent_network_id=agent_network_id)
+    worker_defaults = raw.get("worker_defaults")
+    if worker_defaults is not None and not isinstance(worker_defaults, dict):
+        raise ValueError("worker_defaults must be a mapping")
+    roles = _roles_from_raw(
+        raw.get("roles"),
+        agent_network_id=agent_network_id,
+        worker_defaults=worker_defaults or {},
+    )
     flow = _resolve_flow(raw.get("flow"), config_path=config_path)
     if flow:
         validate_flow_conditions(flow)
@@ -125,17 +134,39 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
     )
 
 
-def _roles_from_raw(raw_roles: object, *, agent_network_id: str) -> tuple[V4RoleConfig, ...]:
+def _roles_from_raw(
+    raw_roles: object,
+    *,
+    agent_network_id: str,
+    worker_defaults: dict[str, Any],
+) -> tuple[V4RoleConfig, ...]:
     if not isinstance(raw_roles, dict) or not raw_roles:
-        return tuple(_default_role(role_id, index, agent_network_id=agent_network_id) for index, role_id in enumerate(DEFAULT_ROLE_IDS))
+        return tuple(
+            _default_role(
+                role_id,
+                index,
+                agent_network_id=agent_network_id,
+                worker_defaults=worker_defaults,
+            )
+            for index, role_id in enumerate(DEFAULT_ROLE_IDS)
+        )
 
     roles: list[V4RoleConfig] = []
     for index, role_id in enumerate(DEFAULT_ROLE_IDS):
         item = raw_roles.get(role_id)
         if not isinstance(item, dict):
-            roles.append(_default_role(role_id, index, agent_network_id=agent_network_id))
+            roles.append(
+                _default_role(
+                    role_id,
+                    index,
+                    agent_network_id=agent_network_id,
+                    worker_defaults=worker_defaults,
+                )
+            )
             continue
-        worker = item.get("worker") if isinstance(item.get("worker"), dict) else {}
+        worker = dict(worker_defaults)
+        if isinstance(item.get("worker"), dict):
+            worker.update(item["worker"])
         roles.append(
             V4RoleConfig(
                 agent_network_id=agent_network_id,
@@ -144,8 +175,10 @@ def _roles_from_raw(raw_roles: object, *, agent_network_id: str) -> tuple[V4Role
                 template=str(item.get("template") or role_id),
                 instances=int(item.get("instances") or 1),
                 authority="full" if role_id in FULL_ACCESS_ROLES else "scoped",
-                model=str(worker.get("model") or "gpt-5.5"),
+                model=str(worker.get("model") or "gpt-5.6-sol"),
                 reasoning_effort=str(worker.get("reasoning_effort") or "high"),
+                plan_mode_reasoning_effort=str(worker.get("plan_mode_reasoning_effort") or "xhigh"),
+                show_raw_agent_reasoning=_bool_value(worker.get("show_raw_agent_reasoning"), default=True),
                 sandbox_mode=_sandbox_mode(role_id, str(worker.get("sandbox_mode") or "")),
                 approval_policy=_approval_policy(role_id, str(worker.get("approval_policy") or "")),
                 codex_port=4700 + index,
@@ -156,15 +189,25 @@ def _roles_from_raw(raw_roles: object, *, agent_network_id: str) -> tuple[V4Role
     return tuple(roles)
 
 
-def _default_role(role_id: str, index: int, *, agent_network_id: str) -> V4RoleConfig:
+def _default_role(
+    role_id: str,
+    index: int,
+    *,
+    agent_network_id: str,
+    worker_defaults: dict[str, Any],
+) -> V4RoleConfig:
     return V4RoleConfig(
         agent_network_id=agent_network_id,
         role_id=role_id,
         display_name=_display_name(role_id),
         template=role_id,
         authority="full" if role_id in FULL_ACCESS_ROLES else "scoped",
-        sandbox_mode=_sandbox_mode(role_id, ""),
-        approval_policy=_approval_policy(role_id, ""),
+        model=str(worker_defaults.get("model") or "gpt-5.6-sol"),
+        reasoning_effort=str(worker_defaults.get("reasoning_effort") or "high"),
+        plan_mode_reasoning_effort=str(worker_defaults.get("plan_mode_reasoning_effort") or "xhigh"),
+        show_raw_agent_reasoning=_bool_value(worker_defaults.get("show_raw_agent_reasoning"), default=True),
+        sandbox_mode=_sandbox_mode(role_id, str(worker_defaults.get("sandbox_mode") or "")),
+        approval_policy=_approval_policy(role_id, str(worker_defaults.get("approval_policy") or "")),
         codex_port=4700 + index,
     )
 
@@ -181,6 +224,22 @@ def _approval_policy(role_id: str, configured: str) -> str:
     if configured:
         return configured
     return "never"
+
+
+def _bool_value(value: object, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    raise ValueError(f"expected a boolean value, got {value!r}")
 
 
 def _display_name(role_id: str) -> str:

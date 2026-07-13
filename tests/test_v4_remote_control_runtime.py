@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import concurrent.futures
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from agentic_mesh_v4.agent_config import materialize_agent_configs
 from agentic_mesh_v4 import cli as v4_cli
@@ -9,6 +12,7 @@ from agentic_mesh_v4.codex_protocol import CodexAppServerClient
 from agentic_mesh_v4.codex_protocol import InMemoryTransport
 from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
+from agentic_mesh_v4.config import _bool_value
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.reporting import render_agents
 from agentic_mesh_v4.reporting import render_agent_thread
@@ -40,6 +44,11 @@ def test_v4_loads_full_sdlc_team_without_broker() -> None:
     config = load_project_config(PROJECT_CONFIG)
 
     assert tuple(role.role_id for role in config.roles) == DEFAULT_ROLE_IDS
+    for role in config.roles:
+        assert role.model == "gpt-5.6-sol"
+        assert role.reasoning_effort == "high"
+        assert role.plan_mode_reasoning_effort == "xhigh"
+        assert role.show_raw_agent_reasoning is True
     assert config.role("project-manager").authority == "full"
     assert config.role("project-manager").sandbox_mode == "danger-full-access"
     assert config.role("project-manager").approval_policy == "never"
@@ -48,6 +57,20 @@ def test_v4_loads_full_sdlc_team_without_broker() -> None:
     assert config.role("product-manager").approval_policy == "never"
     assert config.role("qa-engineer").sandbox_mode == "workspace-write"
     assert config.role("qa-engineer").approval_policy == "never"
+
+
+def test_v4_boolean_config_accepts_integer_zero_and_one() -> None:
+    assert _bool_value(1, default=False) is True
+    assert _bool_value(0, default=True) is False
+
+
+def test_v4_compose_rejects_unsafe_codex_model_value() -> None:
+    config = load_project_config(PROJECT_CONFIG)
+    unsafe_role = replace(config.roles[0], model="gpt-5.6-sol; echo unsafe")
+    unsafe_config = replace(config, roles=(unsafe_role, *config.roles[1:]))
+
+    with pytest.raises(ValueError, match="invalid Codex model"):
+        render_compose(unsafe_config)
 
 
 def test_v4_runtime_source_does_not_use_sqlite_only_upsert_syntax() -> None:
@@ -1851,7 +1874,11 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
     rendered = render_compose(load_project_config(PROJECT_CONFIG))
 
-    assert "codex app-server --listen ws://0.0.0.0:4700" in rendered
+    assert "codex -c model=gpt-5.6-sol" in rendered
+    assert "-c model_reasoning_effort=high" in rendered
+    assert "-c plan_mode_reasoning_effort=xhigh" in rendered
+    assert "-c show_raw_agent_reasoning=true" in rendered
+    assert "app-server --listen ws://0.0.0.0:4700" in rendered
     assert "agentic-mesh-dev-project-manager-1" in rendered
     assert "--document-root /documents" in rendered
     assert "${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents" in rendered
