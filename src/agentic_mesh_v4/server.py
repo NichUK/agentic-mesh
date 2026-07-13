@@ -28,6 +28,7 @@ from agentic_mesh_v4.teams_delivery import TeamsReplySender
 
 
 class V4Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
     db_path: str | None
     project_config: V4ProjectConfig
     document_root: Path
@@ -139,12 +140,7 @@ class V4Handler(BaseHTTPRequestHandler):
             ).fetchone()
         last_created_at = str(latest["created_at"]) if latest else ""
         last_event_id = str(latest["event_id"]) if latest else ""
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
+        self._start_event_stream()
         for _ in range(300):
             rows = []
             if role_instance_ids:
@@ -167,22 +163,18 @@ class V4Handler(BaseHTTPRequestHandler):
                     for row in rows:
                         last_created_at = str(row.get("created_at") or last_created_at)
                         last_event_id = str(row.get("event_id") or last_event_id)
-                        self.wfile.write(f"id: {last_event_id}\n".encode("utf-8"))
-                        self.wfile.write(f"data: {json.dumps(row)}\n\n".encode("utf-8"))
+                        self._write_event_stream_frame(
+                            f"id: {last_event_id}\ndata: {json.dumps(row)}\n\n".encode("utf-8")
+                        )
                 else:
-                    self.wfile.write(b": keep-alive\n\n")
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
+                    self._write_event_stream_frame(b": keep-alive\n\n")
+            except (BrokenPipeError, ConnectionResetError, OSError):
                 return
             time.sleep(1)
+        self._finish_event_stream()
 
     def _handle_agents_events(self, db: V4Database) -> None:
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
+        self._start_event_stream()
         previous_payload = ""
         for _ in range(300):
             snapshot = db.snapshot()
@@ -195,14 +187,37 @@ class V4Handler(BaseHTTPRequestHandler):
             )
             try:
                 if payload != previous_payload:
-                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                    self._write_event_stream_frame(f"data: {payload}\n\n".encode("utf-8"))
                     previous_payload = payload
                 else:
-                    self.wfile.write(b": keep-alive\n\n")
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
+                    self._write_event_stream_frame(b": keep-alive\n\n")
+            except (BrokenPipeError, ConnectionResetError, OSError):
                 return
             time.sleep(1)
+        self._finish_event_stream()
+
+    def _start_event_stream(self) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-transform")
+        self.send_header("Content-Encoding", "identity")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+    def _write_event_stream_frame(self, frame: bytes) -> None:
+        self.wfile.write(f"{len(frame):X}\r\n".encode("ascii"))
+        self.wfile.write(frame)
+        self.wfile.write(b"\r\n")
+        self.wfile.flush()
+
+    def _finish_event_stream(self) -> None:
+        try:
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
 
     def _role_instance_ids(self, db: V4Database, role_id: str) -> tuple[str, ...]:
         rows = db.connection.execute(
