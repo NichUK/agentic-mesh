@@ -24,6 +24,7 @@ AGENTIC_MESH_WORKSPACE_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_
 AGENTIC_MESH_DOCUMENTS_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-}" "$AGENTIC_MESH_PROJECT_HOST_PATH/documents")
 AGENTIC_MESH_CODEX_HOME_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-}" "$AGENTIC_MESH_PROJECT_HOST_PATH/state/worker_mounts/codex-agentic-mesh-dev-team-home-q")
 AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH:-}" /home/nich/agentic-mesh-system-clean/config/otel/collector.yaml)
+AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH="$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/codex/restricted-safe-output-config.toml"
 AGENTIC_MESH_COMPOSE_STAGE_DIR=$(linuxch_host_path_or_default "${AGENTIC_MESH_COMPOSE_STAGE_DIR:-}" /home/nich/agentic-mesh-compose-run)
 : "${AGENTIC_MESH_URL_ROOT:=http://linuxch:8100}"
 : "${AGENTIC_MESH_V4_STATUS_PORT:=8100}"
@@ -43,6 +44,11 @@ AGENTIC_MESH_COMPOSE_STAGE_DIR=$(linuxch_host_path_or_default "${AGENTIC_MESH_CO
 : "${AGENTIC_MESH_DEV_IMAGE_TAG:=agentic-mesh:dev-agent}"
 : "${AGENTIC_MESH_QA_IMAGE_TAG:=agentic-mesh:qa-agent}"
 : "${AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES:=0}"
+
+if [ -d "$AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" ]; then
+  echo "Refusing to release: restricted safe-output config target is a directory: $AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" >&2
+  exit 1
+fi
 
 export AGENTIC_MESH_WORKSPACE_HOST_PATH
 export AGENTIC_MESH_RUNTIME_BUILD_CONTEXT
@@ -123,6 +129,10 @@ PYTHONPATH="$REPO_ROOT/src" python -m agentic_mesh_v4.cli \
 # change which Agentic Mesh source tree the control plane imports.
 cp "$REPO_ROOT/examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml" \
   "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.linuxch.yml"
+mkdir -p "$(dirname "$AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH")"
+cp --remove-destination \
+  "$REPO_ROOT/examples/projects/agentic-mesh-dev/deploy/codex/restricted-safe-output-config.toml" \
+  "$AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH"
 export AGENTIC_MESH_DATABASE_HOST="agentic-mesh-postgres"
 export AGENTIC_MESH_DATABASE_PORT="5432"
 unset AGENTIC_MESH_DATABASE_PASSWORD

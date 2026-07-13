@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
+import os
 import subprocess
+from pathlib import Path
 
+import pytest
 import yaml
 
 from agentic_mesh_v4.cli import _watchdog_services
@@ -227,6 +230,9 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
     assert "Refusing to release: V4 compose points control-plane PYTHONPATH at a mutable project or workspace source tree." in script
     assert 'cp "$REPO_ROOT/examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml"' in script
     assert '"$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.linuxch.yml"' in script
+    assert "AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" in script
+    assert "restricted-safe-output-config.toml" in script
+    assert "cp --remove-destination" in script
     assert 'grep -Eq "/mesh/(workspaces/agentic-mesh|project)/src"' in script
     assert "PYTHONPATH: /mesh/system/src" in script
     assert "--profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image" in script
@@ -260,6 +266,9 @@ def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checko
     )
     assert "AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM" in script
     assert "reject_container_bind_path" in script
+    assert "require_regular_file" in script
+    assert "The deployment will not allow Docker to create a directory" in script
+    assert "AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" in script
     assert "Refusing to deploy: staged V4 compose points control-plane PYTHONPATH at a mutable project or workspace source tree." in script
     assert "Refusing to deploy: effective V4 compose points control-plane PYTHONPATH at a mutable project or workspace source tree." in script
     assert '"$STAGE_DIR/docker-compose.yml" "$STAGE_DIR/docker-compose.linuxch.yml"' in script
@@ -273,6 +282,43 @@ def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checko
         in env_example
     )
     assert "AGENTIC_MESH_WORKSPACE_HOST_PATH=/home/nich/agentic-mesh\n" not in env_example
+
+
+@pytest.mark.parametrize("source_kind", ["missing", "directory"])
+def test_linuxch_deploy_fails_before_compose_for_non_file_restricted_config(
+    tmp_path, source_kind
+) -> None:
+    project_root = tmp_path / "project"
+    config_path = project_root / "deploy" / "codex" / "restricted-safe-output-config.toml"
+    if source_kind == "directory":
+        config_path.mkdir(parents=True)
+    env = {
+        **os.environ,
+        "AGENTIC_MESH_PROJECT_HOST_PATH": str(project_root),
+        "AGENTIC_MESH_COMPOSE_SRC": str(project_root / "deploy" / "compose"),
+    }
+
+    result = subprocess.run(
+        ["sh", "scripts/deploy-linuxch-compose.sh", "up", "-d"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    assert "must exist as a regular file before Docker Compose runs" in result.stderr
+    assert "will not allow Docker to create a directory" in result.stderr
+    if source_kind == "missing":
+        assert not config_path.exists()
+
+
+def test_linuxch_release_checks_directory_config_before_runtime_work() -> None:
+    script = Path("scripts/release-linuxch-compose.sh").read_text(encoding="utf-8")
+
+    check = "restricted safe-output config target is a directory"
+    assert check in script
+    assert script.index(check) < script.index('cd "$REPO_ROOT"')
 
 
 def test_v4_compose_lifecycle_env_file_overrides_container_environment(
@@ -300,6 +346,13 @@ def test_v4_compose_lifecycle_env_file_overrides_container_environment(
     def fake_run(*args, **kwargs):
         commands.append(args[0])
         calls.append(kwargs["env"])
+        if args[0][-3:] == ["config", "--format", "json"]:
+            return subprocess.CompletedProcess(
+                args[0],
+                0,
+                '{"services":{"agentic-mesh-dev-project-manager-1":{"image":"agentic-mesh:base-agent","volumes":[]}}}',
+                "",
+            )
         return subprocess.CompletedProcess(args[0], 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -311,13 +364,14 @@ def test_v4_compose_lifecycle_env_file_overrides_container_environment(
     ).wake_service("agentic-mesh-dev-project-manager-1")
 
     assert calls
-    assert commands[0][-4:] == [
+    assert commands[0][2:4] == ["--profile", "*"]
+    assert commands[1][-4:] == [
         "up",
         "-d",
         "--no-deps",
         "agentic-mesh-dev-project-manager-1",
     ]
-    assert "--no-recreate" not in commands[0]
+    assert "--no-recreate" not in commands[1]
     assert calls[0]["AGENTIC_MESH_PROJECT_HOST_PATH"] == (
         "/home/nich/agentic-mesh-projects/agentic-mesh-dev"
     )
@@ -325,6 +379,82 @@ def test_v4_compose_lifecycle_env_file_overrides_container_environment(
     assert calls[0]["AGENTIC_MESH_WORKSPACE_HOST_PATH"] == (
         "/home/nich/agentic-mesh-projects/agentic-mesh-dev/target-repos/agentic-mesh"
     )
+
+
+def test_v4_compose_lifecycle_recreation_rejects_non_regular_required_bind(
+    tmp_path, monkeypatch
+) -> None:
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_run(*args, **kwargs):
+        command = args[0]
+        commands.append(command)
+        if command[-3:] == ["config", "--format", "json"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(
+                    {
+                        "services": {
+                            "agentic-mesh-dev-business-analyst-1": {
+                                "image": "agentic-mesh:base-agent",
+                                "volumes": [
+                                    {
+                                        "type": "bind",
+                                        "source": "/host/missing-or-directory.toml",
+                                        "target": "/etc/codex/config.toml",
+                                        "bind": {"create_host_path": False},
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        if command[:2] == ["docker", "run"]:
+            return subprocess.CompletedProcess(command, 1, "", "not a regular file")
+        raise AssertionError(f"service creation must not run after failed bind preflight: {command}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="Required regular-file bind failed preflight"):
+        ComposeLifecycle(
+            compose_files=(compose_file,),
+            working_directory=tmp_path,
+        ).wake_service("agentic-mesh-dev-business-analyst-1")
+
+    assert len(commands) == 2
+    assert commands[1][:2] == ["docker", "run"]
+    assert any(
+        value.startswith("type=bind,source=/host/missing-or-directory.toml")
+        for value in commands[1]
+    )
+
+
+def test_linuxch_overlay_marks_restricted_config_as_required_file_bind() -> None:
+    overlay = _linuxch_overlay_text()
+    required_roles = {
+        "product-manager",
+        "business-analyst",
+        "research-analyst",
+        "security-architect",
+        "ux-designer",
+        "qa-engineer",
+    }
+
+    assert "x-restricted-safe-output-config: &restricted-safe-output-config" in overlay
+    assert "target: /etc/codex/config.toml" in overlay
+    assert "create_host_path: false" in overlay
+    assert overlay.count("- *restricted-safe-output-config") == len(required_roles)
+    for role_id in required_roles:
+        marker = f"  agentic-mesh-dev-{role_id}-1:"
+        start = overlay.index(marker)
+        next_service = overlay.find("\n  agentic-mesh-dev-", start + len(marker))
+        section = overlay[start : next_service if next_service != -1 else None]
+        assert "- *restricted-safe-output-config" in section
 
 
 def test_v4_watchdog_restarts_missing_control_plane_services() -> None:

@@ -1,0 +1,6 @@
+# F04 linuxch remediation: retain the workspace-write filesystem sandbox while
+# permitting the role CLI to connect to its role-bound safe-output proxy.
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
