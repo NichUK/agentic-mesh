@@ -132,7 +132,7 @@ cp "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml" \
 if grep -Eq "/mesh/(workspaces/agentic-mesh|project)/src" \
   "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml" \
   "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.linuxch.yml"; then
-  echo "Refusing to release: generated V4 compose points control-plane PYTHONPATH at the workspace repo." >&2
+  echo "Refusing to release: V4 compose points control-plane PYTHONPATH at a mutable project or workspace source tree." >&2
   exit 1
 fi
 if ! grep -q "PYTHONPATH: /mesh/system/src" "$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.v4.yml"; then

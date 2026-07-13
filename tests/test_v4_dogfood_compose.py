@@ -213,7 +213,7 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
     assert script.index("render-compose") < script.index(
         "--profile build-image build base-agent-image ops-agent-image dev-agent-image qa-agent-image"
     )
-    assert "Refusing to release: generated V4 compose points control-plane PYTHONPATH at the workspace repo." in script
+    assert "Refusing to release: V4 compose points control-plane PYTHONPATH at a mutable project or workspace source tree." in script
     assert 'cp "$REPO_ROOT/examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml"' in script
     assert '"$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.linuxch.yml"' in script
     assert 'grep -Eq "/mesh/(workspaces/agentic-mesh|project)/src"' in script
@@ -244,8 +244,8 @@ def test_linuxch_deploy_script_keeps_agent_workspace_separate_from_system_checko
     )
     assert "AGENTIC_MESH_ALLOW_WORKSPACE_EQUALS_SYSTEM" in script
     assert "reject_container_bind_path" in script
-    assert "Refusing to deploy: staged V4 compose points control-plane PYTHONPATH at the workspace repo." in script
-    assert "Refusing to deploy: effective V4 compose points control-plane PYTHONPATH at the workspace repo." in script
+    assert "Refusing to deploy: staged V4 compose points control-plane PYTHONPATH at a mutable project or workspace source tree." in script
+    assert "Refusing to deploy: effective V4 compose points control-plane PYTHONPATH at a mutable project or workspace source tree." in script
     assert '"$STAGE_DIR/docker-compose.yml" "$STAGE_DIR/docker-compose.linuxch.yml"' in script
     assert 'grep -Eq "PYTHONPATH:.*/mesh/(workspaces/agentic-mesh|project)/src"' in script
     assert "validate_effective_compose docker" in script
