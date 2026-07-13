@@ -930,6 +930,14 @@ class V4Database:
                                FROM agent_events e
                                WHERE e.message_id=m.message_id
                                  AND e.event_type NOT LIKE 'turn/readTimeout%%'
+                                 AND e.event_type NOT IN (
+                                   'remoteControl/status/changed',
+                                   'thread/goal/cleared'
+                                 )
+                                 AND e.event_type NOT LIKE 'thread/tokenUsage/%%'
+                                 AND e.event_type NOT LIKE 'account/rateLimits/%%'
+                                 AND e.event_type NOT LIKE 'thread/status/%%'
+                                 AND e.event_type NOT LIKE 'turn/status/%%'
                              ),
                              m.locked_at,
                              m.updated_at
@@ -1040,6 +1048,46 @@ class V4Database:
                 ),
             )
         return event_id
+
+    def terminal_agent_event_for_message(
+        self,
+        *,
+        message_id: str,
+        turn_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return durable terminal protocol evidence for an active delivery.
+
+        A completed turn wins over a later thread-close notification. This lets
+        the dispatcher finish a turn after a process interruption between
+        persisting ``turn/completed`` and updating the queue read model.
+        """
+
+        params: list[object] = [message_id]
+        turn_clause = ""
+        if turn_id is not None:
+            turn_clause = "AND turn_id=?"
+            params.append(turn_id)
+        row = self.connection.execute(
+            f"""
+            SELECT event_id, event_type, content, payload_json, created_at
+            FROM agent_events
+            WHERE message_id=?
+              {turn_clause}
+              AND event_type IN (
+                'turn/completed',
+                'turn/failed',
+                'turn/cancelled',
+                'turn/canceled',
+                'thread/closed'
+              )
+            ORDER BY CASE WHEN event_type='turn/completed' THEN 0 ELSE 1 END,
+                     created_at DESC,
+                     event_id DESC
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+        return _row_dict(row) if row is not None else None
 
     def record_safe_output_call(
         self,

@@ -299,6 +299,8 @@ function isConsoleNoise(eventType, content) {
   if (!eventType) return !content;
   if (eventType === "item/completed" || eventType === "item/started") return true;
   if (eventType === "turn/completed" || eventType === "turn/diff/updated") return true;
+  if (eventType === "turn/readTimeoutStillRunning" || eventType === "turn/readTimeoutAfterOutput") return true;
+  if (eventType === "remoteControl/status/changed" || eventType === "thread/goal/cleared") return true;
   if (eventType === "serverRequest/resolved") return true;
   if (eventType === "item/commandExecution/requestApproval") return true;
   if (eventType === "item/commandExecution/requestApproval/autoAccepted") return true;
@@ -364,6 +366,10 @@ def _is_console_noise(event_type: str, content: str) -> bool:
         "item/started",
         "turn/completed",
         "turn/diff/updated",
+        "turn/readTimeoutStillRunning",
+        "turn/readTimeoutAfterOutput",
+        "remoteControl/status/changed",
+        "thread/goal/cleared",
         "serverRequest/resolved",
         "item/commandExecution/requestApproval",
         "item/commandExecution/requestApproval/autoAccepted",
