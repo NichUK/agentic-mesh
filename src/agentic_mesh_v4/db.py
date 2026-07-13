@@ -275,6 +275,41 @@ class V4Database:
                   message_id TEXT,
                   turn_id TEXT,
                   source_ref TEXT,
+                  restored_from_revision_id TEXT,
+                  created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS document_revision_contents (
+                  revision_id TEXT PRIMARY KEY,
+                  work_item_id TEXT NOT NULL,
+                  path TEXT NOT NULL,
+                  content_sha256 TEXT NOT NULL,
+                  content TEXT NOT NULL,
+                  byte_length BIGINT NOT NULL,
+                  encoding TEXT NOT NULL DEFAULT 'utf-8',
+                  created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS document_write_attempts (
+                  attempt_id TEXT PRIMARY KEY,
+                  work_item_id TEXT NOT NULL,
+                  path TEXT NOT NULL,
+                  document_type TEXT NOT NULL,
+                  role_instance_id TEXT NOT NULL,
+                  actor_role TEXT NOT NULL,
+                  action TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  reason TEXT,
+                  mandatory_lifecycle BIGINT NOT NULL DEFAULT 0,
+                  base_sha256 TEXT,
+                  current_sha256 TEXT,
+                  proposed_sha256 TEXT NOT NULL,
+                  proposed_byte_length BIGINT NOT NULL,
+                  safe_output_call_id TEXT NOT NULL,
+                  message_id TEXT,
+                  turn_id TEXT,
+                  source_ref TEXT,
+                  diagnostic_json TEXT NOT NULL,
                   created_at TEXT NOT NULL
                 );
 
@@ -519,6 +554,12 @@ class V4Database:
                   ON document_revisions(path, created_at);
                 CREATE INDEX IF NOT EXISTS idx_document_revisions_work_item
                   ON document_revisions(work_item_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_document_revision_contents_work_path
+                  ON document_revision_contents(work_item_id, path, created_at);
+                CREATE INDEX IF NOT EXISTS idx_document_write_attempts_work_path
+                  ON document_write_attempts(work_item_id, path, created_at);
+                CREATE INDEX IF NOT EXISTS idx_document_write_attempts_status
+                  ON document_write_attempts(status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_document_merge_tasks_state
                   ON document_merge_tasks(state, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_document_merge_tasks_work_item
@@ -543,6 +584,7 @@ class V4Database:
             _ensure_column(self.connection, "safe_output_calls", "message_id", "TEXT")
             _ensure_column(self.connection, "safe_output_calls", "turn_id", "TEXT")
             _ensure_column(self.connection, "safe_output_calls", "work_item_id", "TEXT")
+            _ensure_column(self.connection, "document_revisions", "restored_from_revision_id", "TEXT")
             _ensure_column(self.connection, "role_memory", "project_id", "TEXT")
             _ensure_column(self.connection, "role_memory", "role_id", "TEXT")
             _ensure_column(self.connection, "role_memory", "scope", "TEXT NOT NULL DEFAULT 'role'")
@@ -1705,6 +1747,8 @@ class V4Database:
             "preflight_results",
             "document_write_warnings",
             "document_merge_tasks",
+            "document_write_attempts",
+            "document_revision_contents",
             "document_revisions",
             "artifacts",
             "work_items",
@@ -1957,6 +2001,12 @@ class V4Database:
                 "SELECT * FROM document_write_warnings ORDER BY created_at DESC LIMIT 100"
             )
         ]
+        document_write_attempts = [
+            _row_dict(row)
+            for row in self.connection.execute(
+                "SELECT * FROM document_write_attempts ORDER BY created_at DESC LIMIT 100"
+            )
+        ]
         preflight_results = [
             _row_dict(row)
             for row in self.connection.execute(
@@ -2079,6 +2129,7 @@ class V4Database:
             "document_revisions": document_revisions,
             "document_merge_tasks": document_merge_tasks,
             "document_write_warnings": document_write_warnings,
+            "document_write_attempts": document_write_attempts,
             "document_attention": document_attention,
             "preflight_results": preflight_results,
             "preflight_attention": preflight_attention,

@@ -33,6 +33,7 @@ from agentic_mesh_v4.decision_records import request_decision
 from agentic_mesh_v4.decision_records import retry_failed_card_updates
 from agentic_mesh_v4.decision_records import resolve_decision
 from agentic_mesh_v4.documents import DocumentWriteRequest
+from agentic_mesh_v4.documents import restore_artifact_revision
 from agentic_mesh_v4.documents import write_artifact
 from agentic_mesh_v4.enterprise_architecture import materialize_enterprise_architecture_portfolio
 from agentic_mesh_v4.flow import ARCHITECTURE_DOMAINS
@@ -196,6 +197,18 @@ def build_parser() -> argparse.ArgumentParser:
     document_write.add_argument("--document-root", type=Path)
     document_write.add_argument("--message-id")
     document_write.add_argument("--turn-id")
+
+    document_restore = safe_output_subparsers.add_parser("document-restore-artifact")
+    document_restore.add_argument("--role-id", required=True)
+    document_restore.add_argument("--work-item-id", required=True)
+    document_restore.add_argument("--path", required=True)
+    document_restore.add_argument("--title", required=True)
+    document_restore.add_argument("--revision-id", required=True)
+    document_restore.add_argument("--base-sha256", required=True)
+    document_restore.add_argument("--source-ref")
+    document_restore.add_argument("--document-root", type=Path)
+    document_restore.add_argument("--message-id")
+    document_restore.add_argument("--turn-id")
 
     handoff = safe_output_subparsers.add_parser("handoff")
     handoff.add_argument("--from-role", required=True)
@@ -1375,6 +1388,43 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
                 "base_etag": args.base_etag,
                 "comment_metadata_status": args.comment_metadata_status,
                 "comment_metadata_detail": args.comment_metadata_detail,
+                "source_ref": args.source_ref,
+                "result": result,
+            },
+            call_id=call_id,
+            message_id=args.message_id,
+            turn_id=args.turn_id,
+            work_item_id=args.work_item_id,
+        )
+        _print_json({"call_id": call_id, **result})
+        return
+    if command == "document-restore-artifact":
+        project_config.role(args.role_id)
+        role_instance_id = _role_instance_id(project_config, args.role_id)
+        call_id = f"call-{secrets.token_hex(16)}"
+        result = restore_artifact_revision(
+            db=db,
+            document_root=args.document_root or Path(project_config.document_root),
+            role_instance_id=role_instance_id,
+            work_item_id=args.work_item_id,
+            path=args.path,
+            title=args.title,
+            revision_id=args.revision_id,
+            base_sha256=args.base_sha256,
+            safe_output_call_id=call_id,
+            message_id=args.message_id,
+            turn_id=args.turn_id,
+            source_ref=args.source_ref,
+        )
+        db.record_safe_output_call(
+            role_instance_id=role_instance_id,
+            tool_name="document.restore_artifact",
+            payload={
+                "work_item_id": args.work_item_id,
+                "path": args.path,
+                "title": args.title,
+                "revision_id": args.revision_id,
+                "base_sha256": args.base_sha256,
                 "source_ref": args.source_ref,
                 "result": result,
             },

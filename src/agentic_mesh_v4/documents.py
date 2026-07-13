@@ -14,6 +14,20 @@ from agentic_mesh_v4.db import utc_now
 
 
 COMMENT_WARNING_STATUSES = {"unsupported", "unavailable", "unsupported_comment_metadata", "comment_metadata_unavailable"}
+MANDATORY_LIFECYCLE_DOCUMENT_NAMES = {
+    "00-index.md",
+    "020-product-definition.md",
+    "030-experience-design.md",
+    "040-enterprise-alignment.md",
+    "050-solution-design.md",
+    "060-security-review.md",
+    "070-platform-readiness.md",
+    "080-implementation-plan.md",
+    "090-quality-plan.md",
+    "100-implementation-log.md",
+    "110-quality-evidence.md",
+    "140-release-record.md",
+}
 
 
 class DocumentWriteError(ValueError):
@@ -36,6 +50,7 @@ class DocumentWriteRequest:
     message_id: str | None = None
     turn_id: str | None = None
     source_ref: str | None = None
+    restored_from_revision_id: str | None = None
 
 
 def sha256_text(content: str) -> str:
@@ -53,9 +68,46 @@ def write_artifact(
     target = _document_path(root=document_root, relative_path=relative_path)
     document_type = request.document_type or _document_type_from_path(relative_path)
     content_sha256 = sha256_text(request.content)
+    content_byte_length = len(request.content.encode("utf-8"))
+    mandatory_lifecycle = _is_mandatory_lifecycle_document(relative_path)
     existed = target.exists()
     previous_content = _read_text(target) if existed else None
     previous_sha256 = sha256_text(previous_content) if previous_content is not None else None
+
+    if mandatory_lifecycle and not request.content.strip():
+        attempt_id = _record_write_attempt(
+            db=db,
+            request=request,
+            path=relative_path,
+            document_type=document_type,
+            safe_output_call_id=safe_output_call_id,
+            status="rejected",
+            reason="mandatory_lifecycle_empty_content",
+            mandatory_lifecycle=True,
+            current_sha256=previous_sha256,
+            proposed_sha256=content_sha256,
+            proposed_byte_length=content_byte_length,
+            diagnostic={
+                "policy": "mandatory_lifecycle_documents_require_non_blank_content",
+                "withdrawal_supported": False,
+                "required_action": (
+                    "Use a separately authorized withdrawal/tombstone operation when one is implemented; "
+                    "document.write_artifact cannot withdraw a mandatory lifecycle document."
+                ),
+                "target_existed": existed,
+            },
+        )
+        return {
+            "status": "rejected",
+            "reason": "mandatory_lifecycle_empty_content",
+            "path": relative_path,
+            "current_sha256": previous_sha256,
+            "proposed_sha256": content_sha256,
+            "attempt_id": attempt_id,
+            "mandatory_lifecycle": True,
+            "withdrawal_supported": False,
+        }
+
     warning_id = _record_comment_warning_if_needed(
         db=db,
         request=request,
@@ -64,19 +116,38 @@ def write_artifact(
     )
 
     if existed and not request.base_sha256:
+        base_content, base_content_available = _base_content_for_request(
+            db=db,
+            request=request,
+            path=relative_path,
+        )
         merge_task_id = _create_merge_task(
             db=db,
             document_root=document_root,
             request=request,
             path=relative_path,
-            base_content="",
+            base_content=base_content,
             current_content=previous_content or "",
             proposed_content=request.content,
             base_sha256=None,
             current_sha256=previous_sha256,
             proposed_sha256=content_sha256,
             safe_output_call_id=safe_output_call_id,
-            diagnostic={"reason": "missing_base_sha256"},
+            diagnostic={"reason": "missing_base_sha256", "base_content_available": base_content_available},
+        )
+        attempt_id = _record_write_attempt(
+            db=db,
+            request=request,
+            path=relative_path,
+            document_type=document_type,
+            safe_output_call_id=safe_output_call_id,
+            status="merge_required",
+            reason="missing_base_sha256",
+            mandatory_lifecycle=mandatory_lifecycle,
+            current_sha256=previous_sha256,
+            proposed_sha256=content_sha256,
+            proposed_byte_length=content_byte_length,
+            diagnostic={"merge_task_id": merge_task_id, "base_content_available": base_content_available},
         )
         return {
             "status": "merge_required",
@@ -86,22 +157,42 @@ def write_artifact(
             "current_sha256": previous_sha256,
             "proposed_sha256": content_sha256,
             "warning_id": warning_id,
+            "attempt_id": attempt_id,
         }
 
     if existed and previous_sha256 != request.base_sha256:
+        base_content, base_content_available = _base_content_for_request(
+            db=db,
+            request=request,
+            path=relative_path,
+        )
         merge_task_id = _create_merge_task(
             db=db,
             document_root=document_root,
             request=request,
             path=relative_path,
-            base_content="",
+            base_content=base_content,
             current_content=previous_content or "",
             proposed_content=request.content,
             base_sha256=request.base_sha256,
             current_sha256=previous_sha256,
             proposed_sha256=content_sha256,
             safe_output_call_id=safe_output_call_id,
-            diagnostic={"reason": "changed_base_sha256"},
+            diagnostic={"reason": "changed_base_sha256", "base_content_available": base_content_available},
+        )
+        attempt_id = _record_write_attempt(
+            db=db,
+            request=request,
+            path=relative_path,
+            document_type=document_type,
+            safe_output_call_id=safe_output_call_id,
+            status="merge_required",
+            reason="changed_base_sha256",
+            mandatory_lifecycle=mandatory_lifecycle,
+            current_sha256=previous_sha256,
+            proposed_sha256=content_sha256,
+            proposed_byte_length=content_byte_length,
+            diagnostic={"merge_task_id": merge_task_id, "base_content_available": base_content_available},
         )
         return {
             "status": "merge_required",
@@ -111,12 +202,18 @@ def write_artifact(
             "current_sha256": previous_sha256,
             "proposed_sha256": content_sha256,
             "warning_id": warning_id,
+            "attempt_id": attempt_id,
         }
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_text(target, request.content)
-    written = _read_text(target)
-    written_sha256 = sha256_text(written)
+    if previous_content is not None and previous_sha256 is not None:
+        _backfill_current_revision_content(
+            db=db,
+            work_item_id=request.work_item_id,
+            path=relative_path,
+            content=previous_content,
+            content_sha256=previous_sha256,
+        )
     revision_id = f"docrev-{uuid4().hex}"
     with db.connection:
         db.connection.execute(
@@ -124,8 +221,9 @@ def write_artifact(
             INSERT INTO document_revisions(
               revision_id, work_item_id, path, document_type, role_instance_id,
               base_sha256, previous_sha256, content_sha256, base_revision_id, base_etag,
-              status, safe_output_call_id, message_id, turn_id, source_ref, created_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              status, safe_output_call_id, message_id, turn_id, source_ref,
+              restored_from_revision_id, created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 revision_id,
@@ -135,27 +233,138 @@ def write_artifact(
                 request.role_instance_id,
                 request.base_sha256,
                 previous_sha256,
-                written_sha256,
+                content_sha256,
                 request.base_revision_id,
                 request.base_etag,
-                "written",
+                "prepared",
                 safe_output_call_id,
                 request.message_id,
                 request.turn_id,
                 request.source_ref,
+                request.restored_from_revision_id,
                 utc_now(),
             ),
         )
+        _store_revision_content(
+            db=db,
+            revision_id=revision_id,
+            work_item_id=request.work_item_id,
+            path=relative_path,
+            content=request.content,
+            content_sha256=content_sha256,
+        )
+    try:
+        _atomic_write_text(target, request.content)
+    except Exception as exc:
+        with db.connection:
+            db.connection.execute(
+                "UPDATE document_revisions SET status=? WHERE revision_id=?",
+                ("write_failed", revision_id),
+            )
+        _record_write_attempt(
+            db=db,
+            request=request,
+            path=relative_path,
+            document_type=document_type,
+            safe_output_call_id=safe_output_call_id,
+            status="failed",
+            reason="canonical_write_failed",
+            mandatory_lifecycle=mandatory_lifecycle,
+            current_sha256=previous_sha256,
+            proposed_sha256=content_sha256,
+            proposed_byte_length=content_byte_length,
+            diagnostic={"revision_id": revision_id, "exception_type": type(exc).__name__},
+        )
+        raise
+    written = _read_text(target)
+    written_sha256 = sha256_text(written)
+    final_status = "restored" if request.restored_from_revision_id else "written"
+    with db.connection:
+        db.connection.execute(
+            "UPDATE document_revisions SET status=?, content_sha256=? WHERE revision_id=?",
+            (final_status, written_sha256, revision_id),
+        )
         db.record_artifact(work_item_id=request.work_item_id, path=relative_path, title=request.title)
+    attempt_id = _record_write_attempt(
+        db=db,
+        request=request,
+        path=relative_path,
+        document_type=document_type,
+        safe_output_call_id=safe_output_call_id,
+        status=final_status,
+        reason=None,
+        mandatory_lifecycle=mandatory_lifecycle,
+        current_sha256=previous_sha256,
+        proposed_sha256=written_sha256,
+        proposed_byte_length=content_byte_length,
+        diagnostic={
+            "revision_id": revision_id,
+            "restored_from_revision_id": request.restored_from_revision_id,
+            "target_existed": existed,
+        },
+    )
     return {
-        "status": "written",
+        "status": final_status,
         "revision_id": revision_id,
         "path": relative_path,
         "document_type": document_type,
         "previous_sha256": previous_sha256,
         "content_sha256": written_sha256,
         "warning_id": warning_id,
+        "attempt_id": attempt_id,
+        "restored_from_revision_id": request.restored_from_revision_id,
     }
+
+
+def restore_artifact_revision(
+    *,
+    db: V4Database,
+    document_root: Path,
+    role_instance_id: str,
+    work_item_id: str,
+    path: str,
+    title: str,
+    revision_id: str,
+    base_sha256: str,
+    safe_output_call_id: str,
+    message_id: str | None = None,
+    turn_id: str | None = None,
+    source_ref: str | None = None,
+) -> dict[str, object]:
+    relative_path = _canonical_relative_path(path=path, work_item_id=work_item_id)
+    stored = db.connection.execute(
+        """
+        SELECT r.document_type, c.content, c.content_sha256
+        FROM document_revisions r
+        JOIN document_revision_contents c ON c.revision_id=r.revision_id
+        WHERE r.revision_id=? AND r.work_item_id=? AND r.path=?
+        """,
+        (revision_id, work_item_id, relative_path),
+    ).fetchone()
+    if stored is None:
+        raise DocumentWriteError("requested revision content is unavailable for this work item and path")
+    content = str(stored["content"])
+    if sha256_text(content) != str(stored["content_sha256"]):
+        raise DocumentWriteError("stored revision content failed integrity validation")
+    return write_artifact(
+        db=db,
+        document_root=document_root,
+        request=DocumentWriteRequest(
+            role_instance_id=role_instance_id,
+            work_item_id=work_item_id,
+            path=relative_path,
+            title=title,
+            content=content,
+            document_type=str(stored["document_type"]),
+            base_sha256=base_sha256,
+            base_revision_id=revision_id,
+            message_id=message_id,
+            turn_id=turn_id,
+            source_ref=source_ref,
+            restored_from_revision_id=revision_id,
+        ),
+        safe_output_call_id=safe_output_call_id,
+    )
 
 
 def _canonical_relative_path(*, path: str, work_item_id: str) -> str:
@@ -186,6 +395,168 @@ def _document_path(*, root: Path, relative_path: str) -> Path:
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _is_mandatory_lifecycle_document(path: str) -> bool:
+    return Path(path).name in MANDATORY_LIFECYCLE_DOCUMENT_NAMES
+
+
+def _actor_role(role_instance_id: str) -> str:
+    parts = role_instance_id.split(".")
+    return parts[-2] if len(parts) >= 2 else role_instance_id
+
+
+def _record_write_attempt(
+    *,
+    db: V4Database,
+    request: DocumentWriteRequest,
+    path: str,
+    document_type: str,
+    safe_output_call_id: str,
+    status: str,
+    reason: str | None,
+    mandatory_lifecycle: bool,
+    current_sha256: str | None,
+    proposed_sha256: str,
+    proposed_byte_length: int,
+    diagnostic: dict[str, object],
+) -> str:
+    attempt_id = f"docattempt-{uuid4().hex}"
+    with db.connection:
+        db.connection.execute(
+            """
+            INSERT INTO document_write_attempts(
+              attempt_id, work_item_id, path, document_type, role_instance_id,
+              actor_role, action, status, reason, mandatory_lifecycle, base_sha256,
+              current_sha256, proposed_sha256, proposed_byte_length,
+              safe_output_call_id, message_id, turn_id, source_ref,
+              diagnostic_json, created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                attempt_id,
+                request.work_item_id,
+                path,
+                document_type,
+                request.role_instance_id,
+                _actor_role(request.role_instance_id),
+                "restore" if request.restored_from_revision_id else "write",
+                status,
+                reason,
+                1 if mandatory_lifecycle else 0,
+                request.base_sha256,
+                current_sha256,
+                proposed_sha256,
+                proposed_byte_length,
+                safe_output_call_id,
+                request.message_id,
+                request.turn_id,
+                request.source_ref,
+                json.dumps(diagnostic, sort_keys=True),
+                utc_now(),
+            ),
+        )
+    return attempt_id
+
+
+def _store_revision_content(
+    *,
+    db: V4Database,
+    revision_id: str,
+    work_item_id: str,
+    path: str,
+    content: str,
+    content_sha256: str,
+) -> None:
+    if sha256_text(content) != content_sha256:
+        raise DocumentWriteError("revision content hash does not match the stored digest")
+    db.connection.execute(
+        """
+        INSERT INTO document_revision_contents(
+          revision_id, work_item_id, path, content_sha256, content,
+          byte_length, encoding, created_at
+        ) VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(revision_id) DO NOTHING
+        """,
+        (
+            revision_id,
+            work_item_id,
+            path,
+            content_sha256,
+            content,
+            len(content.encode("utf-8")),
+            "utf-8",
+            utc_now(),
+        ),
+    )
+
+
+def _backfill_current_revision_content(
+    *,
+    db: V4Database,
+    work_item_id: str,
+    path: str,
+    content: str,
+    content_sha256: str,
+) -> None:
+    row = db.connection.execute(
+        """
+        SELECT revision_id
+        FROM document_revisions
+        WHERE work_item_id=? AND path=? AND content_sha256=?
+        ORDER BY created_at DESC, revision_id DESC
+        LIMIT 1
+        """,
+        (work_item_id, path, content_sha256),
+    ).fetchone()
+    if row is None:
+        return
+    with db.connection:
+        _store_revision_content(
+            db=db,
+            revision_id=str(row["revision_id"]),
+            work_item_id=work_item_id,
+            path=path,
+            content=content,
+            content_sha256=content_sha256,
+        )
+
+
+def _base_content_for_request(
+    *,
+    db: V4Database,
+    request: DocumentWriteRequest,
+    path: str,
+) -> tuple[str, bool]:
+    row = None
+    if request.base_revision_id:
+        row = db.connection.execute(
+            """
+            SELECT c.content, c.content_sha256
+            FROM document_revisions r
+            JOIN document_revision_contents c ON c.revision_id=r.revision_id
+            WHERE r.revision_id=? AND r.work_item_id=? AND r.path=?
+            """,
+            (request.base_revision_id, request.work_item_id, path),
+        ).fetchone()
+    if row is None and request.base_sha256:
+        row = db.connection.execute(
+            """
+            SELECT c.content, c.content_sha256
+            FROM document_revisions r
+            JOIN document_revision_contents c ON c.revision_id=r.revision_id
+            WHERE r.work_item_id=? AND r.path=? AND r.content_sha256=?
+            ORDER BY r.created_at DESC, r.revision_id DESC
+            LIMIT 1
+            """,
+            (request.work_item_id, path, request.base_sha256),
+        ).fetchone()
+    if row is None:
+        return "", False
+    content = str(row["content"])
+    if sha256_text(content) != str(row["content_sha256"]):
+        raise DocumentWriteError("stored base revision content failed integrity validation")
+    return content, True
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
