@@ -838,8 +838,17 @@ def _schedule_available_dispatches(
             continue
         active_message = db.active_message_for_role(target_role=role.role_id)
         if active_message is not None:
-            terminal_event = db.terminal_agent_event_for_message(
-                message_id=str(active_message["message_id"]),
+            active_role_instance_id = str(active_message.get("locked_by") or role.role_instance_id)
+            active_turn_id = db.active_turn_id_for_role_instance(
+                role_instance_id=active_role_instance_id,
+            )
+            terminal_event = (
+                db.terminal_agent_event_for_message(
+                    message_id=str(active_message["message_id"]),
+                    turn_id=active_turn_id,
+                )
+                if active_turn_id
+                else None
             )
             recovered_stale = 0
             if terminal_event is None:
