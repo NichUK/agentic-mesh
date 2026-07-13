@@ -111,7 +111,7 @@ def test_dogfood_compose_defines_full_lazy_role_app_server_team() -> None:
         assert "codex -c model=gpt-5.6-sol" in service["command"]
         assert "-c model_reasoning_effort=high" in service["command"]
         assert "-c plan_mode_reasoning_effort=xhigh" in service["command"]
-        assert "-c show_raw_agent_reasoning=true" in service["command"]
+        assert "-c show_raw_agent_reasoning=false" in service["command"]
         assert "app-server" in service["command"]
         assert "mkdir -p /mesh/agent-workspace /documents/work-items" in service["command"]
         assert "chmod -R a+rwX /mesh/agent-workspace /documents" in service["command"]
