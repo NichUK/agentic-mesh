@@ -588,7 +588,8 @@ def test_v4_failed_immediate_steering_downgrades_to_normal_queue(tmp_path: Path)
 def test_v4_steering_without_an_active_turn_queues_normal_delivery(tmp_path: Path) -> None:
     db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
-    runtime = V4Runtime(db=db, project_config=config, client_factory=lambda _role_id: None)  # type: ignore[arg-type]
+    client = CodexAppServerClient(InMemoryTransport())
+    runtime = V4Runtime(db=db, project_config=config, client_factory=lambda _role_id: client)
     runtime.register_roles()
 
     message_id = runtime.enqueue_or_steer_conversation(
