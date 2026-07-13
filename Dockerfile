@@ -4,7 +4,7 @@ WORKDIR /workspace
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bubblewrap ca-certificates curl git iproute2 jq lsof netcat-openbsd nodejs npm openssh-client procps ripgrep sqlite3 \
-  && npm install -g @openai/codex@0.135.0 \
+  && npm install -g @openai/codex@0.144.3 \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
