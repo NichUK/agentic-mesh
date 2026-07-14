@@ -337,14 +337,25 @@ def ensure_decision_resolution_notification(
         except DecisionRecordError:
             activity = {}
 
+    requester_role = str(decision["requester_role"])
+    owner_role = str(decision["owner_role"])
+    reuse_teams_route = requester_role == owner_role and bool(activity)
     selected_option = _option_label(str(decision.get("selected_option") or ""))
+    next_action = (
+        "Continue from this decision now. Carry out or hand off the next required action, then reply to the sponsor in plain English with what changed and what happens next."
+        if reuse_teams_route
+        else (
+            "Continue from this decision now. Carry out or hand off the next required action, then hand the result back to "
+            f"{owner_role} so that role can update the sponsor in the original conversation."
+        )
+    )
     text = "\n".join(
         [
             "A sponsor decision has been received and recorded.",
             f"Work item: {decision['work_item_id']}",
             f"Decision: {selected_option}",
             f"Subject: {decision['title']}",
-            "Continue from this decision now. Carry out or hand off the next required action, then reply to the sponsor in plain English with what changed and what happens next.",
+            next_action,
             (
                 "This is a recovered notification from an earlier callback. Reconcile it with current work before acting, and record a superseded or already-completed disposition when appropriate."
                 if recovery
@@ -352,25 +363,28 @@ def ensure_decision_resolution_notification(
             ),
         ]
     )
-    payload: dict[str, object] = dict(activity)
+    # Teams conversation references are encrypted for the bot identity that owns
+    # the conversation. Another role bot cannot use them to send a reply.
+    payload: dict[str, object] = dict(activity) if reuse_teams_route else {}
     payload.update(
         {
             "decision_notification": True,
             "decision_id": decision_id,
             "work_item_id": str(decision["work_item_id"]),
             "selected_option": str(decision.get("selected_option") or ""),
-            "requester_role": str(decision["requester_role"]),
+            "requester_role": requester_role,
+            "owner_role": owner_role,
             "recovery": recovery,
         }
     )
     db.enqueue_message(
-        target_role=str(decision["requester_role"]),
+        target_role=requester_role,
         text=text,
-        source="teams" if activity else "decision_callback",
+        source="teams" if reuse_teams_route else "decision_callback",
         payload=payload,
         message_id=message_id,
         correlation_id=f"corr-{decision_id}",
-        conversation_ref=conversation_ref or None,
+        conversation_ref=conversation_ref if reuse_teams_route else None,
     )
     return {"state": "queued", "message_id": message_id, "idempotent": False}
 
