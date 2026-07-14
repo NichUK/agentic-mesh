@@ -92,7 +92,7 @@ def test_v4_runtime_adds_processing_reaction_before_turn_start(tmp_path: Path) -
         payload=_teams_activity(),
     )
 
-    result = runtime.dispatch_once(role_id="engineering")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="engineering")
 
     assert result is not None
     assert result.state == "completed"
@@ -121,7 +121,7 @@ def test_v4_runtime_skips_processing_reaction_without_activity_reference(tmp_pat
         payload=_teams_activity(activity_id=None),
     )
 
-    result = runtime.dispatch_once(role_id="engineering")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="engineering")
 
     assert result is not None
     assert result.state == "completed"
@@ -142,7 +142,7 @@ def test_v4_runtime_continues_when_processing_reaction_fails(tmp_path: Path) -> 
         payload=_teams_activity(),
     )
 
-    result = runtime.dispatch_once(role_id="engineering")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="engineering")
 
     assert result is not None
     assert result.state == "completed"

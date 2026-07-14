@@ -95,7 +95,7 @@ class V4Runtime:
     def register_roles(self) -> None:
         for role in self.project_config.roles:
             self.db.upsert_role_instance(
-                role_instance_id=role.role_instance_id,
+                role_instance_id=self.project_config.role_instance_id(role.role_id),
                 role_id=role.role_id,
                 display_name=role.display_name,
                 service_name=role.service_name,
@@ -154,7 +154,7 @@ class V4Runtime:
         )
         if not should_steer or self.client_factory is None:
             return message_id
-        role_instance_id = role.role_instance_id
+        role_instance_id = self.project_config.role_instance_id(role.role_id)
         thread_id = self._active_thread_id(role_instance_id)
         turn_id = self._active_turn_id(role_instance_id)
         if not thread_id or not turn_id:
@@ -195,9 +195,10 @@ class V4Runtime:
         )
         return message_id
 
-    def dispatch_once(self, *, role_id: str) -> DispatchResult | None:
+    def dispatch_once(self, *, project_id: str | None = None, role_id: str) -> DispatchResult | None:
+        self.project_config.bind(project_id)
         role = self.project_config.role(role_id)
-        role_instance_id = role.role_instance_id
+        role_instance_id = self.project_config.role_instance_id(role.role_id)
         active = self.db.active_message_for_role(target_role=role.role_id)
         if active is not None:
             if str(active.get("state") or "") == "active_turn":
@@ -504,7 +505,9 @@ class V4Runtime:
 
     def _continue_active_turn(self, *, role: object, active: dict[str, Any]) -> DispatchResult:
         message_id = str(active["message_id"])
-        role_instance_id = str(active.get("locked_by") or getattr(role, "role_instance_id", ""))
+        role_instance_id = str(
+            active.get("locked_by") or self.project_config.role_instance_id(getattr(role, "role_id"))
+        )
         thread_id = self._active_thread_id(role_instance_id)
         turn_id = self._active_turn_id(role_instance_id) or self._turn_id_for_message(message_id)
         correlation_id = str(active.get("correlation_id") or f"corr-{message_id}")

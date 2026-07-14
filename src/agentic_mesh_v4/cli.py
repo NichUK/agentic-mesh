@@ -89,10 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
     enqueue.add_argument("--steering", action="store_true")
 
     dispatch = subparsers.add_parser("dispatch-once")
+    dispatch.add_argument("--project-id", required=True)
     dispatch.add_argument("--role-id", required=True)
     dispatch.add_argument("--token-file", type=Path)
 
     dispatch_loop = subparsers.add_parser("dispatch-loop")
+    dispatch_loop.add_argument("--project-id", required=True)
     dispatch_loop.add_argument("--agent-config-root", type=Path, required=True)
     dispatch_loop.add_argument("--poll-interval-seconds", type=float, default=2.0)
     dispatch_loop.add_argument("--compose-file", type=Path, action="append", default=[])
@@ -344,6 +346,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.command in {"serve", "dispatch-loop", "watchdog-loop"}:
         validate_runtime_topology()
     project_config = load_project_config(args.project_config)
+    if args.command in {"dispatch-once", "dispatch-loop"}:
+        project_config.bind(args.project_id)
     if args.command == "materialize-agent-configs":
         written = materialize_agent_configs(
             project_config=project_config,
@@ -426,7 +430,7 @@ def main(argv: list[str] | None = None) -> None:
                 client_factory=factory,
                 document_syncer=_document_syncer(args.project_config),
                 agent_config_root=args.agent_config_root,
-            ).dispatch_once(role_id=role.role_id)
+            ).dispatch_once(project_id=args.project_id, role_id=role.role_id)
             _print_json(_dispatch_result(result))
             return
         if args.command == "dispatch-loop":
@@ -674,7 +678,7 @@ def _dispatch_available_messages(
                     file=sys.stderr,
                 )
                 continue
-        result = runtime.dispatch_once(role_id=role.role_id)
+        result = runtime.dispatch_once(project_id=project_config.project_id, role_id=role.role_id)
         if result is not None:
             processed += 1
     return processed
@@ -841,7 +845,9 @@ def _schedule_available_dispatches(
             continue
         active_message = db.active_message_for_role(target_role=role.role_id)
         if active_message is not None:
-            active_role_instance_id = str(active_message.get("locked_by") or role.role_instance_id)
+            active_role_instance_id = str(
+                active_message.get("locked_by") or project_config.role_instance_id(role.role_id)
+            )
             active_turn_id = db.active_turn_id_for_role_instance(
                 role_instance_id=active_role_instance_id,
             )
@@ -990,7 +996,7 @@ def _dispatch_role_message(
             project_config=project_config,
             client_factory=factory,
             agent_config_root=agent_config_root,
-        ).dispatch_once(role_id=role_id)
+        ).dispatch_once(project_id=project_config.project_id, role_id=role_id)
         return _DispatchWorkerResult(
             processed=1 if result is not None else 0,
             request_document_sync=result is not None and result.state == "completed",

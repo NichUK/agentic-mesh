@@ -89,12 +89,31 @@ class V4ProjectConfig:
                 return role
         raise KeyError(role_id)
 
+    def bind(self, project_id: str | None) -> V4ProjectContext:
+        if not project_id:
+            raise ValueError("project context is required for V4 dispatch")
+        if project_id != self.project_id:
+            raise ValueError(
+                f"project context mismatch: requested {project_id!r}, runtime is bound to {self.project_id!r}"
+            )
+        return V4ProjectContext(project_id=self.project_id, document_root=self.document_root)
+
+    def role_instance_id(self, role_id: str) -> str:
+        self.role(role_id)
+        return f"{self.project_id}.{role_id}.1"
+
     def accountabilities_for_role(self, role_id: str) -> dict[str, dict[str, Any]]:
         return {
             path: details
             for path, details in (self.document_accountabilities or {}).items()
             if details.get("owner_role") == role_id or role_id in details.get("contributing_roles", [])
         }
+
+
+@dataclass(frozen=True)
+class V4ProjectContext:
+    project_id: str
+    document_root: str
 
 
 def load_project_config(path: str | Path) -> V4ProjectConfig:

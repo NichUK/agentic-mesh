@@ -74,6 +74,7 @@ def test_dogfood_compose_defines_v4_runtime_and_dispatcher() -> None:
 
     assert "agentic_mesh_v4.cli" in dispatcher["command"]
     assert "dispatch-loop" in dispatcher["command"]
+    assert "--project-id agentic-mesh-dev" in dispatcher["command"]
     assert dispatcher["env_file"] == [{"path": ".env", "required": False}]
     assert dispatcher["environment"]["PYTHONPATH"] == "/mesh/system/src"
     assert dispatcher["environment"]["AGENTIC_MESH_ENFORCE_RUNTIME_TOPOLOGY"] == 1

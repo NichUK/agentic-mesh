@@ -93,7 +93,7 @@ def materialize_agent_configs(
             json.dumps(
                 {
                     "role_id": role.role_id,
-                    "role_instance_id": role.role_instance_id,
+                    "role_instance_id": project_config.role_instance_id(role.role_id),
                     "authority": role.authority,
                     "codex_endpoint": f"ws://{role.service_name}:{role.codex_port}",
                     "codex_port": role.codex_port,
