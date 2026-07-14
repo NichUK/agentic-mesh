@@ -416,6 +416,48 @@ class V4Database:
                   created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS decision_notification_recovery_summaries (
+                  summary_id TEXT PRIMARY KEY,
+                  route_owner_role TEXT NOT NULL,
+                  activity_ref TEXT NOT NULL,
+                  source TEXT NOT NULL,
+                  reason TEXT NOT NULL,
+                  actor_ref TEXT NOT NULL,
+                  idempotency_key TEXT NOT NULL UNIQUE,
+                  created_at TEXT NOT NULL,
+                  UNIQUE(route_owner_role, activity_ref)
+                );
+
+                CREATE TABLE IF NOT EXISTS decision_notification_outcomes (
+                  notification_id TEXT PRIMARY KEY,
+                  decision_id TEXT NOT NULL UNIQUE,
+                  outcome TEXT NOT NULL CHECK (
+                    outcome IN ('recover_if_missing', 'do_not_retry', 'summary_already_recovered')
+                  ),
+                  version INTEGER NOT NULL CHECK (version > 0),
+                  source TEXT NOT NULL,
+                  reason TEXT NOT NULL,
+                  actor_ref TEXT NOT NULL,
+                  summary_id TEXT,
+                  idempotency_key TEXT NOT NULL UNIQUE,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS decision_notification_outcome_events (
+                  event_id TEXT PRIMARY KEY,
+                  notification_id TEXT NOT NULL,
+                  decision_id TEXT NOT NULL,
+                  outcome TEXT NOT NULL,
+                  version INTEGER NOT NULL,
+                  source TEXT NOT NULL,
+                  reason TEXT NOT NULL,
+                  actor_ref TEXT NOT NULL,
+                  summary_id TEXT,
+                  idempotency_key TEXT NOT NULL UNIQUE,
+                  created_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS handoffs (
                   handoff_id TEXT PRIMARY KEY,
                   work_item_id TEXT,
@@ -515,6 +557,10 @@ class V4Database:
                   ON decision_callbacks(decision_id, state, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_decision_links_decision
                   ON decision_links(decision_id, target_type, target_id);
+                CREATE INDEX IF NOT EXISTS idx_decision_notification_outcomes_decision
+                  ON decision_notification_outcomes(decision_id, outcome, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_decision_notification_outcome_events_notification
+                  ON decision_notification_outcome_events(notification_id, version, created_at);
                 CREATE INDEX IF NOT EXISTS idx_document_revisions_path
                   ON document_revisions(path, created_at);
                 CREATE INDEX IF NOT EXISTS idx_document_revisions_work_item
@@ -749,13 +795,14 @@ class V4Database:
         text, _ = sanitize_persisted_text(text, path="message_queue.text")
         payload = sanitize_json_payload(payload, path="message_queue.payload")
         with self.connection:
-            self.connection.execute(
+            inserted = self.connection.execute(
                 """
                 INSERT INTO message_queue(
                   message_id, correlation_id, source, target_role, conversation_ref,
                   thread_ref, text, payload_json, state, steering, delivery_attempts, created_at, updated_at
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(message_id) DO NOTHING
+                RETURNING message_id
                 """,
                 (
                     message_id,
@@ -772,15 +819,42 @@ class V4Database:
                     now,
                     now,
                 ),
+            ).fetchone()
+        if inserted is not None:
+            self.record_message_journal(
+                message_id=message_id,
+                correlation_id=correlation_id,
+                stage="received",
+                status="queued",
+                summary=f"Queued message for {target_role}",
+                payload=payload,
             )
-        self.record_message_journal(
-            message_id=message_id,
-            correlation_id=correlation_id,
-            stage="received",
-            status="queued",
-            summary=f"Queued message for {target_role}",
-            payload=payload,
-        )
+        else:
+            existing = self.connection.execute(
+                """
+                SELECT correlation_id, state, source, target_role
+                FROM message_queue
+                WHERE message_id=?
+                """,
+                (message_id,),
+            ).fetchone()
+            if existing is None:
+                raise RuntimeError(f"message enqueue conflict lost authoritative row: {message_id}")
+            self.record_message_journal(
+                message_id=message_id,
+                correlation_id=str(existing["correlation_id"]),
+                stage="enqueue",
+                status="existing_no_transition",
+                summary=f"Message already exists in {existing['state']}; no queue transition occurred",
+                payload={
+                    "message_id": message_id,
+                    "requested_target_role": target_role,
+                    "existing_target_role": str(existing["target_role"]),
+                    "existing_source": str(existing["source"]),
+                    "existing_state": str(existing["state"]),
+                    "transitioned": False,
+                },
+            )
         return message_id
 
     def claim_next_message(self, *, role_id: str, worker_id: str) -> QueuedMessage | None:
@@ -2041,6 +2115,12 @@ class V4Database:
                 "SELECT * FROM decision_links ORDER BY created_at DESC"
             )
         ]
+        decision_notification_outcomes = [
+            _row_dict(row)
+            for row in self.connection.execute(
+                "SELECT * FROM decision_notification_outcomes ORDER BY updated_at DESC"
+            )
+        ]
         decision_attention = _decision_attention_items(
             decisions=decision_records,
             deliveries=decision_card_deliveries,
@@ -2099,6 +2179,7 @@ class V4Database:
             "decision_card_deliveries": decision_card_deliveries,
             "decision_callbacks": decision_callbacks,
             "decision_links": decision_links,
+            "decision_notification_outcomes": decision_notification_outcomes,
             "decision_attention": decision_attention,
             "blocked_handoff_attention": blocked_handoff_attention,
             "queue_depth": sum(1 for item in messages if item["state"] not in TERMINAL_MESSAGE_STATES),
@@ -2571,6 +2652,9 @@ class _PostgresConnection:
     def execute(self, sql: str, params: tuple[object, ...] | list[object] = ()) -> Any:
         cursor = self._connection.execute(self._translate_sql(sql), tuple(params))
         return cursor
+
+    def transaction(self) -> Any:
+        return self._connection.transaction()
 
     def executescript(self, script: str) -> None:
         for statement in _split_sql_script(script):
