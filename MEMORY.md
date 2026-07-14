@@ -598,3 +598,20 @@ or `release_review`.
   than failing or remaining stranded.
 - LinuxCH release cleanup removes stopped role containers before starting the
   dispatcher, so automatic queue-driven wake cannot race container removal.
+
+## 2026-07-14 V4 Review Proportionality And Convergence
+
+- A dispatch-incident work item accumulated a disproportionate twelve-revision
+  speculative security-design loop and 92 document revisions. The sponsor
+  stopped the active Security turn; Project Manager durably cancelled the
+  handoff and restored ownership to bounded triage of the original incident.
+- Shared V4 standing instructions now require every consultation, revision, and
+  handoff to directly advance the accepted outcome or resolve a material
+  blocker. Minor, speculative, theoretical, and implementation-detail findings
+  are non-blocking follow-up unless their concrete current impact is stated.
+- The same finding may be returned for correction once. After re-review it must
+  be accepted, explicitly deferred, or escalated for a sponsor decision; a
+  third specialist bounce requires explicit sponsor direction.
+- Out-of-scope discoveries require a separately prioritized work item, sponsor
+  stop instructions terminate the review chain, and human-facing responses
+  must not contain raw session JSONL or unfiltered tool/search transcripts.

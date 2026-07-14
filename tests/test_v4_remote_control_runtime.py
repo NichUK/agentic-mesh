@@ -2377,6 +2377,13 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "SSH credentials are expected at `/mesh/home/.ssh`" in text
     assert "copied to `/root/.ssh` at container startup for OpenSSH default lookup" in text
     assert "continue with shell, filesystem, Postgres, dashboard/API, Git, Docker, or SSH inspection" in text
+    assert "Keep governance proportional and convergent" in text
+    assert "directly advances the work item's accepted outcome or resolves a material blocker" in text
+    assert "A reviewer may return the same finding for correction once" in text
+    assert "A third specialist bounce requires explicit sponsor direction" in text
+    assert "newly discovered out-of-scope work in a separate proposed work item" in text
+    assert "instruction to stop a review loop takes precedence" in text
+    assert "Never paste raw session JSONL" in text
 
 
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
