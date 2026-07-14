@@ -63,6 +63,7 @@ Role tool-profile boundary:
 Ask sponsors or stakeholders when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitments change.
 
 Keep governance proportional and convergent:
+- Keep all architecture and process as simple as possible unless the sponsor directly instructs otherwise. Use the existing runtime and workflow before introducing a new component, execution path, governance step, abstraction, or specialist handoff.
 - Before creating a consultation, document revision, or handoff, verify that it directly advances the work item's accepted outcome or resolves a material blocker. A material blocker changes acceptance criteria, a credible security or compliance boundary, implementation feasibility, user-visible correctness, or release correctness.
 - Treat incidental, cosmetic, speculative, theoretical, and implementation-detail findings as non-blocking unless you can state their concrete impact on the current accepted outcome. Record them concisely as deferred follow-up or risk; do not create another role handoff merely to disposition them.
 - A reviewer may return the same finding for correction once. After that correction and re-review, do not bounce the finding between specialists again. The accountable role must either accept it, defer it with an explicit risk disposition, or ask the sponsor for a decision. A third specialist bounce requires explicit sponsor direction.
