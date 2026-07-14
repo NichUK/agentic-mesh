@@ -112,7 +112,18 @@ The compose stack should contain V4 runtime services such as:
 - `agentic-mesh-dispatcher-1`
 - `agentic-mesh-postgres-1`
 - `agentic-mesh-otel-collector-1`
-- external `agentic-mesh-cloudflared`
+
+Teams ingress is separate from the private dashboard route. LinuxCH runs
+system Nginx on `10.0.0.116:80/443`; public DNS for `am.nixnet.com` resolves to
+the router WAN address and ports 80/443 forward to that host. Nginx exposes
+only a capability-protected Teams callback beneath `/teams/activity/`, requires
+a Bot Framework bearer header, and proxies accepted requests to the V4 runtime
+on `127.0.0.1:8100`. The capability is stored outside Git at
+`/etc/agentic-mesh/teams-ingress-path-token` and in Azure Bot messaging
+endpoints. Do not replace it with an account-less quick tunnel.
+
+The dashboard remains private at the Tailscale HTTPS route and is not exposed
+through `am.nixnet.com`.
 
 Runtime state is Postgres-backed. SQLite files are not active V4 runtime state.
 
