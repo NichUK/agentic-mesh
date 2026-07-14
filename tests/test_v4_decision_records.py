@@ -83,6 +83,59 @@ def test_resolved_decision_queues_requester_and_reuses_teams_route() -> None:
         db.close()
 
 
+def test_cross_role_decision_does_not_reuse_owner_bot_teams_route() -> None:
+    db = make_v4_db()
+    try:
+        request = DecisionRequest(
+            work_item_id="work-cross-role-decision",
+            requester_role="solution-architect",
+            owner_role="project-manager",
+            authority_label="Sponsor",
+            authorized_responders={"sponsor": "sponsor-aad-id"},
+            decision_type="approval",
+            title="Approve the architecture disposition",
+            question="Approve this architecture disposition?",
+            options=("approved", "changes_requested"),
+            recommended_option="approved",
+        )
+        result = request_decision(db=db, request=request, deliver=False)
+        activity = {
+            "conversation": {"id": "project-manager-conversation"},
+            "recipient": {"id": "project-manager-bot", "name": "AM-Project Manager"},
+            "serviceUrl": "https://smba.trafficmanager.net/emea/",
+        }
+        delivery_id = record_card_delivery_attempt(
+            db=db,
+            decision_id=result["decision_id"],
+            channel="teams",
+            conversation_ref=json.dumps(activity),
+            activity_id="activity-cross-role",
+            state="delivered",
+        )
+
+        resolve_decision_and_update_card(
+            db=db,
+            decision_id=result["decision_id"],
+            responder_ref="sponsor-aad-id",
+            selected_option="approved",
+            sender=_CardSender(),
+            delivery_id=delivery_id,
+        )
+
+        message = db.connection.execute(
+            "SELECT * FROM message_queue WHERE target_role=?",
+            ("solution-architect",),
+        ).fetchone()
+        payload = json.loads(message["payload_json"])
+        assert message["source"] == "decision_callback"
+        assert message["conversation_ref"] is None
+        assert "conversation" not in payload
+        assert payload["owner_role"] == "project-manager"
+        assert "hand the result back to project-manager" in message["text"]
+    finally:
+        db.close()
+
+
 def test_resolved_card_is_human_facing_and_hides_internal_responder() -> None:
     card = render_decision_card(
         {
