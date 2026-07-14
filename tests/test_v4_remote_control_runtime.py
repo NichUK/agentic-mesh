@@ -2378,6 +2378,8 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "copied to `/root/.ssh` at container startup for OpenSSH default lookup" in text
     assert "continue with shell, filesystem, Postgres, dashboard/API, Git, Docker, or SSH inspection" in text
     assert "Keep governance proportional and convergent" in text
+    assert "Keep all architecture and process as simple as possible" in text
+    assert "Use the existing runtime and workflow before introducing a new component" in text
     assert "directly advances the work item's accepted outcome or resolves a material blocker" in text
     assert "A reviewer may return the same finding for correction once" in text
     assert "A third specialist bounce requires explicit sponsor direction" in text

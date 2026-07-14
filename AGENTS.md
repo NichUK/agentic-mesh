@@ -132,6 +132,7 @@ improve enterprise adoption, governance, operations, and support.
 
 When implementing:
 
+- Keep all architecture and process as simple as possible unless the sponsor directly instructs otherwise. Use the existing runtime and workflow before introducing a new component, execution path, governance step, abstraction, or specialist handoff.
 - Prefer small, testable slices.
 - Prefer integrating mature existing libraries, tools, standards, and adapters
   for established capabilities before building a bespoke implementation. Build
