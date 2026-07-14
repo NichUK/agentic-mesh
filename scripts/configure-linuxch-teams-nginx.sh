@@ -19,9 +19,9 @@ render_template() {
   destination=$2
   ingress_token=${3:-unused-during-http-stage}
   sed \
-    -e "s/__SERVER_NAME__/$DOMAIN/g" \
-    -e "s/__LISTEN_ADDRESS__/$LISTEN_ADDRESS/g" \
-    -e "s/__INGRESS_TOKEN__/$ingress_token/g" \
+    -e "s|__SERVER_NAME__|$DOMAIN|g" \
+    -e "s|__LISTEN_ADDRESS__|$LISTEN_ADDRESS|g" \
+    -e "s|__INGRESS_TOKEN__|$ingress_token|g" \
     "$template" | sudo tee "$destination" >/dev/null
 }
 
