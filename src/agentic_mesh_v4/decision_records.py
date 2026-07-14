@@ -385,6 +385,10 @@ def reconcile_resolved_decision_notifications(
         SELECT decision_id
         FROM decision_records
         WHERE status='resolved'
+        AND NOT EXISTS (
+            SELECT 1 FROM message_queue
+            WHERE message_id = 'msg-decision-result-' || SUBSTR(decision_id, 10)
+        )
         ORDER BY resolved_at, decision_id
         LIMIT ?
         """,
@@ -735,7 +739,11 @@ def render_decision_card(decision: dict[str, Any], *, detail_url: str | None = N
                 },
                 {
                     "type": "TextBlock",
-                    "text": "The requesting agent has been notified and is responsible for the next action.",
+                    "text": (
+                        "The requesting agent has been notified and is responsible for the next action."
+                        if decision.get("status") == "resolved"
+                        else "This decision has been cancelled. No agent notification was sent."
+                    ),
                     "wrap": True,
                     "isSubtle": True,
                 },

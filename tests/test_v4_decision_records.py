@@ -6,7 +6,9 @@ import pytest
 
 from agentic_mesh_v4.decision_records import DecisionRecordError
 from agentic_mesh_v4.decision_records import DecisionRequest
+from agentic_mesh_v4.decision_records import cancel_decision
 from agentic_mesh_v4.decision_records import record_card_delivery_attempt
+from agentic_mesh_v4.decision_records import reconcile_resolved_decision_notifications
 from agentic_mesh_v4.decision_records import render_decision_card
 from agentic_mesh_v4.decision_records import request_decision
 from agentic_mesh_v4.decision_records import resolve_decision_and_update_card
@@ -108,5 +110,58 @@ def test_decision_request_rejects_opaque_or_empty_declared_effects() -> None:
             request_decision(db=db, request=_request(link_effects=({},)), deliver=False)
         with pytest.raises(DecisionRecordError, match="no more than 600"):
             request_decision(db=db, request=_request(question="x" * 601), deliver=False)
+    finally:
+        db.close()
+
+
+def test_cancelled_card_does_not_claim_agent_was_notified() -> None:
+    card = render_decision_card(
+        {
+            "decision_id": "decision-2",
+            "title": "Approve the implementation plan",
+            "status": "cancelled",
+            "selected_option": "cancelled",
+            "options_json": '["approved"]',
+        }
+    )
+    rendered = json.dumps(card)
+    assert "Decision recorded: **Cancelled**" in rendered
+    assert "requesting agent has been notified" not in rendered
+    assert "cancelled" in rendered.lower()
+
+
+def test_reconcile_skips_already_notified_and_reaches_later_rows() -> None:
+    """Watchdog must skip already-queued notifications so later resolved rows are not starved."""
+    db = make_v4_db()
+    try:
+        # Create 3 resolved decisions
+        ids = []
+        for _ in range(3):
+            r = request_decision(db=db, request=_request(), deliver=False)
+            ids.append(r["decision_id"])
+            resolve_decision_and_update_card(
+                db=db,
+                decision_id=r["decision_id"],
+                responder_ref="sponsor-aad-id",
+                selected_option="approved",
+                sender=_CardSender(),
+            )
+
+        # All 3 should now have notifications; reconcile with limit=1 should find nothing new
+        result = reconcile_resolved_decision_notifications(db=db, limit=1)
+        assert result["queued"] == 0
+        assert result["checked"] == 0
+
+        # Manually delete the notification for the third decision to simulate a missed delivery
+        third_id = ids[2].removeprefix("decision-")
+        db.connection.execute(
+            "DELETE FROM message_queue WHERE message_id=?",
+            (f"msg-decision-result-{third_id}",),
+        )
+
+        # Reconcile with limit=1 — should find and queue the missing notification
+        result = reconcile_resolved_decision_notifications(db=db, limit=1)
+        assert result["queued"] == 1
+        assert result["checked"] == 1
     finally:
         db.close()
