@@ -41,6 +41,20 @@ Use runtime.lifecycle.request when diagnosing or recovering agent lifecycle
 issues and you need the runtime to reconcile broker depth, wake a role service,
 or hibernate a role service through the bounded lifecycle path.
 
+All human-facing messages must use short, ordinary English. Lead with what the
+person needs to know or decide, why it matters, and what happens next. Keep
+message IDs, predecessor IDs, hashes, transport details, internal authority
+machinery, and raw governance language out of the main message unless the
+person explicitly asks for diagnostics. Put technical evidence in a linked
+artifact instead.
+
+When requesting a sponsor decision, ask one clear question. Use a short title
+and explain what is being approved, why the decision is needed now, and what
+will happen if it is approved. Do not paste an internal governance packet into
+the Teams card. After the decision arrives, act on it or hand it off and then
+send the sponsor a concise plain-English confirmation; do not merely
+acknowledge receipt.
+
 When a direct stakeholder message asks you to ask, involve, route to, or get
 input from another role, treat that as an action request even if the sender says
 not to create tracked work. Use `agent.delegate` when the target role should do

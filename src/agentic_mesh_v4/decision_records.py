@@ -31,6 +31,10 @@ AUTHORITY_LABELS = {
 }
 OPEN_DECISION_STATES = {"pending", "delivery_failed_pending", "resolution_failed"}
 TERMINAL_DECISION_STATES = {"resolved", "cancelled"}
+DECISION_NOTIFICATION_PREFIX = "msg-decision-result-"
+MAX_DECISION_TITLE_LENGTH = 120
+MAX_DECISION_QUESTION_LENGTH = 600
+SUPPORTED_EFFECT_TARGET_TYPES = {"work_item", "handoff", "preflight", "artifact", "release"}
 
 
 class DecisionCardSender(Protocol):
@@ -203,7 +207,18 @@ def resolve_decision(
         (idempotency_key,),
     ).fetchone()
     if existing is not None:
-        return {"decision_id": decision_id, "callback_id": existing["callback_id"], "state": existing["state"], "idempotent": True}
+        result = {
+            "decision_id": decision_id,
+            "callback_id": existing["callback_id"],
+            "state": existing["state"],
+            "idempotent": True,
+        }
+        if existing["state"] == "accepted":
+            result["requester_notification"] = ensure_decision_resolution_notification(
+                db=db,
+                decision_id=decision_id,
+            )
+        return result
     callback_id = f"callback-{uuid4().hex}"
     now = utc_now()
     try:
@@ -286,7 +301,113 @@ def resolve_decision(
             (normalized, rationale, responder_ref, now, now, decision_id),
         )
         _apply_declared_effects(db=db, decision_id=decision_id, selected_option=normalized, now=now)
-    return {"decision_id": decision_id, "callback_id": callback_id, "state": "accepted", "idempotent": False}
+    result = {"decision_id": decision_id, "callback_id": callback_id, "state": "accepted", "idempotent": False}
+    result["requester_notification"] = ensure_decision_resolution_notification(
+        db=db,
+        decision_id=decision_id,
+    )
+    return result
+
+
+def ensure_decision_resolution_notification(
+    *,
+    db: V4Database,
+    decision_id: str,
+    recovery: bool = False,
+) -> dict[str, Any]:
+    """Durably queue an accepted decision back to the role that requested it."""
+    decision = _decision(db, decision_id)
+    if decision["status"] != "resolved":
+        return {"state": "not_required", "reason": "decision is not resolved"}
+
+    message_id = f"{DECISION_NOTIFICATION_PREFIX}{decision_id.removeprefix('decision-')}"
+    existing = db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()
+    if existing is not None:
+        return {"state": str(existing["state"]), "message_id": message_id, "idempotent": True}
+
+    delivery = _latest_conversation_delivery(db=db, decision_id=decision_id)
+    conversation_ref = str(delivery.get("conversation_ref") or "") if delivery else ""
+    activity: dict[str, object] = {}
+    if conversation_ref:
+        try:
+            activity = _conversation_activity(conversation_ref)
+        except DecisionRecordError:
+            activity = {}
+
+    selected_option = _option_label(str(decision.get("selected_option") or ""))
+    text = "\n".join(
+        [
+            "A sponsor decision has been received and recorded.",
+            f"Work item: {decision['work_item_id']}",
+            f"Decision: {selected_option}",
+            f"Subject: {decision['title']}",
+            "Continue from this decision now. Carry out or hand off the next required action, then reply to the sponsor in plain English with what changed and what happens next.",
+            (
+                "This is a recovered notification from an earlier callback. Reconcile it with current work before acting, and record a superseded or already-completed disposition when appropriate."
+                if recovery
+                else "Do not merely acknowledge the decision."
+            ),
+        ]
+    )
+    payload: dict[str, object] = dict(activity)
+    payload.update(
+        {
+            "decision_notification": True,
+            "decision_id": decision_id,
+            "work_item_id": str(decision["work_item_id"]),
+            "selected_option": str(decision.get("selected_option") or ""),
+            "requester_role": str(decision["requester_role"]),
+            "recovery": recovery,
+        }
+    )
+    db.enqueue_message(
+        target_role=str(decision["requester_role"]),
+        text=text,
+        source="teams" if activity else "decision_callback",
+        payload=payload,
+        message_id=message_id,
+        correlation_id=f"corr-{decision_id}",
+        conversation_ref=conversation_ref or None,
+    )
+    return {"state": "queued", "message_id": message_id, "idempotent": False}
+
+
+def reconcile_resolved_decision_notifications(
+    *,
+    db: V4Database,
+    limit: int = 100,
+) -> dict[str, Any]:
+    rows = db.connection.execute(
+        """
+        SELECT decision_id
+        FROM decision_records
+        WHERE status='resolved'
+        AND NOT EXISTS (
+            SELECT 1 FROM message_queue
+            WHERE message_id = 'msg-decision-result-' || SUBSTR(decision_id, 10)
+        )
+        ORDER BY resolved_at, decision_id
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    results = [
+        ensure_decision_resolution_notification(
+            db=db,
+            decision_id=str(row["decision_id"]),
+            recovery=True,
+        )
+        for row in rows
+    ]
+    return {
+        "checked": len(results),
+        "queued": sum(1 for item in results if item.get("state") == "queued" and not item.get("idempotent")),
+        "existing": sum(1 for item in results if item.get("idempotent")),
+        "results": results,
+    }
 
 
 def resolve_decision_and_update_card(
@@ -604,30 +725,50 @@ def link_decision(
 
 def render_decision_card(decision: dict[str, Any], *, detail_url: str | None = None) -> dict[str, Any]:
     options = _json_list(decision.get("options_json"))
+    title = str(decision.get("title") or "Decision needed")
     body: list[dict[str, object]] = [
-        {"type": "TextBlock", "text": decision.get("title") or "Decision needed", "weight": "Bolder", "wrap": True},
-        {"type": "TextBlock", "text": decision.get("question") or "", "wrap": True},
-        {"type": "FactSet", "facts": [
-            {"title": "Decision type", "value": str(decision.get("decision_type") or "")},
-            {"title": "Authority", "value": str(decision.get("authority_label") or "")},
-            {"title": "Requester", "value": str(decision.get("requester_role") or "")},
-            {"title": "SLA", "value": _sla_copy(decision)},
-        ]},
-        {"type": "TextBlock", "text": _effect_warning(decision), "wrap": True},
+        {"type": "TextBlock", "text": title, "weight": "Bolder", "wrap": True, "size": "Medium"},
     ]
     if decision.get("status") in TERMINAL_DECISION_STATES:
-        body.append(
-            {
-                "type": "FactSet",
-                "facts": [
-                    {"title": "Status", "value": str(decision.get("status") or "")},
-                    {"title": "Selected option", "value": str(decision.get("selected_option") or "")},
-                    {"title": "Responder", "value": str(decision.get("responder_ref") or "")},
-                ],
-            }
+        body.extend(
+            [
+                {
+                    "type": "TextBlock",
+                    "text": f"Decision recorded: **{_option_label(str(decision.get('selected_option') or decision.get('status') or ''))}**",
+                    "wrap": True,
+                },
+                {
+                    "type": "TextBlock",
+                    "text": (
+                        "The requesting agent has been notified and is responsible for the next action."
+                        if decision.get("status") == "resolved"
+                        else "This decision has been cancelled. No agent notification was sent."
+                    ),
+                    "wrap": True,
+                    "isSubtle": True,
+                },
+            ]
+        )
+    else:
+        body.extend(
+            [
+                {"type": "TextBlock", "text": str(decision.get("question") or ""), "wrap": True},
+                *(
+                    [
+                        {
+                            "type": "TextBlock",
+                            "text": f"Recommended: **{_option_label(str(decision['recommended_option']))}**",
+                            "wrap": True,
+                            "isSubtle": True,
+                        }
+                    ]
+                    if decision.get("recommended_option")
+                    else []
+                ),
+            ]
         )
     if detail_url:
-        body.append({"type": "TextBlock", "text": f"[View details]({detail_url})", "wrap": True})
+        body.append({"type": "TextBlock", "text": f"[View supporting details]({detail_url})", "wrap": True})
     return {
         "type": "AdaptiveCard",
         "version": "1.5",
@@ -635,7 +776,7 @@ def render_decision_card(decision: dict[str, Any], *, detail_url: str | None = N
         "actions": [] if decision.get("status") in TERMINAL_DECISION_STATES else [
             {
                 "type": "Action.Submit",
-                "title": option.replace("_", " ").title(),
+                "title": _option_label(str(option)),
                 "data": {"action": "decision_callback", "decision_id": decision.get("decision_id"), "selected_option": option},
             }
             for option in options
@@ -655,6 +796,25 @@ def _validate_request(request: DecisionRequest) -> None:
         raise DecisionRecordError("options are not valid for decision_type")
     if request.recommended_option and request.recommended_option not in request.options:
         raise DecisionRecordError("recommended_option must be one of options")
+    if not request.title.strip() or len(request.title.strip()) > MAX_DECISION_TITLE_LENGTH:
+        raise DecisionRecordError(f"title must be plain English and no more than {MAX_DECISION_TITLE_LENGTH} characters")
+    if not request.question.strip() or len(request.question.strip()) > MAX_DECISION_QUESTION_LENGTH:
+        raise DecisionRecordError(
+            f"question must be one clear plain-English decision request of no more than {MAX_DECISION_QUESTION_LENGTH} characters; link detailed governance evidence instead"
+        )
+    for effect in request.link_effects:
+        target_type = str(effect.get("target_type") or "")
+        if target_type not in SUPPORTED_EFFECT_TARGET_TYPES:
+            raise DecisionRecordError(
+                "each declared effect requires a supported target_type: "
+                + ", ".join(sorted(SUPPORTED_EFFECT_TARGET_TYPES))
+            )
+        if not str(effect.get("target_id") or "") or not str(effect.get("effect_summary") or ""):
+            raise DecisionRecordError("each declared effect requires target_id and effect_summary")
+
+
+def _option_label(value: str) -> str:
+    return value.replace("_", " ").strip().capitalize()
 
 
 def _decision(db: V4Database, decision_id: str) -> dict[str, Any]:
@@ -956,6 +1116,23 @@ def _latest_update_target(*, db: V4Database, decision_id: str, delivery_id: str 
             """,
             (decision_id,),
         ).fetchone()
+    if row is None:
+        return None
+    return {key: row[key] for key in row.keys()}
+
+
+def _latest_conversation_delivery(*, db: V4Database, decision_id: str) -> dict[str, Any] | None:
+    row = db.connection.execute(
+        """
+        SELECT * FROM decision_card_deliveries
+        WHERE decision_id=?
+          AND channel='teams'
+          AND conversation_ref IS NOT NULL
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """,
+        (decision_id,),
+    ).fetchone()
     if row is None:
         return None
     return {key: row[key] for key in row.keys()}

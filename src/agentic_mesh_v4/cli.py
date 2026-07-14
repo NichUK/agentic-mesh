@@ -28,6 +28,7 @@ from agentic_mesh_v4.decision_records import deliver_pending_decision_cards
 from agentic_mesh_v4.decision_records import link_decision
 from agentic_mesh_v4.decision_records import record_card_delivery_attempt
 from agentic_mesh_v4.decision_records import recalculate_sla_states
+from agentic_mesh_v4.decision_records import reconcile_resolved_decision_notifications
 from agentic_mesh_v4.decision_records import render_decision_card
 from agentic_mesh_v4.decision_records import request_decision
 from agentic_mesh_v4.decision_records import retry_failed_card_updates
@@ -468,8 +469,9 @@ def main(argv: list[str] | None = None) -> None:
             services = tuple(args.service or ("runtime", "dispatcher"))
             while True:
                 checked = _watchdog_services(lifecycle=lifecycle, services=services)
+                decision_notifications = reconcile_resolved_decision_notifications(db=db)
                 if args.once:
-                    _print_json({"services": checked})
+                    _print_json({"services": checked, "decision_notifications": decision_notifications})
                     return
                 time.sleep(args.poll_interval_seconds)
             return
