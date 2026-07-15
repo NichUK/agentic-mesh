@@ -2391,7 +2391,7 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "git status --short --branch" in text
     assert "Complete normal integration through a pull request" in text
     assert "Never return an unbroken wall of text" in text
-    assert "use short paragraphs with blank lines" in text
+    assert "Use short paragraphs with blank lines" in text
 
 
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
