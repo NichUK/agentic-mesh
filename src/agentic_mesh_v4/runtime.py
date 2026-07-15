@@ -62,6 +62,7 @@ class AgentTerminalInterruption(RuntimeError):
 
 
 TERMINAL_INTERRUPTION_MAX_ATTEMPTS = 3
+COMPLETION_REPAIR_MAX_ATTEMPTS = 1
 
 
 @dataclass(frozen=True)
@@ -404,18 +405,29 @@ class V4Runtime:
                     state=completion_evaluation.state,
                     summary=completion_evaluation.next_action,
                 )
-                self._escalate_to_project_manager(
+                repair_message_id = self._enqueue_completion_repair(
+                    message=message,
+                    role_id=role.role_id,
                     role_instance_id=role_instance_id,
-                    summary=completion_evaluation.next_action,
-                    reason=completion_evaluation.state,
+                    diagnostic_id=diagnostic_id,
+                    missing_predicates=list(completion_evaluation.missing_predicates),
+                    next_action=completion_evaluation.next_action,
                     work_item_id=completion_evaluation.work_item_id,
-                    message_id=message.message_id,
-                    payload={
-                        "diagnostic_id": diagnostic_id,
-                        "missing_predicates": list(completion_evaluation.missing_predicates),
-                        "observed_outputs": completion_evaluation.observed_outputs or {},
-                    },
                 )
+                if repair_message_id is None:
+                    self._escalate_to_project_manager(
+                        role_instance_id=role_instance_id,
+                        summary=completion_evaluation.next_action,
+                        reason=completion_evaluation.state,
+                        work_item_id=completion_evaluation.work_item_id,
+                        message_id=message.message_id,
+                        payload={
+                            "diagnostic_id": diagnostic_id,
+                            "missing_predicates": list(completion_evaluation.missing_predicates),
+                            "observed_outputs": completion_evaluation.observed_outputs or {},
+                            "completion_repair_exhausted": True,
+                        },
+                    )
                 return DispatchResult(
                     message_id=message.message_id,
                     state=completion_evaluation.state,
@@ -939,6 +951,75 @@ class V4Runtime:
             handoff_id=handoff_id,
             payload=payload,
         )
+
+    def _enqueue_completion_repair(
+        self,
+        *,
+        message: object,
+        role_id: str,
+        role_instance_id: str,
+        diagnostic_id: str,
+        missing_predicates: list[dict[str, object]],
+        next_action: str,
+        work_item_id: str | None,
+    ) -> str | None:
+        payload = getattr(message, "payload", {})
+        payload = payload if isinstance(payload, dict) else {}
+        try:
+            repair_attempt = max(0, int(payload.get("completion_repair_attempt") or 0))
+        except (TypeError, ValueError):
+            repair_attempt = 0
+        if repair_attempt >= COMPLETION_REPAIR_MAX_ATTEMPTS:
+            return None
+        original_message_id = str(getattr(message, "message_id"))
+        repair_attempt += 1
+        repair_identity = hashlib.sha256(f"{original_message_id}:{repair_attempt}".encode()).hexdigest()[:24]
+        repair_message_id = f"msg-repair-{repair_identity}"
+        repair_payload = {
+            "work_item_id": work_item_id,
+            "completion_repair_attempt": repair_attempt,
+            "completion_repair_max_attempts": COMPLETION_REPAIR_MAX_ATTEMPTS,
+            "repair_of_message_id": original_message_id,
+            "diagnostic_id": diagnostic_id,
+            "completion_contract": {"required": missing_predicates},
+        }
+        repair_text = (
+            "Runtime completion repair required. Your previous turn ended without the durable output "
+            "required by its completion contract. Continue in the same role thread and do not repeat "
+            "work that is already complete.\n\n"
+            f"Work item: {work_item_id or 'none'}\n"
+            f"Required next action: {next_action}\n"
+            f"Missing durable outputs: {json.dumps(missing_predicates, sort_keys=True)}\n\n"
+            "Record the missing safe-output call now. If the requested work cannot complete, use the "
+            "required durable handoff or status path to record the concrete blocker instead of replying "
+            "only in prose. This is the single automatic repair attempt; another incomplete turn will "
+            "escalate to Project Manager."
+        )
+        queued_message_id = self.db.enqueue_message(
+            target_role=role_id,
+            text=repair_text,
+            source="runtime-repair",
+            payload=repair_payload,
+            message_id=repair_message_id,
+            correlation_id=str(getattr(message, "correlation_id")),
+            conversation_ref=getattr(message, "conversation_ref", None),
+            thread_ref=getattr(message, "thread_ref", None),
+        )
+        self.db.record_message_journal(
+            message_id=original_message_id,
+            correlation_id=str(getattr(message, "correlation_id")),
+            role_instance_id=role_instance_id,
+            stage="completion_repair",
+            status="queued",
+            summary=f"Queued bounded completion repair {queued_message_id} for {role_id}",
+            payload={
+                "repair_message_id": queued_message_id,
+                "repair_attempt": repair_attempt,
+                "diagnostic_id": diagnostic_id,
+                "missing_predicates": missing_predicates,
+            },
+        )
+        return queued_message_id
 
     def _auto_dispatch_planned_findings(
         self,
