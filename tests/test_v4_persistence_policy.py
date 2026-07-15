@@ -142,7 +142,7 @@ def test_v4_runtime_nul_command_output_reaches_terminal_state_with_hash_evidence
         source="api",
     )
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id=config.project_id, role_id="project-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -209,7 +209,7 @@ def test_v4_runtime_persistence_failure_terminalizes_turn(monkeypatch) -> None:
         source="api",
     )
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id=config.project_id, role_id="project-manager")
 
     message = db.connection.execute(
         "SELECT state FROM message_queue WHERE message_id=?",
