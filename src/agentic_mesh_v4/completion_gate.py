@@ -71,19 +71,27 @@ def evaluate_completion_contract(
     if not required:
         return CompletionEvaluation(state="completed", observed_outputs={"contract_source": contract.source})
     work_item_id = _first_string(item.work_item_id for item in required)
-    calls = db.list_safe_output_calls(
+    exact_calls = db.list_safe_output_calls(
         role_instance_id=role_instance_id,
         message_id=message_id,
         turn_id=turn_id,
         work_item_id=work_item_id,
     )
+    message_calls = [
+        item
+        for item in db.list_safe_output_calls(
+            message_id=message_id,
+            work_item_id=work_item_id,
+        )
+        if _same_role(item.get("role_instance_id"), role_instance_id)
+    ]
     fallback_calls: list[dict[str, Any]] = []
-    if not calls and work_item_id is not None:
+    if not exact_calls and not message_calls and work_item_id is not None:
         fallback_calls = db.list_safe_output_calls(
             role_instance_id=role_instance_id,
             work_item_id=work_item_id,
         )
-    all_calls = calls or fallback_calls
+    all_calls = _unique_safe_output_calls(exact_calls, message_calls, fallback_calls)
     artifacts = _artifacts_for_work_item(db, work_item_id)
     missing = tuple(
         _predicate_diagnostic(item)
@@ -206,6 +214,28 @@ def _first_string(values: object) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _same_role(candidate: object, expected: str) -> bool:
+    if not isinstance(candidate, str):
+        return False
+    candidate_role, candidate_separator, _candidate_instance = candidate.rpartition(".")
+    expected_role, expected_separator, _expected_instance = expected.rpartition(".")
+    return bool(candidate_separator and expected_separator and candidate_role == expected_role)
+
+
+def _unique_safe_output_calls(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            call_id = str(item.get("call_id") or "")
+            if call_id and call_id in seen:
+                continue
+            if call_id:
+                seen.add(call_id)
+            calls.append(item)
+    return calls
 
 
 def _artifacts_for_work_item(db: Any, work_item_id: str | None) -> list[dict[str, Any]]:
