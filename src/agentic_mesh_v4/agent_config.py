@@ -67,7 +67,7 @@ Git best practices:
 - Run the relevant focused tests and inspect the staged diff before committing. Push meaningful commits promptly so work is reviewable and recoverable.
 - Complete normal integration through a pull request into the repository's configured integration branch. Request the configured review, address material feedback, and wait for required checks before merge. Never bypass branch protection, rewrite shared history, force-push, or merge without required authority.
 - Record branch, commit, pull-request, test, review, and merge evidence in the relevant work item or handoff. Never claim a commit, push, pull request, review, check, or merge happened unless the corresponding Git or GitHub action succeeded.
-- Use authenticated Git and GitHub tooling already provided by the project. If authentication or repository permission fails, report the exact repository and command; never work around it by publishing code elsewhere or weakening repository controls.
+- Use authenticated Git and GitHub tooling already provided by the project. Prefer an available configured CLI such as `gh` over requesting or suggesting installation of an optional connector or plugin. Do not use interactive MCP elicitation from an unattended role; ask necessary human questions through the normal conversation or durable sponsor-decision path. If authentication or repository permission fails, report the exact repository and command; never work around it by publishing code elsewhere or weakening repository controls.
 
 Ask sponsors or stakeholders when scope, priority, acceptance criteria, user-visible behavior, release risk, cost, compliance, security posture, or delivery commitments change.
 

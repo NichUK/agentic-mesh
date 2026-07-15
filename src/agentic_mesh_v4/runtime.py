@@ -1569,12 +1569,17 @@ class V4Runtime:
             content = _event_content(method, params)
             if method == "item/agentMessage/delta":
                 reply_parts.append(content)
-            if _should_auto_accept_server_request(event=event, approval_policy=approval_policy):
-                client.respond_to_server_request(request_id=event["id"], result={"decision": "accept"})
+            automatic_response = _automatic_server_request_response(
+                event=event,
+                approval_policy=approval_policy,
+            )
+            if automatic_response is not None:
+                result, event_suffix, response_summary = automatic_response
+                client.respond_to_server_request(request_id=event["id"], result=result)
                 self.db.record_agent_event(
                     role_instance_id=role_instance_id,
-                    event_type=f"{method}/autoAccepted",
-                    content="Auto-accepted server approval request for approval_policy=never.",
+                    event_type=f"{method}/{event_suffix}",
+                    content=response_summary,
                     payload={"request_id": event["id"], "method": method},
                     thread_id=thread_id,
                     turn_id=turn_id,
@@ -1603,15 +1608,43 @@ def _event_content(method: str, params: dict[str, object]) -> str:
     return method
 
 
-def _should_auto_accept_server_request(*, event: dict[str, object], approval_policy: str) -> bool:
+def _automatic_server_request_response(
+    *,
+    event: dict[str, object],
+    approval_policy: str,
+) -> tuple[dict[str, object], str, str] | None:
     if approval_policy != "never" or "id" not in event:
-        return False
+        return None
     method = str(event.get("method") or "")
-    return method in {
+    if method in {
         "item/commandExecution/requestApproval",
         "item/fileChange/requestApproval",
         "item/permissions/requestApproval",
-    }
+    }:
+        return (
+            {"decision": "accept"},
+            "autoAccepted",
+            "Auto-accepted server approval request for approval_policy=never.",
+        )
+    if method != "mcpServer/elicitation/request":
+        return None
+    params = event.get("params")
+    if not isinstance(params, dict):
+        params = {}
+    metadata = params.get("_meta")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if metadata.get("codex_approval_kind") != "tool_suggestion" or metadata.get("suggest_type") != "install":
+        return (
+            {"action": "cancel"},
+            "autoCancelled",
+            "Auto-cancelled interactive MCP elicitation because the unattended role has no interactive client.",
+        )
+    return (
+        {"action": "decline"},
+        "autoDeclined",
+        "Auto-declined optional plugin installation for unattended approval_policy=never role.",
+    )
 
 
 def _looks_like_agent_unavailable(exc: BaseException) -> bool:

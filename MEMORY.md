@@ -650,3 +650,16 @@ or `release_review`.
 - Out-of-scope discoveries require a separately prioritized work item, sponsor
   stop instructions terminate the review chain, and human-facing responses
   must not contain raw session JSONL or unfiltered tool/search transcripts.
+
+## 2026-07-15 V4 Unattended Elicitation Handling
+
+- Unattended role turns use `approval_policy=never` and have no interactive UI
+  capable of answering Codex `mcpServer/elicitation/request` server requests.
+  Leaving those requests unanswered causes the same request to replay after
+  every WebSocket read timeout and indefinitely blocks the active turn.
+- The runtime declines optional plugin-install suggestions and cancels other
+  interactive MCP elicitations for unattended roles. Ordinary command, file,
+  and permission approvals retain their existing automatic acceptance.
+- Agents must use already-configured tooling such as authenticated `gh` before
+  suggesting optional plugins, and must route genuine human questions through
+  normal conversation or the durable sponsor-decision path.
