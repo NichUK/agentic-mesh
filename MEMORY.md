@@ -3,6 +3,18 @@
 This file records the context needed to resume Agentic Mesh in a fresh chat
 after opening `C:\Dev\agentic-mesh` as the workspace.
 
+## 2026-07-15 - Bounded Missing-Output Repair
+
+- When a V4 role completes a turn without the safe-output required by its
+  completion contract, the runtime queues one corrective turn to the same role
+  and existing Codex thread with the exact missing predicates.
+- If that single repair also omits its durable output, the runtime escalates to
+  Project Manager with `completion_repair_exhausted` evidence. It never creates
+  an unbounded repair loop.
+- This prevents routine omitted handoffs from immediately stranding active work
+  in management recovery while preserving role ownership of specialist
+  decisions and durable outputs.
+
 ## 2026-07-15 - Shared Git And Human-Readable Output Contract
 
 - Every materialized V4 role prompt now includes shared Git best practices:

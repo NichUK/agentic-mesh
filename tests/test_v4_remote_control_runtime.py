@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import threading
 import time
 from dataclasses import replace
@@ -234,7 +235,7 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     assert snapshot["events"][1]["content"] == "Done"
 
 
-def test_v4_missing_required_handoff_escalates_to_project_manager(tmp_path: Path) -> None:
+def test_v4_missing_required_handoff_queues_one_same_role_repair(tmp_path: Path) -> None:
     db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     transport = InMemoryTransport()
@@ -275,6 +276,81 @@ def test_v4_missing_required_handoff_escalates_to_project_manager(tmp_path: Path
 
     assert result is not None
     assert result.state == "completed_with_missing_output"
+    repair_messages = [
+        dict(row)
+        for row in db.connection.execute(
+            "SELECT * FROM message_queue WHERE target_role='product-manager' AND source='runtime-repair'"
+        )
+    ]
+    assert len(repair_messages) == 1
+    assert "single automatic repair attempt" in repair_messages[0]["text"]
+    assert repair_messages[0]["state"] == "queued"
+    repair_payload = json.loads(repair_messages[0]["payload_json"])
+    assert repair_payload["completion_repair_attempt"] == 1
+    assert repair_payload["repair_of_message_id"] == result.message_id
+    assert repair_payload["completion_contract"]["required"][0]["predicate"] == "handoff_recorded"
+    assert db.connection.execute(
+        "SELECT COUNT(*) AS count FROM message_queue WHERE target_role='project-manager' AND source='runtime-escalation'"
+    ).fetchone()["count"] == 0
+
+
+def test_v4_failed_completion_repair_escalates_without_looping(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    first_transport = InMemoryTransport()
+    first_transport.queue_response({"id": 1, "result": {}})
+    first_transport.queue_response(None)
+    first_transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    first_transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    first_transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Done"}})
+    first_transport.queue_notification({"method": "turn/completed", "params": {}})
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(first_transport),
+    )
+    runtime.register_roles()
+    db.upsert_work_item(
+        work_item_id="work-needs-handoff",
+        title="Needs handoff",
+        state="product_definition",
+        owner_role="product-manager",
+        next_action="Hand off to UX.",
+    )
+    runtime.enqueue_conversation(
+        target_role="product-manager",
+        text="Complete product definition and hand off.",
+        source="api",
+        payload={
+            "work_item_id": "work-needs-handoff",
+            "from_role": "product-manager",
+            "to_role": "ux-designer",
+            "state": "experience_design",
+            "next_action": "UX owns design.",
+        },
+    )
+    runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="product-manager")
+
+    repair_transport = InMemoryTransport()
+    repair_transport.queue_response({"id": 1, "result": {}})
+    repair_transport.queue_response(None)
+    repair_transport.queue_response({"id": 2, "result": {}})
+    repair_transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-2"}}})
+    repair_transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Still omitted"}})
+    repair_transport.queue_notification({"method": "turn/completed", "params": {}})
+    repair_runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(repair_transport),
+    )
+
+    result = repair_runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="product-manager")
+
+    assert result is not None
+    assert result.state == "completed_with_missing_output"
+    assert db.connection.execute(
+        "SELECT COUNT(*) AS count FROM message_queue WHERE source='runtime-repair'"
+    ).fetchone()["count"] == 1
     pm_messages = [
         dict(row)
         for row in db.connection.execute(
@@ -282,8 +358,7 @@ def test_v4_missing_required_handoff_escalates_to_project_manager(tmp_path: Path
         )
     ]
     assert len(pm_messages) == 1
-    assert "Runtime obligation failure" in pm_messages[0]["text"]
-    assert pm_messages[0]["state"] == "queued"
+    assert json.loads(pm_messages[0]["payload_json"])["completion_repair_exhausted"] is True
 
 
 def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: Path) -> None:
