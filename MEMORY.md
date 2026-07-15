@@ -3,6 +3,18 @@
 This file records the context needed to resume Agentic Mesh in a fresh chat
 after opening `C:\Dev\agentic-mesh` as the workspace.
 
+## 2026-07-15 - Shared Git And Human-Readable Output Contract
+
+- Every materialized V4 role prompt now includes shared Git best practices:
+  inspect repository state before editing, preserve unrelated work, use scoped
+  branches and focused verified commits, push recoverable work, integrate by
+  reviewed pull request, and record real Git/GitHub evidence.
+- Human-facing role output must lead with the outcome and use short paragraphs,
+  headings, lists, and whitespace where useful. Unbroken walls of text and raw
+  internal/tool-output dumps are explicitly prohibited.
+- The common role-agent image includes GitHub CLI so deployments can provide
+  project-scoped GitHub authentication without baking credentials into images.
+
 ## 2026-06-20 - V4 Remote-Control Runtime Reset
 
 The active implementation direction is now V4 on branch

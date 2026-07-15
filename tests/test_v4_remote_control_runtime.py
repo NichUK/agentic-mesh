@@ -2387,6 +2387,11 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "newly discovered out-of-scope work in a separate proposed work item" in text
     assert "instruction to stop a review loop takes precedence" in text
     assert "Never paste raw session JSONL" in text
+    assert "Git best practices" in text
+    assert "git status --short --branch" in text
+    assert "Complete normal integration through a pull request" in text
+    assert "Never return an unbroken wall of text" in text
+    assert "use short paragraphs with blank lines" in text
 
 
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
