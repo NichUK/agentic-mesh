@@ -11,6 +11,7 @@ import pytest
 
 from agentic_mesh_v4.agent_config import materialize_agent_configs
 from agentic_mesh_v4 import cli as v4_cli
+from agentic_mesh_v4 import runtime as v4_runtime
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
 from agentic_mesh_v4.codex_protocol import InMemoryTransport
 from agentic_mesh_v4.compose import render_compose
@@ -1654,6 +1655,132 @@ def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) 
         "SELECT state FROM message_queue WHERE message_id=?",
         (message_id,),
     ).fetchone()["state"] == "completed"
+
+
+def test_v4_unattended_server_request_policy_declines_plugin_installs_and_cancels_other_elicitations() -> None:
+    plugin_suggestion = {
+        "id": 42,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+            "_meta": {
+                "codex_approval_kind": "tool_suggestion",
+                "suggest_type": "install",
+            },
+        },
+    }
+    sponsor_question = {
+        "id": 43,
+        "method": "mcpServer/elicitation/request",
+        "params": {"message": "Choose the sponsor-visible release date."},
+    }
+
+    response = v4_runtime._automatic_server_request_response(  # noqa: SLF001 - policy regression coverage.
+        event=plugin_suggestion,
+        approval_policy="never",
+    )
+
+    assert response is not None
+    assert response[0] == {"action": "decline"}
+    sponsor_response = v4_runtime._automatic_server_request_response(  # noqa: SLF001 - policy regression coverage.
+        event=sponsor_question,
+        approval_policy="never",
+    )
+    assert sponsor_response is not None
+    assert sponsor_response[0] == {"action": "cancel"}
+    assert v4_runtime._automatic_server_request_response(  # noqa: SLF001 - policy regression coverage.
+        event=plugin_suggestion,
+        approval_policy="on-request",
+    ) is None
+
+
+def test_v4_runtime_auto_declines_optional_plugin_install_elicitation_when_policy_is_never(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification(
+        {
+            "id": 42,
+            "method": "mcpServer/elicitation/request",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "message": "Install the optional GitHub plugin.",
+                "mode": "form",
+                "requestedSchema": {"type": "object", "properties": {}},
+                "_meta": {
+                    "codex_approval_kind": "tool_suggestion",
+                    "suggest_type": "install",
+                    "tool_name": "GitHub",
+                },
+            },
+        }
+    )
+    transport.queue_notification({"method": "item/agentMessage/delta", "params": {"delta": "Used gh."}})
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+    runtime.register_roles()
+    message_id = runtime.enqueue_conversation(target_role="project-manager", text="Check pull requests", source="api")
+
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert {"id": 42, "result": {"action": "decline"}} in transport.sent
+    events = db.snapshot()["events"]
+    assert any(event["event_type"] == "mcpServer/elicitation/request/autoDeclined" for event in events)
+    assert db.connection.execute(
+        "SELECT state FROM message_queue WHERE message_id=?",
+        (message_id,),
+    ).fetchone()["state"] == "completed"
+
+
+def test_v4_runtime_auto_cancels_general_elicitation_for_unattended_role(tmp_path: Path) -> None:
+    db = make_v4_db()
+    config = load_project_config(PROJECT_CONFIG)
+    transport = InMemoryTransport()
+    transport.queue_response({"id": 1, "result": {}})
+    transport.queue_response(None)
+    transport.queue_response({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    transport.queue_response({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+    transport.queue_notification(
+        {
+            "id": 43,
+            "method": "mcpServer/elicitation/request",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "message": "Choose the sponsor-visible release date.",
+                "mode": "form",
+                "requestedSchema": {"type": "object", "properties": {"date": {"type": "string"}}},
+            },
+        }
+    )
+    transport.queue_notification({"method": "turn/completed", "params": {}})
+
+    runtime = V4Runtime(
+        db=db,
+        project_config=config,
+        client_factory=lambda _role_id: CodexAppServerClient(transport),
+    )
+    runtime.register_roles()
+    runtime.enqueue_conversation(target_role="project-manager", text="Plan release", source="api")
+
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
+
+    assert result is not None
+    assert result.state == "completed"
+    assert {"id": 43, "result": {"action": "cancel"}} in transport.sent
+    events = db.snapshot()["events"]
+    assert any(event["event_type"] == "mcpServer/elicitation/request/autoCancelled" for event in events)
 
 
 def test_v4_runtime_retires_thread_when_sandbox_metadata_does_not_match(tmp_path: Path) -> None:
