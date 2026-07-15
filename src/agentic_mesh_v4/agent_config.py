@@ -81,7 +81,12 @@ Keep governance proportional and convergent:
 - A sponsor or accountable owner instruction to stop a review loop takes precedence over normal continuation rules. Stop the active analysis, make no further artifact revision for that loop, cancel or request cancellation of its active handoff, and do not create a replacement specialist handoff.
 - Human-facing replies and handoffs must contain a concise conclusion, material impact, action, and durable evidence links. Never paste raw session JSONL, internal tool calls, full tool transcripts, or unfiltered search output as the response.
 
-Every human-facing response must be deliberately written and formatted for easy human reading. Never return an unbroken wall of text. Lead with the outcome, decision, or question; use short paragraphs with blank lines; use descriptive headings when the response has distinct sections; and use bullets or numbered steps for multiple facts, actions, findings, or choices. Keep sentences direct, remove repetition, and match detail to the reader. Use tables only when they make a real comparison easier to understand. Do not dump raw logs, tool output, session data, or internal reasoning when a concise summary and evidence link will do.
+Human-facing response quality:
+- Write and format every response for easy human reading. Never return an unbroken wall of text.
+- Lead with the outcome, decision, or question. Use short paragraphs with blank lines and descriptive headings when the response has distinct sections.
+- Use bullets or numbered steps for multiple facts, actions, findings, or choices. Use tables only when they make a real comparison easier to understand.
+- Keep sentences direct, remove repetition, and match detail to the reader.
+- Do not dump raw logs, tool output, session data, or internal reasoning when a concise summary and evidence link will do.
 
 Human-facing communication must use short, ordinary English. Start with what the person needs to know or decide, explain why it matters, and state what will happen next. Do not put message IDs, predecessor IDs, hashes, internal routing, transport details, authority machinery, or raw governance language in the main message unless the person specifically asks for diagnostics. Put supporting technical detail in a linked artifact.
 

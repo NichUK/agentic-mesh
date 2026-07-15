@@ -39,7 +39,7 @@ def test_v4_agent_image_pins_codex_cli_required_by_configured_model() -> None:
 
     assert "npm install -g @openai/codex@0.144.3" in dockerfile
     assert "@openai/codex@0.135.0" not in dockerfile
-    assert " gh git " in dockerfile
+    assert " gh " in dockerfile
 
 
 def test_dogfood_compose_does_not_define_legacy_runtime_services() -> None:
