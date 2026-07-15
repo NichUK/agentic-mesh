@@ -32,6 +32,15 @@ AUTHORITY_LABELS = {
 OPEN_DECISION_STATES = {"pending", "delivery_failed_pending", "resolution_failed"}
 TERMINAL_DECISION_STATES = {"resolved", "cancelled"}
 DECISION_NOTIFICATION_PREFIX = "msg-decision-result-"
+DECISION_NOTIFICATION_RECOVERABLE_OUTCOME = "recover_if_missing"
+DECISION_NOTIFICATION_TERMINAL_OUTCOMES = {
+    "do_not_retry",
+    "summary_already_recovered",
+}
+DECISION_NOTIFICATION_OUTCOMES = {
+    DECISION_NOTIFICATION_RECOVERABLE_OUTCOME,
+    *DECISION_NOTIFICATION_TERMINAL_OUTCOMES,
+}
 MAX_DECISION_TITLE_LENGTH = 120
 MAX_DECISION_QUESTION_LENGTH = 600
 SUPPORTED_EFFECT_TARGET_TYPES = {"work_item", "handoff", "preflight", "artifact", "release"}
@@ -60,6 +69,230 @@ class DecisionCardSender(Protocol):
 
 class DecisionRecordError(ValueError):
     pass
+
+
+def record_decision_notification_recovery_summary(
+    *,
+    db: V4Database,
+    summary_id: str,
+    route_owner_role: str,
+    activity_ref: str,
+    source: str,
+    reason: str,
+    actor_ref: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Record an already-sent route-owner summary without invoking a provider."""
+
+    values = {
+        "summary_id": summary_id,
+        "route_owner_role": route_owner_role,
+        "activity_ref": activity_ref,
+        "source": source,
+        "reason": reason,
+        "actor_ref": actor_ref,
+        "idempotency_key": idempotency_key,
+    }
+    _require_non_empty_strings(values)
+    with db.connection.transaction():
+        db.connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+            (f"decision-notification-summary:{route_owner_role}:{activity_ref}",),
+        )
+        existing = db.connection.execute(
+            "SELECT * FROM decision_notification_recovery_summaries WHERE idempotency_key=? FOR UPDATE",
+            (idempotency_key,),
+        ).fetchone()
+        if existing is not None:
+            _assert_idempotent_fields(existing=existing, expected=values, record_type="notification summary")
+            return {"summary_id": str(existing["summary_id"]), "idempotent": True}
+        duplicate_activity = db.connection.execute(
+            """
+            SELECT * FROM decision_notification_recovery_summaries
+            WHERE route_owner_role=? AND activity_ref=?
+            FOR UPDATE
+            """,
+            (route_owner_role, activity_ref),
+        ).fetchone()
+        if duplicate_activity is not None:
+            raise DecisionRecordError("notification summary activity already has a different idempotency identity")
+        db.connection.execute(
+            """
+            INSERT INTO decision_notification_recovery_summaries(
+              summary_id, route_owner_role, activity_ref, source, reason,
+              actor_ref, idempotency_key, created_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                summary_id,
+                route_owner_role,
+                activity_ref,
+                source,
+                reason,
+                actor_ref,
+                idempotency_key,
+                utc_now(),
+            ),
+        )
+    return {"summary_id": summary_id, "idempotent": False}
+
+
+def set_decision_notification_outcome(
+    *,
+    db: V4Database,
+    decision_id: str,
+    outcome: str,
+    source: str,
+    reason: str,
+    actor_ref: str,
+    expected_version: int,
+    idempotency_key: str,
+    summary_id: str | None = None,
+) -> dict[str, Any]:
+    """CAS one authoritative retry outcome independent of queue-row retention."""
+
+    if outcome not in DECISION_NOTIFICATION_OUTCOMES:
+        raise DecisionRecordError(f"unsupported decision notification outcome: {outcome}")
+    if expected_version < 0:
+        raise DecisionRecordError("notification outcome expected_version must be non-negative")
+    notification_id = _decision_notification_id(decision_id)
+    fields = {
+        "notification_id": notification_id,
+        "decision_id": decision_id,
+        "outcome": outcome,
+        "source": source,
+        "reason": reason,
+        "actor_ref": actor_ref,
+        "idempotency_key": idempotency_key,
+    }
+    _require_non_empty_strings(fields)
+    if outcome == "summary_already_recovered" and not summary_id:
+        raise DecisionRecordError("summary_already_recovered requires a durable summary_id")
+    if outcome != "summary_already_recovered" and summary_id is not None:
+        raise DecisionRecordError("summary_id is only valid for summary_already_recovered")
+
+    with db.connection.transaction():
+        db.connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+            (f"decision-notification-outcome:{notification_id}",),
+        )
+        existing_event = db.connection.execute(
+            "SELECT * FROM decision_notification_outcome_events WHERE idempotency_key=? FOR UPDATE",
+            (idempotency_key,),
+        ).fetchone()
+        if existing_event is not None:
+            expected = {**fields, "summary_id": summary_id}
+            _assert_idempotent_fields(existing=existing_event, expected=expected, record_type="notification outcome")
+            if int(existing_event["version"]) - 1 != expected_version:
+                raise DecisionRecordError("notification outcome idempotency key reused with a different expected version")
+            return {
+                "notification_id": notification_id,
+                "decision_id": decision_id,
+                "outcome": str(existing_event["outcome"]),
+                "version": int(existing_event["version"]),
+                "summary_id": existing_event["summary_id"],
+                "terminal": str(existing_event["outcome"]) in DECISION_NOTIFICATION_TERMINAL_OUTCOMES,
+                "idempotent": True,
+            }
+
+        if summary_id is not None:
+            summary = db.connection.execute(
+                "SELECT summary_id FROM decision_notification_recovery_summaries WHERE summary_id=?",
+                (summary_id,),
+            ).fetchone()
+            if summary is None:
+                raise DecisionRecordError("notification recovery summary does not exist")
+
+        current = db.connection.execute(
+            "SELECT * FROM decision_notification_outcomes WHERE notification_id=? FOR UPDATE",
+            (notification_id,),
+        ).fetchone()
+        current_version = int(current["version"]) if current is not None else 0
+        if current is not None and str(current["decision_id"]) != decision_id:
+            raise DecisionRecordError("notification identity is already bound to another decision")
+        if current_version != expected_version:
+            raise DecisionRecordError(
+                f"notification outcome CAS conflict: expected version {expected_version}, current version {current_version}"
+            )
+
+        next_version = current_version + 1
+        now = utc_now()
+        if current is None:
+            db.connection.execute(
+                """
+                INSERT INTO decision_notification_outcomes(
+                  notification_id, decision_id, outcome, version, source, reason,
+                  actor_ref, summary_id, idempotency_key, created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    notification_id,
+                    decision_id,
+                    outcome,
+                    next_version,
+                    source,
+                    reason,
+                    actor_ref,
+                    summary_id,
+                    idempotency_key,
+                    now,
+                    now,
+                ),
+            )
+        else:
+            updated = db.connection.execute(
+                """
+                UPDATE decision_notification_outcomes
+                SET outcome=?, version=?, source=?, reason=?, actor_ref=?, summary_id=?,
+                    idempotency_key=?, updated_at=?
+                WHERE notification_id=? AND version=?
+                RETURNING notification_id
+                """,
+                (
+                    outcome,
+                    next_version,
+                    source,
+                    reason,
+                    actor_ref,
+                    summary_id,
+                    idempotency_key,
+                    now,
+                    notification_id,
+                    expected_version,
+                ),
+            ).fetchone()
+            if updated is None:
+                raise DecisionRecordError("notification outcome CAS conflict")
+        db.connection.execute(
+            """
+            INSERT INTO decision_notification_outcome_events(
+              event_id, notification_id, decision_id, outcome, version, source,
+              reason, actor_ref, summary_id, idempotency_key, created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                f"notification-outcome-event-{uuid4().hex}",
+                notification_id,
+                decision_id,
+                outcome,
+                next_version,
+                source,
+                reason,
+                actor_ref,
+                summary_id,
+                idempotency_key,
+                now,
+            ),
+        )
+    return {
+        "notification_id": notification_id,
+        "decision_id": decision_id,
+        "outcome": outcome,
+        "version": next_version,
+        "summary_id": summary_id,
+        "terminal": outcome in DECISION_NOTIFICATION_TERMINAL_OUTCOMES,
+        "idempotent": False,
+    }
 
 
 @dataclass(frozen=True)
@@ -320,7 +553,41 @@ def ensure_decision_resolution_notification(
     if decision["status"] != "resolved":
         return {"state": "not_required", "reason": "decision is not resolved"}
 
-    message_id = f"{DECISION_NOTIFICATION_PREFIX}{decision_id.removeprefix('decision-')}"
+    message_id = _decision_notification_id(decision_id)
+    notification_outcome = db.connection.execute(
+        "SELECT * FROM decision_notification_outcomes WHERE notification_id=?",
+        (message_id,),
+    ).fetchone()
+    if notification_outcome is None:
+        if recovery:
+            return {
+                "state": "policy_missing",
+                "message_id": message_id,
+                "idempotent": True,
+                "reason": "no authoritative recover_if_missing outcome exists",
+            }
+        notification_outcome = set_decision_notification_outcome(
+            db=db,
+            decision_id=decision_id,
+            outcome=DECISION_NOTIFICATION_RECOVERABLE_OUTCOME,
+            source="decision_resolution",
+            reason="initial requester notification",
+            actor_ref=str(decision["owner_role"]),
+            expected_version=0,
+            idempotency_key=f"decision-notification-outcome:{decision_id}:initial",
+        )
+    outcome = str(notification_outcome["outcome"])
+    if outcome in DECISION_NOTIFICATION_TERMINAL_OUTCOMES:
+        return {
+            "state": outcome,
+            "message_id": message_id,
+            "idempotent": True,
+            "terminal": True,
+            "version": int(notification_outcome["version"]),
+        }
+    if outcome != DECISION_NOTIFICATION_RECOVERABLE_OUTCOME:
+        raise DecisionRecordError(f"unsupported persisted notification outcome: {outcome}")
+
     existing = db.connection.execute(
         "SELECT state FROM message_queue WHERE message_id=?",
         (message_id,),
@@ -396,14 +663,18 @@ def reconcile_resolved_decision_notifications(
 ) -> dict[str, Any]:
     rows = db.connection.execute(
         """
-        SELECT decision_id
-        FROM decision_records
-        WHERE status='resolved'
+        SELECT decisions.decision_id
+        FROM decision_records decisions
+        JOIN decision_notification_outcomes outcomes
+          ON outcomes.decision_id=decisions.decision_id
+         AND outcomes.notification_id = 'msg-decision-result-' || SUBSTR(decisions.decision_id, 10)
+         AND outcomes.outcome='recover_if_missing'
+        WHERE decisions.status='resolved'
         AND NOT EXISTS (
             SELECT 1 FROM message_queue
-            WHERE message_id = 'msg-decision-result-' || SUBSTR(decision_id, 10)
+            WHERE message_id = outcomes.notification_id
         )
-        ORDER BY resolved_at, decision_id
+        ORDER BY decisions.resolved_at, decisions.decision_id
         LIMIT ?
         """,
         (limit,),
@@ -416,10 +687,33 @@ def reconcile_resolved_decision_notifications(
         )
         for row in rows
     ]
+    terminal_excluded = db.connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM decision_records decisions
+        JOIN decision_notification_outcomes outcomes
+          ON outcomes.decision_id=decisions.decision_id
+        WHERE decisions.status='resolved'
+          AND outcomes.outcome IN ('do_not_retry', 'summary_already_recovered')
+        """
+    ).fetchone()
+    policy_missing = db.connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM decision_records decisions
+        WHERE decisions.status='resolved'
+          AND NOT EXISTS (
+            SELECT 1 FROM decision_notification_outcomes outcomes
+            WHERE outcomes.decision_id=decisions.decision_id
+          )
+        """
+    ).fetchone()
     return {
         "checked": len(results),
         "queued": sum(1 for item in results if item.get("state") == "queued" and not item.get("idempotent")),
         "existing": sum(1 for item in results if item.get("idempotent")),
+        "terminal_excluded": int(terminal_excluded["count"]),
+        "policy_missing": int(policy_missing["count"]),
         "results": results,
     }
 
@@ -1169,6 +1463,31 @@ def _parse_timestamp(value: object) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _decision_notification_id(decision_id: str) -> str:
+    if not decision_id.startswith("decision-") or len(decision_id) <= len("decision-"):
+        raise DecisionRecordError("decision notification requires a canonical decision id")
+    return f"{DECISION_NOTIFICATION_PREFIX}{decision_id.removeprefix('decision-')}"
+
+
+def _require_non_empty_strings(values: dict[str, object]) -> None:
+    missing = [key for key, value in values.items() if not isinstance(value, str) or not value.strip()]
+    if missing:
+        raise DecisionRecordError(f"required notification fields are empty: {', '.join(sorted(missing))}")
+
+
+def _assert_idempotent_fields(
+    *,
+    existing: Any,
+    expected: dict[str, object],
+    record_type: str,
+) -> None:
+    mismatched = [key for key, value in expected.items() if existing[key] != value]
+    if mismatched:
+        raise DecisionRecordError(
+            f"{record_type} idempotency key reused with different fields: {', '.join(sorted(mismatched))}"
+        )
 
 
 def _optional_string(value: object) -> str | None:

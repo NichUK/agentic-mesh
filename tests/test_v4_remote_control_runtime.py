@@ -223,7 +223,7 @@ def test_v4_runtime_dispatches_message_and_records_stream_events(tmp_path: Path)
     runtime.register_roles()
     message_id = runtime.enqueue_conversation(target_role="project-manager", text="Check status", source="api")
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is not None
     assert result.message_id == message_id
@@ -271,7 +271,7 @@ def test_v4_missing_required_handoff_escalates_to_project_manager(tmp_path: Path
         },
     )
 
-    result = runtime.dispatch_once(role_id="product-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="product-manager")
 
     assert result is not None
     assert result.state == "completed_with_missing_output"
@@ -307,7 +307,7 @@ def test_v4_runtime_keeps_draining_after_agent_message_item_completed(tmp_path: 
     runtime.register_roles()
     message_id = runtime.enqueue_conversation(target_role="project-manager", text="Check status", source="api")
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -342,7 +342,7 @@ def test_v4_runtime_keeps_started_turn_active_after_read_timeout(tmp_path: Path)
     runtime.register_roles()
     message_id = runtime.enqueue_conversation(target_role="engineering", text="Implement work", source="api")
 
-    result = runtime.dispatch_once(role_id="engineering")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="engineering")
 
     assert result is not None
     assert result.state == "active_turn"
@@ -688,7 +688,7 @@ def test_v4_orphaned_steering_message_dispatches_as_normal_turn(tmp_path: Path) 
         client_factory=lambda _role_id: CodexAppServerClient(transport),
     )
 
-    result = dispatch_runtime.dispatch_once(role_id="project-manager")
+    result = dispatch_runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -799,7 +799,7 @@ def test_v4_dispatch_does_not_claim_second_message_while_role_has_active_turn(tm
         conversation_ref="conversation-1",
     )
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is None
     row = db.connection.execute(
@@ -1054,7 +1054,7 @@ def test_v4_active_turn_reconciles_persisted_completion_event(tmp_path: Path) ->
         message_id=message_id,
     )
 
-    result = runtime.dispatch_once(role_id="enterprise-architect")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="enterprise-architect")
 
     assert result is not None
     assert result.state == "completed"
@@ -1110,7 +1110,7 @@ def test_v4_closed_active_thread_is_retired_and_message_is_requeued(tmp_path: Pa
         message_id=message_id,
     )
 
-    result = runtime.dispatch_once(role_id="solution-architect")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="solution-architect")
 
     assert result is not None
     assert result.state == "queued"
@@ -1324,7 +1324,7 @@ def test_v4_dispatch_continues_active_turn_and_delivers_recorded_reply(tmp_path:
         teams_reply_sender=teams_sender,  # type: ignore[arg-type]
     )
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -1598,7 +1598,8 @@ def test_v4_dispatch_worker_requests_background_sync_only_after_completed_turn(t
         def __init__(self, **kwargs) -> None:
             captured.update(kwargs)
 
-        def dispatch_once(self, *, role_id: str):
+        def dispatch_once(self, *, project_id: str, role_id: str):
+            assert project_id == "agentic-mesh-dev"
             assert role_id == "project-manager"
             return type("Result", (), {"state": "completed"})()
 
@@ -1642,7 +1643,7 @@ def test_v4_runtime_auto_accepts_approvals_when_policy_is_never(tmp_path: Path) 
     runtime.register_roles()
     message_id = runtime.enqueue_conversation(target_role="project-manager", text="Check mounts", source="api")
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -1809,7 +1810,7 @@ def test_v4_runtime_delivers_completed_teams_reply(tmp_path: Path) -> None:
         payload=activity,
     )
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -1897,7 +1898,7 @@ def test_v4_runtime_ignores_foreign_turn_events_for_current_message(tmp_path: Pa
         payload=activity,
     )
 
-    result = runtime.dispatch_once(role_id="release-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="release-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -1976,7 +1977,7 @@ def test_v4_runtime_delivers_commentary_progress_to_teams(tmp_path: Path) -> Non
         payload=activity,
     )
 
-    result = runtime.dispatch_once(role_id="release-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="release-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -2279,7 +2280,7 @@ def test_v4_runtime_syncs_documents_after_completed_turn(tmp_path: Path) -> None
     runtime.register_roles()
     message_id = runtime.enqueue_conversation(target_role="project-manager", text="Write a dossier", source="api")
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is not None
     assert result.state == "completed"
@@ -2322,7 +2323,7 @@ def test_v4_runtime_records_document_sync_failure_without_failing_message(tmp_pa
     runtime.register_roles()
     message_id = runtime.enqueue_conversation(target_role="project-manager", text="Write a dossier", source="api")
 
-    result = runtime.dispatch_once(role_id="project-manager")
+    result = runtime.dispatch_once(project_id="agentic-mesh-dev", role_id="project-manager")
 
     assert result is not None
     assert result.state == "completed"

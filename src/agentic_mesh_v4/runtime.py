@@ -95,7 +95,7 @@ class V4Runtime:
     def register_roles(self) -> None:
         for role in self.project_config.roles:
             self.db.upsert_role_instance(
-                role_instance_id=role.role_instance_id,
+                role_instance_id=self.project_config.role_instance_id(role.role_id),
                 role_id=role.role_id,
                 display_name=role.display_name,
                 service_name=role.service_name,
@@ -154,7 +154,7 @@ class V4Runtime:
         )
         if not should_steer or self.client_factory is None:
             return message_id
-        role_instance_id = role.role_instance_id
+        role_instance_id = self.project_config.role_instance_id(role.role_id)
         thread_id = self._active_thread_id(role_instance_id)
         turn_id = self._active_turn_id(role_instance_id)
         if not thread_id or not turn_id:
@@ -195,9 +195,10 @@ class V4Runtime:
         )
         return message_id
 
-    def dispatch_once(self, *, role_id: str) -> DispatchResult | None:
+    def dispatch_once(self, *, project_id: str | None = None, role_id: str) -> DispatchResult | None:
+        self.project_config.bind(project_id)
         role = self.project_config.role(role_id)
-        role_instance_id = role.role_instance_id
+        role_instance_id = self.project_config.role_instance_id(role.role_id)
         active = self.db.active_message_for_role(target_role=role.role_id)
         if active is not None:
             if str(active.get("state") or "") == "active_turn":
@@ -230,6 +231,7 @@ class V4Runtime:
                 payload={"target_role": role.role_id},
             )
             return DispatchResult(message_id=message.message_id, state="failed", error="missing client factory")
+        turn_id: str | None = None
         try:
             client = self.client_factory(role.role_id)
             if not client.initialized:
@@ -474,22 +476,23 @@ class V4Runtime:
                 event_type=exc.event_type,
             )
         except Exception as exc:
-            with self.db.connection:
-                self.db.connection.execute(
-                    """
-                    UPDATE role_instances
-                    SET active_turn_id=NULL, state='ready', updated_at=?
-                    WHERE role_instance_id=?
-                    """,
-                    (utc_now(), role_instance_id),
-                )
             if _looks_like_agent_unavailable(exc):
+                self._terminalize_turn_record(
+                    role_instance_id=role_instance_id,
+                    turn_id=turn_id,
+                    status="interrupted",
+                )
                 self.db.mark_message_state(
                     message.message_id,
                     state="queued",
                     summary=f"Agent app-server unavailable; queued for retry: {exc}",
                 )
                 return DispatchResult(message_id=message.message_id, state="queued", error=str(exc))
+            self._terminalize_turn_record(
+                role_instance_id=role_instance_id,
+                turn_id=turn_id,
+                status="failed",
+            )
             self.db.mark_message_state(message.message_id, state="failed", summary=str(exc))
             self._escalate_to_project_manager(
                 role_instance_id=role_instance_id,
@@ -502,7 +505,9 @@ class V4Runtime:
 
     def _continue_active_turn(self, *, role: object, active: dict[str, Any]) -> DispatchResult:
         message_id = str(active["message_id"])
-        role_instance_id = str(active.get("locked_by") or getattr(role, "role_instance_id", ""))
+        role_instance_id = str(
+            active.get("locked_by") or self.project_config.role_instance_id(getattr(role, "role_id"))
+        )
         thread_id = self._active_thread_id(role_instance_id)
         turn_id = self._active_turn_id(role_instance_id) or self._turn_id_for_message(message_id)
         correlation_id = str(active.get("correlation_id") or f"corr-{message_id}")
@@ -663,12 +668,22 @@ class V4Runtime:
             )
         except Exception as exc:
             if _looks_like_agent_unavailable(exc):
+                self._terminalize_turn_record(
+                    role_instance_id=role_instance_id,
+                    turn_id=turn_id,
+                    status="interrupted",
+                )
                 self.db.mark_message_state(
                     message_id,
                     state="queued",
                     summary=f"Agent app-server unavailable while continuing active turn; queued for retry: {exc}",
                 )
                 return DispatchResult(message_id=message_id, state="queued", thread_id=thread_id, turn_id=turn_id, error=str(exc))
+            self._terminalize_turn_record(
+                role_instance_id=role_instance_id,
+                turn_id=turn_id,
+                status="failed",
+            )
             self.db.mark_message_state(message_id, state="failed", summary=str(exc))
             self._escalate_to_project_manager(
                 role_instance_id=role_instance_id,
@@ -676,16 +691,37 @@ class V4Runtime:
                 reason="runtime_active_turn_failed",
                 message_id=message_id,
             )
-            with self.db.connection:
-                self.db.connection.execute(
-                    """
-                    UPDATE role_instances
-                    SET active_turn_id=NULL, state='ready', updated_at=?
-                    WHERE role_instance_id=?
-                    """,
-                    (utc_now(), role_instance_id),
-                )
             return DispatchResult(message_id=message_id, state="failed", thread_id=thread_id, turn_id=turn_id, error=str(exc))
+
+    def _terminalize_turn_record(
+        self,
+        *,
+        role_instance_id: str,
+        turn_id: str | None,
+        status: str,
+    ) -> None:
+        """Make a failed or interrupted runtime turn durably terminal."""
+
+        if turn_id is None:
+            return
+        now = utc_now()
+        with self.db.connection:
+            self.db.connection.execute(
+                """
+                UPDATE codex_turns
+                SET status=?, completed_at=?
+                WHERE turn_id=?
+                """,
+                (status, now, turn_id),
+            )
+            self.db.connection.execute(
+                """
+                UPDATE role_instances
+                SET active_turn_id=NULL, state='ready', updated_at=?
+                WHERE role_instance_id=? AND active_turn_id=?
+                """,
+                (now, role_instance_id, turn_id),
+            )
 
     def _record_evidence_contract_warnings(
         self,

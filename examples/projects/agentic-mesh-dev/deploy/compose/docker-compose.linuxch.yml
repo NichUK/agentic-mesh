@@ -1,3 +1,11 @@
+x-restricted-safe-output-config: &restricted-safe-output-config
+  type: bind
+  source: ${AGENTIC_MESH_PROJECT_HOST_PATH:-../..}/deploy/codex/restricted-safe-output-config.toml
+  target: /etc/codex/config.toml
+  read_only: true
+  bind:
+    create_host_path: false
+
 services:
   runtime:
     restart: unless-stopped
@@ -47,14 +55,20 @@ services:
   agentic-mesh-dev-product-manager-1:
     environment:
       PYTHONPATH: /mesh/system/src
+    volumes:
+      - *restricted-safe-output-config
 
   agentic-mesh-dev-business-analyst-1:
     environment:
       PYTHONPATH: /mesh/system/src
+    volumes:
+      - *restricted-safe-output-config
 
   agentic-mesh-dev-research-analyst-1:
     environment:
       PYTHONPATH: /mesh/system/src
+    volumes:
+      - *restricted-safe-output-config
 
   agentic-mesh-dev-enterprise-architect-1:
     environment:
@@ -67,10 +81,14 @@ services:
   agentic-mesh-dev-security-architect-1:
     environment:
       PYTHONPATH: /mesh/system/src
+    volumes:
+      - *restricted-safe-output-config
 
   agentic-mesh-dev-ux-designer-1:
     environment:
       PYTHONPATH: /mesh/system/src
+    volumes:
+      - *restricted-safe-output-config
 
   agentic-mesh-dev-engineering-1:
     environment:
@@ -79,6 +97,8 @@ services:
   agentic-mesh-dev-qa-engineer-1:
     environment:
       PYTHONPATH: /mesh/system/src
+    volumes:
+      - *restricted-safe-output-config
 
   agentic-mesh-dev-platform-engineer-1:
     environment:

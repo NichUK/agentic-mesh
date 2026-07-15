@@ -82,7 +82,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "    env_file:",
         "      - path: .env",
         "        required: false",
-        "    command: python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml dispatch-loop --agent-config-root /mesh/project/state/v4/agent-configs --compose-file /mesh/project/deploy/compose/docker-compose.v4.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-project-name ${COMPOSE_PROJECT_NAME:-agentic-mesh} --compose-env-file /mesh/project/deploy/compose/.env --compose-working-directory /mesh/project/deploy/compose --active-turn-stale-seconds ${AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900} --dispatch-workers ${AGENTIC_MESH_DISPATCH_WORKERS:-8} --wake",
+        f"    command: python -m agentic_mesh_v4.cli --project-config /mesh/project/agentic-mesh/project-v4.yaml dispatch-loop --project-id {project_config.project_id} --agent-config-root /mesh/project/state/v4/agent-configs --compose-file /mesh/project/deploy/compose/docker-compose.v4.yml --compose-file /mesh/project/deploy/compose/docker-compose.linuxch.yml --compose-project-name ${{COMPOSE_PROJECT_NAME:-agentic-mesh}} --compose-env-file /mesh/project/deploy/compose/.env --compose-working-directory /mesh/project/deploy/compose --active-turn-stale-seconds ${{AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS:-900}} --dispatch-workers ${{AGENTIC_MESH_DISPATCH_WORKERS:-8}} --wake",
         "    environment:",
         "      AGENTIC_MESH_RUNTIME_VERSION: v4",
         "      AGENTIC_MESH_URL_ROOT: ${AGENTIC_MESH_URL_ROOT:-http://linuxch:8100}",
@@ -163,6 +163,7 @@ def render_compose(project_config: V4ProjectConfig) -> str:
     for role in project_config.roles:
         lines.extend(
             _role_service(
+                project_config=project_config,
                 role=role,
             )
         )
@@ -179,9 +180,9 @@ def validate_v4_compose(rendered: str) -> None:
         raise ValueError(f"V4 compose contains V3-only components: {', '.join(found)}")
 
 
-def _role_service(*, role: V4RoleConfig) -> list[str]:
+def _role_service(*, project_config: V4ProjectConfig, role: V4RoleConfig) -> list[str]:
     role_id = role.role_id
-    role_instance_id = role.role_instance_id
+    role_instance_id = project_config.role_instance_id(role_id)
     service_name = role.service_name
     port = role.codex_port
     model = _codex_config_atom(role.model, field="model")
