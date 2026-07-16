@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -60,6 +61,59 @@ def test_false_path_preserves_project_prefixed_runtime_and_true_path_is_closed(t
         render_compose(enabled)
     with pytest.raises(ValueError, match="stable fleet_id"):
         stable_fleet_instance_id(fleet_id="orchid", role_id=ROLE_ID)
+
+
+def test_legacy_instances_greater_than_one_render_one_compatible_identity(tmp_path: Path) -> None:
+    base = shared_config(tmp_path)
+    config = replace(
+        base,
+        roles=(replace(base.roles[0], instances=2),),
+        shared_fleet=replace(base.shared_fleet, project_assignments=()),
+    )
+
+    plan = generated_shared_fleet_plan(config)
+    assert len(plan["physical_instances"]) == 1
+
+    compose_text = render_compose(config)
+    assert compose_text.count("\n  synthetic-network-engineering-1:\n") == 1
+    compose = yaml.safe_load(compose_text)
+    assert list(name for name in compose["services"] if name == "synthetic-network-engineering-1") == [
+        "synthetic-network-engineering-1"
+    ]
+
+    output = tmp_path / "legacy-agent-configs"
+    written = materialize_agent_configs(
+        project_config=config,
+        output_root=output,
+        role_templates_dir=Path(__file__).parents[1] / "config" / "roles",
+    )
+    containers = [path for path in written if path.name == "container.json"]
+    assert containers == [output / ROLE_ID / "1" / "container.json"]
+    container = json.loads(containers[0].read_text(encoding="utf-8"))
+    assert container["role_instance_id"] == "synthetic-control.engineering.1"
+    assert container["service_name"] == "synthetic-network-engineering-1"
+    assert not (output / ROLE_ID / "2").exists()
+
+
+def test_complete_shared_fleet_instances_greater_than_one_fail_before_rendering(
+    tmp_path: Path,
+) -> None:
+    base = shared_config(tmp_path)
+    config = replace(base, roles=(replace(base.roles[0], instances=2),))
+
+    with pytest.raises(ValueError, match="requires instances: 1.*engineering"):
+        generated_shared_fleet_plan(config)
+    with pytest.raises(ValueError, match="requires instances: 1.*engineering"):
+        render_compose(config)
+
+    output = tmp_path / "rejected-agent-configs"
+    with pytest.raises(ValueError, match="requires instances: 1.*engineering"):
+        materialize_agent_configs(
+            project_config=config,
+            output_root=output,
+            role_templates_dir=Path(__file__).parents[1] / "config" / "roles",
+        )
+    assert not output.exists()
 
 
 def test_synthetic_compose_config_contains_only_dormant_stable_service(tmp_path: Path) -> None:

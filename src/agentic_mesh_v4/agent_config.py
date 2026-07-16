@@ -112,14 +112,14 @@ def materialize_agent_configs(
     output_root = Path(output_root)
     role_templates_dir = Path(role_templates_dir)
     written: list[Path] = []
+    plan = generated_shared_fleet_plan(project_config)
     shared_fleet_path = output_root / "shared-fleet-plan.json"
     output_root.mkdir(parents=True, exist_ok=True)
     shared_fleet_path.write_text(
-        json.dumps(generated_shared_fleet_plan(project_config), sort_keys=True, indent=2) + "\n",
+        json.dumps(plan, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
     written.append(shared_fleet_path)
-    plan = generated_shared_fleet_plan(project_config)
     complete_shared_fleet = bool(project_config.shared_fleet.project_assignments)
     assignment_refs = sorted(
         item["assignment_allowlist_id"] for item in plan["project_assignments"]

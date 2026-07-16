@@ -37,7 +37,12 @@ def test_step11_renderer_materializes_exact_dormant_target_and_assignment_bounda
     stable_services = {
         f"agentic-mesh-{role_id}-1" for role_id in DEFAULT_ROLE_IDS
     }
-    assert stable_services.issubset(compose["services"])
+    rendered_shared_services = {
+        name
+        for name, service in compose["services"].items()
+        if service.get("labels", {}).get("agentic-mesh.shared-fleet.enabled") == "false"
+    }
+    assert rendered_shared_services == stable_services
     assert not {
         name for name in compose["services"] if name.startswith("agentic-mesh-dev-")
     }

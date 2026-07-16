@@ -130,26 +130,32 @@ def require_stage1_default_off(project_config: V4ProjectConfig, *, operation: st
 
 def generated_shared_fleet_plan(project_config: V4ProjectConfig) -> dict[str, Any]:
     require_stage1_default_off(project_config, operation="configuration materialization")
+    if project_config.shared_fleet.project_assignments:
+        invalid_cardinality = sorted(
+            role.role_id for role in project_config.roles if role.instances != 1
+        )
+        if invalid_cardinality:
+            raise ValueError(
+                "complete shared-fleet configuration requires instances: 1 for roles: "
+                + ", ".join(invalid_cardinality)
+            )
     fleet_id = project_config.shared_fleet.fleet_id
     instances = []
     for role in project_config.roles:
-        for ordinal in range(1, role.instances + 1):
-            instances.append(
-                {
-                    "fleet_instance_id": stable_fleet_instance_id(
-                        fleet_id=fleet_id,
-                        role_id=role.role_id,
-                        ordinal=ordinal,
-                    ),
-                    "ordinal": ordinal,
-                    "role_id": role.role_id,
-                    "service_name": stable_fleet_service_name(
-                        fleet_id=fleet_id,
-                        role_id=role.role_id,
-                        ordinal=ordinal,
-                    ),
-                }
-            )
+        instances.append(
+            {
+                "fleet_instance_id": stable_fleet_instance_id(
+                    fleet_id=fleet_id,
+                    role_id=role.role_id,
+                ),
+                "ordinal": 1,
+                "role_id": role.role_id,
+                "service_name": stable_fleet_service_name(
+                    fleet_id=fleet_id,
+                    role_id=role.role_id,
+                ),
+            }
+        )
     assignments = [assignment_allowlist(project_config, assignment) for assignment in project_config.shared_fleet.project_assignments]
     physical_assignments = [
         {
