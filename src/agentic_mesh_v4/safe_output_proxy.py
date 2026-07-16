@@ -155,6 +155,7 @@ def main() -> None:
     from agentic_mesh_v4.shared_fleet import CapturedBindingController
     from agentic_mesh_v4.shared_fleet import FleetBinding
     from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
+    from agentic_mesh_v4.shared_fleet import require_activation_ready
     from agentic_mesh_v4.shared_fleet import stable_fleet_instance_id
 
     parser = argparse.ArgumentParser(prog="agentic-mesh-v4-safe-output-proxy")
@@ -179,6 +180,7 @@ def main() -> None:
         config = load_project_config(args.project_config)
         if not config.shared_fleet.enabled:
             parser.error("shared-fleet binding requires enabled project configuration")
+        require_activation_ready(config, operation="safe-output proxy construction")
         expected_instance_id = stable_fleet_instance_id(
             fleet_id=config.shared_fleet.fleet_id,
             role_id=args.role_id,

@@ -7,10 +7,12 @@ import pytest
 
 from agentic_mesh_v4.lifecycle import ComposeLifecycle
 from agentic_mesh_v4.safe_output_proxy import validated_cli_argv
+from agentic_mesh_v4.safe_output_proxy import main as safe_output_proxy_main
 from agentic_mesh_v4.shared_fleet import CapturedBindingController
 from agentic_mesh_v4.shared_fleet import FleetActivity
 from agentic_mesh_v4.shared_fleet import FleetBinding
 from agentic_mesh_v4.shared_fleet import SharedFleetConflict
+from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
 from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
 
 from shared_fleet_support import shared_config
@@ -151,3 +153,40 @@ def _context_paths(context: object) -> tuple[str, ...]:
         context.codex_home,
         *context.repository_roots,
     )
+
+
+def test_safe_output_proxy_rejects_enabled_config_before_identity_validation(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    config_path = tmp_path / "invalid-enabled.yaml"
+    config_path.write_text(
+        "project_id: synthetic\n"
+        "shared_fleet:\n"
+        "  enabled: true\n"
+        "  fleet_id: agentic-mesh\n"
+        "  project_assignments: []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "agentic-mesh-v4-safe-output-proxy",
+            "--socket",
+            str(tmp_path / "proxy.sock"),
+            "--role-id",
+            "engineering",
+            "--project-config",
+            str(config_path),
+            "--fleet-instance-id",
+            "agentic-mesh.engineering.1",
+            "--binding-project-id",
+            "orchid",
+            "--binding-generation",
+            "1",
+        ],
+    )
+    with pytest.raises(
+        SharedFleetActivationClosed,
+        match="activation requires project assignments",
+    ):
+        safe_output_proxy_main()

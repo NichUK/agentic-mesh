@@ -25,6 +25,8 @@ from agentic_mesh_v4.reporting import render_status
 from agentic_mesh_v4.reporting import render_work_item
 from agentic_mesh_v4.runtime import V4Runtime
 from agentic_mesh_v4.shared_fleet import project_filtered_dashboard
+from agentic_mesh_v4.shared_fleet import require_activation_ready
+from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
 from agentic_mesh_v4.teams_delivery import TeamsReplySender
 
 
@@ -394,11 +396,19 @@ def shared_fleet_status_payload(
         activity_rows=activity_rows if isinstance(activity_rows, list) else (),
         project_id=project_id,
     )
+    runnable = False
+    if project_config.shared_fleet.enabled:
+        try:
+            require_activation_ready(project_config, operation="dashboard projection")
+        except SharedFleetActivationClosed:
+            pass
+        else:
+            runnable = True
     result = dict(snapshot)
     result["shared_fleet"] = {
         **projection,
         "enabled": project_config.shared_fleet.enabled,
-        "runnable": project_config.shared_fleet.enabled,
+        "runnable": runnable,
     }
     if projection["fleet"]:
         result["roles"] = projection["fleet"]
