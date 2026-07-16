@@ -9,7 +9,10 @@ from agentic_mesh_v4.config import V4RoleConfig
 OPS_ROLES = {"project-manager", "delivery-manager", "platform-engineer", "release-manager"}
 DEV_ROLES = {"engineering"}
 QA_ROLES = {"qa-engineer"}
-SSH_ROLES = OPS_ROLES
+# Full-authority roles that can produce or promote repository changes share the
+# deployment's approved Git identity. The host key directory is mounted
+# read-only and copied into the ephemeral container before Codex starts.
+SSH_ROLES = OPS_ROLES | DEV_ROLES
 DOCKER_SOCKET_ROLES = OPS_ROLES | DEV_ROLES
 CODEX_CONFIG_ATOM = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -272,7 +275,7 @@ def _role_service(*, project_config: V4ProjectConfig, role: V4RoleConfig) -> lis
     if role_id in SSH_ROLES:
         lines.extend([
             "      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro",
-            "      - ${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}:/mesh/home/.ssh:ro",
+            "      - ${AGENTIC_MESH_GIT_SSH_HOST_PATH:-${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}}:/mesh/home/.ssh:ro",
         ])
     return lines
 

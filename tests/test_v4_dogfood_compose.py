@@ -175,6 +175,7 @@ def test_linuxch_deploy_script_preserves_v4_live_environment() -> None:
         "AGENTIC_MESH_PROJECT_CHANNEL_ID",
         "AGENTIC_MESH_SPONSOR_AAD_OBJECT_ID",
         "AGENTIC_MESH_V4_STATUS_PORT",
+        "AGENTIC_MESH_GIT_SSH_HOST_PATH",
     ]:
         assert f"export {name}" in script
         assert f"{name}=${name}" in script
@@ -207,6 +208,7 @@ def test_dogfood_compose_env_example_lists_required_v4_live_inputs() -> None:
         "AGENTIC_MESH_V4_STATUS_PORT",
         "AGENTIC_MESH_WATCHDOG_INTERVAL_SECONDS",
         "AGENTIC_MESH_ACTIVE_TURN_STALE_SECONDS",
+        "AGENTIC_MESH_GIT_SSH_HOST_PATH",
     ]:
         assert f"{name}=" in env_example
     assert "AGENTIC_MESH_V3_STATUS_PORT" not in env_example
@@ -233,6 +235,9 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
     assert 'cp "$REPO_ROOT/examples/projects/agentic-mesh-dev/deploy/compose/docker-compose.linuxch.yml"' in script
     assert '"$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.linuxch.yml"' in script
     assert "AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" in script
+    assert "AGENTIC_MESH_GIT_SSH_HOST_PATH" in script
+    assert "-o IdentitiesOnly=yes -i \"$AGENTIC_MESH_GIT_SSH_HOST_PATH/id_rsa\" -T git@github.com" in script
+    assert "Refusing to release: the approved shared Git SSH identity cannot authenticate to GitHub." in script
     assert "restricted-safe-output-config.toml" in script
     assert "cp --remove-destination" in script
     assert 'grep -Eq "/mesh/(workspaces/agentic-mesh|project)/src"' in script

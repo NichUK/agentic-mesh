@@ -89,3 +89,18 @@ python scripts/check-pr-size.py --base origin/develop --committed-only
 ```
 
 Then open a pull request targeting `develop` and request Copilot review.
+
+## Runtime Git Identity
+
+The dogfood deployment uses one already-approved host SSH identity for Git
+transport. Set `AGENTIC_MESH_GIT_SSH_HOST_PATH` to its host directory (on
+linuxch this is `/home/nich/.ssh`). Compose mounts that directory read-only for
+full-authority Engineering and promotion roles; role startup copies it into the
+ephemeral container with OpenSSH permissions.
+
+The linuxch release script verifies `ssh -T git@github.com` before changing the
+running fleet. A missing, unregistered, or unusable identity therefore blocks
+deployment explicitly instead of allowing Engineering to discover the problem
+after implementation. The legacy
+`AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH` setting remains a compatibility
+fallback but should not be used for new deployments.

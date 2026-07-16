@@ -2616,9 +2616,13 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
     assert "${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-../documents}:/documents" in rendered
     assert "${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro" in rendered
     assert (
-        "${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}"
+        "${AGENTIC_MESH_GIT_SSH_HOST_PATH:-"
+        "${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}}"
         ":/mesh/home/.ssh:ro"
     ) in rendered
+    engineering = rendered.split("  agentic-mesh-dev-engineering-1:", 1)[1].split("\n\n", 1)[0]
+    assert ":/mesh/home/.ssh:ro" in engineering
+    assert "cp -r /mesh/home/.ssh/. /root/.ssh/" in engineering
     assert "cp -r /mesh/home/.ssh/. /root/.ssh/" in rendered
     assert 'sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config' in rendered
     assert "HOME: /mesh/home" in rendered

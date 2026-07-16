@@ -23,6 +23,7 @@ AGENTIC_MESH_PROJECT_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_PR
 AGENTIC_MESH_WORKSPACE_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_WORKSPACE_HOST_PATH:-}" "$AGENTIC_MESH_PROJECT_HOST_PATH/target-repos/agentic-mesh")
 AGENTIC_MESH_DOCUMENTS_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_DOCUMENTS_HOST_PATH:-}" "$AGENTIC_MESH_PROJECT_HOST_PATH/documents")
 AGENTIC_MESH_CODEX_HOME_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_CODEX_HOME_HOST_PATH:-}" "$AGENTIC_MESH_PROJECT_HOST_PATH/state/worker_mounts/codex-agentic-mesh-dev-team-home-q")
+AGENTIC_MESH_GIT_SSH_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_GIT_SSH_HOST_PATH:-${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-}}" /home/nich/.ssh)
 AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH=$(linuxch_host_path_or_default "${AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH:-}" /home/nich/agentic-mesh-system-clean/config/otel/collector.yaml)
 AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH="$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/codex/restricted-safe-output-config.toml"
 AGENTIC_MESH_COMPOSE_STAGE_DIR=$(linuxch_host_path_or_default "${AGENTIC_MESH_COMPOSE_STAGE_DIR:-}" /home/nich/agentic-mesh-compose-run)
@@ -45,6 +46,18 @@ AGENTIC_MESH_COMPOSE_STAGE_DIR=$(linuxch_host_path_or_default "${AGENTIC_MESH_CO
 : "${AGENTIC_MESH_QA_IMAGE_TAG:=agentic-mesh:qa-agent}"
 : "${AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES:=0}"
 
+GITHUB_SSH_PREFLIGHT_OUTPUT=""
+if ! GITHUB_SSH_PREFLIGHT_OUTPUT=$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -i "$AGENTIC_MESH_GIT_SSH_HOST_PATH/id_rsa" -T git@github.com 2>&1); then
+  case "$GITHUB_SSH_PREFLIGHT_OUTPUT" in
+    *"successfully authenticated"*) ;;
+    *)
+      echo "Refusing to release: the approved shared Git SSH identity cannot authenticate to GitHub." >&2
+      echo "Verify that $AGENTIC_MESH_GIT_SSH_HOST_PATH/id_rsa is registered and run: ssh -T git@github.com" >&2
+      exit 1
+      ;;
+  esac
+fi
+
 if [ -d "$AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" ]; then
   echo "Refusing to release: restricted safe-output config target is a directory: $AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" >&2
   exit 1
@@ -56,6 +69,7 @@ export AGENTIC_MESH_SYSTEM_HOST_PATH
 export AGENTIC_MESH_PROJECT_HOST_PATH
 export AGENTIC_MESH_DOCUMENTS_HOST_PATH
 export AGENTIC_MESH_CODEX_HOME_HOST_PATH
+export AGENTIC_MESH_GIT_SSH_HOST_PATH
 export AGENTIC_MESH_OTEL_COLLECTOR_CONFIG_HOST_PATH
 export AGENTIC_MESH_URL_ROOT
 export AGENTIC_MESH_V4_STATUS_PORT
