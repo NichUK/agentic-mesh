@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from agentic_mesh_v4.config import V4ProjectAssignmentConfig
+from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.config import V4RoleConfig
 from agentic_mesh_v4.config import V4SharedFleetConfig
@@ -37,12 +39,29 @@ def shared_config(root: Path, *, enabled: bool = False) -> V4ProjectConfig:
         approval_policy="never",
         codex_port=4700,
     )
+    roles = (role,)
+    if enabled:
+        roles = tuple(
+            replace(role, codex_port=4700 + index)
+            if role_id == ROLE_ID
+            else V4RoleConfig(
+                role_id=role_id,
+                display_name=role_id.replace("-", " ").title(),
+                template=role_id,
+                agent_network_id="synthetic-network",
+                authority="full",
+                sandbox_mode="danger-full-access",
+                approval_policy="never",
+                codex_port=4700 + index,
+            )
+            for index, role_id in enumerate(DEFAULT_ROLE_IDS)
+        )
     return V4ProjectConfig(
         project_id="synthetic-control",
         agent_network_id="synthetic-network",
         name="Synthetic shared fleet",
         goal="Stage 1 captured tests",
-        roles=(role,),
+        roles=roles,
         shared_fleet=V4SharedFleetConfig(
             enabled=enabled,
             fleet_id="agentic-mesh",

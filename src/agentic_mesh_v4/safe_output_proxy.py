@@ -151,15 +151,65 @@ class SafeOutputProxyServer(_UnixStreamServer):
 
 
 def main() -> None:
+    from agentic_mesh_v4.config import load_project_config
+    from agentic_mesh_v4.shared_fleet import CapturedBindingController
+    from agentic_mesh_v4.shared_fleet import FleetBinding
+    from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
+    from agentic_mesh_v4.shared_fleet import require_activation_ready
+    from agentic_mesh_v4.shared_fleet import stable_fleet_instance_id
+
     parser = argparse.ArgumentParser(prog="agentic-mesh-v4-safe-output-proxy")
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--role-id", required=True)
     parser.add_argument("--project-config", type=Path, required=True)
+    parser.add_argument("--fleet-instance-id")
+    parser.add_argument("--binding-project-id")
+    parser.add_argument("--binding-generation", type=int)
     args = parser.parse_args()
+    binding_values = (
+        args.fleet_instance_id,
+        args.binding_project_id,
+        args.binding_generation,
+    )
+    if any(value is not None for value in binding_values) and not all(
+        value is not None for value in binding_values
+    ):
+        parser.error("shared-fleet binding arguments must be supplied together")
+    guard = None
+    if all(value is not None for value in binding_values):
+        config = load_project_config(args.project_config)
+        if not config.shared_fleet.enabled:
+            parser.error("shared-fleet binding requires enabled project configuration")
+        require_activation_ready(config, operation="safe-output proxy construction")
+        expected_instance_id = stable_fleet_instance_id(
+            fleet_id=config.shared_fleet.fleet_id,
+            role_id=args.role_id,
+        )
+        if args.fleet_instance_id != expected_instance_id:
+            parser.error("shared-fleet binding identity does not match the proxy role")
+        if args.binding_generation < 1:
+            parser.error("shared-fleet binding generation must be positive")
+        binding = FleetBinding(
+            fleet_instance_id=args.fleet_instance_id,
+            project_id=args.binding_project_id,
+            generation=args.binding_generation,
+            state="bound",
+        )
+        guard = SharedFleetOperationGuard(
+            controller=CapturedBindingController(config.shared_fleet.project_assignments),
+            binding=binding,
+        )
+        guard.require(
+            project_id=args.binding_project_id,
+            generation=args.binding_generation,
+        )
     with SafeOutputProxyServer(
         socket_path=args.socket,
         role_id=args.role_id,
         project_config=args.project_config,
+        shared_fleet_guard=guard,
+        binding_project_id=args.binding_project_id,
+        binding_generation=args.binding_generation,
     ) as server:
         server.serve_forever()
 

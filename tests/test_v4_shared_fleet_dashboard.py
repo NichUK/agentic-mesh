@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,21 @@ def test_dashboard_rejects_divergent_duplicate_physical_identity() -> None:
         project_filtered_dashboard(fleet_rows=rows, activity_rows=())
 
 
+def test_dashboard_never_advertises_invalid_enabled_fleet_as_runnable(tmp_path: Path) -> None:
+    config = shared_config(tmp_path)
+    invalid_enabled = replace(
+        config,
+        shared_fleet=replace(config.shared_fleet, enabled=True),
+    )
+    payload = shared_fleet_status_payload(
+        {"roles": [], "shared_fleet_activity": []},
+        project_config=invalid_enabled,
+        project_id="orchid",
+    )
+    assert payload["shared_fleet"]["enabled"] is True
+    assert payload["shared_fleet"]["runnable"] is False
+
+
 def test_existing_status_api_serializes_single_fleet_and_project_activity(tmp_path: Path) -> None:
     config = shared_config(tmp_path)
     fleet = {
@@ -92,3 +108,12 @@ def test_existing_status_api_serializes_single_fleet_and_project_activity(tmp_pa
     assert orchid["shared_fleet"]["enabled"] is False
     assert orchid["shared_fleet"]["runnable"] is False
     assert json.loads(json.dumps(orchid, sort_keys=True))["shared_fleet"]["fleet"][0]["fleet_instance_id"] == "agentic-mesh.engineering.1"
+
+    enabled = shared_fleet_status_payload(
+        snapshot,
+        project_config=shared_config(tmp_path, enabled=True),
+        project_id="orchid",
+    )
+    assert enabled["shared_fleet"]["enabled"] is True
+    assert enabled["shared_fleet"]["runnable"] is True
+    assert len(enabled["roles"]) == 1

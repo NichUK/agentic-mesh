@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import threading
 from typing import Any
 from typing import Iterable
 from typing import Mapping
@@ -13,6 +14,7 @@ from typing import Sequence
 
 from agentic_mesh_v4.config import V4ProjectAssignmentConfig
 from agentic_mesh_v4.config import V4ProjectConfig
+from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 
 
 CANONICAL_FLEET_ID = "agentic-mesh"
@@ -122,14 +124,41 @@ def stable_fleet_service_name(*, fleet_id: str, role_id: str, ordinal: int = 1) 
 
 
 def require_stage1_default_off(project_config: V4ProjectConfig, *, operation: str) -> None:
+    """Keep Stage-1 administrative operations closed after activation support."""
     if project_config.shared_fleet.enabled:
         raise SharedFleetActivationClosed(
             f"shared fleet activation is closed during Stage 1: {operation}"
         )
 
 
+def require_activation_ready(project_config: V4ProjectConfig, *, operation: str) -> None:
+    """Fail closed unless an enabled fleet has a complete neutral identity model."""
+    shared_fleet = project_config.shared_fleet
+    if not shared_fleet.enabled:
+        return
+    if shared_fleet.fleet_id != CANONICAL_FLEET_ID:
+        raise SharedFleetActivationClosed(
+            f"shared fleet activation requires fleet_id={CANONICAL_FLEET_ID!r}: {operation}"
+        )
+    if not shared_fleet.project_assignments:
+        raise SharedFleetActivationClosed(
+            f"shared fleet activation requires project assignments: {operation}"
+        )
+    configured_roles = {role.role_id for role in project_config.roles}
+    expected_roles = set(DEFAULT_ROLE_IDS)
+    if configured_roles != expected_roles:
+        raise SharedFleetActivationClosed(
+            "shared fleet activation requires exactly the 15 configured project-neutral roles: "
+            f"{operation}"
+        )
+    if any(role.instances != 1 for role in project_config.roles):
+        raise SharedFleetActivationClosed(
+            f"shared fleet activation requires exactly one instance per role: {operation}"
+        )
+
+
 def generated_shared_fleet_plan(project_config: V4ProjectConfig) -> dict[str, Any]:
-    require_stage1_default_off(project_config, operation="configuration materialization")
+    require_activation_ready(project_config, operation="configuration materialization")
     if project_config.shared_fleet.project_assignments:
         invalid_cardinality = sorted(
             role.role_id for role in project_config.roles if role.instances != 1
@@ -166,9 +195,10 @@ def generated_shared_fleet_plan(project_config: V4ProjectConfig) -> dict[str, An
         for instance in instances
         for assignment in assignments
     ]
+    enabled = project_config.shared_fleet.enabled
     return {
-        "activation_gate": "stages_2_4_closed",
-        "enabled": False,
+        "activation_gate": "activation_ready" if enabled else "stages_2_4_closed",
+        "enabled": enabled,
         "fleet_id": fleet_id,
         "physical_instances": sorted(instances, key=lambda item: item["fleet_instance_id"]),
         "physical_assignments": sorted(
@@ -176,7 +206,7 @@ def generated_shared_fleet_plan(project_config: V4ProjectConfig) -> dict[str, An
             key=lambda item: (item["fleet_instance_id"], item["project_id"]),
         ),
         "project_assignments": sorted(assignments, key=lambda item: item["project_id"]),
-        "runnable": False,
+        "runnable": enabled,
         "schema_version": SHARED_FLEET_SCHEMA_VERSION,
     }
 
@@ -189,7 +219,7 @@ def assignment_allowlist(
     mounts = [
         _mount("document", assignment.document_root, "/documents"),
         _mount("project", assignment.project_root, "/mesh/project"),
-        _mount("workspace", assignment.workspace_root, "/mesh/agent-workspaces"),
+        _mount("workspace", assignment.workspace_root, "/mesh/agent-workspace"),
         _mount("codex_home", assignment.codex_home, "/mesh/worker-auth/codex"),
     ]
     mounts.extend(
@@ -365,6 +395,90 @@ class SharedFleetOperationGuard:
         context = self.require(project_id=project_id, generation=generation)
         context.require_database(schema=schema, credential_ref=credential_ref)
         return context
+
+
+class SharedFleetDispatchCoordinator:
+    """Own the single dispatcher's per-role binding generations.
+
+    Queue/database adapters remain project-qualified; this coordinator only
+    serializes the physical role seam so one role can never be captured by two
+    projects at once.
+    """
+
+    def __init__(self, project_config: V4ProjectConfig) -> None:
+        require_activation_ready(project_config, operation="dispatcher construction")
+        if not project_config.shared_fleet.enabled:
+            raise SharedFleetActivationClosed(
+                "shared fleet dispatcher requires enabled configuration"
+            )
+        self._controller = CapturedBindingController(
+            project_config.shared_fleet.project_assignments
+        )
+        self._fleet_id = project_config.shared_fleet.fleet_id
+        self._projects = tuple(
+            sorted(
+                assignment.project_id
+                for assignment in project_config.shared_fleet.project_assignments
+            )
+        )
+        self._bindings = {
+            role.role_id: FleetBinding(
+                stable_fleet_instance_id(
+                    fleet_id=self._fleet_id,
+                    role_id=role.role_id,
+                )
+            )
+            for role in project_config.roles
+        }
+        self._lock = threading.RLock()
+
+    @property
+    def project_ids(self) -> tuple[str, ...]:
+        return self._projects
+
+    def bind(
+        self,
+        *,
+        role_id: str,
+        project_id: str,
+        activity: FleetActivity,
+    ) -> SharedFleetOperationGuard:
+        with self._lock:
+            current = self._binding(role_id)
+            if current.state == "bound":
+                if current.project_id == project_id:
+                    if not activity.idle:
+                        raise SharedFleetConflict(
+                            "fleet instance must be idle before binding capture"
+                        )
+                    return SharedFleetOperationGuard(self._controller, current)
+                current = self._controller.unbind(current, activity=activity)
+            updated, _context = self._controller.bind(
+                current,
+                project_id=project_id,
+                activity=activity,
+            )
+            self._bindings[role_id] = updated
+            return SharedFleetOperationGuard(self._controller, updated)
+
+    def unbind(self, *, role_id: str, activity: FleetActivity) -> FleetBinding:
+        with self._lock:
+            updated = self._controller.unbind(
+                self._binding(role_id),
+                activity=activity,
+            )
+            self._bindings[role_id] = updated
+            return updated
+
+    def guard(self, *, role_id: str) -> SharedFleetOperationGuard:
+        with self._lock:
+            return SharedFleetOperationGuard(self._controller, self._binding(role_id))
+
+    def _binding(self, role_id: str) -> FleetBinding:
+        try:
+            return self._bindings[role_id]
+        except KeyError as exc:
+            raise SharedFleetConflict(f"unknown shared-fleet role: {role_id}") from exc
 
 
 @dataclass(frozen=True)

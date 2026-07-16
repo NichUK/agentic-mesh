@@ -11,7 +11,6 @@ import yaml
 
 from agentic_mesh_v4.agent_config import materialize_agent_configs
 from agentic_mesh_v4.compose import render_compose
-from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
 from agentic_mesh_v4.shared_fleet import generated_shared_fleet_plan
 from agentic_mesh_v4.shared_fleet import stable_fleet_instance_id
 
@@ -51,14 +50,18 @@ def test_default_off_plan_has_one_stable_identity_and_one_dormant_service(tmp_pa
     assert "networks" not in service
 
 
-def test_false_path_preserves_project_prefixed_runtime_and_true_path_is_closed(tmp_path: Path) -> None:
+def test_false_path_preserves_project_prefixed_runtime_and_true_path_is_runnable(tmp_path: Path) -> None:
     disabled = shared_config(tmp_path)
     enabled = shared_config(tmp_path, enabled=True)
 
     assert disabled.role_instance_id(ROLE_ID) == "synthetic-control.engineering.1"
     assert disabled.role(ROLE_ID).service_name == "synthetic-network-engineering-1"
-    with pytest.raises(SharedFleetActivationClosed, match="Stage 1"):
-        render_compose(enabled)
+    enabled_compose = yaml.safe_load(render_compose(enabled))
+    service = enabled_compose["services"]["agentic-mesh-engineering-1"]
+    assert service["restart"] == "unless-stopped"
+    assert service["environment"]["AGENTIC_MESH_SHARED_FLEET_BINDING_STATE"] == "unbound"
+    assert service["environment"]["AGENTIC_MESH_SHARED_FLEET_RUNNABLE"] == "1"
+    assert "volumes" not in service and "networks" not in service
     with pytest.raises(ValueError, match="stable fleet_id"):
         stable_fleet_instance_id(fleet_id="orchid", role_id=ROLE_ID)
 

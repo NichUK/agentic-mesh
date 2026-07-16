@@ -1,22 +1,24 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from agentic_mesh_v4.lifecycle import ComposeLifecycle
 from agentic_mesh_v4.safe_output_proxy import validated_cli_argv
+from agentic_mesh_v4.safe_output_proxy import main as safe_output_proxy_main
 from agentic_mesh_v4.shared_fleet import CapturedBindingController
 from agentic_mesh_v4.shared_fleet import FleetActivity
 from agentic_mesh_v4.shared_fleet import FleetBinding
-from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
 from agentic_mesh_v4.shared_fleet import SharedFleetConflict
+from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
 from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
 
 from shared_fleet_support import shared_config
 
 
-def test_captured_a_b_a_uses_only_selected_project_context(tmp_path: Path) -> None:
+def test_captured_a_b_a_uses_only_selected_project_context(tmp_path: Path, monkeypatch) -> None:
     config = shared_config(tmp_path)
     for assignment in config.shared_fleet.project_assignments:
         for path in (
@@ -103,6 +105,15 @@ def test_captured_a_b_a_uses_only_selected_project_context(tmp_path: Path) -> No
             binding_project_id="cedar",
             binding_generation=3,
         )
+    with pytest.raises(SharedFleetConflict, match="generation mismatch"):
+        validated_cli_argv(
+            request_argv=["safe-output", "artifact-link", "--role-id", "engineering"],
+            role_id="engineering",
+            project_config=tmp_path / "project-v4.yaml",
+            shared_fleet_guard=guard,
+            binding_project_id="orchid",
+            binding_generation=2,
+        )
 
     lifecycle = ComposeLifecycle(
         compose_files=(),
@@ -110,8 +121,28 @@ def test_captured_a_b_a_uses_only_selected_project_context(tmp_path: Path) -> No
         binding_project_id="orchid",
         binding_generation=3,
     )
-    with pytest.raises(SharedFleetActivationClosed, match="stable service start is closed"):
-        lifecycle.wake_service("agentic-mesh-engineering-1")
+    with pytest.raises(SharedFleetConflict, match="generation mismatch"):
+        ComposeLifecycle(
+            compose_files=(),
+            shared_fleet_guard=guard,
+            binding_project_id="orchid",
+            binding_generation=2,
+        ).wake_service("agentic-mesh-engineering-1")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if "--format" in command:
+            return SimpleNamespace(
+                stdout='{"services":{"agentic-mesh-engineering-1":{"image":"image","volumes":[]}}}',
+                stderr="",
+                returncode=0,
+            )
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr("agentic_mesh_v4.lifecycle.subprocess.run", fake_run)
+    lifecycle.wake_service("agentic-mesh-engineering-1")
+    assert calls[-1][-4:] == ["up", "-d", "--no-deps", "agentic-mesh-engineering-1"]
 
 
 def _context_paths(context: object) -> tuple[str, ...]:
@@ -122,3 +153,40 @@ def _context_paths(context: object) -> tuple[str, ...]:
         context.codex_home,
         *context.repository_roots,
     )
+
+
+def test_safe_output_proxy_rejects_enabled_config_before_identity_validation(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    config_path = tmp_path / "invalid-enabled.yaml"
+    config_path.write_text(
+        "project_id: synthetic\n"
+        "shared_fleet:\n"
+        "  enabled: true\n"
+        "  fleet_id: agentic-mesh\n"
+        "  project_assignments: []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "agentic-mesh-v4-safe-output-proxy",
+            "--socket",
+            str(tmp_path / "proxy.sock"),
+            "--role-id",
+            "engineering",
+            "--project-config",
+            str(config_path),
+            "--fleet-instance-id",
+            "agentic-mesh.engineering.1",
+            "--binding-project-id",
+            "orchid",
+            "--binding-generation",
+            "1",
+        ],
+    )
+    with pytest.raises(
+        SharedFleetActivationClosed,
+        match="activation requires project assignments",
+    ):
+        safe_output_proxy_main()

@@ -27,9 +27,12 @@ from agentic_mesh_v4.db import utc_now
 from agentic_mesh_v4.evidence_contracts import evaluate_evidence_contracts
 from agentic_mesh_v4.evidence_contracts import resolve_evidence_contracts
 from agentic_mesh_v4.handoff_lifecycle import suppress_terminal_handoff_message
-from agentic_mesh_v4.shared_fleet import require_stage1_default_off
 from agentic_mesh_v4.shared_fleet import BoundProjectContext
+from agentic_mesh_v4.shared_fleet import SharedFleetConflict
 from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
+from agentic_mesh_v4.shared_fleet import stable_fleet_instance_id
+from agentic_mesh_v4.shared_fleet import stable_fleet_service_name
+from agentic_mesh_v4.shared_fleet import require_activation_ready
 from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_GLYPH
 from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_NAME
 from agentic_mesh_v4.teams_delivery import MISSING_DELEGATED_GRAPH_TOKEN_REASON
@@ -89,7 +92,7 @@ class V4Runtime:
         artifact_preflight: RoleArtifactPreflight | None = None,
         shared_fleet_guard: SharedFleetOperationGuard | None = None,
     ) -> None:
-        require_stage1_default_off(project_config, operation="runtime construction")
+        require_activation_ready(project_config, operation="runtime construction")
         self.db = db
         self.project_config = project_config
         self.client_factory = client_factory
@@ -101,13 +104,30 @@ class V4Runtime:
 
     def register_roles(self) -> None:
         for role in self.project_config.roles:
+            shared = self.project_config.shared_fleet.enabled
+            role_instance_id = (
+                stable_fleet_instance_id(
+                    fleet_id=self.project_config.shared_fleet.fleet_id,
+                    role_id=role.role_id,
+                )
+                if shared
+                else self.project_config.role_instance_id(role.role_id)
+            )
+            service_name = (
+                stable_fleet_service_name(
+                    fleet_id=self.project_config.shared_fleet.fleet_id,
+                    role_id=role.role_id,
+                )
+                if shared
+                else role.service_name
+            )
             self.db.upsert_role_instance(
-                role_instance_id=self.project_config.role_instance_id(role.role_id),
+                role_instance_id=role_instance_id,
                 role_id=role.role_id,
                 display_name=role.display_name,
-                service_name=role.service_name,
+                service_name=service_name,
                 authority=role.authority,
-                codex_endpoint=f"ws://{role.service_name}:{role.codex_port}",
+                codex_endpoint=f"ws://{service_name}:{role.codex_port}",
             )
 
     def enqueue_conversation(
@@ -536,6 +556,10 @@ class V4Runtime:
 
     def _require_project_operation(self, project_id: str | None) -> BoundProjectContext | None:
         if self.shared_fleet_guard is None:
+            if self.project_config.shared_fleet.enabled:
+                raise SharedFleetConflict(
+                    "enabled shared fleet operation requires a captured project binding"
+                )
             return self.db.require_project_operation(project_id=project_id)
         context = self.shared_fleet_guard.require(
             project_id=project_id,

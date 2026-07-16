@@ -168,14 +168,17 @@ def materialize_agent_configs(
                     "sandbox_mode": role.sandbox_mode,
             }
             if complete_shared_fleet:
+                enabled = project_config.shared_fleet.enabled
                 container["shared_fleet"] = {
-                    "activation_gate": "stages_2_4_closed",
+                    "activation_gate": "activation_ready" if enabled else "stages_2_4_closed",
                     "assignment_allowlist_refs": assignment_refs,
                     "bound_project_id": None,
-                    "enabled": False,
+                    "binding_generation": 0,
+                    "binding_state": "unbound",
+                    "enabled": enabled,
                     "mounts": [],
                     "networks": [],
-                    "runnable": False,
+                    "runnable": enabled,
                 }
             container_path.write_text(
                 json.dumps(
