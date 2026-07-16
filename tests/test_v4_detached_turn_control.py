@@ -360,6 +360,11 @@ def test_rejected_detached_control_keeps_waiting_turn_active(control_db) -> None
 
     assert control_db.events[-1]["event_type"] == "turn/detachedControlRejected"
     assert control_db.events[-1]["content"] == "continuation_mismatch"
+    assert control_db.events[-1]["payload"] == {
+        "reason": "continuation_mismatch",
+        "handoff_id": HANDOFF_ID,
+        "target_message_id": TARGET_MESSAGE_ID,
+    }
 
 
 def test_failed_interrupt_keeps_waiting_turn_active(control_db) -> None:

@@ -117,6 +117,12 @@ def evaluate_detached_turn_control(
         """,
         (handoff_id,),
     ).fetchone()
+    known_handoff_id = handoff_id or None
+    known_target_message_id = (
+        str(continuation["target_message_id"])
+        if continuation is not None and continuation["target_message_id"]
+        else None
+    )
     if (
         continuation is None
         or str(continuation["work_item_id"]) != str(payload.get("work_item_id") or "")
@@ -130,7 +136,13 @@ def evaluate_detached_turn_control(
         or continuation["locked_by"] is not None
         or continuation["locked_at"] is not None
     ):
-        return DetachedTurnControlEvaluation(True, False, "continuation_mismatch")
+        return DetachedTurnControlEvaluation(
+            True,
+            False,
+            "continuation_mismatch",
+            handoff_id=known_handoff_id,
+            target_message_id=known_target_message_id,
+        )
 
     target_message_id = str(continuation["target_message_id"])
     rows = db.connection.execute("SELECT message_id, state FROM message_queue").fetchall()
