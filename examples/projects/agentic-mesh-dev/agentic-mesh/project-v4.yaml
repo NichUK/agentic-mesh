@@ -5,8 +5,8 @@ goal:
   description: Prove the V4 Codex remote-control agent runtime with one Codex app-server container per role, Postgres message queues, Teams routing, external role configuration, DB-backed memory, and safe-output tools for durable workflow effects.
 worker_defaults:
   model: gpt-5.6-sol
-  reasoning_effort: high
-  plan_mode_reasoning_effort: xhigh
+  reasoning_effort: medium
+  plan_mode_reasoning_effort: medium
   show_raw_agent_reasoning: false
 document_library:
   adapter: onedrive
@@ -348,11 +348,15 @@ roles:
     template: product-manager
     instances: 1
     worker:
+      reasoning_effort: high
+      plan_mode_reasoning_effort: xhigh
       sandbox_mode: workspace-write
   business-analyst:
     template: business-analyst
     instances: 1
     worker:
+      reasoning_effort: high
+      plan_mode_reasoning_effort: xhigh
       sandbox_mode: workspace-write
   research-analyst:
     template: research-analyst
