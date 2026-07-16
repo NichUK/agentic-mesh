@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from dataclasses import field
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,25 @@ class V4RoleConfig:
 
 
 @dataclass(frozen=True)
+class V4ProjectAssignmentConfig:
+    project_id: str
+    database_schema: str
+    database_credential_ref: str
+    document_root: str
+    project_root: str
+    workspace_root: str
+    repository_roots: tuple[str, ...]
+    codex_home: str
+
+
+@dataclass(frozen=True)
+class V4SharedFleetConfig:
+    enabled: bool = False
+    fleet_id: str = "agentic-mesh"
+    project_assignments: tuple[V4ProjectAssignmentConfig, ...] = ()
+
+
+@dataclass(frozen=True)
 class V4ProjectConfig:
     project_id: str
     name: str
@@ -82,6 +102,7 @@ class V4ProjectConfig:
     teams_public_endpoint: str | None = None
     teams_project_channel_id: str | None = None
     teams_project_team_id: str | None = None
+    shared_fleet: V4SharedFleetConfig = field(default_factory=V4SharedFleetConfig)
 
     def role(self, role_id: str) -> V4RoleConfig:
         for role in self.roles:
@@ -150,7 +171,74 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
         teams_public_endpoint=_expand_optional(_nested(raw, ("connectors", "teams", "ingress", "public_endpoint"))),
         teams_project_channel_id=_expand_optional(_nested(raw, ("connectors", "teams", "channels", "project", "id"))),
         teams_project_team_id=_expand_optional(_nested(raw, ("connectors", "teams", "team", "id"))),
+        shared_fleet=_shared_fleet_config(raw.get("shared_fleet")),
     )
+
+
+def _shared_fleet_config(value: object) -> V4SharedFleetConfig:
+    if value is None:
+        return V4SharedFleetConfig()
+    if not isinstance(value, dict):
+        raise ValueError("shared_fleet must be a mapping")
+    enabled = _bool_value(value.get("enabled"), default=False)
+    fleet_id = str(value.get("fleet_id") or "agentic-mesh")
+    raw_assignments = value.get("project_assignments") or []
+    if not isinstance(raw_assignments, list):
+        raise ValueError("shared_fleet.project_assignments must be a list")
+    assignments: list[V4ProjectAssignmentConfig] = []
+    seen_projects: set[str] = set()
+    for index, raw in enumerate(raw_assignments):
+        if not isinstance(raw, dict):
+            raise ValueError(f"shared_fleet.project_assignments[{index}] must be a mapping")
+        project_id = _required_assignment_value(raw, "project_id", index=index)
+        if project_id in seen_projects:
+            raise ValueError(f"duplicate shared-fleet project assignment: {project_id}")
+        seen_projects.add(project_id)
+        database_schema = _required_assignment_value(raw, "database_schema", index=index)
+        if not database_schema.replace("_", "").isalnum():
+            raise ValueError(f"invalid shared-fleet database schema: {database_schema!r}")
+        repository_roots = raw.get("repository_roots") or []
+        if not isinstance(repository_roots, list):
+            raise ValueError(f"shared_fleet.project_assignments[{index}].repository_roots must be a list")
+        assignment = V4ProjectAssignmentConfig(
+            project_id=project_id,
+            database_schema=database_schema,
+            database_credential_ref=_required_assignment_value(raw, "database_credential_ref", index=index),
+            document_root=_required_assignment_path(raw, "document_root", index=index),
+            project_root=_required_assignment_path(raw, "project_root", index=index),
+            workspace_root=_required_assignment_path(raw, "workspace_root", index=index),
+            repository_roots=tuple(
+                _absolute_path(str(path), field=f"project_assignments[{index}].repository_roots")
+                for path in repository_roots
+            ),
+            codex_home=_required_assignment_path(raw, "codex_home", index=index),
+        )
+        assignments.append(assignment)
+    return V4SharedFleetConfig(
+        enabled=enabled,
+        fleet_id=fleet_id,
+        project_assignments=tuple(assignments),
+    )
+
+
+def _required_assignment_value(raw: dict[str, Any], key: str, *, index: int) -> str:
+    value = str(raw.get(key) or "").strip()
+    if not value:
+        raise ValueError(f"shared_fleet.project_assignments[{index}].{key} is required")
+    return value
+
+
+def _required_assignment_path(raw: dict[str, Any], key: str, *, index: int) -> str:
+    return _absolute_path(
+        _required_assignment_value(raw, key, index=index),
+        field=f"project_assignments[{index}].{key}",
+    )
+
+
+def _absolute_path(value: str, *, field: str) -> str:
+    if not Path(value).is_absolute():
+        raise ValueError(f"shared_fleet.{field} must be an absolute path")
+    return value
 
 
 def _roles_from_raw(

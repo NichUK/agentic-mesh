@@ -10,12 +10,17 @@ from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 from uuid import uuid4
 
 from agentic_mesh_v4.flow import ARCHITECTURE_DOMAINS
 from agentic_mesh_v4.persistence_policy import sanitize_json_payload
 from agentic_mesh_v4.persistence_policy import sanitize_persisted_text
+
+if TYPE_CHECKING:
+    from agentic_mesh_v4.shared_fleet import BoundProjectContext
+    from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
 
 
 COMPLETION_ATTENTION_MESSAGE_STATES = {
@@ -57,10 +62,34 @@ class QueuedMessage:
 
 
 class V4Database:
-    def __init__(self, database_url: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        database_url: str | Path | None = None,
+        *,
+        shared_fleet_guard: "SharedFleetOperationGuard | None" = None,
+    ) -> None:
         self.database_url = _resolve_database_url(database_url)
         self.path = self.database_url
         self.connection = _PostgresConnection(self.database_url)
+        self.shared_fleet_guard = shared_fleet_guard
+
+    def require_project_operation(
+        self,
+        *,
+        project_id: str | None,
+        generation: int | None = None,
+    ) -> "BoundProjectContext | None":
+        if self.shared_fleet_guard is None:
+            return None
+        effective_generation = (
+            self.shared_fleet_guard.binding.generation
+            if generation is None
+            else generation
+        )
+        return self.shared_fleet_guard.require(
+            project_id=project_id,
+            generation=effective_generation,
+        )
 
     def close(self) -> None:
         self.connection.close()

@@ -8,6 +8,7 @@ import yaml
 
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.config import V4RoleConfig
+from agentic_mesh_v4.shared_fleet import generated_shared_fleet_plan
 
 
 SHARED_STANDING_INSTRUCTIONS = """\
@@ -109,6 +110,13 @@ def materialize_agent_configs(
     output_root = Path(output_root)
     role_templates_dir = Path(role_templates_dir)
     written: list[Path] = []
+    shared_fleet_path = output_root / "shared-fleet-plan.json"
+    output_root.mkdir(parents=True, exist_ok=True)
+    shared_fleet_path.write_text(
+        json.dumps(generated_shared_fleet_plan(project_config), sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    written.append(shared_fleet_path)
     for role in project_config.roles:
         role_dir = output_root / role.role_id / "1"
         role_dir.mkdir(parents=True, exist_ok=True)
