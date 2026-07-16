@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-import fcntl
 import json
+import os
+import subprocess
+import sys
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import agentic_mesh_v4.detached_turn_control as detached_turn_control
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
 from agentic_mesh_v4.codex_protocol import InMemoryTransport
 from agentic_mesh_v4.config import load_project_config
@@ -21,6 +25,11 @@ from agentic_mesh_v4.runtime import V4Runtime
 from agentic_mesh_v4.shared_fleet import MigrationTraffic
 from agentic_mesh_v4.shared_fleet import evaluate_migration_guard
 from v4_postgres import make_v4_db
+
+try:
+    import fcntl as _test_fcntl
+except ImportError:  # pragma: no cover - collection portability for non-POSIX runners.
+    _test_fcntl = None
 
 
 PROJECT_CONFIG = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml")
@@ -112,6 +121,8 @@ class _FailedInterruptTransport(_TimeoutTransport):
 
 @pytest.fixture
 def control_db(tmp_path: Path):
+    if _test_fcntl is None or not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("POSIX advisory locking and no-follow open are required for the positive lease path")
     now = datetime.now(UTC)
     expires_at = (now + timedelta(minutes=5)).isoformat()
     lease_path = tmp_path / "detached-control.lease"
@@ -132,7 +143,7 @@ def control_db(tmp_path: Path):
         encoding="utf-8",
     )
     lease_handle = lease_path.open("r", encoding="utf-8")
-    fcntl.flock(lease_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    _test_fcntl.flock(lease_handle.fileno(), _test_fcntl.LOCK_EX | _test_fcntl.LOCK_NB)
     payload = {
         "work_item_id": WORK_ITEM_ID,
         "from_role": "platform-engineer",
@@ -237,7 +248,7 @@ def test_detached_control_rejects_dispatcher_drift(control_db) -> None:
 
 
 def test_detached_control_rejects_process_loss(control_db) -> None:
-    fcntl.flock(control_db.lease_handle.fileno(), fcntl.LOCK_UN)
+    _test_fcntl.flock(control_db.lease_handle.fileno(), _test_fcntl.LOCK_UN)
 
     result = _evaluate(control_db)
 
@@ -260,6 +271,77 @@ def test_detached_control_rejects_expired_attestation(control_db) -> None:
 
     assert result.authorized is False
     assert result.reason == "expired_control"
+
+
+def test_detached_control_rejects_unsupported_lock_capability(control_db, monkeypatch) -> None:
+    monkeypatch.setattr(detached_turn_control, "_fcntl", None)
+
+    result = _evaluate(control_db)
+
+    assert result.authorized is False
+    assert result.reason == "unsupported_lease_security"
+
+
+def test_detached_control_rejects_fcntl_without_flock(control_db, monkeypatch) -> None:
+    monkeypatch.setattr(detached_turn_control, "_fcntl", SimpleNamespace())
+
+    result = _evaluate(control_db)
+
+    assert result.authorized is False
+    assert result.reason == "unsupported_lease_security"
+
+
+def test_detached_control_rejects_unsupported_no_follow_capability(control_db, monkeypatch) -> None:
+    monkeypatch.delattr(detached_turn_control.os, "O_NOFOLLOW")
+
+    result = _evaluate(control_db)
+
+    assert result.authorized is False
+    assert result.reason == "unsupported_lease_security"
+
+
+def test_detached_control_rejects_group_or_other_writable_lease(control_db) -> None:
+    lease_path = Path(json.loads(control_db.calls[0]["payload_json"])["detached_turn_control"]["lease_path"])
+    lease_path.chmod(0o660)
+
+    result = _evaluate(control_db)
+
+    assert result.authorized is False
+    assert result.reason == "insecure_lease_permissions"
+
+
+def test_non_detached_timeout_remains_available_without_fcntl(monkeypatch) -> None:
+    db = _Database(call={}, lease_handle=None)
+    db.calls = []
+    monkeypatch.setattr(detached_turn_control, "_fcntl", None)
+    runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
+
+    with pytest.raises(AgentTurnStillRunning):
+        runtime._drain_available_events(
+            client=CodexAppServerClient(_TimeoutTransport()),
+            role_instance_id=ROLE_INSTANCE_ID,
+            approval_policy="never",
+            thread_id="thread-platform-control",
+            turn_id=TURN_ID,
+            message_id=SOURCE_MESSAGE_ID,
+        )
+
+    assert db.events[-1]["event_type"] == "turn/readTimeoutStillRunning"
+
+
+def test_runtime_import_remains_available_without_fcntl() -> None:
+    code = (
+        "import builtins; "
+        "real_import = builtins.__import__; "
+        "builtins.__import__ = lambda name, *args, **kwargs: "
+        "(_ for _ in ()).throw(ImportError('blocked fcntl')) "
+        "if name == 'fcntl' else real_import(name, *args, **kwargs); "
+        "import agentic_mesh_v4.runtime"
+    )
+
+    result = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_rejected_detached_control_keeps_waiting_turn_active(control_db) -> None:
@@ -301,6 +383,8 @@ def test_failed_interrupt_keeps_waiting_turn_active(control_db) -> None:
 
 
 def test_database_wait_cycle_terminates_then_exact_cancellation_reaches_strict_zero(tmp_path: Path) -> None:
+    if _test_fcntl is None or not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("POSIX advisory locking and no-follow open are required for the positive lease path")
     db = make_v4_db()
     config = load_project_config(PROJECT_CONFIG)
     runtime = V4Runtime(
@@ -372,7 +456,7 @@ def test_database_wait_cycle_terminates_then_exact_cancellation_reaches_strict_z
         encoding="utf-8",
     )
     with lease_path.open("r", encoding="utf-8") as lease_handle:
-        fcntl.flock(lease_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _test_fcntl.flock(lease_handle.fileno(), _test_fcntl.LOCK_EX | _test_fcntl.LOCK_NB)
         db.record_safe_output_call(
             role_instance_id=ROLE_INSTANCE_ID,
             tool_name="handoff.require",

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import stat
@@ -11,6 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from agentic_mesh_v4.db import TERMINAL_MESSAGE_STATES
+
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - exercised on non-POSIX runtimes.
+    _fcntl = None
 
 
 CONTROL_SCHEMA = "agentic-mesh-v4-detached-turn-control-v1"
@@ -176,6 +180,14 @@ def _validate_live_lease(
     work_item_id: str,
     current: datetime,
 ) -> str | None:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    lock_capabilities = ("flock", "LOCK_EX", "LOCK_NB", "LOCK_UN")
+    if (
+        _fcntl is None
+        or any(not hasattr(_fcntl, capability) for capability in lock_capabilities)
+        or nofollow is None
+    ):
+        return "unsupported_lease_security"
     raw_path = str(control.get("lease_path") or "")
     if not raw_path or not os.path.isabs(raw_path):
         return "invalid_lease_path"
@@ -186,18 +198,29 @@ def _validate_live_lease(
         return "process_lease_missing"
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         return "invalid_lease_file"
+    if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return "insecure_lease_permissions"
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = os.open(path, os.O_RDONLY | nofollow)
     except OSError:
         return "process_lease_unreadable"
     try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != metadata.st_dev
+            or opened.st_ino != metadata.st_ino
+        ):
+            return "lease_file_changed"
+        if opened.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            return "insecure_lease_permissions"
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _fcntl.flock(descriptor, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
         except BlockingIOError:
             process_alive = True
         else:
             process_alive = False
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            _fcntl.flock(descriptor, _fcntl.LOCK_UN)
         if not process_alive:
             return "detached_process_lost"
         with os.fdopen(os.dup(descriptor), "r", encoding="utf-8") as handle:
