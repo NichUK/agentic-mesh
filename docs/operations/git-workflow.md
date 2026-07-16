@@ -104,3 +104,16 @@ deployment explicitly instead of allowing Engineering to discover the problem
 after implementation. The legacy
 `AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH` setting remains a compatibility
 fallback but should not be used for new deployments.
+
+Git transport authentication does not authorize GitHub API operations. Store
+the approved repository-scoped token as a single value in the host secret file
+referenced by `AGENTIC_MESH_GITHUB_TOKEN_FILE_HOST_PATH` (on linuxch this is
+`/home/nich/agentic-mesh-projects/agentic-mesh-dev/state/secrets/github-token`).
+The file is mounted read-only only for full-authority Engineering and promotion
+roles; container startup exports it as `GH_TOKEN` and `GITHUB_TOKEN` without
+placing the value in Compose, project configuration, logs, or Git.
+
+The release preflight refuses to recreate the fleet unless the token
+authenticates to the GitHub API and has write access to `NichUK/agentic-mesh`. This ensures a
+role that can push a branch can also open a pull request, request review, and
+inspect checks without asking the sponsor to supply credentials again.

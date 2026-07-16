@@ -11,9 +11,10 @@ OPS_ROLES = {"project-manager", "delivery-manager", "platform-engineer", "releas
 DEV_ROLES = {"engineering"}
 QA_ROLES = {"qa-engineer"}
 # Full-authority roles that can produce or promote repository changes share the
-# deployment's approved Git identity. The host key directory is mounted
-# read-only and copied into the ephemeral container before Codex starts.
+# deployment's approved Git identity and GitHub API token. Both host secrets are
+# mounted read-only and loaded only inside the ephemeral container.
 SSH_ROLES = OPS_ROLES | DEV_ROLES
+GITHUB_ROLES = SSH_ROLES
 DOCKER_SOCKET_ROLES = OPS_ROLES | DEV_ROLES
 CODEX_CONFIG_ATOM = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -232,6 +233,9 @@ def _role_service(*, project_config: V4ProjectConfig, role: V4RoleConfig) -> lis
             "if [ -f /root/.ssh/config ]; then sed -i \"s#/mesh/home/.ssh#/root/.ssh#g\" /root/.ssh/config; fi; "
             "chmod 700 /root/.ssh; "
             "find /root/.ssh -type f -exec chmod 600 {} \\; 2>/dev/null || true; "
+            "[ -s /run/secrets/github-token ] || { echo GitHub token secret is missing >&2; exit 1; }; "
+            "export GH_TOKEN=\"$(tr -d '\\r\\n' < /run/secrets/github-token)\"; "
+            "export GITHUB_TOKEN=\"$$GH_TOKEN\" GH_PROMPT_DISABLED=1; "
             f"exec {app_server}'"
         )
     lines = [
@@ -279,6 +283,10 @@ def _role_service(*, project_config: V4ProjectConfig, role: V4RoleConfig) -> lis
             "      - ${AGENTIC_MESH_PROJECT_ENV_FILE_HOST_PATH:-.env}:/mesh/home/.env:ro",
             "      - ${AGENTIC_MESH_GIT_SSH_HOST_PATH:-${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}}:/mesh/home/.ssh:ro",
         ])
+    if role_id in GITHUB_ROLES:
+        lines.append(
+            "      - ${AGENTIC_MESH_GITHUB_TOKEN_FILE_HOST_PATH:-../../state/secrets/github-token}:/run/secrets/github-token:ro"
+        )
     return lines
 
 
