@@ -2584,8 +2584,8 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "Keep all architecture and process as simple as possible" in text
     assert "Use the existing runtime and workflow before introducing a new component" in text
     assert "directly advances the work item's accepted outcome or resolves a material blocker" in text
-    assert "A reviewer may return the same finding for correction once" in text
-    assert "A third specialist bounce requires explicit sponsor direction" in text
+    assert "up to three focused correction-and-re-review loops" in text
+    assert "A fourth specialist bounce requires explicit sponsor direction" in text
     assert "newly discovered out-of-scope work in a separate proposed work item" in text
     assert "instruction to stop a review loop takes precedence" in text
     assert "Never paste raw session JSONL" in text

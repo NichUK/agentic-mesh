@@ -23,6 +23,7 @@ from agentic_mesh_v4.compose import render_compose
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.decision_records import DecisionRequest
+from agentic_mesh_v4.decision_records import HUMAN_WAIT_STATES
 from agentic_mesh_v4.decision_records import cancel_decision
 from agentic_mesh_v4.decision_records import deliver_pending_decision_cards
 from agentic_mesh_v4.decision_records import link_decision
@@ -31,6 +32,7 @@ from agentic_mesh_v4.decision_records import recalculate_sla_states
 from agentic_mesh_v4.decision_records import reconcile_resolved_decision_notifications
 from agentic_mesh_v4.decision_records import render_decision_card
 from agentic_mesh_v4.decision_records import request_decision
+from agentic_mesh_v4.decision_records import require_delivered_sponsor_notification
 from agentic_mesh_v4.decision_records import retry_failed_card_updates
 from agentic_mesh_v4.decision_records import resolve_decision
 from agentic_mesh_v4.documents import DocumentWriteRequest
@@ -1173,6 +1175,13 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
         existing_work = db.connection.execute("SELECT * FROM work_items WHERE work_item_id=?", (args.work_item_id,)).fetchone()
         effective_state = args.state or (str(existing_work["state"]) if existing_work is not None else None)
         effective_next_action = args.next_action or (str(existing_work["next_action"]) if existing_work is not None else None)
+        sponsor_notification = None
+        if effective_state and effective_state.casefold() in HUMAN_WAIT_STATES:
+            sponsor_notification = require_delivered_sponsor_notification(
+                db=db,
+                work_item_id=args.work_item_id,
+                requester_role=args.role_id,
+            )
         call_id = f"call-{secrets.token_hex(16)}"
         payload = {
             "work_item_id": args.work_item_id,
@@ -1180,6 +1189,7 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
             "state": args.state,
             "owner_role": args.owner_role,
             "next_action": args.next_action,
+            "sponsor_notification": sponsor_notification,
         }
         queued_handoff = None
         if (

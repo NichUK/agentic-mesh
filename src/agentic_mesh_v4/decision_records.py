@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
@@ -31,6 +32,13 @@ AUTHORITY_LABELS = {
 }
 OPEN_DECISION_STATES = {"pending", "delivery_failed_pending", "resolution_failed"}
 TERMINAL_DECISION_STATES = {"resolved", "cancelled"}
+HUMAN_WAIT_STATES = {
+    "awaiting_decision",
+    "awaiting_human",
+    "blocked_on_human",
+    "human_review",
+    "waiting_human",
+}
 DECISION_NOTIFICATION_PREFIX = "msg-decision-result-"
 DECISION_NOTIFICATION_RECOVERABLE_OUTCOME = "recover_if_missing"
 DECISION_NOTIFICATION_TERMINAL_OUTCOMES = {
@@ -43,6 +51,11 @@ DECISION_NOTIFICATION_OUTCOMES = {
 }
 MAX_DECISION_TITLE_LENGTH = 120
 MAX_DECISION_QUESTION_LENGTH = 600
+INTERNAL_DECISION_REFERENCE_PATTERN = re.compile(
+    r"\b(?:QA|AC|ADR|EC|ST|WI)(?:-[A-Z0-9]+){2,}\b|"
+    r"\b(?:artifact|decision|docrev|handoff|msg|work)-[A-Za-z0-9-]+\b",
+    re.IGNORECASE,
+)
 SUPPORTED_EFFECT_TARGET_TYPES = {"work_item", "handoff", "preflight", "artifact", "release"}
 
 
@@ -69,6 +82,46 @@ class DecisionCardSender(Protocol):
 
 class DecisionRecordError(ValueError):
     pass
+
+
+def require_delivered_sponsor_notification(
+    *,
+    db: V4Database,
+    work_item_id: str,
+    requester_role: str,
+) -> dict[str, Any]:
+    """Require proof that the blocking role notified the sponsor in Teams."""
+
+    row = db.connection.execute(
+        """
+        SELECT
+          decisions.decision_id,
+          decisions.status AS decision_status,
+          deliveries.delivery_id,
+          deliveries.activity_id,
+          deliveries.updated_at AS delivered_at
+        FROM decision_records decisions
+        JOIN decision_card_deliveries deliveries
+          ON deliveries.decision_id=decisions.decision_id
+        WHERE decisions.work_item_id=?
+          AND decisions.requester_role=?
+          AND decisions.authority_label='Sponsor'
+          AND decisions.status IN ('pending','delivery_failed_pending','resolution_failed')
+          AND deliveries.channel='teams'
+          AND deliveries.state='delivered'
+          AND deliveries.activity_id IS NOT NULL
+        ORDER BY deliveries.updated_at DESC, deliveries.delivery_id DESC
+        LIMIT 1
+        """,
+        (work_item_id, requester_role),
+    ).fetchone()
+    if row is None:
+        raise DecisionRecordError(
+            "human-wait state requires a sponsor decision request delivered through Teams by the blocking role; "
+            "send `safe-output decision-request` with the sponsor Teams activity and confirm its delivery state "
+            "is `delivered` before updating the work item"
+        )
+    return dict(row)
 
 
 def record_decision_notification_recovery_summary(
@@ -1109,6 +1162,11 @@ def _validate_request(request: DecisionRequest) -> None:
     if not request.question.strip() or len(request.question.strip()) > MAX_DECISION_QUESTION_LENGTH:
         raise DecisionRecordError(
             f"question must be one clear plain-English decision request of no more than {MAX_DECISION_QUESTION_LENGTH} characters; link detailed governance evidence instead"
+        )
+    if INTERNAL_DECISION_REFERENCE_PATTERN.search(request.title) or INTERNAL_DECISION_REFERENCE_PATTERN.search(request.question):
+        raise DecisionRecordError(
+            "decision title and question must summarize the underlying issue and consequence in ordinary English; "
+            "put internal finding, work-item, decision, handoff, revision, message, and artifact identifiers in source_refs"
         )
     for effect in request.link_effects:
         target_type = str(effect.get("target_type") or "")
