@@ -2594,6 +2594,13 @@ def test_v4_materializes_role_agents_md_from_role_charter(tmp_path: Path) -> Non
     assert "Complete normal integration through a pull request" in text
     assert "Never return an unbroken wall of text" in text
     assert "Use short paragraphs with blank lines" in text
+    # Human-wait notification invariant: dashboard-only escalation is prohibited
+    assert "dashboard-only escalation" in text
+    assert "blocked_on_human" in text
+    assert "durable card-delivery state is `delivered`" in text
+    # Sponsor card authoring: opaque internal identifiers must not appear in title/question
+    assert "internal finding code, work-item id, stage label" in text
+    assert "put those identifiers in source references" in text
 
 
 def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None:
