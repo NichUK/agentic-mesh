@@ -10,9 +10,9 @@ import yaml
 
 from agentic_mesh_v4.agent_config import materialize_agent_configs
 from agentic_mesh_v4.compose import render_compose
+from agentic_mesh_v4.compose import render_shared_fleet_binding_override
 from agentic_mesh_v4.config import DEFAULT_ROLE_IDS
 from agentic_mesh_v4.config import load_project_config
-from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
 from agentic_mesh_v4.shared_fleet import generated_shared_fleet_plan
 
 
@@ -90,6 +90,8 @@ def test_step11_renderer_materializes_exact_dormant_target_and_assignment_bounda
             "activation_gate": "stages_2_4_closed",
             "assignment_allowlist_refs": sorted(expected_refs),
             "bound_project_id": None,
+            "binding_generation": 0,
+            "binding_state": "unbound",
             "enabled": False,
             "mounts": [],
             "networks": [],
@@ -161,16 +163,42 @@ def test_duplicate_yaml_role_key_is_rejected(tmp_path: Path) -> None:
         load_project_config(path)
 
 
-def test_activation_gate_remains_closed_for_complete_configuration(tmp_path: Path) -> None:
+def test_complete_enabled_configuration_renders_runnable_neutral_fleet(tmp_path: Path) -> None:
     raw = _complete_raw(tmp_path)
     raw["shared_fleet"]["enabled"] = True
     path = tmp_path / "enabled.yaml"
     path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     config = load_project_config(path)
-    with pytest.raises(SharedFleetActivationClosed, match="Stage 1"):
-        render_compose(config)
-    with pytest.raises(SharedFleetActivationClosed, match="Stage 1"):
-        generated_shared_fleet_plan(config)
+    plan = generated_shared_fleet_plan(config)
+    compose = yaml.safe_load(render_compose(config))
+    assert plan["enabled"] is plan["runnable"] is True
+    assert plan["activation_gate"] == "activation_ready"
+    stable = {
+        name: service
+        for name, service in compose["services"].items()
+        if service.get("labels", {}).get("agentic-mesh.shared-fleet.enabled") == "true"
+    }
+    assert len(stable) == 15
+    assert all("profiles" not in service and "deploy" not in service for service in stable.values())
+    assert all("volumes" not in service and "networks" not in service for service in stable.values())
+    assert all(service["environment"]["AGENTIC_MESH_SHARED_FLEET_BINDING_STATE"] == "unbound" for service in stable.values())
+
+    orchid = yaml.safe_load(
+        render_shared_fleet_binding_override(
+            config, role_id="engineering", project_id="orchid", generation=7
+        )
+    )
+    cedar = yaml.safe_load(
+        render_shared_fleet_binding_override(
+            config, role_id="engineering", project_id="cedar", generation=8
+        )
+    )
+    orchid_service = orchid["services"]["agentic-mesh-engineering-1"]
+    cedar_service = cedar["services"]["agentic-mesh-engineering-1"]
+    assert orchid_service["environment"]["AGENTIC_MESH_DATABASE_SCHEMA"] == "orchid_schema"
+    assert cedar_service["environment"]["AGENTIC_MESH_DATABASE_SCHEMA"] == "cedar_schema"
+    assert "cedar" not in json.dumps(orchid, sort_keys=True)
+    assert "orchid" not in json.dumps(cedar, sort_keys=True)
 
 
 def test_complete_shared_fleet_config_rejects_multi_instance_roles(tmp_path: Path) -> None:

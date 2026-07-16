@@ -12,6 +12,7 @@ from agentic_mesh_v4.shared_fleet import FleetActivity
 from agentic_mesh_v4.shared_fleet import FleetBinding
 from agentic_mesh_v4.shared_fleet import MigrationTraffic
 from agentic_mesh_v4.shared_fleet import SharedFleetConflict
+from agentic_mesh_v4.shared_fleet import SharedFleetDispatchCoordinator
 from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
 from agentic_mesh_v4.shared_fleet import evaluate_migration_guard
 
@@ -99,3 +100,65 @@ def test_runtime_and_database_adapter_share_one_project_qualified_binding(tmp_pa
         runtime._require_project_operation("cedar")
     with pytest.raises(SharedFleetConflict, match="generation mismatch"):
         db.require_project_operation(project_id="orchid", generation=2)
+
+
+def test_single_dispatcher_coordinates_project_qualified_a_b_a_generations(tmp_path: Path) -> None:
+    config = shared_config(tmp_path, enabled=True)
+    coordinator = SharedFleetDispatchCoordinator(config)
+    assert coordinator.project_ids == ("cedar", "orchid")
+
+    a = coordinator.bind(
+        role_id="engineering", project_id="orchid", activity=FleetActivity()
+    )
+    b = coordinator.bind(
+        role_id="engineering", project_id="cedar", activity=FleetActivity()
+    )
+    a_return = coordinator.bind(
+        role_id="engineering", project_id="orchid", activity=FleetActivity()
+    )
+    assert (a.binding.generation, b.binding.generation, a_return.binding.generation) == (1, 2, 3)
+    assert len({guard.binding.fleet_instance_id for guard in (a, b, a_return)}) == 1
+
+    for activity in (
+        FleetActivity(active_turn=True),
+        FleetActivity(claimed_message=True),
+        FleetActivity(safe_output_active=True),
+        FleetActivity(lifecycle_active=True),
+    ):
+        with pytest.raises(SharedFleetConflict, match="must be idle"):
+            coordinator.bind(
+                role_id="engineering", project_id="cedar", activity=activity
+            )
+
+
+def test_enabled_runtime_rejects_uncaptured_project_operation(tmp_path: Path) -> None:
+    config = replace(shared_config(tmp_path, enabled=True), project_id="orchid")
+    db = object.__new__(V4Database)
+    db.shared_fleet_guard = None
+    runtime = V4Runtime(db=db, project_config=config)
+    with pytest.raises(SharedFleetConflict, match="requires a captured project binding"):
+        runtime._require_project_operation("orchid")
+
+
+def test_runtime_registration_switches_identity_only_when_enabled(tmp_path: Path) -> None:
+    class RegistrationDb:
+        def __init__(self) -> None:
+            self.rows: list[dict[str, object]] = []
+
+        def upsert_role_instance(self, **values: object) -> None:
+            self.rows.append(values)
+
+    disabled_db = RegistrationDb()
+    V4Runtime(db=disabled_db, project_config=shared_config(tmp_path)).register_roles()
+    assert disabled_db.rows[0]["role_instance_id"] == "synthetic-control.engineering.1"
+    assert disabled_db.rows[0]["service_name"] == "synthetic-network-engineering-1"
+
+    enabled_db = RegistrationDb()
+    V4Runtime(
+        db=enabled_db,
+        project_config=shared_config(tmp_path, enabled=True),
+    ).register_roles()
+    engineering = next(row for row in enabled_db.rows if row["role_id"] == "engineering")
+    assert engineering["role_instance_id"] == "agentic-mesh.engineering.1"
+    assert engineering["service_name"] == "agentic-mesh-engineering-1"
+    assert len(enabled_db.rows) == 15

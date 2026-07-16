@@ -398,7 +398,7 @@ def shared_fleet_status_payload(
     result["shared_fleet"] = {
         **projection,
         "enabled": project_config.shared_fleet.enabled,
-        "runnable": False,
+        "runnable": project_config.shared_fleet.enabled,
     }
     if projection["fleet"]:
         result["roles"] = projection["fleet"]

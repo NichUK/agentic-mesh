@@ -7,7 +7,6 @@ import yaml
 
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.config import V4RoleConfig
-from agentic_mesh_v4.shared_fleet import require_stage1_default_off
 from agentic_mesh_v4.shared_fleet import generated_shared_fleet_plan
 from agentic_mesh_v4.shared_fleet import stable_fleet_instance_id
 from agentic_mesh_v4.shared_fleet import stable_fleet_service_name
@@ -25,7 +24,6 @@ CODEX_CONFIG_ATOM = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def render_compose(project_config: V4ProjectConfig) -> str:
-    require_stage1_default_off(project_config, operation="Compose rendering")
     shared_fleet_plan = generated_shared_fleet_plan(project_config)
     complete_shared_fleet = bool(project_config.shared_fleet.project_assignments)
     lines: list[str] = []
@@ -37,8 +35,8 @@ def render_compose(project_config: V4ProjectConfig) -> str:
                     item["assignment_allowlist_id"]: item
                     for item in shared_fleet_plan["project_assignments"]
                 },
-                "enabled": False,
-                "runnable": False,
+                "enabled": shared_fleet_plan["enabled"],
+                "runnable": shared_fleet_plan["runnable"],
             }
         }
         lines.extend(yaml.safe_dump(metadata, sort_keys=True).rstrip().splitlines())
@@ -219,6 +217,106 @@ def validate_v4_compose(rendered: str) -> None:
         raise ValueError(f"V4 compose contains V3-only components: {', '.join(found)}")
 
 
+def render_shared_fleet_binding_override(
+    project_config: V4ProjectConfig,
+    *,
+    role_id: str,
+    project_id: str,
+    generation: int,
+) -> str:
+    """Render the only project-bearing layer used for a captured binding.
+
+    The base shared-fleet service remains unbound and has no project resources.
+    This override is intentionally generation-specific so a stale container or
+    safe-output proxy cannot silently continue after an A -> B transition.
+    """
+    plan = generated_shared_fleet_plan(project_config)
+    if not plan["runnable"]:
+        raise ValueError("shared fleet binding override requires enabled runnable configuration")
+    if generation < 1:
+        raise ValueError("shared fleet binding generation must be positive")
+    role = project_config.role(role_id)
+    allowlists = {
+        item["project_id"]: item for item in plan["project_assignments"]
+    }
+    assignment = allowlists.get(project_id)
+    if assignment is None:
+        raise ValueError(f"unknown shared-fleet project assignment: {project_id}")
+    service_name = stable_fleet_service_name(
+        fleet_id=project_config.shared_fleet.fleet_id,
+        role_id=role_id,
+    )
+    instance_id = stable_fleet_instance_id(
+        fleet_id=project_config.shared_fleet.fleet_id,
+        role_id=role_id,
+    )
+    model = _codex_config_atom(role.model, field="model")
+    reasoning = _codex_config_atom(role.reasoning_effort, field="reasoning_effort")
+    plan_reasoning = _codex_config_atom(
+        role.plan_mode_reasoning_effort, field="plan_mode_reasoning_effort"
+    )
+    raw_reasoning = "true" if role.show_raw_agent_reasoning else "false"
+    app_server = (
+        f"codex -c model={model} -c model_reasoning_effort={reasoning} "
+        f"-c plan_mode_reasoning_effort={plan_reasoning} "
+        f"-c show_raw_agent_reasoning={raw_reasoning} app-server "
+        f"--listen ws://0.0.0.0:{role.codex_port} --ws-auth capability-token "
+        f"--ws-token-file /mesh/project/state/v4/agent-configs/{role_id}/1/ws-token"
+    )
+    proxy = (
+        "python -m agentic_mesh_v4.safe_output_proxy "
+        "--socket /mesh/agent-workspace/.agentic-mesh/safe-output.sock "
+        f"--role-id {role_id} --project-config /mesh/project/agentic-mesh/project-v4.yaml "
+        f"--fleet-instance-id {instance_id} --binding-project-id {project_id} "
+        f"--binding-generation {generation}"
+    )
+    command = (
+        "rm -f /mesh/agent-workspace/.agentic-mesh/safe-output.sock; "
+        f"{proxy} & for i in $(seq 1 50); do "
+        "[ -S /mesh/agent-workspace/.agentic-mesh/safe-output.sock ] && break; sleep 0.1; "
+        "done; [ -S /mesh/agent-workspace/.agentic-mesh/safe-output.sock ] || exit 1; "
+        f"exec {app_server}"
+    )
+    service = {
+        "command": ["sh", "-lc", command],
+        "env_file": [
+            {
+                "path": f"{assignment['project_root']}/deploy/compose/.env",
+                "required": False,
+            }
+        ],
+        "environment": {
+            "AGENTIC_MESH_DATABASE_CREDENTIAL_REF": assignment["database_credential_ref"],
+            "AGENTIC_MESH_DATABASE_PASSWORD_FILE": "/mesh/project/state/secrets/postgres-password",
+            "AGENTIC_MESH_DATABASE_SCHEMA": assignment["database_schema"],
+            "AGENTIC_MESH_PROJECT_ID": project_id,
+            "AGENTIC_MESH_ROLE_ID": role_id,
+            "AGENTIC_MESH_ROLE_INSTANCE_ID": instance_id,
+            "AGENTIC_MESH_SAFE_OUTPUT_SOCKET": "/mesh/agent-workspace/.agentic-mesh/safe-output.sock",
+            "AGENTIC_MESH_SHARED_FLEET_BINDING_GENERATION": str(generation),
+            "AGENTIC_MESH_SHARED_FLEET_BINDING_STATE": "bound",
+            "PGOPTIONS": f"-c search_path={assignment['database_schema']}",
+        },
+        "networks": assignment["networks"],
+        "volumes": [
+            {
+                "type": "bind",
+                "source": mount["source"],
+                "target": mount["target"],
+                "read_only": mount["read_only"],
+            }
+            for mount in assignment["mounts"]
+        ],
+    }
+    return yaml.safe_dump(
+        {
+            "networks": {assignment["networks"][0]: {"external": True}},
+            "services": {service_name: service},
+        },
+        sort_keys=True,
+    )
+
+
 def _role_service(*, project_config: V4ProjectConfig, role: V4RoleConfig) -> list[str]:
     role_id = role.role_id
     role_instance_id = project_config.role_instance_id(role_id)
@@ -328,27 +426,45 @@ def _stable_role_service(
     service_name = stable_fleet_service_name(fleet_id=fleet_id, role_id=role_id, ordinal=ordinal)
     instance_id = stable_fleet_instance_id(fleet_id=fleet_id, role_id=role_id, ordinal=ordinal)
     refs = json.dumps(sorted(assignment_refs), separators=(",", ":"))
-    return [
+    enabled = project_config.shared_fleet.enabled
+    activation_gate = "activation_ready" if enabled else "stages_2_4_closed"
+    lines = [
         f"  {service_name}:",
         f"    image: {_role_image(role_id)}",
-        "    profiles:",
-        "      - shared-fleet-activation-closed",
-        "    restart: \"no\"",
-        "    deploy:",
-        "      replicas: 0",
-        "    command: [\"sh\", \"-lc\", \"echo 'shared fleet activation gate is closed' >&2; exit 78\"]",
+    ]
+    if enabled:
+        # The physical service is deliberately useful but resource-free while
+        # unbound.  A generation-checked lifecycle override supplies exactly
+        # one project's command, mounts, credentials and network at bind time.
+        lines.extend([
+            "    restart: unless-stopped",
+            "    command: [\"python\", \"-c\", \"import signal; signal.pause()\"]",
+        ])
+    else:
+        lines.extend([
+            "    profiles:",
+            "      - shared-fleet-activation-closed",
+            "    restart: \"no\"",
+            "    deploy:",
+            "      replicas: 0",
+            "    command: [\"sh\", \"-lc\", \"echo 'shared fleet activation gate is closed' >&2; exit 78\"]",
+        ])
+    lines.extend([
         "    environment:",
         f"      AGENTIC_MESH_ROLE_ID: {role_id}",
         f"      AGENTIC_MESH_ROLE_INSTANCE_ID: {instance_id}",
-        "      AGENTIC_MESH_SHARED_FLEET_ENABLED: \"0\"",
-        "      AGENTIC_MESH_SHARED_FLEET_RUNNABLE: \"0\"",
-        "      AGENTIC_MESH_SHARED_FLEET_ACTIVATION_GATE: stages_2_4_closed",
+        f"      AGENTIC_MESH_SHARED_FLEET_ENABLED: \"{1 if enabled else 0}\"",
+        f"      AGENTIC_MESH_SHARED_FLEET_RUNNABLE: \"{1 if enabled else 0}\"",
+        f"      AGENTIC_MESH_SHARED_FLEET_ACTIVATION_GATE: {activation_gate}",
+        "      AGENTIC_MESH_SHARED_FLEET_BINDING_STATE: unbound",
+        "      AGENTIC_MESH_SHARED_FLEET_BINDING_GENERATION: \"0\"",
         f"      AGENTIC_MESH_SHARED_FLEET_ASSIGNMENT_ALLOWLIST_REFS: '{refs}'",
         "    labels:",
-        "      agentic-mesh.shared-fleet.enabled: \"false\"",
-        "      agentic-mesh.shared-fleet.runnable: \"false\"",
-        "      agentic-mesh.shared-fleet.activation-gate: stages_2_4_closed",
-    ]
+        f"      agentic-mesh.shared-fleet.enabled: \"{'true' if enabled else 'false'}\"",
+        f"      agentic-mesh.shared-fleet.runnable: \"{'true' if enabled else 'false'}\"",
+        f"      agentic-mesh.shared-fleet.activation-gate: {activation_gate}",
+    ])
+    return lines
 
 
 def _codex_config_atom(value: str, *, field: str) -> str:
