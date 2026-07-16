@@ -188,6 +188,19 @@ def test_decision_question_accepts_short_plain_english_problem_summary() -> None
     _validate_request(request)
 
 
+def test_decision_question_accepts_hyphenated_plain_english_words() -> None:
+    """Ensure common English hyphenated words are not mistaken for internal IDs."""
+    request = _request(
+        question=(
+            "A work-around exists but requires sponsor approval. "
+            "The decision-making process is blocked pending your response. "
+            "Approve the handoff-process change so Engineering can continue?"
+        )
+    )
+
+    _validate_request(request)
+
+
 def test_cancelled_card_does_not_claim_agent_was_notified() -> None:
     card = render_decision_card(
         {

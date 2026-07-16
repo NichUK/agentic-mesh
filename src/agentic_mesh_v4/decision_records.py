@@ -53,7 +53,7 @@ MAX_DECISION_TITLE_LENGTH = 120
 MAX_DECISION_QUESTION_LENGTH = 600
 INTERNAL_DECISION_REFERENCE_PATTERN = re.compile(
     r"\b(?:QA|AC|ADR|EC|ST|WI)(?:-[A-Z0-9]+){2,}\b|"
-    r"\b(?:artifact|decision|docrev|handoff|msg|work)-[A-Za-z0-9-]+\b",
+    r"\b(?:artifact|decision|docrev|handoff|msg|work)-[A-Za-z0-9-]*\d[A-Za-z0-9-]*\b",
     re.IGNORECASE,
 )
 SUPPORTED_EFFECT_TARGET_TYPES = {"work_item", "handoff", "preflight", "artifact", "release"}
