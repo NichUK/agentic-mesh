@@ -34,7 +34,8 @@ Each pull request should:
 - describe the product or implementation slice
 - include test or smoke evidence
 - call out configuration, deployment, or operational impact
-- request GitHub Copilot review before merge
+- request GitHub Copilot as a reviewer before merge, and verify the resulting
+  code-review run targets the current head
 - keep unrelated changes out of the branch where practical
 
 Review size policy:
@@ -88,7 +89,18 @@ Check the PR size before pushing:
 python scripts/check-pr-size.py --base origin/develop --committed-only
 ```
 
-Then open a pull request targeting `develop` and request Copilot review.
+Then open a pull request targeting `develop` and request Copilot through the
+reviewer API, for example:
+
+```bash
+gh api --method POST repos/OWNER/REPO/pulls/NUMBER/requested_reviewers \
+  -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+```
+
+Confirm that GitHub starts a `Running Copilot Code Review` run for the current
+head SHA. Do not substitute an `@copilot review` issue comment: GitHub can route
+that comment to Copilot's coding workflow, which completes without producing a
+new review.
 
 ## Runtime Git Identity
 
