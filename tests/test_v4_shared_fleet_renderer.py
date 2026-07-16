@@ -195,6 +195,9 @@ def test_complete_enabled_configuration_renders_runnable_neutral_fleet(tmp_path:
     )
     orchid_service = orchid["services"]["agentic-mesh-engineering-1"]
     cedar_service = cedar["services"]["agentic-mesh-engineering-1"]
+    assert orchid_service["command"][2].startswith(
+        "mkdir -p /mesh/agent-workspace/.agentic-mesh;"
+    )
     assert orchid_service["environment"]["AGENTIC_MESH_DATABASE_SCHEMA"] == "orchid_schema"
     assert cedar_service["environment"]["AGENTIC_MESH_DATABASE_SCHEMA"] == "cedar_schema"
     assert "cedar" not in json.dumps(orchid, sort_keys=True)

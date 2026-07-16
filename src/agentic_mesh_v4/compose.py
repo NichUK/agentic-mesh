@@ -271,6 +271,7 @@ def render_shared_fleet_binding_override(
         f"--binding-generation {generation}"
     )
     command = (
+        "mkdir -p /mesh/agent-workspace/.agentic-mesh; "
         "rm -f /mesh/agent-workspace/.agentic-mesh/safe-output.sock; "
         f"{proxy} & for i in $(seq 1 50); do "
         "[ -S /mesh/agent-workspace/.agentic-mesh/safe-output.sock ] && break; sleep 0.1; "
