@@ -644,9 +644,11 @@ or `release_review`.
   handoff to directly advance the accepted outcome or resolve a material
   blocker. Minor, speculative, theoretical, and implementation-detail findings
   are non-blocking follow-up unless their concrete current impact is stated.
-- The same finding may be returned for correction once. After re-review it must
-  be accepted, explicitly deferred, or escalated for a sponsor decision; a
-  third specialist bounce requires explicit sponsor direction.
+- The same material finding may be returned for up to three focused
+  correction-and-re-review loops. Each loop must stay tied to the overall
+  outcome and use the minimum engineering necessary. After the third failed
+  correction, the loop stops for deeper-problem disposition or sponsor
+  escalation; a fourth specialist bounce requires explicit sponsor direction.
 - Out-of-scope discoveries require a separately prioritized work item, sponsor
   stop instructions terminate the review chain, and human-facing responses
   must not contain raw session JSONL or unfiltered tool/search transcripts.
@@ -663,3 +665,17 @@ or `release_review`.
 - Agents must use already-configured tooling such as authenticated `gh` before
   suggesting optional plugins, and must route genuine human questions through
   normal conversation or the durable sponsor-decision path.
+
+## 2026-07-16 V4 Sponsor Notification Gate
+
+- A Project Manager moved the shared-fleet migration to `blocked_on_human`
+  without creating or delivering a sponsor decision, leaving every agent idle
+  while the sponsor had no notification.
+- Human-wait states now require an open Sponsor decision requested by the same
+  blocking role and a successful Teams delivery receipt with an activity id.
+- A dashboard-only, pending, or failed notification cannot satisfy the gate;
+  the work item remains unchanged and the delivery failure must stay visible.
+- Turn completion also enforces nonterminal continuity: tracked work must be
+  genuinely terminal, have a queued/active durable handoff, or have a
+  successfully delivered Sponsor decision. Milestone states such as
+  `stage1_complete` cannot silently end the overall job.

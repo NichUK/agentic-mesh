@@ -343,6 +343,7 @@ class V4Runtime:
                 role_instance_id=role_instance_id,
                 message_id=message.message_id,
                 turn_id=turn_id,
+                work_item_id=_string_value(message.payload.get("work_item_id")),
             )
             if completion_evaluation.state != "completed":
                 now = utc_now()
@@ -606,6 +607,7 @@ class V4Runtime:
                 role_instance_id=role_instance_id,
                 message_id=message_id,
                 turn_id=turn_id,
+                work_item_id=_string_value(payload.get("work_item_id")),
             )
             if completion_evaluation.state != "completed":
                 now = utc_now()

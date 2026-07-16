@@ -12,6 +12,7 @@ from agentic_mesh_v4.decision_records import reconcile_resolved_decision_notific
 from agentic_mesh_v4.decision_records import render_decision_card
 from agentic_mesh_v4.decision_records import request_decision
 from agentic_mesh_v4.decision_records import resolve_decision_and_update_card
+from agentic_mesh_v4.decision_records import _validate_request
 from v4_postgres import make_v4_db
 
 
@@ -165,6 +166,39 @@ def test_decision_request_rejects_opaque_or_empty_declared_effects() -> None:
             request_decision(db=db, request=_request(question="x" * 601), deliver=False)
     finally:
         db.close()
+
+
+def test_decision_question_rejects_internal_finding_code_instead_of_summary() -> None:
+    request = _request(
+        question="Authorize direct remediation of QA-SF-ST1-001 so Stages 2-4 may continue?"
+    )
+
+    with pytest.raises(DecisionRecordError, match="summarize the underlying issue"):
+        _validate_request(request)
+
+
+def test_decision_question_accepts_short_plain_english_problem_summary() -> None:
+    request = _request(
+        question=(
+            "The migration cannot yet prove that every project uses the same agent fleet, so cutover is paused. "
+            "Authorize Engineering to correct that validation gap and let QA accept the result?"
+        )
+    )
+
+    _validate_request(request)
+
+
+def test_decision_question_accepts_hyphenated_plain_english_words() -> None:
+    """Ensure common English hyphenated words are not mistaken for internal IDs."""
+    request = _request(
+        question=(
+            "A work-around exists but requires sponsor approval. "
+            "The decision-making process is blocked pending your response. "
+            "Approve the handoff-process change so Engineering can continue?"
+        )
+    )
+
+    _validate_request(request)
 
 
 def test_cancelled_card_does_not_claim_agent_was_notified() -> None:

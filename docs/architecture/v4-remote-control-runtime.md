@@ -36,10 +36,14 @@ implementation-detail findings that do not change acceptance criteria, a
 credible security/compliance boundary, feasibility, or release correctness are
 recorded as non-blocking follow-up and do not trigger another role cycle.
 
-A reviewer may return the same finding for correction once. If it remains
-unresolved after that correction and re-review, the accountable role must
-either defer it with an explicit risk disposition or ask the sponsor for a
-decision. A third specialist bounce requires explicit sponsor direction.
+A reviewer may return the same material finding for up to three focused
+correction-and-re-review loops. Each loop must stay tied to the overall accepted
+outcome and use the minimum engineering necessary to resolve the finding,
+without expanding into speculative improvements. If the finding remains
+unresolved after the third correction and re-review, the accountable role must
+stop the specialist loop and either disposition the deeper problem or ask the
+sponsor for a decision. A fourth specialist bounce requires explicit sponsor
+direction.
 Newly discovered work outside the current objective belongs in a separate work
 item and requires normal prioritisation; it must not be grafted onto an
 incident merely because it was discovered there. Sponsor stop instructions
@@ -51,8 +55,9 @@ Acceptance criteria for this prompt contract are:
   proportionality check;
 - minor or speculative findings are explicitly non-blocking and cannot require
   another handoff;
-- the same finding has a maximum of one correction-and-re-review return before
-  defer-or-escalate handling;
+- the same material finding has a maximum of three focused
+  correction-and-re-review loops before deeper-problem disposition or sponsor
+  escalation;
 - out-of-scope work requires a separate prioritized work item;
 - sponsor stop instructions prohibit further artifact revisions and specialist
   handoffs for the stopped loop; and
@@ -90,6 +95,49 @@ Conversational replies come from the Codex stream. Durable project effects still
 require safe-output tools, including handoff, consult, queue/work creation,
 document/artifact updates, approval requests, sponsor questions, memory updates,
 release/deployment records, blockers, risks, and decisions.
+
+### Human-wait notification invariant
+
+A dashboard state is not a human notification. Before a role can move work to
+`waiting_human`, `awaiting_human`, `awaiting_decision`, `human_review`, or
+`blocked_on_human`, that same role must create an open Sponsor decision and
+successfully deliver its decision card through Teams. The durable delivery
+record must contain the Teams activity identifier.
+
+Acceptance criteria are:
+
+- a human-wait update without a delivered Sponsor decision is rejected without
+  changing the work item;
+- a pending or failed Teams attempt does not satisfy the gate;
+- the blocking role, work item, open decision, and delivery receipt are bound
+  together so another role's notification cannot satisfy the gate;
+- successful updates record the notification identity in the safe-output audit
+  payload; and
+- delivery failure keeps work operationally visible and must never be reported
+  as a successful sponsor notification.
+
+The decision card itself must state the underlying problem, its practical
+consequence, and what the recommended answer enables in short ordinary English.
+Internal finding codes, work-item ids, stage labels, and governance references
+belong in source references or the supporting-details link, not in the card's
+title or question.
+
+### Nonterminal continuity invariant
+
+A role turn cannot complete while any tracked work item it touched remains
+nonterminal without a live durable continuation. The completion gate accepts
+exactly three outcomes:
+
+- the overall work item is terminal;
+- a handoff target message for that work item is queued or active; or
+- the item is explicitly waiting for a human and an open Sponsor decision has
+  a successful Teams delivery receipt.
+
+Milestone labels such as `stage1_complete`, local commit completion, review
+completion, or readiness for promotion are not terminal outcomes. If no valid
+continuation exists, the turn becomes `completed_with_missing_output` and the
+runtime immediately queues repair/escalation work rather than allowing the
+fleet to become silently idle.
 
 ## Active Deployment
 

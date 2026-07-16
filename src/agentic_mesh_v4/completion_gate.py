@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agentic_mesh_v4.auto_dispatch import TERMINAL_WORK_STATES
+from agentic_mesh_v4.decision_records import HUMAN_WAIT_STATES
+
 
 P0_PREDICATES = {
     "artifact_exists",
@@ -64,13 +67,36 @@ def evaluate_completion_contract(
     role_instance_id: str,
     message_id: str,
     turn_id: str | None,
+    work_item_id: str | None = None,
 ) -> CompletionEvaluation:
     if contract is None:
-        return CompletionEvaluation(state="completed", observed_outputs={})
+        return evaluate_work_continuity(
+            db=db,
+            role_instance_id=role_instance_id,
+            message_id=message_id,
+            turn_id=turn_id,
+            work_item_id=work_item_id,
+        )
     required = tuple(item for item in contract.required if item.enabled)
     if not required:
-        return CompletionEvaluation(state="completed", observed_outputs={"contract_source": contract.source})
-    work_item_id = _first_string(item.work_item_id for item in required)
+        continuity = evaluate_work_continuity(
+            db=db,
+            role_instance_id=role_instance_id,
+            message_id=message_id,
+            turn_id=turn_id,
+            work_item_id=work_item_id,
+        )
+        return CompletionEvaluation(
+            state=continuity.state,
+            missing_predicates=continuity.missing_predicates,
+            observed_outputs={
+                "contract_source": contract.source,
+                **(continuity.observed_outputs or {}),
+            },
+            next_action=continuity.next_action,
+            work_item_id=continuity.work_item_id,
+        )
+    work_item_id = _first_string(item.work_item_id for item in required) or work_item_id
     exact_calls = db.list_safe_output_calls(
         role_instance_id=role_instance_id,
         message_id=message_id,
@@ -121,7 +147,26 @@ def evaluate_completion_contract(
         ],
     }
     if not missing:
-        return CompletionEvaluation(state="completed", observed_outputs=observed, work_item_id=work_item_id)
+        continuity = evaluate_work_continuity(
+            db=db,
+            role_instance_id=role_instance_id,
+            message_id=message_id,
+            turn_id=turn_id,
+            work_item_id=work_item_id,
+        )
+        if continuity.state != "completed":
+            return CompletionEvaluation(
+                state=continuity.state,
+                missing_predicates=continuity.missing_predicates,
+                observed_outputs={**observed, **(continuity.observed_outputs or {})},
+                next_action=continuity.next_action,
+                work_item_id=continuity.work_item_id,
+            )
+        return CompletionEvaluation(
+            state="completed",
+            observed_outputs={**observed, **(continuity.observed_outputs or {})},
+            work_item_id=work_item_id,
+        )
     next_action = next((item.next_action for item in required if item.next_action), "")
     return CompletionEvaluation(
         state="completed_with_missing_output",
@@ -129,6 +174,136 @@ def evaluate_completion_contract(
         observed_outputs=observed,
         next_action=next_action or "Record the required durable output before completing the turn.",
         work_item_id=work_item_id,
+    )
+
+
+def evaluate_work_continuity(
+    *,
+    db: Any,
+    role_instance_id: str,
+    message_id: str,
+    turn_id: str | None,
+    work_item_id: str | None = None,
+) -> CompletionEvaluation:
+    """Prevent a role turn from silently abandoning nonterminal work."""
+
+    calls = db.list_safe_output_calls(
+        role_instance_id=role_instance_id,
+        message_id=message_id,
+        turn_id=turn_id,
+    )
+    work_item_ids = {
+        str(item.get("work_item_id"))
+        for item in calls
+        if item.get("work_item_id")
+    }
+    if work_item_id:
+        work_item_ids.add(work_item_id)
+    if not work_item_ids:
+        return CompletionEvaluation(state="completed", observed_outputs={"continuity": "not_applicable"})
+
+    observed: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    for candidate_id in sorted(work_item_ids):
+        work_item = db.connection.execute(
+            "SELECT work_item_id, state, owner_role, next_action FROM work_items WHERE work_item_id=?",
+            (candidate_id,),
+        ).fetchone()
+        if work_item is None:
+            continue
+        state = str(work_item["state"] or "")
+        normalized_state = state.casefold()
+        evidence: dict[str, Any] = {
+            "work_item_id": candidate_id,
+            "state": state,
+            "owner_role": work_item["owner_role"],
+        }
+        if normalized_state in TERMINAL_WORK_STATES:
+            evidence["continuity"] = "terminal"
+            observed.append(evidence)
+            continue
+        if normalized_state in HUMAN_WAIT_STATES:
+            delivery = db.connection.execute(
+                """
+                SELECT decisions.decision_id, deliveries.delivery_id, deliveries.activity_id
+                FROM decision_records decisions
+                JOIN decision_card_deliveries deliveries
+                  ON deliveries.decision_id=decisions.decision_id
+                WHERE decisions.work_item_id=?
+                  AND decisions.authority_label='Sponsor'
+                  AND decisions.status IN ('pending','delivery_failed_pending','resolution_failed')
+                  AND deliveries.channel='teams'
+                  AND deliveries.state='delivered'
+                  AND deliveries.activity_id IS NOT NULL
+                ORDER BY deliveries.updated_at DESC, deliveries.delivery_id DESC
+                LIMIT 1
+                """,
+                (candidate_id,),
+            ).fetchone()
+            if delivery is not None:
+                evidence.update(
+                    {
+                        "continuity": "human_notified",
+                        "decision_id": delivery["decision_id"],
+                        "delivery_id": delivery["delivery_id"],
+                    }
+                )
+                observed.append(evidence)
+                continue
+        else:
+            continuation = db.connection.execute(
+                """
+                SELECT handoffs.handoff_id, handoffs.to_role, messages.message_id, messages.state
+                FROM handoffs
+                JOIN message_queue messages ON messages.message_id=handoffs.target_message_id
+                WHERE handoffs.work_item_id=?
+                  AND handoffs.status IN ('open','accepted')
+                  AND handoffs.to_role<>handoffs.from_role
+                  AND messages.state IN ('queued','active_turn')
+                  AND messages.message_id<>?
+                ORDER BY handoffs.updated_at DESC, handoffs.handoff_id DESC
+                LIMIT 1
+                """,
+                (candidate_id, message_id),
+            ).fetchone()
+            if continuation is not None:
+                evidence.update(
+                    {
+                        "continuity": "handoff_queued",
+                        "handoff_id": continuation["handoff_id"],
+                        "target_role": continuation["to_role"],
+                        "target_message_id": continuation["message_id"],
+                    }
+                )
+                observed.append(evidence)
+                continue
+        evidence["continuity"] = "missing"
+        observed.append(evidence)
+        missing.append(
+            {
+                "predicate": "continuation_recorded",
+                "work_item_id": candidate_id,
+                "state": state,
+                "owner_role": work_item["owner_role"],
+                "next_action": work_item["next_action"],
+            }
+        )
+
+    if not missing:
+        return CompletionEvaluation(
+            state="completed",
+            observed_outputs={"work_continuity": observed},
+            work_item_id=work_item_id or next(iter(sorted(work_item_ids))),
+        )
+    return CompletionEvaluation(
+        state="completed_with_missing_output",
+        missing_predicates=tuple(missing),
+        observed_outputs={"work_continuity": observed},
+        next_action=(
+            "Work is not terminal and has no queued continuation. Complete it now, create a durable handoff, "
+            "or deliver a Sponsor decision through Teams before ending the turn."
+        ),
+        work_item_id=str(missing[0]["work_item_id"]),
     )
 
 

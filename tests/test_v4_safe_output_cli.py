@@ -3,10 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agentic_mesh_v4.agent_config import materialize_agent_configs
 from agentic_mesh_v4.cli import main
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.db import V4Database
+from agentic_mesh_v4.decision_records import DecisionRequest
+from agentic_mesh_v4.decision_records import DecisionRecordError
+from agentic_mesh_v4.decision_records import record_card_delivery_attempt
+from agentic_mesh_v4.decision_records import request_decision
 from v4_postgres import make_v4_db_url
 
 
@@ -51,6 +57,117 @@ def test_v4_safe_output_work_item_update_records_state_and_call(tmp_path: Path, 
     assert work["owner_role"] == "product-manager"
     assert call["role_instance_id"] == "agentic-mesh-dev.product-manager.1"
     assert call["tool_name"] == "work_item.update"
+
+
+def test_v4_human_wait_rejects_dashboard_only_escalation(capsys) -> None:
+    db_path = make_v4_db_url()
+
+    with pytest.raises(DecisionRecordError, match="delivered through Teams"):
+        main(
+            [
+                "--project-config",
+                str(PROJECT_CONFIG),
+                "--db",
+                str(db_path),
+                "safe-output",
+                "work-item-update",
+                "--role-id",
+                "project-manager",
+                "--work-item-id",
+                "work-human-wait",
+                "--title",
+                "Human decision needed",
+                "--state",
+                "blocked_on_human",
+                "--owner-role",
+                "project-manager",
+                "--next-action",
+                "Await sponsor direction.",
+            ]
+        )
+
+    db = V4Database(db_path)
+    try:
+        db.migrate()
+        assert db.connection.execute(
+            "SELECT 1 FROM work_items WHERE work_item_id=?",
+            ("work-human-wait",),
+        ).fetchone() is None
+    finally:
+        db.close()
+
+
+def test_v4_human_wait_requires_blocking_role_teams_delivery(capsys) -> None:
+    db_path = make_v4_db_url()
+    db = V4Database(db_path)
+    try:
+        db.migrate()
+        decision = request_decision(
+            db=db,
+            request=DecisionRequest(
+                work_item_id="work-human-wait-delivered",
+                requester_role="project-manager",
+                owner_role="project-manager",
+                authority_label="Sponsor",
+                authorized_responders={"sponsor": "sponsor-aad-id"},
+                decision_type="approval",
+                title="Choose the remediation path",
+                question="Approve the bounded remediation path so migration can continue?",
+                options=("approved", "changes_requested", "deferred"),
+                recommended_option="approved",
+            ),
+            deliver=False,
+        )
+        record_card_delivery_attempt(
+            db=db,
+            decision_id=decision["decision_id"],
+            channel="teams",
+            conversation_ref='{"conversation":{"id":"sponsor-chat"}}',
+            activity_id="teams-activity-1",
+            state="delivered",
+        )
+    finally:
+        db.close()
+
+    main(
+        [
+            "--project-config",
+            str(PROJECT_CONFIG),
+            "--db",
+            str(db_path),
+            "safe-output",
+            "work-item-update",
+            "--role-id",
+            "project-manager",
+            "--work-item-id",
+            "work-human-wait-delivered",
+            "--title",
+            "Human decision needed",
+            "--state",
+            "blocked_on_human",
+            "--owner-role",
+            "project-manager",
+            "--next-action",
+            "Await sponsor direction.",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    db = V4Database(db_path)
+    try:
+        db.migrate()
+        work = db.connection.execute(
+            "SELECT state FROM work_items WHERE work_item_id=?",
+            ("work-human-wait-delivered",),
+        ).fetchone()
+        call = db.connection.execute(
+            "SELECT payload_json FROM safe_output_calls WHERE call_id=?",
+            (output["call_id"],),
+        ).fetchone()
+    finally:
+        db.close()
+    assert work["state"] == "blocked_on_human"
+    assert json.loads(call["payload_json"])["sponsor_notification"]["activity_id"] == "teams-activity-1"
 
 
 def test_v4_safe_output_handoff_moves_work_item_and_queues_target_role(tmp_path: Path, capsys) -> None:
