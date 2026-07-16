@@ -243,6 +243,8 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
     assert "AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" in script
     assert "AGENTIC_MESH_GIT_SSH_HOST_PATH" in script
     assert "AGENTIC_MESH_GITHUB_TOKEN_FILE_HOST_PATH" in script
+    assert "GITHUB_REPOSITORY_CURL_CONFIG=$(cat <<EOF" in script
+    assert "curl -fsS --config -" in script
     assert '"https://api.github.com/repos/$AGENTIC_MESH_GITHUB_REPOSITORY"' in script
     assert "Authorization: Bearer $AGENTIC_MESH_GITHUB_TOKEN" in script
     assert "the configured GitHub API token lacks write access" in script

@@ -10,11 +10,13 @@ from agentic_mesh_v4.shared_fleet import require_stage1_default_off
 OPS_ROLES = {"project-manager", "delivery-manager", "platform-engineer", "release-manager"}
 DEV_ROLES = {"engineering"}
 QA_ROLES = {"qa-engineer"}
-# Full-authority roles that can produce or promote repository changes share the
-# deployment's approved Git identity and GitHub API token. Both host secrets are
-# mounted read-only and loaded only inside the ephemeral container.
+# Full-authority roles share the deployment's approved Git identity. The host
+# key directory is mounted read-only and copied into the ephemeral container
+# before Codex starts.
 SSH_ROLES = OPS_ROLES | DEV_ROLES
-GITHUB_ROLES = SSH_ROLES
+# Only Git-capable implementation/promotion roles receive the repository token
+# needed for PR, review, and checks handoff.
+GITHUB_ROLES = DEV_ROLES | {"project-manager", "platform-engineer", "release-manager"}
 DOCKER_SOCKET_ROLES = OPS_ROLES | DEV_ROLES
 CODEX_CONFIG_ATOM = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -217,6 +219,13 @@ def _role_service(*, project_config: V4ProjectConfig, role: V4RoleConfig) -> lis
         "cp /mesh/agent/AGENTS.md /mesh/agent-workspace/AGENTS.md; "
         f"exec {app_server}'"
     )
+    github_token_setup = ""
+    if role_id in GITHUB_ROLES:
+        github_token_setup = (
+            "[ -s /run/secrets/github-token ] || { echo GitHub token secret is missing >&2; exit 1; }; "
+            "export GH_TOKEN=\"$(tr -d '\\r\\n' < /run/secrets/github-token)\"; "
+            "export GITHUB_TOKEN=\"$$GH_TOKEN\" GH_PROMPT_DISABLED=1; "
+        )
     if role_id in SSH_ROLES:
         command = (
             "sh -lc 'mkdir -p /mesh/agent-workspace /documents/work-items; "
@@ -233,9 +242,7 @@ def _role_service(*, project_config: V4ProjectConfig, role: V4RoleConfig) -> lis
             "if [ -f /root/.ssh/config ]; then sed -i \"s#/mesh/home/.ssh#/root/.ssh#g\" /root/.ssh/config; fi; "
             "chmod 700 /root/.ssh; "
             "find /root/.ssh -type f -exec chmod 600 {} \\; 2>/dev/null || true; "
-            "[ -s /run/secrets/github-token ] || { echo GitHub token secret is missing >&2; exit 1; }; "
-            "export GH_TOKEN=\"$(tr -d '\\r\\n' < /run/secrets/github-token)\"; "
-            "export GITHUB_TOKEN=\"$$GH_TOKEN\" GH_PROMPT_DISABLED=1; "
+            f"{github_token_setup}"
             f"exec {app_server}'"
         )
     lines = [

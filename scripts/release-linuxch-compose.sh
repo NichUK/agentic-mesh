@@ -80,22 +80,28 @@ if [ ! -s "$AGENTIC_MESH_GITHUB_TOKEN_FILE_HOST_PATH" ]; then
 fi
 chmod 600 "$AGENTIC_MESH_GITHUB_TOKEN_FILE_HOST_PATH"
 AGENTIC_MESH_GITHUB_TOKEN=$(tr -d '\r\n' < "$AGENTIC_MESH_GITHUB_TOKEN_FILE_HOST_PATH")
-if ! AGENTIC_MESH_GITHUB_REPOSITORY_JSON=$(curl -fsS \
-  -H "Accept: application/vnd.github+json" \
-  -H "Authorization: Bearer $AGENTIC_MESH_GITHUB_TOKEN" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
-  "https://api.github.com/repos/$AGENTIC_MESH_GITHUB_REPOSITORY"); then
+GITHUB_REPOSITORY_CURL_CONFIG=$(cat <<EOF
+header = "Accept: application/vnd.github+json"
+header = "Authorization: Bearer $AGENTIC_MESH_GITHUB_TOKEN"
+header = "X-GitHub-Api-Version: 2022-11-28"
+url = "https://api.github.com/repos/$AGENTIC_MESH_GITHUB_REPOSITORY"
+EOF
+)
+if ! AGENTIC_MESH_GITHUB_REPOSITORY_JSON=$(printf '%s\n' "$GITHUB_REPOSITORY_CURL_CONFIG" | curl -fsS --config -); then
   unset AGENTIC_MESH_GITHUB_TOKEN
+  unset GITHUB_REPOSITORY_CURL_CONFIG
   echo "Refusing to release: the configured GitHub API token is not authenticated." >&2
   exit 1
 fi
 if ! printf '%s' "$AGENTIC_MESH_GITHUB_REPOSITORY_JSON" | jq -e '.permissions.push == true' >/dev/null; then
   unset AGENTIC_MESH_GITHUB_TOKEN
+  unset GITHUB_REPOSITORY_CURL_CONFIG
   unset AGENTIC_MESH_GITHUB_REPOSITORY_JSON
   echo "Refusing to release: the configured GitHub API token lacks write access to $AGENTIC_MESH_GITHUB_REPOSITORY." >&2
   exit 1
 fi
 unset AGENTIC_MESH_GITHUB_TOKEN
+unset GITHUB_REPOSITORY_CURL_CONFIG
 unset AGENTIC_MESH_GITHUB_REPOSITORY_JSON
 
 if [ -d "$AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" ]; then

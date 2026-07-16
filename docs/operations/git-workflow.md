@@ -109,9 +109,10 @@ Git transport authentication does not authorize GitHub API operations. Store
 the approved repository-scoped token as a single value in the host secret file
 referenced by `AGENTIC_MESH_GITHUB_TOKEN_FILE_HOST_PATH` (on linuxch this is
 `/home/nich/agentic-mesh-projects/agentic-mesh-dev/state/secrets/github-token`).
-The file is mounted read-only only for full-authority Engineering and promotion
-roles; container startup exports it as `GH_TOKEN` and `GITHUB_TOKEN` without
-placing the value in Compose, project configuration, logs, or Git.
+The file is mounted read-only only for Engineering, Project Manager, Platform
+Engineer, and Release Manager; container startup exports it as `GH_TOKEN` and
+`GITHUB_TOKEN` without placing the value in Compose, project configuration,
+logs, or Git.
 
 The release preflight refuses to recreate the fleet unless the token
 authenticates to the GitHub API and has write access to `NichUK/agentic-mesh`. This ensures a
