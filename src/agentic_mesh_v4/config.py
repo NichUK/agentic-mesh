@@ -171,6 +171,7 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
     _validate_complete_shared_fleet_roles(
         shared_fleet=raw.get("shared_fleet"),
         roles=raw.get("roles"),
+        parsed_roles=roles,
     )
     flow = _resolve_flow(raw.get("flow"), config_path=config_path)
     if flow:
@@ -297,7 +298,12 @@ def _reject_unknown_keys(value: dict[str, Any], *, allowed: frozenset[str], fiel
         raise ValueError(f"{field} contains unknown keys: {', '.join(unknown)}")
 
 
-def _validate_complete_shared_fleet_roles(*, shared_fleet: object, roles: object) -> None:
+def _validate_complete_shared_fleet_roles(
+    *,
+    shared_fleet: object,
+    roles: object,
+    parsed_roles: tuple[V4RoleConfig, ...],
+) -> None:
     if not isinstance(shared_fleet, dict) or not shared_fleet.get("project_assignments"):
         return
     if not isinstance(roles, dict):
@@ -310,6 +316,12 @@ def _validate_complete_shared_fleet_roles(*, shared_fleet: object, roles: object
         raise ValueError(f"unknown shared-fleet roles: {', '.join(unknown)}")
     if missing:
         raise ValueError(f"missing shared-fleet roles: {', '.join(missing)}")
+    multi_instance = sorted(role.role_id for role in parsed_roles if role.instances != 1)
+    if multi_instance:
+        raise ValueError(
+            "complete shared-fleet configuration requires instances: 1 for roles: "
+            + ", ".join(multi_instance)
+        )
 
 
 def _roles_from_raw(

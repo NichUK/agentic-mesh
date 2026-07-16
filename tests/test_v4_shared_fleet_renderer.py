@@ -168,6 +168,39 @@ def test_activation_gate_remains_closed_for_complete_configuration(tmp_path: Pat
         generated_shared_fleet_plan(config)
 
 
+def test_complete_shared_fleet_config_rejects_multi_instance_roles(tmp_path: Path) -> None:
+    raw = _complete_raw(tmp_path)
+    raw["roles"]["engineering"]["instances"] = 2
+    path = tmp_path / "multi-instance.yaml"
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"requires instances: 1 .*engineering"):
+        load_project_config(path)
+
+
+def test_incomplete_shared_fleet_keeps_single_project_service_and_container_config(tmp_path: Path) -> None:
+    raw = yaml.safe_load(PROJECT_FILE.read_text(encoding="utf-8"))
+    raw["roles"]["engineering"]["instances"] = 2
+    path = tmp_path / "project-v4.yaml"
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    config = load_project_config(path)
+
+    compose = yaml.safe_load(render_compose(config))
+    service_names = [name for name in compose["services"] if name == config.role("engineering").service_name]
+    assert service_names == [config.role("engineering").service_name]
+
+    output = tmp_path / "agent-configs"
+    written = materialize_agent_configs(
+        project_config=config,
+        output_root=output,
+        role_templates_dir="config/roles",
+    )
+    containers = [path for path in written if path.name == "container.json" and path.parent.parent.name == "engineering"]
+    assert len(containers) == 1
+    container = json.loads(containers[0].read_text(encoding="utf-8"))
+    assert container["role_instance_id"] == config.role_instance_id("engineering")
+    assert container["service_name"] == config.role("engineering").service_name
+
+
 def _complete_config(tmp_path: Path) -> Path:
     path = tmp_path / "project-v4.yaml"
     path.write_text(yaml.safe_dump(_complete_raw(tmp_path), sort_keys=False), encoding="utf-8")

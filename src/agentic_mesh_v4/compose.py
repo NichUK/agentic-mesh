@@ -188,7 +188,8 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "",
     ])
     for role in project_config.roles:
-        for ordinal in range(1, role.instances + 1):
+        max_instances = role.instances if complete_shared_fleet else 1
+        for ordinal in range(1, max_instances + 1):
             lines.extend(
                 _stable_role_service(
                     project_config=project_config,

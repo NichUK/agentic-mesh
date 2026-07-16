@@ -125,7 +125,8 @@ def materialize_agent_configs(
         item["assignment_allowlist_id"] for item in plan["project_assignments"]
     )
     for role in project_config.roles:
-        for ordinal in range(1, role.instances + 1):
+        max_instances = role.instances if complete_shared_fleet else 1
+        for ordinal in range(1, max_instances + 1):
             role_dir = output_root / role.role_id / str(ordinal)
             role_dir.mkdir(parents=True, exist_ok=True)
             role_template = _load_role_template(role_templates_dir / f"{role.template}.yaml")
