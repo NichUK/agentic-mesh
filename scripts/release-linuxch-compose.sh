@@ -47,12 +47,26 @@ AGENTIC_MESH_COMPOSE_STAGE_DIR=$(linuxch_host_path_or_default "${AGENTIC_MESH_CO
 : "${AGENTIC_MESH_MIN_WARM_ROLE_INSTANCES:=0}"
 
 GITHUB_SSH_PREFLIGHT_OUTPUT=""
-if ! GITHUB_SSH_PREFLIGHT_OUTPUT=$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -i "$AGENTIC_MESH_GIT_SSH_HOST_PATH/id_rsa" -T git@github.com 2>&1); then
+set -- \
+  -o BatchMode=yes \
+  -o ConnectTimeout=10 \
+  -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=yes \
+  -o "UserKnownHostsFile=$AGENTIC_MESH_GIT_SSH_HOST_PATH/known_hosts" \
+  -o GlobalKnownHostsFile=/dev/null \
+  -i "$AGENTIC_MESH_GIT_SSH_HOST_PATH/id_rsa"
+if [ -f "$AGENTIC_MESH_GIT_SSH_HOST_PATH/config" ]; then
+  set -- "$@" -F "$AGENTIC_MESH_GIT_SSH_HOST_PATH/config"
+else
+  set -- "$@" -F /dev/null
+fi
+if ! GITHUB_SSH_PREFLIGHT_OUTPUT=$(ssh "$@" -T git@github.com 2>&1); then
   case "$GITHUB_SSH_PREFLIGHT_OUTPUT" in
     *"successfully authenticated"*) ;;
     *)
       echo "Refusing to release: the approved shared Git SSH identity cannot authenticate to GitHub." >&2
       echo "Verify that $AGENTIC_MESH_GIT_SSH_HOST_PATH/id_rsa is registered and run: ssh -T git@github.com" >&2
+      printf '%s\n' "$GITHUB_SSH_PREFLIGHT_OUTPUT" >&2
       exit 1
       ;;
   esac

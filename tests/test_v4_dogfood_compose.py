@@ -236,7 +236,12 @@ def test_linuxch_release_script_defaults_to_v4_services() -> None:
     assert '"$AGENTIC_MESH_PROJECT_HOST_PATH/deploy/compose/docker-compose.linuxch.yml"' in script
     assert "AGENTIC_MESH_RESTRICTED_SAFE_OUTPUT_CONFIG_HOST_PATH" in script
     assert "AGENTIC_MESH_GIT_SSH_HOST_PATH" in script
-    assert "-o IdentitiesOnly=yes -i \"$AGENTIC_MESH_GIT_SSH_HOST_PATH/id_rsa\" -T git@github.com" in script
+    assert 'UserKnownHostsFile=$AGENTIC_MESH_GIT_SSH_HOST_PATH/known_hosts' in script
+    assert 'GlobalKnownHostsFile=/dev/null' in script
+    assert '-i "$AGENTIC_MESH_GIT_SSH_HOST_PATH/id_rsa"' in script
+    assert '-F "$AGENTIC_MESH_GIT_SSH_HOST_PATH/config"' in script
+    assert 'ssh "$@" -T git@github.com' in script
+    assert 'printf \'%s\\n\' "$GITHUB_SSH_PREFLIGHT_OUTPUT" >&2' in script
     assert "Refusing to release: the approved shared Git SSH identity cannot authenticate to GitHub." in script
     assert "restricted-safe-output-config.toml" in script
     assert "cp --remove-destination" in script
