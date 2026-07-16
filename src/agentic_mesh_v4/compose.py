@@ -4,6 +4,7 @@ import re
 
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.config import V4RoleConfig
+from agentic_mesh_v4.shared_fleet import require_stage1_default_off
 
 
 OPS_ROLES = {"project-manager", "delivery-manager", "platform-engineer", "release-manager"}
@@ -15,6 +16,7 @@ CODEX_CONFIG_ATOM = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def render_compose(project_config: V4ProjectConfig) -> str:
+    require_stage1_default_off(project_config, operation="Compose rendering")
     lines: list[str] = [
         "services:",
         "  base-agent-image:",
