@@ -24,6 +24,7 @@ from agentic_mesh_v4.completion_gate import resolve_completion_contract
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.db import V4Database
 from agentic_mesh_v4.db import utc_now
+from agentic_mesh_v4.detached_turn_control import evaluate_detached_turn_control
 from agentic_mesh_v4.evidence_contracts import evaluate_evidence_contracts
 from agentic_mesh_v4.evidence_contracts import resolve_evidence_contracts
 from agentic_mesh_v4.handoff_lifecycle import suppress_terminal_handoff_message
@@ -1617,6 +1618,61 @@ class V4Runtime:
                         turn_id=resolved_turn_id,
                         message_id=message_id,
                     )
+                    control = evaluate_detached_turn_control(
+                        db=self.db,
+                        role_instance_id=role_instance_id,
+                        message_id=message_id,
+                        turn_id=resolved_turn_id,
+                    )
+                    if control.requested and not control.authorized:
+                        self.db.record_agent_event(
+                            role_instance_id=role_instance_id,
+                            event_type="turn/detachedControlRejected",
+                            content=control.reason,
+                            payload={
+                                "reason": control.reason,
+                                "handoff_id": control.handoff_id,
+                                "target_message_id": control.target_message_id,
+                            },
+                            thread_id=thread_id,
+                            turn_id=resolved_turn_id,
+                            message_id=message_id,
+                        )
+                    if control.authorized and resolved_turn_id:
+                        try:
+                            client.interrupt_turn(thread_id=thread_id, turn_id=resolved_turn_id)
+                        except Exception as interrupt_exc:
+                            self.db.record_agent_event(
+                                role_instance_id=role_instance_id,
+                                event_type="turn/detachedControlRejected",
+                                content="interrupt_failed",
+                                payload={
+                                    "reason": "interrupt_failed",
+                                    "handoff_id": control.handoff_id,
+                                    "target_message_id": control.target_message_id,
+                                    "error": str(interrupt_exc),
+                                },
+                                thread_id=thread_id,
+                                turn_id=resolved_turn_id,
+                                message_id=message_id,
+                            )
+                            raise AgentTurnStillRunning(
+                                f"detached control could not interrupt turn {resolved_turn_id}; leaving it active"
+                            ) from interrupt_exc
+                        self.db.record_agent_event(
+                            role_instance_id=role_instance_id,
+                            event_type="turn/detachedControlReleased",
+                            content=control.reason,
+                            payload={
+                                "reason": control.reason,
+                                "handoff_id": control.handoff_id,
+                                "target_message_id": control.target_message_id,
+                            },
+                            thread_id=thread_id,
+                            turn_id=resolved_turn_id,
+                            message_id=message_id,
+                        )
+                        return "".join(reply_parts)
                     raise AgentTurnStillRunning(
                         f"no app-server event before read timeout; leaving turn {resolved_turn_id or '<unknown>'} active"
                     ) from exc
