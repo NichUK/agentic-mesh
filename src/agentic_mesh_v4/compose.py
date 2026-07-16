@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
+
+import yaml
 
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.config import V4RoleConfig
 from agentic_mesh_v4.shared_fleet import require_stage1_default_off
+from agentic_mesh_v4.shared_fleet import generated_shared_fleet_plan
+from agentic_mesh_v4.shared_fleet import stable_fleet_instance_id
+from agentic_mesh_v4.shared_fleet import stable_fleet_service_name
 
 
 OPS_ROLES = {"project-manager", "delivery-manager", "platform-engineer", "release-manager"}
@@ -20,7 +26,23 @@ CODEX_CONFIG_ATOM = re.compile(r"^[A-Za-z0-9._-]+$")
 
 def render_compose(project_config: V4ProjectConfig) -> str:
     require_stage1_default_off(project_config, operation="Compose rendering")
-    lines: list[str] = [
+    shared_fleet_plan = generated_shared_fleet_plan(project_config)
+    complete_shared_fleet = bool(project_config.shared_fleet.project_assignments)
+    lines: list[str] = []
+    if complete_shared_fleet:
+        metadata = {
+            "x-agentic-mesh-shared-fleet": {
+                "activation_gate": shared_fleet_plan["activation_gate"],
+                "assignment_allowlists": {
+                    item["assignment_allowlist_id"]: item
+                    for item in shared_fleet_plan["project_assignments"]
+                },
+                "enabled": False,
+                "runnable": False,
+            }
+        }
+        lines.extend(yaml.safe_dump(metadata, sort_keys=True).rstrip().splitlines())
+    lines.extend([
         "services:",
         "  base-agent-image:",
         "    image: ${AGENTIC_MESH_BASE_IMAGE_TAG:-agentic-mesh:base-agent}",
@@ -164,15 +186,26 @@ def render_compose(project_config: V4ProjectConfig) -> str:
         "      - \"4317:4317\"",
         "      - \"4318:4318\"",
         "",
-    ]
+    ])
     for role in project_config.roles:
-        lines.extend(
-            _role_service(
-                project_config=project_config,
-                role=role,
+        for ordinal in range(1, role.instances + 1):
+            lines.extend(
+                _stable_role_service(
+                    project_config=project_config,
+                    role=role,
+                    ordinal=ordinal,
+                    assignment_refs=tuple(
+                        item["assignment_allowlist_id"]
+                        for item in shared_fleet_plan["project_assignments"]
+                    ),
+                )
+                if complete_shared_fleet
+                else _role_service(
+                    project_config=project_config,
+                    role=role,
+                )
             )
-        )
-        lines.append("")
+            lines.append("")
     rendered = "\n".join(lines).rstrip() + "\n"
     validate_v4_compose(rendered)
     return rendered
@@ -280,6 +313,41 @@ def _role_service(*, project_config: V4ProjectConfig, role: V4RoleConfig) -> lis
             "      - ${AGENTIC_MESH_GIT_SSH_HOST_PATH:-${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}}:/mesh/home/.ssh:ro",
         ])
     return lines
+
+
+def _stable_role_service(
+    *,
+    project_config: V4ProjectConfig,
+    role: V4RoleConfig,
+    ordinal: int,
+    assignment_refs: tuple[str, ...],
+) -> list[str]:
+    fleet_id = project_config.shared_fleet.fleet_id
+    role_id = role.role_id
+    service_name = stable_fleet_service_name(fleet_id=fleet_id, role_id=role_id, ordinal=ordinal)
+    instance_id = stable_fleet_instance_id(fleet_id=fleet_id, role_id=role_id, ordinal=ordinal)
+    refs = json.dumps(sorted(assignment_refs), separators=(",", ":"))
+    return [
+        f"  {service_name}:",
+        f"    image: {_role_image(role_id)}",
+        "    profiles:",
+        "      - shared-fleet-activation-closed",
+        "    restart: \"no\"",
+        "    deploy:",
+        "      replicas: 0",
+        "    command: [\"sh\", \"-lc\", \"echo 'shared fleet activation gate is closed' >&2; exit 78\"]",
+        "    environment:",
+        f"      AGENTIC_MESH_ROLE_ID: {role_id}",
+        f"      AGENTIC_MESH_ROLE_INSTANCE_ID: {instance_id}",
+        "      AGENTIC_MESH_SHARED_FLEET_ENABLED: \"0\"",
+        "      AGENTIC_MESH_SHARED_FLEET_RUNNABLE: \"0\"",
+        "      AGENTIC_MESH_SHARED_FLEET_ACTIVATION_GATE: stages_2_4_closed",
+        f"      AGENTIC_MESH_SHARED_FLEET_ASSIGNMENT_ALLOWLIST_REFS: '{refs}'",
+        "    labels:",
+        "      agentic-mesh.shared-fleet.enabled: \"false\"",
+        "      agentic-mesh.shared-fleet.runnable: \"false\"",
+        "      agentic-mesh.shared-fleet.activation-gate: stages_2_4_closed",
+    ]
 
 
 def _codex_config_atom(value: str, *, field: str) -> str:

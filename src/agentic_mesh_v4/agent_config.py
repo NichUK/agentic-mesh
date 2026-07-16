@@ -9,6 +9,8 @@ import yaml
 from agentic_mesh_v4.config import V4ProjectConfig
 from agentic_mesh_v4.config import V4RoleConfig
 from agentic_mesh_v4.shared_fleet import generated_shared_fleet_plan
+from agentic_mesh_v4.shared_fleet import stable_fleet_instance_id
+from agentic_mesh_v4.shared_fleet import stable_fleet_service_name
 
 
 SHARED_STANDING_INSTRUCTIONS = """\
@@ -117,37 +119,72 @@ def materialize_agent_configs(
         encoding="utf-8",
     )
     written.append(shared_fleet_path)
+    plan = generated_shared_fleet_plan(project_config)
+    complete_shared_fleet = bool(project_config.shared_fleet.project_assignments)
+    assignment_refs = sorted(
+        item["assignment_allowlist_id"] for item in plan["project_assignments"]
+    )
     for role in project_config.roles:
-        role_dir = output_root / role.role_id / "1"
-        role_dir.mkdir(parents=True, exist_ok=True)
-        role_template = _load_role_template(role_templates_dir / f"{role.template}.yaml")
-        agents_path = role_dir / "AGENTS.md"
-        agents_path.write_text(
-            render_agents_md(project_config=project_config, role=role, role_template=role_template),
-            encoding="utf-8",
-        )
-        container_path = role_dir / "container.json"
-        container_path.write_text(
-            json.dumps(
-                {
+        for ordinal in range(1, role.instances + 1):
+            role_dir = output_root / role.role_id / str(ordinal)
+            role_dir.mkdir(parents=True, exist_ok=True)
+            role_template = _load_role_template(role_templates_dir / f"{role.template}.yaml")
+            agents_path = role_dir / "AGENTS.md"
+            agents_path.write_text(
+                render_agents_md(project_config=project_config, role=role, role_template=role_template),
+                encoding="utf-8",
+            )
+            container_path = role_dir / "container.json"
+            role_instance_id = (
+                stable_fleet_instance_id(
+                    fleet_id=project_config.shared_fleet.fleet_id,
+                    role_id=role.role_id,
+                    ordinal=ordinal,
+                )
+                if complete_shared_fleet
+                else project_config.role_instance_id(role.role_id)
+            )
+            service_name = (
+                stable_fleet_service_name(
+                    fleet_id=project_config.shared_fleet.fleet_id,
+                    role_id=role.role_id,
+                    ordinal=ordinal,
+                )
+                if complete_shared_fleet
+                else role.service_name
+            )
+            container = {
                     "role_id": role.role_id,
-                    "role_instance_id": project_config.role_instance_id(role.role_id),
+                    "role_instance_id": role_instance_id,
                     "authority": role.authority,
-                    "codex_endpoint": f"ws://{role.service_name}:{role.codex_port}",
-                    "codex_port": role.codex_port,
-                    "service_name": role.service_name,
+                    "codex_endpoint": f"ws://{service_name}:{role.codex_port + ordinal - 1}",
+                    "codex_port": role.codex_port + ordinal - 1,
+                    "service_name": service_name,
                     "model": role.model,
                     "reasoning_effort": role.reasoning_effort,
                     "plan_mode_reasoning_effort": role.plan_mode_reasoning_effort,
                     "show_raw_agent_reasoning": role.show_raw_agent_reasoning,
                     "sandbox_mode": role.sandbox_mode,
-                },
+            }
+            if complete_shared_fleet:
+                container["shared_fleet"] = {
+                    "activation_gate": "stages_2_4_closed",
+                    "assignment_allowlist_refs": assignment_refs,
+                    "bound_project_id": None,
+                    "enabled": False,
+                    "mounts": [],
+                    "networks": [],
+                    "runnable": False,
+                }
+            container_path.write_text(
+                json.dumps(
+                    container,
                 sort_keys=True,
                 indent=2,
-            ),
-            encoding="utf-8",
-        )
-        written.extend([agents_path, container_path])
+                ),
+                encoding="utf-8",
+            )
+            written.extend([agents_path, container_path])
     return tuple(written)
 
 

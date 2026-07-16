@@ -150,27 +150,67 @@ def generated_shared_fleet_plan(project_config: V4ProjectConfig) -> dict[str, An
                     ),
                 }
             )
-    assignments = [
+    assignments = [assignment_allowlist(project_config, assignment) for assignment in project_config.shared_fleet.project_assignments]
+    physical_assignments = [
         {
-            "codex_home": assignment.codex_home,
-            "database_credential_ref": assignment.database_credential_ref,
-            "database_schema": assignment.database_schema,
-            "document_root": assignment.document_root,
-            "project_id": assignment.project_id,
-            "project_root": assignment.project_root,
-            "repository_roots": list(assignment.repository_roots),
-            "workspace_root": assignment.workspace_root,
+            "assignment_allowlist_ref": assignment["assignment_allowlist_id"],
+            "fleet_instance_id": instance["fleet_instance_id"],
+            "project_id": assignment["project_id"],
         }
-        for assignment in project_config.shared_fleet.project_assignments
+        for instance in instances
+        for assignment in assignments
     ]
     return {
         "activation_gate": "stages_2_4_closed",
         "enabled": False,
         "fleet_id": fleet_id,
         "physical_instances": sorted(instances, key=lambda item: item["fleet_instance_id"]),
+        "physical_assignments": sorted(
+            physical_assignments,
+            key=lambda item: (item["fleet_instance_id"], item["project_id"]),
+        ),
         "project_assignments": sorted(assignments, key=lambda item: item["project_id"]),
         "runnable": False,
         "schema_version": SHARED_FLEET_SCHEMA_VERSION,
+    }
+
+
+def assignment_allowlist(
+    project_config: V4ProjectConfig,
+    assignment: V4ProjectAssignmentConfig,
+) -> dict[str, Any]:
+    fleet_id = project_config.shared_fleet.fleet_id
+    mounts = [
+        _mount("document", assignment.document_root, "/documents"),
+        _mount("project", assignment.project_root, "/mesh/project"),
+        _mount("workspace", assignment.workspace_root, "/mesh/agent-workspaces"),
+        _mount("codex_home", assignment.codex_home, "/mesh/worker-auth/codex"),
+    ]
+    mounts.extend(
+        _mount("repository", source, f"/mesh/repositories/{index}")
+        for index, source in enumerate(assignment.repository_roots, start=1)
+    )
+    return {
+        "assignment_allowlist_id": f"{fleet_id}.assignment.{assignment.project_id}",
+        "codex_home": assignment.codex_home,
+        "database_credential_ref": assignment.database_credential_ref,
+        "database_schema": assignment.database_schema,
+        "document_root": assignment.document_root,
+        "mounts": mounts,
+        "networks": [f"{fleet_id}-{assignment.project_id}"],
+        "project_id": assignment.project_id,
+        "project_root": assignment.project_root,
+        "repository_roots": list(assignment.repository_roots),
+        "workspace_root": assignment.workspace_root,
+    }
+
+
+def _mount(kind: str, source: str, target: str) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "read_only": False,
+        "source": source,
+        "target": target,
     }
 
 

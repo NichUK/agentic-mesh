@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from dataclasses import field
 from copy import deepcopy
@@ -40,6 +41,20 @@ FULL_ACCESS_ROLES: frozenset[str] = frozenset(
         "platform-engineer",
     }
 )
+SHARED_FLEET_KEYS = frozenset({"enabled", "fleet_id", "project_assignments"})
+SHARED_FLEET_ASSIGNMENT_KEYS = frozenset(
+    {
+        "project_id",
+        "database_schema",
+        "database_credential_ref",
+        "document_root",
+        "project_root",
+        "workspace_root",
+        "repository_roots",
+        "codex_home",
+    }
+)
+PROJECT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 @dataclass(frozen=True)
@@ -139,7 +154,7 @@ class V4ProjectContext:
 
 def load_project_config(path: str | Path) -> V4ProjectConfig:
     config_path = Path(path)
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw = yaml.load(config_path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"project config must be a mapping: {config_path}")
 
@@ -152,6 +167,10 @@ def load_project_config(path: str | Path) -> V4ProjectConfig:
         raw.get("roles"),
         agent_network_id=agent_network_id,
         worker_defaults=worker_defaults or {},
+    )
+    _validate_complete_shared_fleet_roles(
+        shared_fleet=raw.get("shared_fleet"),
+        roles=raw.get("roles"),
     )
     flow = _resolve_flow(raw.get("flow"), config_path=config_path)
     if flow:
@@ -180,6 +199,7 @@ def _shared_fleet_config(value: object) -> V4SharedFleetConfig:
         return V4SharedFleetConfig()
     if not isinstance(value, dict):
         raise ValueError("shared_fleet must be a mapping")
+    _reject_unknown_keys(value, allowed=SHARED_FLEET_KEYS, field="shared_fleet")
     enabled = _bool_value(value.get("enabled"), default=False)
     fleet_id = str(value.get("fleet_id") or "agentic-mesh")
     raw_assignments = value.get("project_assignments") or []
@@ -190,7 +210,14 @@ def _shared_fleet_config(value: object) -> V4SharedFleetConfig:
     for index, raw in enumerate(raw_assignments):
         if not isinstance(raw, dict):
             raise ValueError(f"shared_fleet.project_assignments[{index}] must be a mapping")
+        _reject_unknown_keys(
+            raw,
+            allowed=SHARED_FLEET_ASSIGNMENT_KEYS,
+            field=f"shared_fleet.project_assignments[{index}]",
+        )
         project_id = _required_assignment_value(raw, "project_id", index=index)
+        if not PROJECT_ID_PATTERN.fullmatch(project_id):
+            raise ValueError(f"invalid shared-fleet project assignment: {project_id!r}")
         if project_id in seen_projects:
             raise ValueError(f"duplicate shared-fleet project assignment: {project_id}")
         seen_projects.add(project_id)
@@ -239,6 +266,50 @@ def _absolute_path(value: str, *, field: str) -> str:
     if not Path(value).is_absolute():
         raise ValueError(f"shared_fleet.{field} must be an absolute path")
     return value
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_unique_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+    seen: set[Any] = set()
+    for key_node, _value_node in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            continue
+        key = loader.construct_object(key_node, deep=deep)
+        if key in seen:
+            raise ValueError(f"duplicate configuration key: {key}")
+        seen.add(key)
+    loader.flatten_mapping(node)
+    return dict(loader.construct_pairs(node, deep=deep))
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
+def _reject_unknown_keys(value: dict[str, Any], *, allowed: frozenset[str], field: str) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"{field} contains unknown keys: {', '.join(unknown)}")
+
+
+def _validate_complete_shared_fleet_roles(*, shared_fleet: object, roles: object) -> None:
+    if not isinstance(shared_fleet, dict) or not shared_fleet.get("project_assignments"):
+        return
+    if not isinstance(roles, dict):
+        raise ValueError("complete shared-fleet configuration requires an explicit roles mapping")
+    configured = set(roles)
+    expected = set(DEFAULT_ROLE_IDS)
+    unknown = sorted(configured - expected)
+    missing = sorted(expected - configured)
+    if unknown:
+        raise ValueError(f"unknown shared-fleet roles: {', '.join(unknown)}")
+    if missing:
+        raise ValueError(f"missing shared-fleet roles: {', '.join(missing)}")
 
 
 def _roles_from_raw(
