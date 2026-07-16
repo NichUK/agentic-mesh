@@ -608,6 +608,16 @@ def build_reconciliation_manifest(
         for action in identities.actions
     ]
     filesystem_entries = _filesystem_manifest_entries(filesystem_state)
+    conflicts.extend(
+        {
+            "project_id": str(item["project_id"]),
+            "reason": str(item["reason"]),
+            "schema": "filesystem_config",
+            "table": str(item["state_class"]),
+        }
+        for item in filesystem_entries
+        if item["action"] == "hard_conflict"
+    )
     action_counts: dict[str, int] = {}
     for item in identity_entries:
         action_counts[item["action"]] = action_counts.get(item["action"], 0) + 1

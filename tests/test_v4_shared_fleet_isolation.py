@@ -63,6 +63,12 @@ def test_captured_a_b_a_uses_only_selected_project_context(tmp_path: Path) -> No
         a_return.require_path(foreign_marker, kind="document")
     with pytest.raises(SharedFleetConflict, match="foreign repository mount denied"):
         a_return.require_path(Path(b.repository_roots[0]) / "cedar.marker", kind="repository")
+    with pytest.raises(SharedFleetConflict, match="foreign workspace mount denied"):
+        a_return.require_path(Path(b.workspace_root) / "cedar.marker", kind="workspace")
+    with pytest.raises(SharedFleetConflict, match="foreign project mount denied"):
+        a_return.require_path(Path(b.project_root) / "cedar.marker", kind="project")
+    with pytest.raises(SharedFleetConflict, match="foreign codex_home mount denied"):
+        a_return.require_path(Path(b.codex_home) / "cedar.marker", kind="codex_home")
     a_return.require_database(
         schema="orchid",
         credential_ref="secret://orchid/postgres",
@@ -71,6 +77,11 @@ def test_captured_a_b_a_uses_only_selected_project_context(tmp_path: Path) -> No
         a_return.require_database(
             schema="orchid",
             credential_ref="secret://cedar/postgres",
+        )
+    with pytest.raises(SharedFleetConflict, match="foreign database schema denied"):
+        a_return.require_database(
+            schema="cedar",
+            credential_ref="secret://orchid/postgres",
         )
 
     guard = SharedFleetOperationGuard(controller=controller, binding=a_return_binding)

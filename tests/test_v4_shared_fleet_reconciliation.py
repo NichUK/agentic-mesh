@@ -164,44 +164,126 @@ def test_filesystem_classes_and_administrative_capture_entrypoint_are_complete(
 ) -> None:
     filesystem = tuple(
         FilesystemStateSnapshot(
-            project_id="orchid",
+            project_id="agentic-mesh-dev",
             state_class=state_class,
             source_key={"class": state_class},
-            allowed_metadata={"binding": "orchid", "generation": 1},
+            allowed_metadata={"binding": "agentic-mesh-dev", "generation": 1},
         )
         for state_class in FILESYSTEM_STATE_CLASSES
     )
+    public_records = {
+        table: (
+            CatalogRecord(
+                source_key={"record_id": f"public:{table}:1"},
+                allowed_metadata={"state": "retained", "version": 1},
+            ),
+        )
+        for table in ALL_PUBLIC_TABLES
+    }
+    quantauma_records = {
+        table: (
+            CatalogRecord(
+                source_key={"record_id": f"quantauma:{table}:1"},
+                allowed_metadata={"state": "retained", "version": 1},
+            ),
+        )
+        for table in COMMON_TABLES
+    }
     catalogs = (
-        CatalogSnapshot("orchid", "public", True, {table: 0 for table in ALL_PUBLIC_TABLES}),
+        CatalogSnapshot(
+            "agentic-mesh-dev",
+            "public",
+            True,
+            {table: 1 for table in ALL_PUBLIC_TABLES},
+            public_records,
+        ),
+        CatalogSnapshot(
+            "quantauma",
+            "quantauma",
+            False,
+            {table: 1 for table in COMMON_TABLES},
+            quantauma_records,
+        ),
     )
     manifest = build_reconciliation_manifest(
         catalogs=catalogs,
-        identities=reconcile_identities(fleet_id="agentic-mesh", sources=(source("orchid"),)),
+        identities=reconcile_identities(
+            fleet_id="agentic-mesh",
+            sources=(source("agentic-mesh-dev"), source("quantauma")),
+        ),
         filesystem_state=filesystem,
     )
     assert {item["state_class"] for item in manifest.payload["filesystem_state"]} == set(FILESYSTEM_STATE_CLASSES)
-    assert all(item["qualified_source_key_digest"] for item in manifest.payload["filesystem_state"])
+    assert all(
+        item["qualified_source_key_digest"] and item["allowed_metadata_digest"]
+        for item in manifest.payload["filesystem_state"]
+    )
+    assert len(manifest.payload["catalogs"]) == 72
+    assert sum(len(item["record_actions"]) for item in manifest.payload["catalogs"]) == 68
+    assert all(item["row_count"] == 1 for item in manifest.payload["catalogs"] if item["action"] != "skipped_absent")
+    assert all(
+        record["qualified_source_key_digest"] and record["allowed_metadata_digest"]
+        for item in manifest.payload["catalogs"]
+        for record in item["record_actions"]
+    )
     assert len(manifest.payload["retained_state"]) == len(STATE_LEDGER) + len(PUBLIC_ONLY_LEDGER)
 
     capture = {
         "identities": [
             {
-                "project_id": "orchid",
-                "role_instance_id": "orchid.engineering.1",
+                "project_id": "agentic-mesh-dev",
+                "role_instance_id": "agentic-mesh-dev.engineering.1",
                 "role_id": "engineering",
                 "ordinal": 1,
                 "canonical_role_fingerprint": "role-v1",
-            }
+            },
+            {
+                "project_id": "quantauma",
+                "role_instance_id": "quantauma.engineering.1",
+                "role_id": "engineering",
+                "ordinal": 1,
+                "canonical_role_fingerprint": "role-v1",
+            },
         ],
         "catalogs": [
             {
-                "project_id": "orchid",
+                "project_id": "agentic-mesh-dev",
                 "schema": "public",
                 "control_schema": True,
-                "tables": {table: [] for table in ALL_PUBLIC_TABLES},
-            }
+                "tables": {
+                    table: [
+                        {
+                            "source_key": {"record_id": f"public:{table}:1"},
+                            "allowed_metadata": {"state": "retained", "version": 1},
+                        }
+                    ]
+                    for table in ALL_PUBLIC_TABLES
+                },
+            },
+            {
+                "project_id": "quantauma",
+                "schema": "quantauma",
+                "control_schema": False,
+                "tables": {
+                    table: [
+                        {
+                            "source_key": {"record_id": f"quantauma:{table}:1"},
+                            "allowed_metadata": {"state": "retained", "version": 1},
+                        }
+                    ]
+                    for table in COMMON_TABLES
+                },
+            },
         ],
-        "filesystem_state": [],
+        "filesystem_state": [
+            {
+                "project_id": "agentic-mesh-dev",
+                "state_class": state_class,
+                "source_key": {"class": state_class},
+                "allowed_metadata": {"binding": "agentic-mesh-dev", "generation": 1},
+            }
+            for state_class in FILESYSTEM_STATE_CLASSES
+        ],
     }
     captured = _shared_fleet_manifest_from_capture(capture=capture, fleet_id="agentic-mesh")
     assert captured.digest == _shared_fleet_manifest_from_capture(capture=capture, fleet_id="agentic-mesh").digest
@@ -238,6 +320,46 @@ def test_filesystem_classes_and_administrative_capture_entrypoint_are_complete(
                 "--apply",
             ]
         )
+
+
+def test_filesystem_conflicts_block_terminal_manifest_across_all_closed_classes() -> None:
+    filesystem = tuple(
+        FilesystemStateSnapshot(
+            project_id="agentic-mesh-dev",
+            state_class=state_class,
+            source_key={"class": state_class},
+            allowed_metadata={"binding": "agentic-mesh-dev", "generation": 1},
+            target_key={"class": state_class},
+            target_allowed_metadata={"binding": "foreign", "generation": 1},
+        )
+        for state_class in FILESYSTEM_STATE_CLASSES
+    )
+    manifest = build_reconciliation_manifest(
+        catalogs=(
+            CatalogSnapshot(
+                "agentic-mesh-dev",
+                "public",
+                True,
+                {table: 0 for table in ALL_PUBLIC_TABLES},
+            ),
+        ),
+        identities=reconcile_identities(
+            fleet_id="agentic-mesh",
+            sources=(source("agentic-mesh-dev"),),
+        ),
+        filesystem_state=filesystem,
+    )
+    assert {item["action"] for item in manifest.payload["filesystem_state"]} == {"hard_conflict"}
+    assert {item["table"] for item in manifest.payload["conflicts"]} == set(FILESYSTEM_STATE_CLASSES)
+    assert all(
+        item["reason"] == "allowed_metadata_content_conflict"
+        and item["schema"] == "filesystem_config"
+        for item in manifest.payload["conflicts"]
+    )
+    assert manifest.blocking is True
+    assert manifest.payload["blocking"] is True
+    assert manifest.payload["terminal"] is True
+    assert manifest.payload["terminal_status"] == "blocked"
 
 
 def test_disposable_postgres_catalog_dry_run_and_interrupted_apply_are_idempotent() -> None:
