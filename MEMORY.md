@@ -675,3 +675,7 @@ or `release_review`.
   blocking role and a successful Teams delivery receipt with an activity id.
 - A dashboard-only, pending, or failed notification cannot satisfy the gate;
   the work item remains unchanged and the delivery failure must stay visible.
+- Turn completion also enforces nonterminal continuity: tracked work must be
+  genuinely terminal, have a queued/active durable handoff, or have a
+  successfully delivered Sponsor decision. Milestone states such as
+  `stage1_complete` cannot silently end the overall job.

@@ -122,6 +122,23 @@ Internal finding codes, work-item ids, stage labels, and governance references
 belong in source references or the supporting-details link, not in the card's
 title or question.
 
+### Nonterminal continuity invariant
+
+A role turn cannot complete while any tracked work item it touched remains
+nonterminal without a live durable continuation. The completion gate accepts
+exactly three outcomes:
+
+- the overall work item is terminal;
+- a handoff target message for that work item is queued or active; or
+- the item is explicitly waiting for a human and an open Sponsor decision has
+  a successful Teams delivery receipt.
+
+Milestone labels such as `stage1_complete`, local commit completion, review
+completion, or readiness for promotion are not terminal outcomes. If no valid
+continuation exists, the turn becomes `completed_with_missing_output` and the
+runtime immediately queues repair/escalation work rather than allowing the
+fleet to become silently idle.
+
 ## Active Deployment
 
 The V4 deployment profile no longer starts V3-only NATS, V3 supervisor, V3

@@ -33,8 +33,10 @@ AUTHORITY_LABELS = {
 OPEN_DECISION_STATES = {"pending", "delivery_failed_pending", "resolution_failed"}
 TERMINAL_DECISION_STATES = {"resolved", "cancelled"}
 HUMAN_WAIT_STATES = {
+    "awaiting_approval",
     "awaiting_decision",
     "awaiting_human",
+    "awaiting_review",
     "blocked_on_human",
     "human_review",
     "waiting_human",

@@ -186,23 +186,16 @@ def requires_dispatch_path(*, state: str, next_action: str | None, owner_role: s
 def looks_actionable_next_action(next_action: str | None) -> bool:
     if next_action is None:
         return False
-    text = next_action.casefold()
-    actionable_terms = (
-        "add ",
-        "build",
-        "create",
-        "dispatch",
-        "handoff",
-        "implement",
-        "investigate",
-        "plan",
-        "review",
-        "run ",
-        "test",
-        "validate",
-        "verify",
+    text = next_action.strip().casefold()
+    if not text:
+        return False
+    explicit_no_action = (
+        "no action required",
+        "no further action",
+        "nothing further",
+        "terminal record only",
     )
-    return any(term in text for term in actionable_terms)
+    return not any(term in text for term in explicit_no_action)
 
 
 def _targets_from_structured_dispatch(payload: dict[str, Any], *, default_next_action: str) -> tuple[DispatchTarget, ...]:
