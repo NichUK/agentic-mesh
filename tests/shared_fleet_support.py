@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from agentic_mesh_v4.config import V4ProjectAssignmentConfig
@@ -41,7 +42,7 @@ def shared_config(root: Path, *, enabled: bool = False) -> V4ProjectConfig:
     roles = (role,)
     if enabled:
         roles = tuple(
-            role
+            replace(role, codex_port=4700 + index)
             if role_id == ROLE_ID
             else V4RoleConfig(
                 role_id=role_id,
