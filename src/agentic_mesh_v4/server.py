@@ -24,6 +24,7 @@ from agentic_mesh_v4.reporting import render_artifact
 from agentic_mesh_v4.reporting import render_status
 from agentic_mesh_v4.reporting import render_work_item
 from agentic_mesh_v4.runtime import V4Runtime
+from agentic_mesh_v4.shared_fleet import project_filtered_dashboard
 from agentic_mesh_v4.teams_delivery import TeamsReplySender
 
 
@@ -46,13 +47,27 @@ class V4Handler(BaseHTTPRequestHandler):
                 self._html(render_status(db.snapshot()))
                 return
             if path == "/status.json":
-                self._json(db.snapshot())
+                self._json(
+                    shared_fleet_status_payload(
+                        db.snapshot(),
+                        project_config=self.project_config,
+                        project_id=_first_query_value(parsed_url.query, "project_id"),
+                    )
+                )
                 return
             if path == "/agents/events":
                 self._handle_agents_events(db)
                 return
             if path == "/agents":
-                self._html(render_agents(db.snapshot()))
+                self._html(
+                    render_agents(
+                        shared_fleet_status_payload(
+                            db.snapshot(),
+                            project_config=self.project_config,
+                            project_id=_first_query_value(parsed_url.query, "project_id"),
+                        )
+                    )
+                )
                 return
             if path.startswith("/agent/") and path.endswith("/thread/events"):
                 role_id = unquote(path.removeprefix("/agent/").removesuffix("/thread/events")).strip("/")
@@ -177,7 +192,11 @@ class V4Handler(BaseHTTPRequestHandler):
         self._start_event_stream()
         previous_payload = ""
         for _ in range(300):
-            snapshot = db.snapshot()
+            snapshot = shared_fleet_status_payload(
+                db.snapshot(),
+                project_config=self.project_config,
+                project_id=None,
+            )
             payload = json.dumps(
                 {
                     "roles": snapshot.get("roles", []),
@@ -360,6 +379,30 @@ class V4Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+def shared_fleet_status_payload(
+    snapshot: dict[str, object],
+    *,
+    project_config: V4ProjectConfig,
+    project_id: str | None,
+) -> dict[str, object]:
+    fleet_rows = snapshot.get("roles")
+    activity_rows = snapshot.get("shared_fleet_activity")
+    projection = project_filtered_dashboard(
+        fleet_rows=fleet_rows if isinstance(fleet_rows, list) else (),
+        activity_rows=activity_rows if isinstance(activity_rows, list) else (),
+        project_id=project_id,
+    )
+    result = dict(snapshot)
+    result["shared_fleet"] = {
+        **projection,
+        "enabled": project_config.shared_fleet.enabled,
+        "runnable": False,
+    }
+    if projection["fleet"]:
+        result["roles"] = projection["fleet"]
+    return result
 
 
 def serve(

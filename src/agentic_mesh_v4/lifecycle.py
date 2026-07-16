@@ -5,6 +5,12 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
+
+if TYPE_CHECKING:
+    from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
 
 
 @dataclass(frozen=True)
@@ -13,8 +19,19 @@ class ComposeLifecycle:
     project_name: str | None = None
     env_file: Path | None = None
     working_directory: Path | None = None
+    shared_fleet_guard: "SharedFleetOperationGuard | None" = None
+    binding_project_id: str | None = None
+    binding_generation: int | None = None
 
     def wake_service(self, service_name: str) -> None:
+        if self.shared_fleet_guard is not None:
+            self.shared_fleet_guard.require(
+                project_id=self.binding_project_id,
+                generation=self.binding_generation,
+            )
+            raise SharedFleetActivationClosed(
+                "shared fleet stable service start is closed during Stage 1"
+            )
         env = self._compose_env()
         self._validate_required_file_binds(service_name=service_name, env=env)
         command = self._base_command()

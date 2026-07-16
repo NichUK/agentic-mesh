@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from agentic_mesh_v4.db import V4Database
+from agentic_mesh_v4.cli import _shared_fleet_manifest_from_capture
+from agentic_mesh_v4.cli import build_parser
+from agentic_mesh_v4.cli import main
 from agentic_mesh_v4.shared_fleet import ALL_PUBLIC_TABLES
 from agentic_mesh_v4.shared_fleet import COMMON_TABLES
 from agentic_mesh_v4.shared_fleet import PUBLIC_ONLY_TABLES
 from agentic_mesh_v4.shared_fleet import CatalogSnapshot
+from agentic_mesh_v4.shared_fleet import CatalogRecord
 from agentic_mesh_v4.shared_fleet import ExistingFleetIdentity
+from agentic_mesh_v4.shared_fleet import FILESYSTEM_STATE_CLASSES
+from agentic_mesh_v4.shared_fleet import FilesystemStateSnapshot
+from agentic_mesh_v4.shared_fleet import RECORD_ACTIONS
+from agentic_mesh_v4.shared_fleet import PUBLIC_ONLY_LEDGER
+from agentic_mesh_v4.shared_fleet import STATE_LEDGER
 from agentic_mesh_v4.shared_fleet import SourceRoleIdentity
+from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
 from agentic_mesh_v4.shared_fleet import STAGE1_DISPOSABLE_PERMIT
 from agentic_mesh_v4.shared_fleet import apply_disposable_role_metadata
 from agentic_mesh_v4.shared_fleet import build_reconciliation_manifest
@@ -72,6 +83,161 @@ def test_identity_duplicate_unknown_and_divergent_rules_stop_deterministically()
     )
     assert divergent.blocking
     assert "hard_conflict" in {item.action for item in divergent.actions}
+
+
+def test_record_digests_detect_equal_count_divergence_and_close_all_actions() -> None:
+    identities = reconcile_identities(fleet_id="agentic-mesh", sources=(source("orchid"),))
+    records = tuple(
+        CatalogRecord(
+            source_key={"message_id": f"m-{index}"},
+            allowed_metadata={"state": "completed", "target_role": ROLE_ID},
+            action=action,
+            reason=f"synthetic_{action}",
+        )
+        for index, action in enumerate(sorted(RECORD_ACTIONS))
+    )
+    counts = {table: 0 for table in ALL_PUBLIC_TABLES}
+    counts["message_queue"] = len(records)
+    catalog = CatalogSnapshot(
+        "orchid",
+        "public",
+        True,
+        counts,
+        records={"message_queue": records},
+    )
+    manifest = build_reconciliation_manifest(catalogs=(catalog,), identities=identities)
+    reordered = build_reconciliation_manifest(
+        catalogs=(
+            CatalogSnapshot(
+                "orchid",
+                "public",
+                True,
+                counts,
+                records={"message_queue": tuple(reversed(records))},
+            ),
+        ),
+        identities=identities,
+    )
+    assert reordered.digest == manifest.digest
+    actions = {
+        record["action"]
+        for table in manifest.payload["catalogs"]
+        for record in table["record_actions"]
+    }
+    assert actions == RECORD_ACTIONS
+    assert manifest.blocking
+    assert manifest.payload["terminal"] is True
+    assert manifest.payload["terminal_status"] == "blocked"
+
+    matching = CatalogRecord(
+        source_key={"message_id": "same-count"},
+        allowed_metadata={"state": "completed"},
+        target_key={"message_id": "same-count"},
+        target_allowed_metadata={"state": "completed"},
+    )
+    divergent = CatalogRecord(
+        source_key={"message_id": "same-count"},
+        allowed_metadata={"state": "completed"},
+        target_key={"message_id": "same-count"},
+        target_allowed_metadata={"state": "failed"},
+    )
+    equal_counts = {table: 0 for table in ALL_PUBLIC_TABLES}
+    equal_counts["message_queue"] = 1
+    matching_manifest = build_reconciliation_manifest(
+        catalogs=(CatalogSnapshot("orchid", "public", True, equal_counts, {"message_queue": (matching,)}),),
+        identities=identities,
+    )
+    divergent_manifest = build_reconciliation_manifest(
+        catalogs=(CatalogSnapshot("orchid", "public", True, equal_counts, {"message_queue": (divergent,)}),),
+        identities=identities,
+    )
+    assert not matching_manifest.blocking
+    assert matching_manifest.payload["terminal_status"] == "ready_for_authorization_review"
+    assert matching_manifest.payload["action_counts"]["duplicate_noop"] >= 1
+    assert divergent_manifest.blocking
+    assert matching_manifest.digest != divergent_manifest.digest
+    assert any(item["reason"] == "allowed_metadata_content_conflict" for item in divergent_manifest.payload["conflicts"])
+
+
+def test_filesystem_classes_and_administrative_capture_entrypoint_are_complete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    filesystem = tuple(
+        FilesystemStateSnapshot(
+            project_id="orchid",
+            state_class=state_class,
+            source_key={"class": state_class},
+            allowed_metadata={"binding": "orchid", "generation": 1},
+        )
+        for state_class in FILESYSTEM_STATE_CLASSES
+    )
+    catalogs = (
+        CatalogSnapshot("orchid", "public", True, {table: 0 for table in ALL_PUBLIC_TABLES}),
+    )
+    manifest = build_reconciliation_manifest(
+        catalogs=catalogs,
+        identities=reconcile_identities(fleet_id="agentic-mesh", sources=(source("orchid"),)),
+        filesystem_state=filesystem,
+    )
+    assert {item["state_class"] for item in manifest.payload["filesystem_state"]} == set(FILESYSTEM_STATE_CLASSES)
+    assert all(item["qualified_source_key_digest"] for item in manifest.payload["filesystem_state"])
+    assert len(manifest.payload["retained_state"]) == len(STATE_LEDGER) + len(PUBLIC_ONLY_LEDGER)
+
+    capture = {
+        "identities": [
+            {
+                "project_id": "orchid",
+                "role_instance_id": "orchid.engineering.1",
+                "role_id": "engineering",
+                "ordinal": 1,
+                "canonical_role_fingerprint": "role-v1",
+            }
+        ],
+        "catalogs": [
+            {
+                "project_id": "orchid",
+                "schema": "public",
+                "control_schema": True,
+                "tables": {table: [] for table in ALL_PUBLIC_TABLES},
+            }
+        ],
+        "filesystem_state": [],
+    }
+    captured = _shared_fleet_manifest_from_capture(capture=capture, fleet_id="agentic-mesh")
+    assert captured.digest == _shared_fleet_manifest_from_capture(capture=capture, fleet_id="agentic-mesh").digest
+    parsed = build_parser().parse_args(
+        ["--project-config", str(tmp_path / "project-v4.yaml"), "shared-fleet-reconcile", "--capture", str(tmp_path / "capture.json")]
+    )
+    assert parsed.command == "shared-fleet-reconcile"
+    assert parsed.apply is False
+    capture_path = tmp_path / "capture.json"
+    output_path = tmp_path / "manifest.json"
+    capture_path.write_text(json.dumps(capture), encoding="utf-8")
+    project_config = Path("examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml")
+    main(
+        [
+            "--project-config",
+            str(project_config),
+            "shared-fleet-reconcile",
+            "--capture",
+            str(capture_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+    capsys.readouterr()
+    assert json.loads(output_path.read_text(encoding="utf-8"))["terminal_status"] == "ready_for_authorization_review"
+    with pytest.raises(SharedFleetActivationClosed, match="apply is closed"):
+        main(
+            [
+                "--project-config",
+                str(project_config),
+                "shared-fleet-reconcile",
+                "--capture",
+                str(capture_path),
+                "--apply",
+            ]
+        )
 
 
 def test_disposable_postgres_catalog_dry_run_and_interrupted_apply_are_idempotent() -> None:

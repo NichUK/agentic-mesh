@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
+from agentic_mesh_v4.server import shared_fleet_status_payload
 from agentic_mesh_v4.shared_fleet import SharedFleetConflict
 from agentic_mesh_v4.shared_fleet import project_filtered_dashboard
+
+from shared_fleet_support import shared_config
 
 
 def test_dashboard_lists_fleet_once_and_filters_only_activity() -> None:
@@ -50,3 +56,39 @@ def test_dashboard_rejects_divergent_duplicate_physical_identity() -> None:
     )
     with pytest.raises(SharedFleetConflict, match="diverges"):
         project_filtered_dashboard(fleet_rows=rows, activity_rows=())
+
+
+def test_existing_status_api_serializes_single_fleet_and_project_activity(tmp_path: Path) -> None:
+    config = shared_config(tmp_path)
+    fleet = {
+        "identity_kind": "fleet_instance",
+        "fleet_instance_id": "agentic-mesh.engineering.1",
+        "role_instance_id": "agentic-mesh.engineering.1",
+        "role_id": "engineering",
+        "display_name": "Engineering",
+        "state": "ready",
+        "effective_state": "ready",
+        "authority": "full",
+        "codex_endpoint": "ws://agentic-mesh-engineering-1:4700",
+    }
+    assignment = {
+        **fleet,
+        "identity_kind": "project_assignment",
+        "role_instance_id": "orchid.engineering.1",
+    }
+    snapshot = {
+        "roles": [fleet, assignment],
+        "shared_fleet_activity": [
+            {"activity_id": "a", "project_id": "orchid", "fleet_instance_id": fleet["fleet_instance_id"]},
+            {"activity_id": "b", "project_id": "cedar", "fleet_instance_id": fleet["fleet_instance_id"]},
+        ],
+    }
+    orchid = shared_fleet_status_payload(snapshot, project_config=config, project_id="orchid")
+    cedar = shared_fleet_status_payload(snapshot, project_config=config, project_id="cedar")
+    assert len(orchid["roles"]) == len(cedar["roles"]) == 1
+    assert orchid["roles"][0]["role_instance_id"] == "agentic-mesh.engineering.1"
+    assert [item["activity_id"] for item in orchid["shared_fleet"]["activity"]] == ["a"]
+    assert [item["activity_id"] for item in cedar["shared_fleet"]["activity"]] == ["b"]
+    assert orchid["shared_fleet"]["enabled"] is False
+    assert orchid["shared_fleet"]["runnable"] is False
+    assert json.loads(json.dumps(orchid, sort_keys=True))["shared_fleet"]["fleet"][0]["fleet_instance_id"] == "agentic-mesh.engineering.1"

@@ -28,6 +28,8 @@ from agentic_mesh_v4.evidence_contracts import evaluate_evidence_contracts
 from agentic_mesh_v4.evidence_contracts import resolve_evidence_contracts
 from agentic_mesh_v4.handoff_lifecycle import suppress_terminal_handoff_message
 from agentic_mesh_v4.shared_fleet import require_stage1_default_off
+from agentic_mesh_v4.shared_fleet import BoundProjectContext
+from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
 from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_GLYPH
 from agentic_mesh_v4.teams_delivery import PROCESSING_REACTION_NAME
 from agentic_mesh_v4.teams_delivery import MISSING_DELEGATED_GRAPH_TOKEN_REASON
@@ -85,6 +87,7 @@ class V4Runtime:
         document_syncer: Callable[[], object] | None = None,
         agent_config_root: str | Path | None = None,
         artifact_preflight: RoleArtifactPreflight | None = None,
+        shared_fleet_guard: SharedFleetOperationGuard | None = None,
     ) -> None:
         require_stage1_default_off(project_config, operation="runtime construction")
         self.db = db
@@ -94,6 +97,7 @@ class V4Runtime:
         self.document_syncer = document_syncer
         self.agent_config_root = Path(agent_config_root) if agent_config_root is not None else None
         self.artifact_preflight = artifact_preflight
+        self.shared_fleet_guard = shared_fleet_guard
 
     def register_roles(self) -> None:
         for role in self.project_config.roles:
@@ -117,6 +121,7 @@ class V4Runtime:
         steering: bool = False,
         payload: dict[str, object] | None = None,
     ) -> str:
+        self._require_project_operation(self.project_config.project_id)
         self.project_config.role(target_role)
         return self.db.enqueue_message(
             target_role=target_role,
@@ -139,6 +144,7 @@ class V4Runtime:
         steering: bool = False,
         payload: dict[str, object] | None = None,
     ) -> str:
+        bound_context = self._require_project_operation(self.project_config.project_id)
         role = self.project_config.role(target_role)
         active = self.db.active_message_for_role(
             target_role=target_role,
@@ -157,7 +163,11 @@ class V4Runtime:
         )
         if not should_steer or self.client_factory is None:
             return message_id
-        role_instance_id = self.project_config.role_instance_id(role.role_id)
+        role_instance_id = (
+            bound_context.fleet_instance_id
+            if bound_context is not None
+            else self.project_config.role_instance_id(role.role_id)
+        )
         thread_id = self._active_thread_id(role_instance_id)
         turn_id = self._active_turn_id(role_instance_id)
         if not thread_id or not turn_id:
@@ -199,9 +209,15 @@ class V4Runtime:
         return message_id
 
     def dispatch_once(self, *, project_id: str | None = None, role_id: str) -> DispatchResult | None:
-        self.project_config.bind(project_id)
+        bound_context = self._require_project_operation(project_id)
+        if bound_context is None:
+            self.project_config.bind(project_id)
         role = self.project_config.role(role_id)
-        role_instance_id = self.project_config.role_instance_id(role.role_id)
+        role_instance_id = (
+            bound_context.fleet_instance_id
+            if bound_context is not None
+            else self.project_config.role_instance_id(role.role_id)
+        )
         active = self.db.active_message_for_role(target_role=role.role_id)
         if active is not None:
             if str(active.get("state") or "") == "active_turn":
@@ -516,6 +532,21 @@ class V4Runtime:
                 payload={"target_role": role.role_id},
             )
             return DispatchResult(message_id=message.message_id, state="failed", error=str(exc))
+
+    def _require_project_operation(self, project_id: str | None) -> BoundProjectContext | None:
+        if self.shared_fleet_guard is None:
+            return self.db.require_project_operation(project_id=project_id)
+        context = self.shared_fleet_guard.require(
+            project_id=project_id,
+            generation=self.shared_fleet_guard.binding.generation,
+        )
+        database_context = self.db.require_project_operation(
+            project_id=project_id,
+            generation=context.generation,
+        )
+        if database_context is not None and database_context != context:
+            raise RuntimeError("runtime and database shared-fleet bindings diverge")
+        return context
 
     def _continue_active_turn(self, *, role: object, active: dict[str, Any]) -> DispatchResult:
         message_id = str(active["message_id"])

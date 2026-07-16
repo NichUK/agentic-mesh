@@ -48,6 +48,15 @@ from agentic_mesh_v4.onedrive_sync import sync_local_documents_to_onedrive
 from agentic_mesh_v4.persistence_policy import reject_binary_values
 from agentic_mesh_v4.runtime import V4Runtime
 from agentic_mesh_v4.server import serve
+from agentic_mesh_v4.shared_fleet import CatalogRecord
+from agentic_mesh_v4.shared_fleet import CatalogSnapshot
+from agentic_mesh_v4.shared_fleet import ExistingFleetIdentity
+from agentic_mesh_v4.shared_fleet import FilesystemStateSnapshot
+from agentic_mesh_v4.shared_fleet import SharedFleetActivationClosed
+from agentic_mesh_v4.shared_fleet import SourceRoleIdentity
+from agentic_mesh_v4.shared_fleet import build_reconciliation_manifest
+from agentic_mesh_v4.shared_fleet import reconcile_identities
+from agentic_mesh_v4.shared_fleet import require_stage1_default_off
 from agentic_mesh_v4.teams_delivery import TeamsReplySender
 from agentic_mesh_v4.topology import validate_runtime_topology
 from agentic_mesh_v4.watchdog import WatchdogThresholds
@@ -76,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     compose = subparsers.add_parser("render-compose")
     compose.add_argument("--output", type=Path, required=True)
+
+    shared_fleet_reconcile = subparsers.add_parser("shared-fleet-reconcile")
+    shared_fleet_reconcile.add_argument("--capture", type=Path, required=True)
+    shared_fleet_reconcile.add_argument("--output", type=Path)
+    shared_fleet_reconcile.add_argument("--apply", action="store_true")
 
     serve_parser = subparsers.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
@@ -376,6 +390,20 @@ def main(argv: list[str] | None = None) -> None:
                 "manifest_path": result.manifest_path,
             }
         )
+        return
+    if args.command == "shared-fleet-reconcile":
+        require_stage1_default_off(project_config, operation="administrative reconciliation")
+        if args.apply:
+            raise SharedFleetActivationClosed("shared fleet apply is closed during Stage 1")
+        manifest = _shared_fleet_manifest_from_capture(
+            capture=json.loads(args.capture.read_text(encoding="utf-8")),
+            fleet_id=project_config.shared_fleet.fleet_id,
+        )
+        rendered = json.dumps(manifest.as_dict(), sort_keys=True, indent=2) + "\n"
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+        _print_json(manifest.as_dict())
         return
     db = V4Database(args.db)
     try:
@@ -1162,7 +1190,109 @@ def _json_object(value: object) -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _shared_fleet_manifest_from_capture(*, capture: object, fleet_id: str):
+    if not isinstance(capture, dict):
+        raise ValueError("shared-fleet capture must be a JSON object")
+    sources = tuple(
+        SourceRoleIdentity(
+            project_id=str(item["project_id"]),
+            role_instance_id=str(item["role_instance_id"]),
+            role_id=str(item["role_id"]),
+            ordinal=int(item["ordinal"]),
+            canonical_role_fingerprint=str(item["canonical_role_fingerprint"]),
+        )
+        for item in _capture_items(capture, "identities")
+    )
+    existing = {
+        str(item["fleet_instance_id"]): ExistingFleetIdentity(
+            fleet_instance_id=str(item["fleet_instance_id"]),
+            canonical_role_fingerprint=str(item["canonical_role_fingerprint"]),
+        )
+        for item in _capture_items(capture, "existing_identities", required=False)
+    }
+    catalogs: list[CatalogSnapshot] = []
+    for item in _capture_items(capture, "catalogs"):
+        raw_tables = item.get("tables")
+        if not isinstance(raw_tables, dict):
+            raise ValueError("shared-fleet catalog tables must be a mapping")
+        records = {
+            str(table): tuple(_catalog_record(record) for record in raw_records)
+            for table, raw_records in raw_tables.items()
+            if isinstance(raw_records, list)
+        }
+        if len(records) != len(raw_tables):
+            raise ValueError("shared-fleet catalog records must be lists")
+        catalogs.append(
+            CatalogSnapshot(
+                project_id=str(item["project_id"]),
+                schema=str(item["schema"]),
+                control_schema=bool(item["control_schema"]),
+                table_counts={table: len(values) for table, values in records.items()},
+                records=records,
+            )
+        )
+    filesystem_state = tuple(
+        FilesystemStateSnapshot(
+            project_id=str(item["project_id"]),
+            state_class=str(item["state_class"]),
+            source_key=_capture_mapping(item, "source_key"),
+            allowed_metadata=_capture_mapping(item, "allowed_metadata"),
+            target_key=_capture_mapping(item, "target_key", required=False),
+            target_allowed_metadata=_capture_mapping(
+                item, "target_allowed_metadata", required=False
+            ),
+            action=_capture_optional_string(item, "action"),
+            reason=_capture_optional_string(item, "reason"),
+        )
+        for item in _capture_items(capture, "filesystem_state", required=False)
+    )
+    return build_reconciliation_manifest(
+        catalogs=tuple(catalogs),
+        identities=reconcile_identities(fleet_id=fleet_id, sources=sources, existing=existing),
+        filesystem_state=filesystem_state,
+    )
+
+
+def _catalog_record(item: object) -> CatalogRecord:
+    if not isinstance(item, dict):
+        raise ValueError("shared-fleet catalog record must be a mapping")
+    return CatalogRecord(
+        source_key=_capture_mapping(item, "source_key"),
+        allowed_metadata=_capture_mapping(item, "allowed_metadata"),
+        target_key=_capture_mapping(item, "target_key", required=False),
+        target_allowed_metadata=_capture_mapping(item, "target_allowed_metadata", required=False),
+        action=_capture_optional_string(item, "action"),
+        reason=_capture_optional_string(item, "reason"),
+    )
+
+
+def _capture_items(capture: dict[str, object], key: str, *, required: bool = True) -> list[dict[str, object]]:
+    value = capture.get(key)
+    if value is None and not required:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError(f"shared-fleet capture {key} must be a list of mappings")
+    return value
+
+
+def _capture_mapping(
+    item: dict[str, object], key: str, *, required: bool = True
+) -> dict[str, object] | None:
+    value = item.get(key)
+    if value is None and not required:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"shared-fleet capture {key} must be a mapping")
+    return value
+
+
+def _capture_optional_string(item: dict[str, object], key: str) -> str | None:
+    value = item.get(key)
+    return str(value) if value is not None else None
+
+
 def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
+    db.require_project_operation(project_id=project_config.project_id)
     reject_binary_values(vars(args), path="safe-output.request")
     command = args.safe_output_command
     if command == "work-item-update":

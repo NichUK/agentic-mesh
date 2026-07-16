@@ -9,12 +9,24 @@ import socket
 import socketserver
 from pathlib import Path
 from typing import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agentic_mesh_v4.shared_fleet import SharedFleetOperationGuard
 
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
 
 
-def validated_cli_argv(*, request_argv: list[str], role_id: str, project_config: Path) -> list[str]:
+def validated_cli_argv(
+    *,
+    request_argv: list[str],
+    role_id: str,
+    project_config: Path,
+    shared_fleet_guard: "SharedFleetOperationGuard | None" = None,
+    binding_project_id: str | None = None,
+    binding_generation: int | None = None,
+) -> list[str]:
     try:
         safe_output_index = request_argv.index("safe-output")
     except ValueError as exc:
@@ -31,6 +43,11 @@ def validated_cli_argv(*, request_argv: list[str], role_id: str, project_config:
         raise PermissionError(f"role {role_id} cannot act as {actor}")
     if any(value == "--db" or value.startswith("--db=") for value in safe_output_argv):
         raise ValueError("database overrides are not accepted by the role proxy")
+    if shared_fleet_guard is not None:
+        shared_fleet_guard.require(
+            project_id=binding_project_id,
+            generation=binding_generation,
+        )
     return ["--project-config", str(project_config), "safe-output", *safe_output_argv]
 
 
@@ -85,6 +102,9 @@ class _SafeOutputRequestHandler(socketserver.StreamRequestHandler):
                 request_argv=request_argv,
                 role_id=server.role_id,
                 project_config=server.project_config,
+                shared_fleet_guard=server.shared_fleet_guard,
+                binding_project_id=server.binding_project_id,
+                binding_generation=server.binding_generation,
             )
             exit_code, stdout, stderr = server.executor(argv)
             self._write_response({"exit_code": exit_code, "stdout": stdout, "stderr": stderr})
@@ -109,6 +129,9 @@ class SafeOutputProxyServer(_UnixStreamServer):
         role_id: str,
         project_config: Path,
         executor: Callable[[list[str]], tuple[int, str, str]] = execute_cli,
+        shared_fleet_guard: "SharedFleetOperationGuard | None" = None,
+        binding_project_id: str | None = None,
+        binding_generation: int | None = None,
     ) -> None:
         socket_path.parent.mkdir(parents=True, exist_ok=True)
         socket_path.unlink(missing_ok=True)
@@ -116,6 +139,9 @@ class SafeOutputProxyServer(_UnixStreamServer):
         self.role_id = role_id
         self.project_config = project_config
         self.executor = executor
+        self.shared_fleet_guard = shared_fleet_guard
+        self.binding_project_id = binding_project_id
+        self.binding_generation = binding_generation
         super().__init__(str(socket_path), _SafeOutputRequestHandler)
         socket_path.chmod(0o600)
 

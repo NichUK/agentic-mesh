@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 import hashlib
 import json
+from pathlib import Path
 import re
 from typing import Any
 from typing import Iterable
@@ -16,6 +18,18 @@ from agentic_mesh_v4.config import V4ProjectConfig
 CANONICAL_FLEET_ID = "agentic-mesh"
 SHARED_FLEET_SCHEMA_VERSION = 1
 STAGE1_DISPOSABLE_PERMIT = "stage1-disposable-only"
+RECORD_ACTIONS = frozenset(
+    {
+        "annotate_assignment",
+        "duplicate_noop",
+        "hard_conflict",
+        "retain_binding_reference",
+        "retain_history",
+        "skipped_absent",
+        "skipped_sensitive",
+        "skipped_unknown_identity",
+    }
+)
 
 STATE_LEDGER: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("physical_identity_and_assignment", ("role_instances",)),
@@ -195,6 +209,27 @@ class BoundProjectContext:
     repository_roots: tuple[str, ...]
     codex_home: str
 
+    def require_database(self, *, schema: str, credential_ref: str) -> None:
+        if schema != self.database_schema:
+            raise SharedFleetConflict("foreign database schema denied by project binding")
+        if credential_ref != self.database_credential_ref:
+            raise SharedFleetConflict("foreign database credential denied by project binding")
+
+    def require_path(self, path: str | Path, *, kind: str) -> Path:
+        candidate = Path(path).resolve()
+        roots = {
+            "document": (Path(self.document_root).resolve(),),
+            "project": (Path(self.project_root).resolve(),),
+            "workspace": (Path(self.workspace_root).resolve(),),
+            "repository": tuple(Path(item).resolve() for item in self.repository_roots),
+            "codex_home": (Path(self.codex_home).resolve(),),
+        }.get(kind)
+        if roots is None:
+            raise ValueError(f"unknown shared-fleet path kind: {kind}")
+        if not any(candidate == root or root in candidate.parents for root in roots):
+            raise SharedFleetConflict(f"foreign {kind} mount denied by project binding")
+        return candidate
+
 
 class CapturedBindingController:
     """Pure Stage 1 model. It never starts services, mounts paths, or opens a database."""
@@ -252,6 +287,38 @@ class CapturedBindingController:
         if assignment is None:
             raise SharedFleetConflict("bound project assignment is unavailable")
         return _bound_context(binding, assignment)
+
+
+@dataclass(frozen=True)
+class SharedFleetOperationGuard:
+    """Dormant production-seam hook carrying one immutable captured binding."""
+
+    controller: CapturedBindingController
+    binding: FleetBinding
+
+    def require(
+        self,
+        *,
+        project_id: str | None,
+        generation: int | None,
+    ) -> BoundProjectContext:
+        return self.controller.require_operation(
+            self.binding,
+            project_id=project_id,
+            generation=generation,
+        )
+
+    def require_database(
+        self,
+        *,
+        project_id: str | None,
+        generation: int | None,
+        schema: str,
+        credential_ref: str,
+    ) -> BoundProjectContext:
+        context = self.require(project_id=project_id, generation=generation)
+        context.require_database(schema=schema, credential_ref=credential_ref)
+        return context
 
 
 @dataclass(frozen=True)
@@ -397,6 +464,29 @@ class CatalogSnapshot:
     schema: str
     control_schema: bool
     table_counts: Mapping[str, int]
+    records: Mapping[str, tuple["CatalogRecord", ...]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CatalogRecord:
+    source_key: Mapping[str, Any]
+    allowed_metadata: Mapping[str, Any]
+    target_key: Mapping[str, Any] | None = None
+    target_allowed_metadata: Mapping[str, Any] | None = None
+    action: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class FilesystemStateSnapshot:
+    project_id: str
+    state_class: str
+    source_key: Mapping[str, Any]
+    allowed_metadata: Mapping[str, Any]
+    target_key: Mapping[str, Any] | None = None
+    target_allowed_metadata: Mapping[str, Any] | None = None
+    action: str | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -413,6 +503,7 @@ def build_reconciliation_manifest(
     *,
     catalogs: Sequence[CatalogSnapshot],
     identities: IdentityReconciliation,
+    filesystem_state: Sequence[FilesystemStateSnapshot] = (),
 ) -> ReconciliationManifest:
     conflicts: list[dict[str, str]] = []
     table_entries: list[dict[str, Any]] = []
@@ -438,11 +529,55 @@ def build_reconciliation_manifest(
                 }
             )
         for table in sorted(discovered & expected):
+            records = tuple(catalog.records.get(table, ()))
+            expected_count = int(catalog.table_counts[table])
+            if len(records) != expected_count:
+                conflicts.append(
+                    {
+                        "project_id": catalog.project_id,
+                        "reason": "record_inventory_incomplete",
+                        "schema": catalog.schema,
+                        "table": table,
+                    }
+                )
+            record_entries = sorted(
+                [
+                _record_manifest_entry(
+                    project_id=catalog.project_id,
+                    schema=catalog.schema,
+                    state_class=_TABLE_TO_CLASS[table],
+                    table=table,
+                    record=record,
+                    default_action=(
+                        "annotate_assignment" if table == "role_instances" else "retain_history"
+                    ),
+                )
+                for record in records
+                ],
+                key=lambda item: (
+                    item["qualified_source_key_digest"],
+                    item["qualified_target_key_digest"],
+                    item["action"],
+                ),
+            )
+            if any(item["action"] == "hard_conflict" for item in record_entries):
+                conflicts.extend(
+                    {
+                        "project_id": catalog.project_id,
+                        "reason": str(item["reason"]),
+                        "schema": catalog.schema,
+                        "table": table,
+                    }
+                    for item in record_entries
+                    if item["action"] == "hard_conflict"
+                )
             table_entries.append(
                 {
                     "action": "retain_history" if table != "role_instances" else "annotate_assignment",
                     "project_id": catalog.project_id,
-                    "row_count": int(catalog.table_counts[table]),
+                    "record_actions": record_entries,
+                    "retained_state_digest": _digest(record_entries),
+                    "row_count": expected_count,
                     "schema": catalog.schema,
                     "state_class": _TABLE_TO_CLASS[table],
                     "table": table,
@@ -454,6 +589,8 @@ def build_reconciliation_manifest(
                     {
                         "action": "skipped_absent",
                         "project_id": catalog.project_id,
+                        "record_actions": [],
+                        "retained_state_digest": _digest([]),
                         "row_count": 0,
                         "schema": catalog.schema,
                         "state_class": _TABLE_TO_CLASS[table],
@@ -470,16 +607,49 @@ def build_reconciliation_manifest(
         }
         for action in identities.actions
     ]
+    filesystem_entries = _filesystem_manifest_entries(filesystem_state)
+    action_counts: dict[str, int] = {}
+    for item in identity_entries:
+        action_counts[item["action"]] = action_counts.get(item["action"], 0) + 1
+    for table in table_entries:
+        if table["record_actions"]:
+            for item in table["record_actions"]:
+                action_counts[item["action"]] = action_counts.get(item["action"], 0) + 1
+        else:
+            action_counts[table["action"]] = action_counts.get(table["action"], 0) + 1
+    for item in filesystem_entries:
+        action_counts[item["action"]] = action_counts.get(item["action"], 0) + 1
+    blocking = bool(conflicts) or identities.blocking
+    retained_by_class: dict[str, list[dict[str, Any]]] = {}
+    for table in table_entries:
+        retained_by_class.setdefault(str(table["state_class"]), []).append(
+            {
+                "project_id": table["project_id"],
+                "row_count": table["row_count"],
+                "retained_state_digest": table["retained_state_digest"],
+                "schema": table["schema"],
+                "table": table["table"],
+            }
+        )
+    retained_state = [
+        {
+            "digest": _digest(entries),
+            "row_count": sum(int(item["row_count"]) for item in entries),
+            "state_class": state_class,
+        }
+        for state_class, entries in sorted(retained_by_class.items())
+    ]
     payload: dict[str, Any] = {
-        "blocking": bool(conflicts) or identities.blocking,
+        "action_counts": dict(sorted(action_counts.items())),
+        "blocking": blocking,
         "catalogs": table_entries,
         "conflicts": conflicts,
-        "filesystem_state": [
-            {"action": "retain_binding_reference", "state_class": state_class}
-            for state_class in FILESYSTEM_STATE_CLASSES
-        ],
+        "filesystem_state": filesystem_entries,
         "identity_actions": identity_entries,
+        "retained_state": retained_state,
         "schema_version": SHARED_FLEET_SCHEMA_VERSION,
+        "terminal": True,
+        "terminal_status": "blocked" if blocking else "ready_for_authorization_review",
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return ReconciliationManifest(
@@ -504,24 +674,218 @@ def discover_postgres_catalog(connection: Any, *, project_id: str, schema: str, 
     ).fetchall()
     tables = [str(row["table_name"] if isinstance(row, Mapping) else row[0]) for row in rows]
     counts: dict[str, int] = {}
-    if tables:
-        count_query = sql.SQL(" UNION ALL ").join(
-            sql.SQL("SELECT {} AS table_name, COUNT(*) AS row_count FROM {}.{}").format(
-                sql.Literal(table),
-                sql.Identifier(schema),
-                sql.Identifier(table),
-            )
-            for table in tables
+    records: dict[str, tuple[CatalogRecord, ...]] = {}
+    for table in tables:
+        columns = _table_columns(raw_connection, schema=schema, table=table)
+        key_columns = _primary_key_columns(raw_connection, schema=schema, table=table)
+        if not key_columns:
+            key_columns = tuple(column for column in columns if column.endswith("_id"))[:1]
+        if not key_columns:
+            raise SharedFleetConflict(f"content-free catalog requires a qualified key: {schema}.{table}")
+        metadata_columns = tuple(
+            column for column in columns if column not in key_columns and _allowed_metadata_column(column)
         )
-        for row in raw_connection.execute(count_query).fetchall():
-            table = str(row["table_name"] if isinstance(row, Mapping) else row[0])
-            counts[table] = int(row["row_count"] if isinstance(row, Mapping) else row[1])
+        selected = (*key_columns, *metadata_columns)
+        query = sql.SQL("SELECT {} FROM {}.{} ORDER BY {}").format(
+            sql.SQL(", ").join(sql.Identifier(column) for column in selected),
+            sql.Identifier(schema),
+            sql.Identifier(table),
+            sql.SQL(", ").join(sql.Identifier(column) for column in key_columns),
+        )
+        rows_for_table = raw_connection.execute(query).fetchall()
+        records[table] = tuple(
+            CatalogRecord(
+                source_key={column: _row_value(row, column, index) for index, column in enumerate(key_columns)},
+                allowed_metadata={
+                    column: _row_value(row, column, len(key_columns) + index)
+                    for index, column in enumerate(metadata_columns)
+                },
+            )
+            for row in rows_for_table
+        )
+        counts[table] = len(rows_for_table)
     return CatalogSnapshot(
         project_id=project_id,
         schema=schema,
         control_schema=control_schema,
         table_counts=counts,
+        records=records,
     )
+
+
+def _record_manifest_entry(
+    *,
+    project_id: str,
+    schema: str,
+    state_class: str,
+    table: str,
+    record: CatalogRecord | FilesystemStateSnapshot,
+    default_action: str,
+) -> dict[str, Any]:
+    source_key_digest = _digest(
+        {
+            "project_id": project_id,
+            "schema": schema,
+            "state_class": state_class,
+            "table": table,
+            "key": record.source_key,
+        }
+    )
+    target_key = record.target_key if record.target_key is not None else record.source_key
+    target_key_digest = _digest(
+        {
+            "project_id": project_id,
+            "schema": schema,
+            "state_class": state_class,
+            "table": table,
+            "key": target_key,
+        }
+    )
+    source_metadata_digest = _digest(record.allowed_metadata)
+    target_metadata_digest = (
+        _digest(record.target_allowed_metadata)
+        if record.target_allowed_metadata is not None
+        else None
+    )
+    action = record.action
+    reason = record.reason
+    if action is None and record.target_allowed_metadata is not None:
+        if source_key_digest != target_key_digest:
+            action = "hard_conflict"
+            reason = "qualified_target_key_diverges"
+        elif source_metadata_digest != target_metadata_digest:
+            action = "hard_conflict"
+            reason = "allowed_metadata_content_conflict"
+        else:
+            action = "duplicate_noop"
+            reason = "qualified_key_and_allowed_metadata_match"
+    if action is None:
+        action = default_action
+        reason = reason or "state_retained_in_project_context"
+    if action not in RECORD_ACTIONS:
+        raise SharedFleetConflict(f"unknown closed reconciliation action: {action}")
+    return {
+        "action": action,
+        "allowed_metadata_digest": source_metadata_digest,
+        "qualified_source_key_digest": source_key_digest,
+        "qualified_target_key_digest": target_key_digest,
+        "reason": reason,
+        "target_allowed_metadata_digest": target_metadata_digest,
+    }
+
+
+def _filesystem_manifest_entries(
+    snapshots: Sequence[FilesystemStateSnapshot],
+) -> list[dict[str, Any]]:
+    grouped = {item.state_class: item for item in snapshots}
+    if len(grouped) != len(snapshots):
+        raise SharedFleetConflict("duplicate filesystem/configuration state class")
+    unknown = set(grouped) - set(FILESYSTEM_STATE_CLASSES)
+    if unknown:
+        raise SharedFleetConflict(f"unknown filesystem/configuration state classes: {sorted(unknown)}")
+    entries: list[dict[str, Any]] = []
+    for state_class in FILESYSTEM_STATE_CLASSES:
+        record = grouped.get(state_class)
+        if record is None:
+            record = FilesystemStateSnapshot(
+                project_id="unassigned",
+                state_class=state_class,
+                source_key={"state_class": state_class},
+                allowed_metadata={"captured": False},
+                action="retain_binding_reference",
+                reason="class_mapped_without_content_inspection",
+            )
+        entry = _record_manifest_entry(
+            project_id=record.project_id,
+            schema="filesystem_config",
+            state_class=state_class,
+            table=state_class,
+            record=record,
+            default_action="retain_binding_reference",
+        )
+        entries.append({"project_id": record.project_id, "state_class": state_class, **entry})
+    return entries
+
+
+def _digest(value: Any) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), default=_json_scalar)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _json_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _table_columns(connection: Any, *, schema: str, table: str) -> tuple[str, ...]:
+    rows = connection.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema=%s AND table_name=%s
+        ORDER BY ordinal_position
+        """,
+        (schema, table),
+    ).fetchall()
+    return tuple(str(row["column_name"] if isinstance(row, Mapping) else row[0]) for row in rows)
+
+
+def _primary_key_columns(connection: Any, *, schema: str, table: str) -> tuple[str, ...]:
+    rows = connection.execute(
+        """
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name=kcu.constraint_name
+         AND tc.table_schema=kcu.table_schema
+         AND tc.table_name=kcu.table_name
+        WHERE tc.table_schema=%s AND tc.table_name=%s
+          AND tc.constraint_type='PRIMARY KEY'
+        ORDER BY kcu.ordinal_position
+        """,
+        (schema, table),
+    ).fetchall()
+    return tuple(str(row["column_name"] if isinstance(row, Mapping) else row[0]) for row in rows)
+
+
+def _allowed_metadata_column(column: str) -> bool:
+    forbidden = {
+        "content",
+        "detail",
+        "error",
+        "goal",
+        "message",
+        "next_action",
+        "payload",
+        "prompt",
+        "rationale",
+        "result",
+        "summary",
+        "text",
+        "title",
+    }
+    if column in forbidden or column.endswith("_json") or column.endswith("_text"):
+        return False
+    return (
+        column in {"authority", "durable", "identity_kind", "role_id", "scope", "steering"}
+        or column.endswith("_at")
+        or column.endswith("_count")
+        or column.endswith("_generation")
+        or column.endswith("_id")
+        or column.endswith("_kind")
+        or column.endswith("_role")
+        or column.endswith("_state")
+        or column.endswith("_status")
+        or column.endswith("_version")
+    )
+
+
+def _row_value(row: Any, column: str, index: int) -> Any:
+    value = row[column] if isinstance(row, Mapping) else row[index]
+    return _json_scalar(value)
 
 
 @dataclass(frozen=True)
@@ -743,9 +1107,18 @@ def project_filtered_dashboard(
         if not fleet_instance_id:
             raise SharedFleetConflict("fleet dashboard row lacks a stable identity")
         projected = {
+            "active_thread_id": row.get("active_thread_id"),
+            "authority": row.get("authority"),
+            "codex_endpoint": row.get("codex_endpoint"),
+            "current_message": row.get("current_message"),
+            "display_name": row.get("display_name"),
+            "effective_state": row.get("effective_state"),
             "fleet_instance_id": fleet_instance_id,
             "health": row.get("health"),
+            "memory_count": row.get("memory_count"),
+            "queued_messages": row.get("queued_messages"),
             "role_id": row.get("role_id"),
+            "role_instance_id": fleet_instance_id,
             "state": row.get("state"),
         }
         prior = fleet.get(fleet_instance_id)
