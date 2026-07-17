@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -23,15 +24,22 @@ def _inventory_entries() -> list[dict[str, object]]:
 
 def test_inventory_entries_are_complete_and_source_linked() -> None:
     data = yaml.safe_load(INVENTORY.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 1
     allowed = set(data["allowed_dispositions"])
     entries = _inventory_entries()
     sources = [str(item["source"]) for item in entries]
+    duplicates = sorted({source for source in sources if sources.count(source) > 1})
 
-    assert len(sources) == len(set(sources))
+    assert duplicates == []
     for item in entries:
         assert item["disposition"] in allowed
         assert str(item["rationale"]).strip()
+        assert isinstance(item["target_stories"], list)
         assert item["target_stories"]
+        assert all(
+            re.fullmatch(r"AMV5-\d{3}", story)
+            for story in item["target_stories"]
+        )
         assert (ROOT / str(item["source"])).is_file(), item["source"]
 
 
