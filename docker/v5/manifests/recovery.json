@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "profile_id": "recovery",
+  "image": "agentic-mesh/worker-recovery:0.1.0",
+  "target": "v5-recovery-worker",
+  "tool_profile_reference": "tool-profile/recovery@0.1.0",
+  "capabilities": [
+    "build.execute",
+    "container.manage",
+    "deployment.manage",
+    "diagnostics.system",
+    "filesystem.read",
+    "filesystem.write",
+    "network.diagnose",
+    "source-control.git",
+    "structured-output",
+    "test.execute"
+  ],
+  "required_commands": [
+    "agentic-mesh-recovery-drill",
+    "codex",
+    "curl",
+    "docker",
+    "docker-compose",
+    "gh",
+    "git",
+    "jq",
+    "make",
+    "nc",
+    "pytest",
+    "python",
+    "rg",
+    "shellcheck",
+    "ssh"
+  ]
+}

@@ -106,6 +106,8 @@ def test_loads_typed_general_profile_and_checks_capabilities(tmp_path: Path) -> 
     assert profile.credentials[0].kind == "oauth-cache"
     assert profile.health.command == ("agentic-mesh-worker-healthcheck",)
     assert profile.resources.memory_mb == 2048
+    assert profile.launch_policy.normal_routing
+    assert profile.launch_policy.allowed_launchers == ()
     assert len(profile.configuration_digest) == 64
     profile.require_capabilities(["structured-output"])
     with pytest.raises(ToolProfileError, match="lacks capabilities.*browser.test"):
@@ -134,6 +136,42 @@ def test_synthetic_finance_category_uses_the_same_registry(tmp_path: Path) -> No
     assert loaded.profile_id == "finance"
     assert loaded.capability_ids == {"ledger.read", "forecast.create"}
     loaded.require_capabilities(["ledger.read"])
+
+
+def test_restricted_profile_only_allows_its_supervisor(tmp_path: Path) -> None:
+    root = _repository(tmp_path)
+    content = copy.deepcopy(GENERAL_PROFILE)
+    profile = content["tool_profile"]
+    assert isinstance(profile, dict)
+    profile["profile_id"] = "recovery"
+    image = profile["image"]
+    assert isinstance(image, dict)
+    image["repository"] = "agentic-mesh/worker-recovery"
+    profile["launch_policy"] = {
+        "normal_routing": False,
+        "allowed_launchers": ["recovery-supervisor"],
+    }
+    reference = _profile_package(root, "recovery", "0.1.0", content)
+    registry = ToolProfileRegistry(root)
+
+    with pytest.raises(ToolProfileError, match="excluded from normal routing"):
+        registry.load_for_launch(
+            reference,
+            launcher="engineering",
+            via_normal_routing=True,
+        )
+    with pytest.raises(ToolProfileError, match="not authorized"):
+        registry.load_for_launch(
+            reference,
+            launcher="engineering",
+            via_normal_routing=False,
+        )
+    loaded = registry.load_for_launch(
+        reference,
+        launcher="recovery-supervisor",
+        via_normal_routing=False,
+    )
+    assert loaded.profile_id == "recovery"
 
 
 @pytest.mark.parametrize(

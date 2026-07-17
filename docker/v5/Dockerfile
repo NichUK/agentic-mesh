@@ -124,3 +124,44 @@ LABEL org.opencontainers.image.title="Agentic Mesh V5 UX worker" \
 RUN agentic-mesh-worker-healthcheck \
     && agentic-mesh-ux-smoke
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["agentic-mesh-worker-healthcheck"]
+
+FROM v5-worker-base AS v5-recovery-worker
+
+ARG COMPOSE_VERSION=v5.3.1
+ARG COMPOSE_SHA256=f9ebc6ebdb19d769b793c245a736caaeb198c62587f13b25c660c13b4987f959
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        dnsutils \
+        docker.io \
+        gh \
+        iproute2 \
+        lsof \
+        netcat-openbsd \
+        pkg-config \
+        python3-dev \
+        shellcheck \
+    && python -m pip install --no-cache-dir pytest==8.4.2 \
+    && install -d /usr/local/lib/docker/cli-plugins \
+    && curl --fail --location --show-error --silent \
+        "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
+        --output /usr/local/lib/docker/cli-plugins/docker-compose \
+    && echo "${COMPOSE_SHA256}  /usr/local/lib/docker/cli-plugins/docker-compose" \
+        | sha256sum --check --status \
+    && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose \
+    && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /root/.cache
+COPY recovery-drill.py /usr/local/bin/agentic-mesh-recovery-drill
+RUN chmod 0755 /usr/local/bin/agentic-mesh-recovery-drill
+COPY manifests/recovery.json /opt/agentic-mesh/image-manifest.json
+ENV AGENTIC_MESH_TOOL_PROFILE_ID=recovery
+LABEL org.opencontainers.image.title="Agentic Mesh V5 recovery worker" \
+      io.agentic-mesh.profile="recovery" \
+      io.agentic-mesh.capabilities="build.execute,container.manage,deployment.manage,diagnostics.system,filesystem.read,filesystem.write,network.diagnose,source-control.git,structured-output,test.execute" \
+      io.agentic-mesh.normal-routing="disabled" \
+      io.agentic-mesh.allowed-launcher="recovery-supervisor"
+RUN agentic-mesh-worker-healthcheck \
+    && docker --version \
+    && docker compose version
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["agentic-mesh-worker-healthcheck"]

@@ -30,3 +30,11 @@ services:
     build:
       <<: *worker-build
       target: v5-ux-worker
+  recovery:
+    profiles: ["recovery-supervisor"]
+    image: agentic-mesh/worker-recovery:0.1.0
+    build:
+      <<: *worker-build
+      target: v5-recovery-worker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
