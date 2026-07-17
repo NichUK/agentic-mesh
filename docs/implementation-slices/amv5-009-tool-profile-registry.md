@@ -15,8 +15,8 @@ or project data.
 - load one exact tool-profile package through the existing deterministic package
   resolver;
 - expose typed, immutable profile values and an explicit capability check; and
-- prove a synthetic future corporate-agent profile works with the same schema
-  and runtime code.
+- prove a synthetic future finance profile works with the same schema and
+  runtime code.
 
 Container builds, secret delivery, health-check execution, scheduling, resource
 enforcement, and a dynamic plugin system belong to later stories.

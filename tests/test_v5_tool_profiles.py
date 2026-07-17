@@ -144,6 +144,10 @@ def test_synthetic_finance_category_uses_the_same_registry(tmp_path: Path) -> No
             "identity does not match",
         ),
         (
+            lambda profile: profile.update(schema_version=2),
+            "unsupported tool-profile schema_version",
+        ),
+        (
             lambda profile: profile.update(profile_id="general.v2"),
             "profile_id is invalid",
         ),

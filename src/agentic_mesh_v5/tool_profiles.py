@@ -165,7 +165,9 @@ def _parse_profile(reference: str, digest: str, value: object) -> ToolProfile:
     profile = _object(value, "tool_profile")
     _fields(profile, PROFILE_FIELDS, "tool_profile")
     profile_id = _package_id(profile.get("profile_id"), "profile_id")
-    if profile.get("schema_version") != 1 or profile_id != package_reference.package_id:
+    if profile.get("schema_version") != 1:
+        raise ToolProfileError("unsupported tool-profile schema_version")
+    if profile_id != package_reference.package_id:
         raise ToolProfileError("tool-profile identity does not match its package reference")
 
     image_value = _object(profile.get("image"), "image")
