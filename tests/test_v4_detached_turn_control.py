@@ -735,7 +735,7 @@ def test_database_wait_cycle_terminates_then_exact_cancellation_reaches_strict_z
             MigrationTraffic(source_message_id, "safe-output", "platform-engineer", "completed", WORK_ITEM_ID),
             MigrationTraffic(handoff["message_id"], "safe-output", "project-manager", target_state, WORK_ITEM_ID),
         ),
-        quantauma_messages=(),
+        retired_project_messages=(),
         expected_work_item_id=WORK_ITEM_ID,
     )
 

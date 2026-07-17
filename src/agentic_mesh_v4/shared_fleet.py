@@ -1071,19 +1071,21 @@ class MigrationTraffic:
 class MigrationGuardResult:
     allowed: bool
     unrelated: tuple[MigrationTraffic, ...]
-    quantauma_nonterminal: tuple[MigrationTraffic, ...]
+    retired_project_nonterminal: tuple[MigrationTraffic, ...]
     reason: str
 
 
 def evaluate_migration_guard(
     *,
     agentic_mesh_messages: Iterable[MigrationTraffic],
-    quantauma_messages: Iterable[MigrationTraffic],
+    retired_project_messages: Iterable[MigrationTraffic],
     expected_work_item_id: str,
     cutover: bool = False,
 ) -> MigrationGuardResult:
     am_nonterminal = tuple(item for item in agentic_mesh_messages if item.state not in _TERMINAL_MESSAGE_STATES)
-    q_nonterminal = tuple(item for item in quantauma_messages if item.state not in _TERMINAL_MESSAGE_STATES)
+    retired_nonterminal = tuple(
+        item for item in retired_project_messages if item.state not in _TERMINAL_MESSAGE_STATES
+    )
     unrelated = tuple(
         item
         for item in am_nonterminal
@@ -1091,14 +1093,14 @@ def evaluate_migration_guard(
     )
     if unrelated:
         reason = "agentic_mesh_unrelated_nonterminal_traffic"
-    elif q_nonterminal:
-        reason = "quantauma_nonterminal_traffic"
+    elif retired_nonterminal:
+        reason = "retired_project_nonterminal_traffic"
     else:
         reason = "migration_exclusive"
     return MigrationGuardResult(
-        allowed=not unrelated and not q_nonterminal,
+        allowed=not unrelated and not retired_nonterminal,
         unrelated=unrelated,
-        quantauma_nonterminal=q_nonterminal,
+        retired_project_nonterminal=retired_nonterminal,
         reason=reason,
     )
 

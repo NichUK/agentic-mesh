@@ -14,6 +14,9 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
 - V4 reuse is governed by
   `docs/architecture/v5/v4-asset-inventory.yaml`; port and rewrite decisions
   create new V5 assets and never authorize importing the V4 package.
+- Quantauma is retired from active source, configuration, examples, runtime
+  terminology, and fixtures. Historical documents remain available; neutral
+  `example-project` fixtures preserve isolation coverage.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

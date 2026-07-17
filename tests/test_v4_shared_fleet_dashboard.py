@@ -31,7 +31,7 @@ def test_dashboard_lists_fleet_once_and_filters_only_activity() -> None:
     )
     activity = (
         {"activity_id": "a", "project_id": "agentic-mesh-dev", "fleet_instance_id": "agentic-mesh.engineering.1"},
-        {"activity_id": "b", "project_id": "quantauma", "fleet_instance_id": "agentic-mesh.engineering.1"},
+        {"activity_id": "b", "project_id": "example-project", "fleet_instance_id": "agentic-mesh.engineering.1"},
     )
 
     all_projects = project_filtered_dashboard(fleet_rows=fleet_rows, activity_rows=activity)
@@ -40,14 +40,14 @@ def test_dashboard_lists_fleet_once_and_filters_only_activity() -> None:
         activity_rows=activity,
         project_id="agentic-mesh-dev",
     )
-    quantauma = project_filtered_dashboard(
+    example_project = project_filtered_dashboard(
         fleet_rows=fleet_rows,
         activity_rows=activity,
-        project_id="quantauma",
+        project_id="example-project",
     )
-    assert len(all_projects["fleet"]) == len(agentic_mesh["fleet"]) == len(quantauma["fleet"]) == 1
+    assert len(all_projects["fleet"]) == len(agentic_mesh["fleet"]) == len(example_project["fleet"]) == 1
     assert [item["activity_id"] for item in agentic_mesh["activity"]] == ["a"]
-    assert [item["activity_id"] for item in quantauma["activity"]] == ["b"]
+    assert [item["activity_id"] for item in example_project["activity"]] == ["b"]
 
 
 def test_dashboard_rejects_divergent_duplicate_physical_identity() -> None:

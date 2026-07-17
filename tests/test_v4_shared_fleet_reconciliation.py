@@ -43,7 +43,7 @@ def test_closed_ledger_and_manifest_are_exhaustive_content_free_and_deterministi
     )
     catalogs = (
         CatalogSnapshot("agentic-mesh-dev", "public", True, {table: 0 for table in ALL_PUBLIC_TABLES}),
-        CatalogSnapshot("quantauma", "quantauma", False, {table: 0 for table in COMMON_TABLES}),
+        CatalogSnapshot("example-project", "example_project", False, {table: 0 for table in COMMON_TABLES}),
     )
 
     first = build_reconciliation_manifest(catalogs=catalogs, identities=identities)
@@ -180,10 +180,10 @@ def test_filesystem_classes_and_administrative_capture_entrypoint_are_complete(
         )
         for table in ALL_PUBLIC_TABLES
     }
-    quantauma_records = {
+    example_project_records = {
         table: (
             CatalogRecord(
-                source_key={"record_id": f"quantauma:{table}:1"},
+                source_key={"record_id": f"example-project:{table}:1"},
                 allowed_metadata={"state": "retained", "version": 1},
             ),
         )
@@ -198,18 +198,18 @@ def test_filesystem_classes_and_administrative_capture_entrypoint_are_complete(
             public_records,
         ),
         CatalogSnapshot(
-            "quantauma",
-            "quantauma",
+            "example-project",
+            "example_project",
             False,
             {table: 1 for table in COMMON_TABLES},
-            quantauma_records,
+            example_project_records,
         ),
     )
     manifest = build_reconciliation_manifest(
         catalogs=catalogs,
         identities=reconcile_identities(
             fleet_id="agentic-mesh",
-            sources=(source("agentic-mesh-dev"), source("quantauma")),
+            sources=(source("agentic-mesh-dev"), source("example-project")),
         ),
         filesystem_state=filesystem,
     )
@@ -238,8 +238,8 @@ def test_filesystem_classes_and_administrative_capture_entrypoint_are_complete(
                 "canonical_role_fingerprint": "role-v1",
             },
             {
-                "project_id": "quantauma",
-                "role_instance_id": "quantauma.engineering.1",
+                "project_id": "example-project",
+                "role_instance_id": "example-project.engineering.1",
                 "role_id": "engineering",
                 "ordinal": 1,
                 "canonical_role_fingerprint": "role-v1",
@@ -261,13 +261,13 @@ def test_filesystem_classes_and_administrative_capture_entrypoint_are_complete(
                 },
             },
             {
-                "project_id": "quantauma",
-                "schema": "quantauma",
+                "project_id": "example-project",
+                "schema": "example_project",
                 "control_schema": False,
                 "tables": {
                     table: [
                         {
-                            "source_key": {"record_id": f"quantauma:{table}:1"},
+                            "source_key": {"record_id": f"example-project:{table}:1"},
                             "allowed_metadata": {"state": "retained", "version": 1},
                         }
                     ]
@@ -364,35 +364,35 @@ def test_filesystem_conflicts_block_terminal_manifest_across_all_closed_classes(
 
 def test_disposable_postgres_catalog_dry_run_and_interrupted_apply_are_idempotent() -> None:
     public_db = make_v4_db()
-    quantauma_db = make_v4_db()
+    example_project_db = make_v4_db()
     try:
         public_schema = _schema(public_db)
-        quantauma_schema = _schema(quantauma_db)
+        example_project_schema = _schema(example_project_db)
         _add_public_only_tables(public_db)
         _register_source(public_db, "agentic-mesh-dev")
-        _register_source(quantauma_db, "quantauma")
+        _register_source(example_project_db, "example-project")
         public_catalog = discover_postgres_catalog(
             public_db.connection,
             project_id="agentic-mesh-dev",
             schema=public_schema,
             control_schema=True,
         )
-        quantauma_catalog = discover_postgres_catalog(
-            quantauma_db.connection,
-            project_id="quantauma",
-            schema=quantauma_schema,
+        example_project_catalog = discover_postgres_catalog(
+            example_project_db.connection,
+            project_id="example-project",
+            schema=example_project_schema,
             control_schema=False,
         )
         identities = reconcile_identities(
             fleet_id="agentic-mesh",
-            sources=(source("agentic-mesh-dev"), source("quantauma")),
+            sources=(source("agentic-mesh-dev"), source("example-project")),
         )
         before = build_reconciliation_manifest(
-            catalogs=(public_catalog, quantauma_catalog),
+            catalogs=(public_catalog, example_project_catalog),
             identities=identities,
         )
         repeat = build_reconciliation_manifest(
-            catalogs=(public_catalog, quantauma_catalog),
+            catalogs=(public_catalog, example_project_catalog),
             identities=identities,
         )
         assert before.digest == repeat.digest and not before.blocking
@@ -414,19 +414,19 @@ def test_disposable_postgres_catalog_dry_run_and_interrupted_apply_are_idempoten
             permit=STAGE1_DISPOSABLE_PERMIT,
         )
         q_result = apply_disposable_role_metadata(
-            quantauma_db.connection,
-            project_id="quantauma",
-            sources=(source("quantauma"),),
+            example_project_db.connection,
+            project_id="example-project",
+            sources=(source("example-project"),),
             control_schema=False,
             permit=STAGE1_DISPOSABLE_PERMIT,
         )
         assert rerun.duplicate_noop >= 1
         assert q_result.completed_steps == ("schema", "assignments")
         assert _count(public_db, "work_items") == 0
-        assert _count(quantauma_db, "work_items") == 0
+        assert _count(example_project_db, "work_items") == 0
     finally:
         public_db.close()
-        quantauma_db.close()
+        example_project_db.close()
 
 
 def _schema(db: V4Database) -> str:

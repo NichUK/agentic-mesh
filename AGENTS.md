@@ -88,7 +88,7 @@ Separate these concepts:
 - project override: project-specific instructions, write paths, channels,
   tools, model choice, and instance count
 - role instance: concrete running worker, for example
-  `quantauma.engineering.1`
+  `example-project.engineering.1`
 
 Current example files:
 

@@ -51,31 +51,31 @@ def test_binding_requires_idle_matching_project_and_generation(tmp_path: Path) -
         controller.bind(orchid_binding, project_id="cedar", activity=FleetActivity())
 
 
-def test_migration_guard_allows_only_control_item_and_zero_quantauma_work() -> None:
+def test_migration_guard_allows_only_control_item_and_zero_retired_project_work() -> None:
     control = MigrationTraffic("m1", "safe-output", "engineering", "active_turn", WORK_ITEM_ID)
     unrelated = MigrationTraffic("m2", "teams", "engineering", "queued", "other-work")
     terminal = MigrationTraffic("m3", "safe-output", "engineering", "completed", "other-work")
 
     assert evaluate_migration_guard(
         agentic_mesh_messages=(control, terminal),
-        quantauma_messages=(),
+        retired_project_messages=(),
         expected_work_item_id=WORK_ITEM_ID,
     ).allowed
     blocked = evaluate_migration_guard(
         agentic_mesh_messages=(control, unrelated),
-        quantauma_messages=(),
+        retired_project_messages=(),
         expected_work_item_id=WORK_ITEM_ID,
     )
     assert not blocked.allowed and blocked.unrelated == (unrelated,)
-    quantauma_blocked = evaluate_migration_guard(
+    retired_project_blocked = evaluate_migration_guard(
         agentic_mesh_messages=(control,),
-        quantauma_messages=(MigrationTraffic("q1", "safe-output", "qa-engineer", "queued", WORK_ITEM_ID),),
+        retired_project_messages=(MigrationTraffic("q1", "safe-output", "qa-engineer", "queued", WORK_ITEM_ID),),
         expected_work_item_id=WORK_ITEM_ID,
     )
-    assert not quantauma_blocked.allowed
+    assert not retired_project_blocked.allowed
     assert not evaluate_migration_guard(
         agentic_mesh_messages=(control,),
-        quantauma_messages=(),
+        retired_project_messages=(),
         expected_work_item_id=WORK_ITEM_ID,
         cutover=True,
     ).allowed
