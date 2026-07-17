@@ -19,10 +19,21 @@ from agentic_mesh_v5.package_resolver import resolve_packages
 
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _UNSET = object()
+_REPOSITORY_LOCKS: dict[Path, threading.Lock] = {}
+_REPOSITORY_LOCKS_GUARD = threading.Lock()
 
 
 class ConfigActivationError(ValueError):
     pass
+
+
+def _repository_lock(path: Path) -> threading.Lock:
+    with _REPOSITORY_LOCKS_GUARD:
+        lock = _REPOSITORY_LOCKS.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _REPOSITORY_LOCKS[path] = lock
+        return lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +114,7 @@ class ConfigActivationStore:
         self.activation_path = self.repository_root / "activation" / "current.json"
         self.lock_path = self.repository_root / "state" / "config-activation.lock"
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._thread_lock = threading.Lock()
+        self._thread_lock = _repository_lock(self.lock_path)
 
     @contextmanager
     def _locked(self) -> Iterator[None]:

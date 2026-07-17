@@ -175,7 +175,11 @@ def test_failure_before_atomic_replace_preserves_previous_state(
         store.activate(second.digest, actor="pm", expected_active=first.digest)
 
     assert store.get_state() == before
-    assert not list(store.activation_path.parent.glob("*.tmp"))
+    assert not [
+        path
+        for path in store.activation_path.parent.iterdir()
+        if path.name.endswith(".tmp")
+    ]
 
 
 def test_release_cli_creates_activates_and_reports_state(
