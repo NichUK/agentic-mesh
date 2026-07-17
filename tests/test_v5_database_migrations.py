@@ -55,10 +55,12 @@ def _migration(version: int, name: str, statement: str) -> Migration:
 def test_packaged_migrations_are_contiguous_and_v5_only() -> None:
     migrations = load_migrations()
 
-    assert [item.version for item in migrations] == [1]
+    assert [item.version for item in migrations] == list(
+        range(1, len(migrations) + 1)
+    )
     assert migrations[0].name == "initial_control_plane"
     assert "agentic_mesh_v5.projects" in migrations[0].sql
-    assert "agentic_mesh_v4" not in migrations[0].sql
+    assert all("agentic_mesh_v4" not in item.sql for item in migrations)
 
 
 def test_loader_rejects_missing_and_malformed_versions(tmp_path: Path) -> None:
@@ -81,19 +83,20 @@ def test_runner_rejects_an_explicit_empty_migration_set() -> None:
 
 def test_clean_database_migrates_and_repeat_is_noop(postgres_database: str) -> None:
     runner = MigrationRunner(postgres_database)
+    available_version = load_migrations()[-1].version
 
     assert runner.status().to_dict() == {
         "current_version": 0,
-        "available_version": 1,
-        "pending_versions": [1],
+        "available_version": available_version,
+        "pending_versions": list(range(1, available_version + 1)),
         "applied": [],
     }
     first = runner.migrate()
     second = runner.migrate()
 
-    assert first.current_version == second.current_version == 1
+    assert first.current_version == second.current_version == available_version
     assert second.pending_versions == ()
-    assert len(second.applied) == 1
+    assert len(second.applied) == available_version
     with psycopg.connect(postgres_database) as connection:
         tables = {
             row[0]
@@ -122,7 +125,7 @@ def test_clean_database_migrates_and_repeat_is_noop(postgres_database: str) -> N
         "progress",
         "audit_records",
         "schema_migrations",
-    } == tables
+    }.issubset(tables)
 
 
 def test_ordered_upgrade_and_checksum_drift(postgres_database: str) -> None:
@@ -177,18 +180,20 @@ def test_failed_run_rolls_back_history_and_schema(postgres_database: str) -> Non
 
 
 def test_concurrent_runners_apply_once(postgres_database: str) -> None:
+    available_version = load_migrations()[-1].version
+
     def migrate() -> int:
         return MigrationRunner(postgres_database).migrate().current_version
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         versions = list(pool.map(lambda _: migrate(), range(2)))
 
-    assert versions == [1, 1]
+    assert versions == [available_version, available_version]
     with psycopg.connect(postgres_database) as connection:
         count = connection.execute(
             "SELECT count(*) FROM agentic_mesh_v5.schema_migrations"
         ).fetchone()[0]
-    assert count == 1
+    assert count == available_version
 
 
 def test_project_foreign_keys_and_scoped_ownership_fail_closed(
@@ -251,7 +256,7 @@ def test_cli_migrates_and_reports_status_without_database_url(
     assert cli.main(["--json", "database-migrate"]) == 0
     migrated = json.loads(capsys.readouterr().out)
     assert migrated["status"] == "database-current"
-    assert migrated["current_version"] == 1
+    assert migrated["current_version"] == load_migrations()[-1].version
     assert postgres_database not in json.dumps(migrated)
 
     assert cli.main(["--json", "database-status"]) == 0

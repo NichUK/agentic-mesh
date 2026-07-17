@@ -90,7 +90,11 @@ def database_url_from_environment() -> str:
 def load_migrations(directory: Path | None = None) -> tuple[Migration, ...]:
     if directory is None:
         root = resources.files("agentic_mesh_v5.migrations")
-        entries = [item for item in root.iterdir() if item.name.endswith(".sql")]
+        entries = [
+            item
+            for item in root.iterdir()
+            if item.is_file() and item.name.endswith(".sql")
+        ]
         texts = [(item.name, item.read_text(encoding="utf-8")) for item in entries]
     else:
         entries = [item for item in directory.iterdir() if item.is_file() and item.suffix == ".sql"]
