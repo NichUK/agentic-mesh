@@ -127,7 +127,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write(
             {
                 "runtime": "agentic-mesh-v5",
-                "status": "database-current",
+                "status": (
+                    "database-pending"
+                    if result.pending_versions
+                    else "database-current"
+                ),
                 **result.to_dict(),
             },
             as_json=args.json,

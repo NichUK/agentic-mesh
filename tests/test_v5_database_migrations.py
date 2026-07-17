@@ -248,10 +248,16 @@ def test_project_foreign_keys_and_scoped_ownership_fail_closed(
             )
 
 
-def test_cli_migrates_and_reports_status_without_database_url(
+def test_cli_migrates_and_reports_status_with_configured_database(
     postgres_database: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv(DATABASE_URL_ENV, postgres_database)
+
+    assert cli.main(["--json", "database-status"]) == 0
+    pending = json.loads(capsys.readouterr().out)
+    assert pending["status"] == "database-pending"
+    assert pending["pending_versions"]
+    assert postgres_database not in json.dumps(pending)
 
     assert cli.main(["--json", "database-migrate"]) == 0
     migrated = json.loads(capsys.readouterr().out)
