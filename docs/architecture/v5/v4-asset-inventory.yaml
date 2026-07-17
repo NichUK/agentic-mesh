@@ -1,0 +1,103 @@
+schema_version: 1
+allowed_dispositions: [port, rewrite, reference, reject]
+categories:
+  runtime:
+    assets:
+      - {source: src/agentic_mesh_v4/__init__.py, disposition: reject, rationale: V4 package identity must not enter V5., target_stories: [AMV5-001]}
+      - {source: src/agentic_mesh_v4/agent_config.py, disposition: rewrite, rationale: Effective agent configuration must come from external deterministic packages., target_stories: [AMV5-005, AMV5-007]}
+      - {source: src/agentic_mesh_v4/artifact_preflight.py, disposition: rewrite, rationale: Keep preflight outcomes but bind them to immutable V5 releases., target_stories: [AMV5-035, AMV5-047]}
+      - {source: src/agentic_mesh_v4/auto_dispatch.py, disposition: rewrite, rationale: Preserve routing lessons behind project and capability aware idempotent routing., target_stories: [AMV5-029]}
+      - {source: src/agentic_mesh_v4/auto_handoff.py, disposition: reject, rationale: Implicit auto-handoff mechanics conflict with explicit target acceptance., target_stories: [AMV5-030]}
+      - {source: src/agentic_mesh_v4/cli.py, disposition: rewrite, rationale: The monolithic V4 CLI is coupled to every V4 service; V5 needs a small API client., target_stories: [AMV5-018]}
+      - {source: src/agentic_mesh_v4/codex_protocol.py, disposition: rewrite, rationale: Protocol knowledge is useful but must sit behind a provider-neutral adapter., target_stories: [AMV5-022]}
+      - {source: src/agentic_mesh_v4/completion_gate.py, disposition: rewrite, rationale: Retain continuity invariants through the V5 flow and PM continuation model., target_stories: [AMV5-031, AMV5-033, AMV5-041]}
+      - {source: src/agentic_mesh_v4/compose.py, disposition: reference, rationale: Use deployment lessons without carrying V4 service topology into the new images., target_stories: [AMV5-010, AMV5-047]}
+      - {source: src/agentic_mesh_v4/config.py, disposition: rewrite, rationale: Replace embedded V4 configuration semantics with external package and project manifests., target_stories: [AMV5-005, AMV5-036]}
+      - {source: src/agentic_mesh_v4/db.py, disposition: rewrite, rationale: Preserve proven data invariants in versioned V5 migrations rather than importing the repository., target_stories: [AMV5-013, AMV5-014]}
+      - {source: src/agentic_mesh_v4/decision_records.py, disposition: rewrite, rationale: Durable approvals remain essential but require V5 lifecycle and connector boundaries., target_stories: [AMV5-015, AMV5-044, AMV5-052]}
+      - {source: src/agentic_mesh_v4/detached_turn_control.py, disposition: reference, rationale: Retain correlation and recovery lessons for the new provider adapter., target_stories: [AMV5-022, AMV5-025]}
+      - {source: src/agentic_mesh_v4/documents.py, disposition: rewrite, rationale: Document contracts remain while storage moves to a direct DocumentStore adapter., target_stories: [AMV5-038]}
+      - {source: src/agentic_mesh_v4/enterprise_architecture.py, disposition: port, rationale: Preserve TOGAF document obligations while removing V4 execution coupling., target_stories: [AMV5-043]}
+      - {source: src/agentic_mesh_v4/evidence_contracts.py, disposition: port, rationale: Evidence requirements are product rules suitable for external flow packages., target_stories: [AMV5-007, AMV5-041]}
+      - {source: src/agentic_mesh_v4/flow.py, disposition: rewrite, rationale: Flow semantics move to a version-pinned external engine., target_stories: [AMV5-041]}
+      - {source: src/agentic_mesh_v4/handoff_lifecycle.py, disposition: rewrite, rationale: Keep crash-boundary lessons and implement explicit claim and acceptance., target_stories: [AMV5-030]}
+      - {source: src/agentic_mesh_v4/lifecycle.py, disposition: rewrite, rationale: Container actuation must follow V5 queue-aware scaling and hibernation., target_stories: [AMV5-032]}
+      - {source: src/agentic_mesh_v4/onedrive_sync.py, disposition: reject, rationale: Filesystem synchronization is replaced by direct Graph DocumentStore access., target_stories: [AMV5-038]}
+      - {source: src/agentic_mesh_v4/persistence_policy.py, disposition: port, rationale: Binary and unsafe persistence restrictions remain valid platform rules., target_stories: [AMV5-013, AMV5-040]}
+      - {source: src/agentic_mesh_v4/reporting.py, disposition: rewrite, rationale: Preserve useful projections through versioned APIs and rebuildable read models., target_stories: [AMV5-019, AMV5-056]}
+      - {source: src/agentic_mesh_v4/runtime.py, disposition: reject, rationale: The coupled V4 runtime facade is not a V5 module boundary., target_stories: [AMV5-017]}
+      - {source: src/agentic_mesh_v4/safe_output_proxy.py, disposition: rewrite, rationale: Structured progress and effects remain but use V5 validation and authorization., target_stories: [AMV5-027]}
+      - {source: src/agentic_mesh_v4/server.py, disposition: rewrite, rationale: Replace mixed reporting and mutation routes with the versioned FastAPI contract., target_stories: [AMV5-017]}
+      - {source: src/agentic_mesh_v4/shared_fleet.py, disposition: reject, rationale: V4 shared-fleet migration mechanics are replaced by native role queues and shared role memory., target_stories: [AMV5-032, AMV5-039]}
+      - {source: src/agentic_mesh_v4/teams_delivery.py, disposition: rewrite, rationale: Retain delivery receipts and cards behind role-specific connector bindings., target_stories: [AMV5-050, AMV5-052]}
+      - {source: src/agentic_mesh_v4/topology.py, disposition: port, rationale: Source runtime project and secret separation remain mandatory invariants., target_stories: [AMV5-036, AMV5-037]}
+      - {source: src/agentic_mesh_v4/watchdog.py, disposition: rewrite, rationale: Findings feed the global PM and independent recovery chain rather than V4 sweeps., target_stories: [AMV5-031, AMV5-034]}
+  roles:
+    defaults: {disposition: rewrite, rationale: Retain role expertise but remove V4 mechanics and add simplicity guardrails in external packages., target_stories: [AMV5-007, AMV5-008, AMV5-042]}
+    sources:
+      - config/roles/business-analyst.yaml
+      - config/roles/delivery-manager.yaml
+      - config/roles/engineering.yaml
+      - config/roles/enterprise-architect.yaml
+      - config/roles/platform-engineer.yaml
+      - config/roles/product-manager.yaml
+      - config/roles/project-manager.yaml
+      - config/roles/prompt-engineer.yaml
+      - config/roles/qa-engineer.yaml
+      - config/roles/release-manager.yaml
+      - config/roles/research-analyst.yaml
+      - config/roles/security-architect.yaml
+      - config/roles/solution-architect.yaml
+      - config/roles/technical-writer.yaml
+      - config/roles/ux-designer.yaml
+  tests:
+    defaults: {disposition: port, rationale: Preserve the behavioural invariant as a V5 test while rewriting fixtures and implementation coupling., target_stories: [AMV5-045, AMV5-061]}
+    sources:
+      - tests/test_v4_agent_message_processing_reaction.py
+      - tests/test_v4_auto_dispatch.py
+      - tests/test_v4_completion_continuity.py
+      - tests/test_v4_completion_gate.py
+      - tests/test_v4_decision_notification_outcomes.py
+      - tests/test_v4_decision_records.py
+      - tests/test_v4_detached_turn_control.py
+      - tests/test_v4_document_permissions.py
+      - tests/test_v4_dogfood_compose.py
+      - tests/test_v4_evidence_contracts.py
+      - tests/test_v4_onedrive_sync.py
+      - tests/test_v4_persistence_policy.py
+      - tests/test_v4_project_context_isolation.py
+      - tests/test_v4_remote_control_runtime.py
+      - tests/test_v4_safe_output_cli.py
+      - tests/test_v4_safe_output_proxy.py
+      - tests/test_v4_shared_fleet_binding.py
+      - tests/test_v4_shared_fleet_dashboard.py
+      - tests/test_v4_shared_fleet_identity.py
+      - tests/test_v4_shared_fleet_isolation.py
+      - tests/test_v4_shared_fleet_reconciliation.py
+      - tests/test_v4_shared_fleet_renderer.py
+      - tests/test_v4_shared_fleet_restart_resume.py
+      - tests/test_v4_shared_fleet_rollback.py
+      - tests/test_v4_teams_delivery.py
+      - tests/test_v4_teams_ingress.py
+      - tests/test_v4_togaf_enterprise_architecture.py
+      - tests/test_v4_topology.py
+  configuration:
+    assets:
+      - {source: config/flows/evidence-contracts.yaml, disposition: port, rationale: Move evidence rules into versioned external flow packages., target_stories: [AMV5-007, AMV5-041]}
+      - {source: config/flows/sdlc.yaml, disposition: rewrite, rationale: Preserve the lifecycle and RACI intent without V4 routes or paths., target_stories: [AMV5-007, AMV5-041]}
+      - {source: config/schemas/architecture-impact.schema.json, disposition: port, rationale: The proportional architecture-impact vocabulary remains valid., target_stories: [AMV5-043]}
+      - {source: config/schemas/project.schema.json, disposition: rewrite, rationale: Replace V4 project fields with the explicit V5 resource manifest., target_stories: [AMV5-036]}
+      - {source: config/schemas/response-types.schema.json, disposition: port, rationale: Reuse response taxonomy where it supports structured safe output., target_stories: [AMV5-027]}
+      - {source: config/schemas/role-template.schema.json, disposition: rewrite, rationale: External packages and tool profiles require a V5 schema., target_stories: [AMV5-004, AMV5-009]}
+      - {source: config/prompts/worker/instructions.xml, disposition: rewrite, rationale: Retain useful behaviour with explicit simplicity and ambiguity rules., target_stories: [AMV5-007, AMV5-008]}
+      - {source: config/prompts/worker/safe-outputs.xml, disposition: rewrite, rationale: Align guidance to V5 progress and effect contracts., target_stories: [AMV5-027]}
+      - {source: config/prompts/worker/system-security.xml, disposition: port, rationale: Preserve security boundaries in an external system package., target_stories: [AMV5-004, AMV5-007]}
+  lessons:
+    assets:
+      - {source: docs/architecture/v4-remote-control-runtime.md, disposition: reference, rationale: Historical V4 design and limitations inform provider and worker choices., target_stories: [AMV5-022, AMV5-024]}
+      - {source: docs/architecture/risk-register.md, disposition: port, rationale: Convert evidenced V4 failures into V5 tests and qualification risks., target_stories: [AMV5-008, AMV5-061]}
+      - {source: docs/architecture/repository-topology.md, disposition: port, rationale: Preserve source runtime project and state separation., target_stories: [AMV5-036, AMV5-037]}
+      - {source: docs/architecture/human-response-gates.md, disposition: port, rationale: Preserve durable human-wait notification and continuation rules., target_stories: [AMV5-031, AMV5-044, AMV5-052]}
+      - {source: docs/architecture/flow-collaboration.md, disposition: rewrite, rationale: Retain governance intent under explicit V5 flow and handoff acceptance., target_stories: [AMV5-030, AMV5-041]}
+      - {source: docs/implementation-slices/v4-completion-repair-v0.md, disposition: port, rationale: Preserve bounded repair and escalation as a V5 regression scenario., target_stories: [AMV5-033, AMV5-061]}
+      - {source: MEMORY.md, disposition: reference, rationale: Use dated operational evidence without treating historical implementation as a dependency., target_stories: [AMV5-002, AMV5-061]}
