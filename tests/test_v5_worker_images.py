@@ -115,6 +115,7 @@ def test_ux_image_pins_and_exercises_specialist_tools() -> None:
         "page.screenshot",
         "page.pdf",
         "pixelmatch",
+        "spawnSync",
         'execFileSync("identify"',
         '"compare",',
         'execFileSync("pdfinfo"',
@@ -124,6 +125,7 @@ def test_ux_image_pins_and_exercises_specialist_tools() -> None:
     assert "candidateScreenshot" in smoke
     assert "accessibility.violations.length > 0" in smoke
     assert "changedPixels > 0" in smoke
+    assert "imageMagickChangedPixels > 0" in smoke
 
 
 def test_build_context_allowlist_excludes_project_material() -> None:

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import AxeBuilder from "@axe-core/playwright";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,27 +46,48 @@ try {
   await writeFile(comparison, PNG.sync.write(diff));
 
   execFileSync("identify", [baselineScreenshot], { stdio: "ignore" });
-  execFileSync(
+  const imageMagickComparison = spawnSync(
     "compare",
     ["-metric", "AE", baselineScreenshot, candidateScreenshot, "null:"],
-    { stdio: "ignore" },
+    { encoding: "utf8" },
   );
+  const imageMagickChangedPixels = Number.parseInt(
+    imageMagickComparison.stderr?.trim() ?? "",
+    10,
+  );
+  const imageMagickFailed =
+    imageMagickComparison.error !== undefined ||
+    imageMagickComparison.status === null ||
+    imageMagickComparison.status > 1 ||
+    !Number.isFinite(imageMagickChangedPixels);
   execFileSync("pdfinfo", [pdf], { stdio: "ignore" });
 
   const evidence = {
     status:
-      accessibility.violations.length === 0 && changedPixels === 0
+      accessibility.violations.length === 0 &&
+      changedPixels === 0 &&
+      !imageMagickFailed &&
+      imageMagickChangedPixels === 0
         ? "passed"
         : "failed",
     browser: "chromium",
     accessibilityViolations: accessibility.violations.length,
     changedPixels,
+    imageMagickChangedPixels: Number.isFinite(imageMagickChangedPixels)
+      ? imageMagickChangedPixels
+      : null,
+    imageMagickStatus: imageMagickComparison.status,
     baselineScreenshotBytes: (await readFile(baselineScreenshot)).length,
     candidateScreenshotBytes: (await readFile(candidateScreenshot)).length,
     pdfBytes: (await readFile(pdf)).length,
   };
   console.log(JSON.stringify(evidence));
-  if (accessibility.violations.length > 0 || changedPixels > 0) {
+  if (
+    accessibility.violations.length > 0 ||
+    changedPixels > 0 ||
+    imageMagickFailed ||
+    imageMagickChangedPixels > 0
+  ) {
     throw new Error("UX smoke evidence did not meet the clean baseline");
   }
 } finally {
