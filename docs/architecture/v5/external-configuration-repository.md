@@ -24,5 +24,14 @@ Deployments mount an approved clone at `/mesh/config`. Package manifests may
 name `${secret:<name>}` references, but credential values, OAuth caches,
 tokens, connection strings, and private keys remain in external secret stores
 or host mounts. Immutable release activation and rollback remain separate
-stories; package resolution never resolves secret values or changes an active
-release.
+operations from package resolution; neither operation resolves secret values.
+
+Validated effective configurations become immutable records under
+`releases/<digest>.json`. The digest addresses the complete resolved output,
+and an existing record is never rewritten. `activation/current.json` contains
+the current digest, a monotonic revision, and the complete activation/rollback
+history. The pointer and its audit event are committed through one atomic file
+replacement under a repository-local cross-process lock. Optimistic
+`expected_active` checks make concurrent promotion explicit: only one caller
+can advance from the same prior digest. These files are visible to normal Git
+review; automated Git commit/promotion policy remains a later integration.
