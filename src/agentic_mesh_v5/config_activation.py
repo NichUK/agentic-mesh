@@ -379,6 +379,15 @@ class ConfigActivationStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, path)
+            try:
+                directory = os.open(path.parent, os.O_RDONLY)
+            except OSError:
+                directory = None
+            if directory is not None:
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         except OSError as exc:
             raise ConfigActivationError(f"atomic write failed for {path.name}: {exc}") from exc
         finally:
