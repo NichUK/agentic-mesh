@@ -202,7 +202,15 @@ def test_valid_guardrails_allow_an_immutable_role_flow_release(tmp_path: Path) -
 
 @pytest.mark.parametrize(
     "regression",
-    ["missing-policy", "missing-prompt", "missing-requirement", "wrong-expectation", "missing-scenario"],
+    [
+        "missing-policy",
+        "missing-prompt",
+        "malformed-policy",
+        "identity-mismatch",
+        "missing-requirement",
+        "wrong-expectation",
+        "missing-scenario",
+    ],
 )
 def test_behavioral_regressions_block_release_creation(
     tmp_path: Path, regression: str
@@ -218,13 +226,20 @@ def test_behavioral_regressions_block_release_creation(
         )
     else:
         content = json.loads(policy_path.read_text(encoding="utf-8"))
-        policy = content["behavioral_guardrails"]
-        if regression == "missing-requirement":
-            policy["prompt_requirements"].pop()
-        elif regression == "wrong-expectation":
-            policy["scenarios"][0]["expected_action"] = "simplify"
+        if regression == "malformed-policy":
+            content["behavioral_guardrails"] = []
         else:
-            policy["scenarios"].pop()
+            policy = content["behavioral_guardrails"]
+            if regression == "identity-mismatch":
+                policy["policy_id"] = "different-policy"
+            elif regression == "missing-requirement":
+                policy["prompt_requirements"].pop()
+            elif regression == "wrong-expectation":
+                policy["scenarios"][0]["expected_action"] = "simplify"
+            elif regression == "missing-scenario":
+                policy["scenarios"].pop()
+            else:
+                raise AssertionError(f"unhandled regression fixture: {regression}")
         policy_path.write_text(json.dumps(content), encoding="utf-8")
     store = ConfigActivationStore(root)
 
