@@ -20,6 +20,11 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
 - V5 organization configuration packages live in the private, secret-free
   `NichUK/agentic-mesh-config` repository and mount at `/mesh/config`; the
   runtime repository stores only its external reference and mount contract.
+- V5 resolves exact external package references and dependencies with fixed
+  precedence and project overrides last. Effective configuration records
+  ordered text, merged JSON, canonical content provenance, and one reproducible
+  digest; missing packages, cycles, malformed content, and path escapes fail
+  closed.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
