@@ -11,6 +11,8 @@ import threading
 from typing import Callable, Iterator, Mapping, Sequence
 from uuid import uuid4
 
+from agentic_mesh_v5.behavioral_guardrails import BehavioralGuardrailError
+from agentic_mesh_v5.behavioral_guardrails import evaluate_behavioral_guardrails
 from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.package_resolver import ResolvedConfiguration
 from agentic_mesh_v5.package_resolver import calculate_configuration_digest
@@ -155,6 +157,12 @@ class ConfigActivationStore:
     ) -> ConfigRelease:
         actor = self._actor(actor)
         resolved = self.validate_draft(references)
+        try:
+            evaluate_behavioral_guardrails(resolved)
+        except BehavioralGuardrailError as exc:
+            raise ConfigActivationError(
+                f"behavioral promotion check failed: {exc}"
+            ) from exc
         release = ConfigRelease(
             digest=resolved.digest,
             created_at=self._timestamp(),
