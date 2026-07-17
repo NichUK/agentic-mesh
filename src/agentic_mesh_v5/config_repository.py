@@ -23,13 +23,21 @@ def load_config_repository(path: Path) -> ConfigRepository:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ConfigRepositoryError(f"invalid configuration repository record: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ConfigRepositoryError("configuration repository record must be a JSON object")
     required = {"repository_url", "default_ref", "mount_path", "secret_resolution"}
     missing = sorted(required - payload.keys())
     if missing:
         raise ConfigRepositoryError(f"missing configuration repository fields: {missing}")
     repository_url = str(payload["repository_url"])
     parsed = urlparse(repository_url)
-    if parsed.scheme != "https" or not parsed.netloc or not repository_url.endswith(".git"):
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or not repository_url.endswith(".git")
+    ):
         raise ConfigRepositoryError("repository_url must be an HTTPS Git URL")
     default_ref = str(payload["default_ref"]).strip()
     if not default_ref:

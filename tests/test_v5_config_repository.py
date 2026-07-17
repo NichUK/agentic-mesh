@@ -46,3 +46,21 @@ def test_repository_record_rejects_resolved_secret_mode(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigRepositoryError, match="cannot contain resolved secrets"):
         load_config_repository(record)
+
+
+def test_repository_record_must_be_an_object(tmp_path: Path) -> None:
+    record = tmp_path / "repository.json"
+    record.write_text("[]\n", encoding="utf-8")
+
+    with pytest.raises(ConfigRepositoryError, match="must be a JSON object"):
+        load_config_repository(record)
+
+
+def test_repository_url_cannot_embed_credentials(tmp_path: Path) -> None:
+    payload = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    payload["repository_url"] = "https://token@github.com/NichUK/agentic-mesh-config.git"
+    record = tmp_path / "repository.json"
+    record.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ConfigRepositoryError, match="must be an HTTPS Git URL"):
+        load_config_repository(record)
