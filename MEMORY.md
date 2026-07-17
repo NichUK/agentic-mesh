@@ -17,6 +17,9 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
 - Quantauma is retired from active source, configuration, examples, runtime
   terminology, and fixtures. Historical documents remain available; neutral
   `example-project` fixtures preserve isolation coverage.
+- V5 organization configuration packages live in the private, secret-free
+  `NichUK/agentic-mesh-config` repository and mount at `/mesh/config`; the
+  runtime repository stores only its external reference and mount contract.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
