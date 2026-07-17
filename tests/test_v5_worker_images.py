@@ -114,10 +114,12 @@ def test_ux_image_pins_and_exercises_specialist_tools() -> None:
         "page.pdf",
         "pixelmatch",
         'execFileSync("identify"',
-        'execFileSync("compare"',
+        '"compare",',
         'execFileSync("pdfinfo"',
     ):
         assert operation in smoke
+    assert "baselineScreenshot" in smoke
+    assert "candidateScreenshot" in smoke
 
 
 def test_build_context_allowlist_excludes_project_material() -> None:

@@ -9,7 +9,8 @@ import { chromium } from "playwright";
 import { PNG } from "pngjs";
 
 const directory = await mkdtemp(join(tmpdir(), "agentic-mesh-ux-"));
-const screenshot = join(directory, "page.png");
+const baselineScreenshot = join(directory, "page-baseline.png");
+const candidateScreenshot = join(directory, "page-candidate.png");
 const comparison = join(directory, "comparison.png");
 const pdf = join(directory, "page.pdf");
 let browser;
@@ -27,11 +28,12 @@ try {
     </html>
   `);
   const accessibility = await new AxeBuilder({ page }).include("main").analyze();
-  await page.screenshot({ path: screenshot, fullPage: true });
+  await page.screenshot({ path: baselineScreenshot, fullPage: true });
+  await page.screenshot({ path: candidateScreenshot, fullPage: true });
   await page.pdf({ path: pdf, format: "A4" });
 
-  const first = PNG.sync.read(await readFile(screenshot));
-  const second = PNG.sync.read(await readFile(screenshot));
+  const first = PNG.sync.read(await readFile(baselineScreenshot));
+  const second = PNG.sync.read(await readFile(candidateScreenshot));
   const diff = new PNG({ width: first.width, height: first.height });
   const changedPixels = pixelmatch(
     first.data,
@@ -43,10 +45,12 @@ try {
   );
   await writeFile(comparison, PNG.sync.write(diff));
 
-  execFileSync("identify", [screenshot], { stdio: "ignore" });
-  execFileSync("compare", ["-metric", "AE", screenshot, screenshot, "null:"], {
-    stdio: "ignore",
-  });
+  execFileSync("identify", [baselineScreenshot], { stdio: "ignore" });
+  execFileSync(
+    "compare",
+    ["-metric", "AE", baselineScreenshot, candidateScreenshot, "null:"],
+    { stdio: "ignore" },
+  );
   execFileSync("pdfinfo", [pdf], { stdio: "ignore" });
 
   console.log(
@@ -55,7 +59,8 @@ try {
       browser: "chromium",
       accessibilityViolations: accessibility.violations.length,
       changedPixels,
-      screenshotBytes: (await readFile(screenshot)).length,
+      baselineScreenshotBytes: (await readFile(baselineScreenshot)).length,
+      candidateScreenshotBytes: (await readFile(candidateScreenshot)).length,
       pdfBytes: (await readFile(pdf)).length,
     }),
   );
