@@ -144,7 +144,7 @@ CREATE TABLE agentic_mesh_v5.outbox (
 );
 
 CREATE INDEX outbox_pending_idx
-    ON agentic_mesh_v5.outbox(available_at, outbox_id)
+    ON agentic_mesh_v5.outbox(project_id, available_at, outbox_id)
     WHERE dispatched_at IS NULL;
 
 CREATE TABLE agentic_mesh_v5.handoffs (

@@ -107,6 +107,13 @@ def test_clean_database_migrates_and_repeat_is_noop(postgres_database: str) -> N
                 """
             )
         }
+        outbox_index = connection.execute(
+            """
+            SELECT indexdef FROM pg_indexes
+            WHERE schemaname = 'agentic_mesh_v5'
+              AND indexname = 'outbox_pending_idx'
+            """
+        ).fetchone()[0]
     assert {
         "projects",
         "roles",
@@ -126,6 +133,7 @@ def test_clean_database_migrates_and_repeat_is_noop(postgres_database: str) -> N
         "audit_records",
         "schema_migrations",
     }.issubset(tables)
+    assert "(project_id, available_at, outbox_id)" in outbox_index
 
 
 def test_ordered_upgrade_and_checksum_drift(postgres_database: str) -> None:
