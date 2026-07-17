@@ -92,3 +92,35 @@ LABEL org.opencontainers.image.title="Agentic Mesh V5 operations worker" \
       io.agentic-mesh.capabilities="container.manage,filesystem.read,network.diagnose,source-control.git,structured-output"
 RUN agentic-mesh-worker-healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["agentic-mesh-worker-healthcheck"]
+
+FROM v5-worker-base AS v5-ux-worker
+
+ARG PLAYWRIGHT_VERSION=1.61.1
+ARG AXE_PLAYWRIGHT_VERSION=4.12.1
+ARG PIXELMATCH_VERSION=7.2.0
+ARG PNGJS_VERSION=7.0.0
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN --mount=type=cache,target=/root/.npm \
+    mkdir -p /opt/agentic-mesh/ux-tools \
+    && npm install --prefix /opt/agentic-mesh/ux-tools --omit=dev --no-audit --no-fund \
+        "@axe-core/playwright@${AXE_PLAYWRIGHT_VERSION}" \
+        "pixelmatch@${PIXELMATCH_VERSION}" \
+        "playwright@${PLAYWRIGHT_VERSION}" \
+        "pngjs@${PNGJS_VERSION}" \
+    && /opt/agentic-mesh/ux-tools/node_modules/.bin/playwright install --with-deps chromium \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends imagemagick poppler-utils \
+    && ln -s /opt/agentic-mesh/ux-tools/node_modules/.bin/playwright /usr/local/bin/playwright \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /root/.cache
+COPY ux-smoke-test.mjs /opt/agentic-mesh/ux-tools/ux-smoke-test.mjs
+RUN chmod 0755 /opt/agentic-mesh/ux-tools/ux-smoke-test.mjs \
+    && ln -s /opt/agentic-mesh/ux-tools/ux-smoke-test.mjs /usr/local/bin/agentic-mesh-ux-smoke
+COPY manifests/ux.json /opt/agentic-mesh/image-manifest.json
+ENV AGENTIC_MESH_TOOL_PROFILE_ID=ux
+LABEL org.opencontainers.image.title="Agentic Mesh V5 UX worker" \
+      io.agentic-mesh.profile="ux" \
+      io.agentic-mesh.capabilities="accessibility.test,browser.test,filesystem.read,filesystem.write,image.inspect,pdf.inspect,structured-output,visual.compare"
+RUN agentic-mesh-worker-healthcheck \
+    && agentic-mesh-ux-smoke
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["agentic-mesh-worker-healthcheck"]

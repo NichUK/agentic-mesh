@@ -1,5 +1,6 @@
 *
 !Dockerfile
 !worker-healthcheck.py
+!ux-smoke-test.mjs
 !manifests/
 !manifests/*.json

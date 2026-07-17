@@ -25,3 +25,8 @@ services:
     build:
       <<: *worker-build
       target: v5-operations-worker
+  ux:
+    image: agentic-mesh/worker-ux:0.1.0
+    build:
+      <<: *worker-build
+      target: v5-ux-worker
