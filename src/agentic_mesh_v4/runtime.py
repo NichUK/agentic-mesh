@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 from types import SimpleNamespace
 from typing import Any
 from typing import Callable
@@ -70,6 +71,7 @@ class AgentTerminalInterruption(RuntimeError):
 
 TERMINAL_INTERRUPTION_MAX_ATTEMPTS = 3
 COMPLETION_REPAIR_MAX_ATTEMPTS = 1
+DETACHED_CONTROL_CHECK_INTERVAL_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -1602,6 +1604,7 @@ class V4Runtime:
         message_id: str,
     ) -> str:
         reply_parts: list[str] = []
+        next_control_check = monotonic() + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
         while True:
             try:
                 event = client.receive_event()
@@ -1618,60 +1621,13 @@ class V4Runtime:
                         turn_id=resolved_turn_id,
                         message_id=message_id,
                     )
-                    control = evaluate_detached_turn_control(
-                        db=self.db,
+                    if self._release_detached_turn_if_authorized(
+                        client=client,
                         role_instance_id=role_instance_id,
-                        message_id=message_id,
+                        thread_id=thread_id,
                         turn_id=resolved_turn_id,
-                    )
-                    if control.requested and not control.authorized:
-                        self.db.record_agent_event(
-                            role_instance_id=role_instance_id,
-                            event_type="turn/detachedControlRejected",
-                            content=control.reason,
-                            payload={
-                                "reason": control.reason,
-                                "handoff_id": control.handoff_id,
-                                "target_message_id": control.target_message_id,
-                            },
-                            thread_id=thread_id,
-                            turn_id=resolved_turn_id,
-                            message_id=message_id,
-                        )
-                    if control.authorized and resolved_turn_id:
-                        try:
-                            client.interrupt_turn(thread_id=thread_id, turn_id=resolved_turn_id)
-                        except Exception as interrupt_exc:
-                            self.db.record_agent_event(
-                                role_instance_id=role_instance_id,
-                                event_type="turn/detachedControlRejected",
-                                content="interrupt_failed",
-                                payload={
-                                    "reason": "interrupt_failed",
-                                    "handoff_id": control.handoff_id,
-                                    "target_message_id": control.target_message_id,
-                                    "error": str(interrupt_exc),
-                                },
-                                thread_id=thread_id,
-                                turn_id=resolved_turn_id,
-                                message_id=message_id,
-                            )
-                            raise AgentTurnStillRunning(
-                                f"detached control could not interrupt turn {resolved_turn_id}; leaving it active"
-                            ) from interrupt_exc
-                        self.db.record_agent_event(
-                            role_instance_id=role_instance_id,
-                            event_type="turn/detachedControlReleased",
-                            content=control.reason,
-                            payload={
-                                "reason": control.reason,
-                                "handoff_id": control.handoff_id,
-                                "target_message_id": control.target_message_id,
-                            },
-                            thread_id=thread_id,
-                            turn_id=resolved_turn_id,
-                            message_id=message_id,
-                        )
+                        message_id=message_id,
+                    ):
                         return "".join(reply_parts)
                     raise AgentTurnStillRunning(
                         f"no app-server event before read timeout; leaving turn {resolved_turn_id or '<unknown>'} active"
@@ -1713,6 +1669,84 @@ class V4Runtime:
                 return "".join(reply_parts)
             if method in {"turn/failed", "turn/cancelled", "turn/canceled", "thread/closed"}:
                 raise AgentTerminalInterruption(method)
+            current_time = monotonic()
+            if current_time >= next_control_check:
+                next_control_check = current_time + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
+                resolved_turn_id = turn_id or self._active_turn_id(role_instance_id)
+                if self._release_detached_turn_if_authorized(
+                    client=client,
+                    role_instance_id=role_instance_id,
+                    thread_id=thread_id,
+                    turn_id=resolved_turn_id,
+                    message_id=message_id,
+                ):
+                    return "".join(reply_parts)
+
+    def _release_detached_turn_if_authorized(
+        self,
+        *,
+        client: CodexAppServerClient,
+        role_instance_id: str,
+        thread_id: str,
+        turn_id: str | None,
+        message_id: str,
+    ) -> bool:
+        control = evaluate_detached_turn_control(
+            db=self.db,
+            role_instance_id=role_instance_id,
+            message_id=message_id,
+            turn_id=turn_id,
+        )
+        if control.requested and not control.authorized:
+            self.db.record_agent_event(
+                role_instance_id=role_instance_id,
+                event_type="turn/detachedControlRejected",
+                content=control.reason,
+                payload={
+                    "reason": control.reason,
+                    "handoff_id": control.handoff_id,
+                    "target_message_id": control.target_message_id,
+                },
+                thread_id=thread_id,
+                turn_id=turn_id,
+                message_id=message_id,
+            )
+        if not control.authorized or not turn_id:
+            return False
+        try:
+            client.interrupt_turn(thread_id=thread_id, turn_id=turn_id)
+        except Exception as interrupt_exc:
+            self.db.record_agent_event(
+                role_instance_id=role_instance_id,
+                event_type="turn/detachedControlRejected",
+                content="interrupt_failed",
+                payload={
+                    "reason": "interrupt_failed",
+                    "handoff_id": control.handoff_id,
+                    "target_message_id": control.target_message_id,
+                    "error": str(interrupt_exc),
+                },
+                thread_id=thread_id,
+                turn_id=turn_id,
+                message_id=message_id,
+            )
+            raise AgentTurnStillRunning(
+                f"detached control could not interrupt turn {turn_id}; leaving it active"
+            ) from interrupt_exc
+        self.db.record_agent_event(
+            role_instance_id=role_instance_id,
+            event_type="turn/detachedControlReleased",
+            content=control.reason,
+            payload={
+                "reason": control.reason,
+                "handoff_id": control.handoff_id,
+                "target_message_id": control.target_message_id,
+            },
+            thread_id=thread_id,
+            turn_id=turn_id,
+            message_id=message_id,
+        )
+        return True
 
 
 def _event_content(method: str, params: dict[str, object]) -> str:
