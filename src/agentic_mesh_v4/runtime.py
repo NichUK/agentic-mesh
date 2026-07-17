@@ -1604,6 +1604,7 @@ class V4Runtime:
         message_id: str,
     ) -> str:
         reply_parts: list[str] = []
+        reported_control_rejections: set[tuple[str, str | None, str | None]] = set()
         next_control_check = monotonic() + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
         while True:
             try:
@@ -1627,6 +1628,7 @@ class V4Runtime:
                         thread_id=thread_id,
                         turn_id=resolved_turn_id,
                         message_id=message_id,
+                        reported_rejections=reported_control_rejections,
                     ):
                         return "".join(reply_parts)
                     raise AgentTurnStillRunning(
@@ -1679,6 +1681,7 @@ class V4Runtime:
                     thread_id=thread_id,
                     turn_id=resolved_turn_id,
                     message_id=message_id,
+                    reported_rejections=reported_control_rejections,
                 ):
                     return "".join(reply_parts)
 
@@ -1690,6 +1693,7 @@ class V4Runtime:
         thread_id: str,
         turn_id: str | None,
         message_id: str,
+        reported_rejections: set[tuple[str, str | None, str | None]],
     ) -> bool:
         control = evaluate_detached_turn_control(
             db=self.db,
@@ -1697,7 +1701,9 @@ class V4Runtime:
             message_id=message_id,
             turn_id=turn_id,
         )
-        if control.requested and not control.authorized:
+        rejection = (control.reason, control.handoff_id, control.target_message_id)
+        if control.requested and not control.authorized and rejection not in reported_rejections:
+            reported_rejections.add(rejection)
             self.db.record_agent_event(
                 role_instance_id=role_instance_id,
                 event_type="turn/detachedControlRejected",

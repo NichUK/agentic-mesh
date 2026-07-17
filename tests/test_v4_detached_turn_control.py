@@ -357,7 +357,7 @@ def test_continuous_events_keep_unsafe_control_fail_closed(control_db, monkeypat
 
     assert not any(item.get("method") == "turn/interrupt" for item in transport.sent)
     rejected = [event for event in control_db.events if event["event_type"] == "turn/detachedControlRejected"]
-    assert rejected
+    assert len(rejected) == 1
     assert {event["content"] for event in rejected} == {reason}
 
 
