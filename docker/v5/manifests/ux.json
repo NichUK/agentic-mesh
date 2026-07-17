@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "profile_id": "ux",
+  "image": "agentic-mesh/worker-ux:0.1.0",
+  "target": "v5-ux-worker",
+  "tool_profile_reference": "tool-profile/ux@0.1.0",
+  "capabilities": [
+    "accessibility.test",
+    "browser.test",
+    "filesystem.read",
+    "filesystem.write",
+    "image.inspect",
+    "pdf.inspect",
+    "structured-output",
+    "visual.compare"
+  ],
+  "required_commands": [
+    "agentic-mesh-ux-smoke",
+    "codex",
+    "compare",
+    "convert",
+    "git",
+    "identify",
+    "node",
+    "npm",
+    "pdfinfo",
+    "pdftoppm",
+    "playwright",
+    "python",
+    "rg"
+  ]
+}

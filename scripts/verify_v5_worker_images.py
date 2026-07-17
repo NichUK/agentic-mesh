@@ -16,7 +16,7 @@ from agentic_mesh_v5.tool_profiles import ToolProfileError  # noqa: E402
 from agentic_mesh_v5.tool_profiles import ToolProfileRegistry  # noqa: E402
 
 
-PROFILE_IDS = ("general", "development", "qa", "operations")
+PROFILE_IDS = ("general", "development", "qa", "operations", "ux")
 MANIFEST_FIELDS = {
     "schema_version",
     "profile_id",
@@ -134,6 +134,7 @@ def validate_worker_images(root: Path, config_root: Path | None = None) -> list[
         "*",
         "!Dockerfile",
         "!worker-healthcheck.py",
+        "!ux-smoke-test.mjs",
         "!manifests/",
         "!manifests/*.json",
     ]

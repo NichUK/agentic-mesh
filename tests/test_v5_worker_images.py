@@ -78,24 +78,46 @@ def _synthetic_config_repository(root: Path) -> Path:
     return root
 
 
-def test_core_worker_image_contract_is_valid() -> None:
+def test_worker_image_contract_is_valid() -> None:
     assert VERIFIER.validate_worker_images(ROOT) == []
 
 
-def test_core_worker_images_match_external_tool_profiles(tmp_path: Path) -> None:
+def test_worker_images_match_external_tool_profiles(tmp_path: Path) -> None:
     config_root = _synthetic_config_repository(tmp_path / "config")
 
     assert VERIFIER.validate_worker_images(ROOT, config_root=config_root) == []
 
 
-def test_every_core_image_has_one_shared_base_and_exact_build_inputs() -> None:
+def test_every_worker_image_has_one_shared_base_and_exact_build_inputs() -> None:
     dockerfile = (ROOT / "docker" / "v5" / "Dockerfile").read_text(encoding="utf-8")
 
-    assert dockerfile.count("FROM v5-worker-base AS v5-") == 4
+    assert dockerfile.count("FROM v5-worker-base AS v5-") == 5
     assert "python:3.12.11-slim-bookworm@sha256:" in dockerfile
     assert "ARG CODEX_VERSION=0.144.3" in dockerfile
     assert "ARG SOURCE_DATE_EPOCH=1751328000" in dockerfile
     assert "latest" not in dockerfile.casefold()
+
+
+def test_ux_image_pins_and_exercises_specialist_tools() -> None:
+    dockerfile = (ROOT / "docker" / "v5" / "Dockerfile").read_text(encoding="utf-8")
+    smoke = (ROOT / "docker" / "v5" / "ux-smoke-test.mjs").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ARG PLAYWRIGHT_VERSION=1.61.1" in dockerfile
+    assert "ARG AXE_PLAYWRIGHT_VERSION=4.12.1" in dockerfile
+    assert "playwright install --with-deps chromium" in dockerfile
+    assert "agentic-mesh-ux-smoke" in dockerfile
+    for operation in (
+        "AxeBuilder",
+        "page.screenshot",
+        "page.pdf",
+        "pixelmatch",
+        'execFileSync("identify"',
+        'execFileSync("compare"',
+        'execFileSync("pdfinfo"',
+    ):
+        assert operation in smoke
 
 
 def test_build_context_allowlist_excludes_project_material() -> None:
