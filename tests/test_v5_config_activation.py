@@ -83,6 +83,11 @@ def test_release_is_immutable_and_idempotent(tmp_path: Path) -> None:
     release_path = store.releases_dir / f"{first.digest}.json"
     assert store.get_release(first.digest) == first
     payload = json.loads(release_path.read_text(encoding="utf-8"))
+    payload["created_by"] = " "
+    release_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ConfigActivationError, match="invalid release record"):
+        store.get_release(first.digest)
+    payload["created_by"] = "alice"
     payload["resolved"]["settings"]["workers"] = 99
     release_path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ConfigActivationError, match="invalid release record"):
@@ -180,6 +185,28 @@ def test_failure_before_atomic_replace_preserves_previous_state(
         for path in store.activation_path.parent.iterdir()
         if path.name.endswith(".tmp")
     ]
+
+
+def test_unsupported_directory_fsync_does_not_report_committed_write_as_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "state.json"
+    calls = 0
+
+    def fsync(file_descriptor: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("directory fsync unsupported")
+
+    monkeypatch.setattr(config_activation.os, "fsync", fsync)
+    monkeypatch.setattr(config_activation.os, "open", lambda *args: 12345)
+    monkeypatch.setattr(config_activation.os, "close", lambda descriptor: None)
+
+    ConfigActivationStore._atomic_write(target, {"committed": True})
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"committed": True}
+    assert calls == 2
 
 
 def test_release_cli_creates_activates_and_reports_state(

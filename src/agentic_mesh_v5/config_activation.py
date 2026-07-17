@@ -299,7 +299,9 @@ class ConfigActivationStore:
             or not all(isinstance(item, str) for item in packages)
             or packages != resolved.get("packages")
             or not isinstance(payload["created_at"], str)
+            or not payload["created_at"].strip()
             or not isinstance(payload["created_by"], str)
+            or not payload["created_by"].strip()
         ):
             raise ConfigActivationError(f"invalid release record: {path.name}")
         return ConfigRelease(
@@ -396,9 +398,15 @@ class ConfigActivationStore:
                 directory = None
             if directory is not None:
                 try:
-                    os.fsync(directory)
+                    try:
+                        os.fsync(directory)
+                    except OSError:
+                        pass
                 finally:
-                    os.close(directory)
+                    try:
+                        os.close(directory)
+                    except OSError:
+                        pass
         except OSError as exc:
             raise ConfigActivationError(f"atomic write failed for {path.name}: {exc}") from exc
         finally:
