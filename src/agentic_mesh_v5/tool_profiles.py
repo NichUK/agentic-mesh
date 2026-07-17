@@ -11,6 +11,7 @@ from agentic_mesh_v5.package_resolver import resolve_packages
 
 
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9.-]*$")
+PACKAGE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
 PROFILE_FIELDS = {
     "schema_version",
     "profile_id",
@@ -127,6 +128,13 @@ def _identifier(value: object, label: str) -> str:
     return result
 
 
+def _package_id(value: object, label: str) -> str:
+    result = _string(value, label)
+    if PACKAGE_ID.fullmatch(result) is None:
+        raise ToolProfileError(f"{label} is invalid")
+    return result
+
+
 def _positive_integer(value: object, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ToolProfileError(f"{label} must be a positive integer")
@@ -154,15 +162,20 @@ def _parse_profile(reference: str, digest: str, value: object) -> ToolProfile:
     package_reference = PackageReference.parse(reference)
     profile = _object(value, "tool_profile")
     _fields(profile, PROFILE_FIELDS, "tool_profile")
-    profile_id = _identifier(profile.get("profile_id"), "profile_id")
+    profile_id = _package_id(profile.get("profile_id"), "profile_id")
     if profile.get("schema_version") != 1 or profile_id != package_reference.package_id:
         raise ToolProfileError("tool-profile identity does not match its package reference")
 
     image_value = _object(profile.get("image"), "image")
     _fields(image_value, {"repository", "tag", "platform"}, "image")
     repository = _string(image_value.get("repository"), "image.repository")
-    if "@" in repository or "://" in repository:
-        raise ToolProfileError("image.repository must not embed credentials or a URL scheme")
+    if "://" in repository:
+        raise ToolProfileError("image.repository must not include a URL scheme")
+    if "@" in repository:
+        raise ToolProfileError(
+            "image.repository must not contain @; digest references are unsupported "
+            "because image.tag is separate"
+        )
     image = ImageSpec(
         repository,
         _string(image_value.get("tag"), "image.tag"),

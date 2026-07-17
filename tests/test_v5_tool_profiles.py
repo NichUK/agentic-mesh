@@ -142,6 +142,10 @@ def test_synthetic_finance_category_uses_the_same_registry(tmp_path: Path) -> No
             "identity does not match",
         ),
         (
+            lambda profile: profile.update(profile_id="general.v2"),
+            "profile_id is invalid",
+        ),
+        (
             lambda profile: profile["capabilities"].append(
                 {"id": "filesystem.read", "required": True}
             ),
@@ -153,7 +157,7 @@ def test_synthetic_finance_category_uses_the_same_registry(tmp_path: Path) -> No
         ),
         (
             lambda profile: profile["image"].update(repository="user:secret@registry/image"),
-            "must not embed credentials",
+            "must not contain @",
         ),
         (
             lambda profile: profile["health"].update(timeout_seconds=31),
