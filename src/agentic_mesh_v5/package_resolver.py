@@ -30,6 +30,14 @@ class PackageResolutionError(ValueError):
     pass
 
 
+def calculate_configuration_digest(payload: Mapping[str, object]) -> str:
+    unsigned = {key: value for key, value in payload.items() if key != "digest"}
+    canonical = json.dumps(
+        unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class PackageReference:
     kind: str
@@ -290,8 +298,7 @@ def resolve_packages(root: Path, references: Sequence[str]) -> ResolvedConfigura
         "text_sections": [section.to_dict() for section in text_sections],
         "provenance": [source.to_dict() for source in provenance],
     }
-    canonical = json.dumps(unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    digest = calculate_configuration_digest(unsigned)
     return ResolvedConfiguration(
         digest=digest,
         packages=tuple(unsigned["packages"]),

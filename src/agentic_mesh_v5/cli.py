@@ -7,6 +7,8 @@ from typing import Sequence
 
 from agentic_mesh_v5 import __version__
 from agentic_mesh_v5.boundary import find_runtime_boundary_violations
+from agentic_mesh_v5.config_activation import ConfigActivationError
+from agentic_mesh_v5.config_activation import ConfigActivationStore
 from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.package_resolver import resolve_packages
 
@@ -29,6 +31,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resolve.add_argument("--config-root", type=Path, required=True)
     resolve.add_argument("--package", action="append", required=True, dest="packages")
+    release_create = subparsers.add_parser(
+        "release-create", help="validate configuration and create an immutable release"
+    )
+    release_create.add_argument("--config-root", type=Path, required=True)
+    release_create.add_argument("--package", action="append", required=True, dest="packages")
+    release_create.add_argument("--actor", required=True)
+    release_activate = subparsers.add_parser(
+        "release-activate", help="atomically activate an immutable configuration release"
+    )
+    release_activate.add_argument("--config-root", type=Path, required=True)
+    release_activate.add_argument("--digest", required=True)
+    release_activate.add_argument("--actor", required=True)
+    release_activate.add_argument("--reason", default="")
+    expectation = release_activate.add_mutually_exclusive_group()
+    expectation.add_argument("--expected-active")
+    expectation.add_argument("--expect-empty", action="store_true")
+    release_rollback = subparsers.add_parser(
+        "release-rollback", help="roll back to an earlier immutable release"
+    )
+    release_rollback.add_argument("--config-root", type=Path, required=True)
+    release_rollback.add_argument("--digest", required=True)
+    release_rollback.add_argument("--actor", required=True)
+    release_rollback.add_argument("--reason", required=True)
+    release_status = subparsers.add_parser(
+        "release-status", help="show the active configuration release and audit history"
+    )
+    release_status.add_argument("--config-root", type=Path, required=True)
     return parser
 
 
@@ -64,6 +93,47 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         _write(
             {"runtime": "agentic-mesh-v5", "status": "resolved", **resolved.to_dict()},
+            as_json=args.json,
+        )
+        return 0
+
+    if args.command.startswith("release-"):
+        try:
+            store = ConfigActivationStore(args.config_root)
+            if args.command == "release-create":
+                result = store.create_release(
+                    args.packages, actor=args.actor
+                ).to_dict()
+                status = "release-created"
+            elif args.command == "release-activate":
+                options: dict[str, object] = {}
+                if args.expect_empty:
+                    options["expected_active"] = None
+                elif args.expected_active is not None:
+                    options["expected_active"] = args.expected_active
+                result = store.activate(
+                    args.digest,
+                    actor=args.actor,
+                    reason=args.reason,
+                    **options,
+                ).to_dict()
+                status = "release-active"
+            elif args.command == "release-rollback":
+                result = store.rollback(
+                    args.digest, actor=args.actor, reason=args.reason
+                ).to_dict()
+                status = "release-rolled-back"
+            else:
+                result = store.get_state().to_dict()
+                status = "release-status"
+        except ConfigActivationError as exc:
+            _write(
+                {"runtime": "agentic-mesh-v5", "status": "rejected", "error": str(exc)},
+                as_json=args.json,
+            )
+            return 2
+        _write(
+            {"runtime": "agentic-mesh-v5", "status": status, **result},
             as_json=args.json,
         )
         return 0

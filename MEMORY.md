@@ -25,6 +25,11 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   ordered text, merged JSON, canonical content provenance, and one reproducible
   digest; missing packages, cycles, malformed content, and path escapes fail
   closed.
+- Validated V5 configuration can be stored as a digest-addressed immutable
+  release in the external repository. One atomically replaced, Git-visible
+  activation document keeps the active digest and audit history together;
+  expected-current checks serialize competing promotions and rollback only
+  repoints to an existing release.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

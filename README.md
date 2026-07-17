@@ -17,6 +17,8 @@ bootstrap package can be checked without starting V4:
 python -m agentic_mesh_v5 --json boundary-check
 python -m agentic_mesh_v5 --json status
 python -m agentic_mesh_v5 --json resolve-config --config-root C:\Dev\agentic-mesh-config --package project-override/example-project@0.1.0
+python -m agentic_mesh_v5 --json release-create --config-root C:\Dev\agentic-mesh-config --package project-override/example-project@0.1.0 --actor sponsor
+python -m agentic_mesh_v5 --json release-status --config-root C:\Dev\agentic-mesh-config
 ```
 
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
