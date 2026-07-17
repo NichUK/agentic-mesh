@@ -30,6 +30,17 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   activation document keeps the active digest and audit history together;
   expected-current checks serialize competing promotions and rollback only
   repoints to an existing release.
+- External SDLC role/flow packages, simplicity and ambiguity guardrails, and
+  the extensible tool-profile registry are active in the organization config
+  repository. General, development, QA, operations, UX, and independently
+  launched recovery images are project-neutral and contain no persona, project
+  state, memory, prompt, or credential.
+- V5 durable control-plane state uses the dedicated `agentic_mesh_v5` Postgres
+  schema. Packaged, checksum-protected SQL migrations run under one transaction
+  and advisory lock; composite project-qualified foreign keys prevent
+  cross-project references. `agentic-mesh-v5 database-migrate` and
+  `database-status` read the database URL only from
+  `AGENTIC_MESH_V5_DATABASE_URL`.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
@@ -131,13 +142,16 @@ Important V3 decisions:
 
 ## Current State
 
-Agentic Mesh is active on the V4 remote-control runtime. V2 and V3 runtime
-packages, legacy console scripts, installer scripts, and tests have been
-removed from the active source tree. New runtime work must land under:
+Agentic Mesh is active on the V4 remote-control runtime while the ordered V5
+backlog is implemented as a clean replacement. V2 and V3 runtime packages,
+legacy console scripts, installer scripts, and tests have been removed from the
+active source tree. Operational V4 fixes and new V5 work land separately under:
 
 ```text
 src/agentic_mesh_v4
 tests/test_v4_*.py
+src/agentic_mesh_v5
+tests/test_v5_*.py
 ```
 
 The active console scripts are:
@@ -145,6 +159,7 @@ The active console scripts are:
 ```text
 agentic-mesh = agentic_mesh_v4.cli:main
 agentic-mesh-v4 = agentic_mesh_v4.cli:main
+agentic-mesh-v5 = agentic_mesh_v5.cli:main
 ```
 
 Use feature branches from `develop`, then promote through PRs with Copilot
