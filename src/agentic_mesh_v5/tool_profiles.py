@@ -312,10 +312,10 @@ def _parse_profile(reference: str, digest: str, value: object) -> ToolProfile:
             "resources.ephemeral_storage_mb",
         ),
     )
-    launch_value = profile.get("launch_policy")
-    if launch_value is None:
+    if "launch_policy" not in profile:
         launch_policy = LaunchPolicy(True, ())
     else:
+        launch_value = profile["launch_policy"]
         launch = _object(launch_value, "launch_policy")
         _fields(
             launch,

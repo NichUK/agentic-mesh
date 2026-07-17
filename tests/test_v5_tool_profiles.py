@@ -229,6 +229,10 @@ def test_restricted_profile_only_allows_its_supervisor(tmp_path: Path) -> None:
             lambda profile: profile["resources"].update(cpu_millis=True),
             "cpu_millis must be a positive integer",
         ),
+        (
+            lambda profile: profile.update(launch_policy=None),
+            "launch_policy must be an object",
+        ),
     ],
 )
 def test_invalid_profiles_are_rejected(
