@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "profile_id": "qa",
+  "image": "agentic-mesh/worker-qa:0.1.0",
+  "target": "v5-qa-worker",
+  "tool_profile_reference": "tool-profile/qa@0.1.0",
+  "capabilities": ["filesystem.read", "shell.lint", "structured-output", "test.execute"],
+  "required_commands": ["codex", "git", "node", "npm", "pytest", "python", "rg", "shellcheck"]
+}

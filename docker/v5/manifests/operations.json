@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "profile_id": "operations",
+  "image": "agentic-mesh/worker-operations:0.1.0",
+  "target": "v5-operations-worker",
+  "tool_profile_reference": "tool-profile/operations@0.1.0",
+  "capabilities": ["container.manage", "filesystem.read", "network.diagnose", "source-control.git", "structured-output"],
+  "required_commands": ["codex", "docker", "docker-compose", "gh", "git", "ip", "lsof", "nc", "python", "rg"]
+}
