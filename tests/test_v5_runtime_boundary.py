@@ -9,6 +9,8 @@ import tomllib
 
 import pytest
 
+from agentic_mesh_v5 import __version__
+from agentic_mesh_v5.boundary import InvalidPackageRootError
 from agentic_mesh_v5.boundary import RuntimeBoundaryError
 from agentic_mesh_v5.boundary import find_runtime_boundary_violations
 from agentic_mesh_v5.boundary import require_clean_runtime_boundary
@@ -59,7 +61,7 @@ def test_v5_cli_starts_independently() -> None:
     assert json.loads(result.stdout) == {
         "runtime": "agentic-mesh-v5",
         "status": "bootstrap-ready",
-        "version": "5.0.0.dev0",
+        "version": __version__,
     }
 
 
@@ -94,6 +96,9 @@ def test_v5_boundary_cli_rejects_invalid_package_root(
         "runtime": "agentic-mesh-v5",
         "status": "error",
     }
+
+    with pytest.raises(InvalidPackageRootError, match="existing directory"):
+        find_runtime_boundary_violations(package_root)
 
 
 def test_current_v5_source_has_a_clean_runtime_boundary() -> None:

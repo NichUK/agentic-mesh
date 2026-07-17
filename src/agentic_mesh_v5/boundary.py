@@ -28,6 +28,10 @@ class RuntimeBoundaryError(RuntimeError):
         super().__init__(f"V5 runtime boundary violation: {details}")
 
 
+class InvalidPackageRootError(ValueError):
+    pass
+
+
 def _is_forbidden(module: str) -> bool:
     return any(
         module == root or module.startswith(f"{root}.")
@@ -39,6 +43,10 @@ def find_runtime_boundary_violations(
     package_root: Path | None = None,
 ) -> tuple[BoundaryViolation, ...]:
     root = package_root or Path(__file__).resolve().parent
+    if not root.exists() or not root.is_dir():
+        raise InvalidPackageRootError(
+            f"package root must be an existing directory: {root}"
+        )
     violations: list[BoundaryViolation] = []
 
     for path in sorted(root.rglob("*.py")):
