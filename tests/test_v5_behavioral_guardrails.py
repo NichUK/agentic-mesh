@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agentic_mesh_v5.behavioral_guardrails import BehavioralGuardrailError
 from agentic_mesh_v5.behavioral_guardrails import decide_scenario_action
 from agentic_mesh_v5.behavioral_guardrails import evaluate_behavioral_guardrails
 from agentic_mesh_v5.config_activation import ConfigActivationError
@@ -163,6 +164,22 @@ def _repository(tmp_path: Path) -> tuple[Path, Path, Path]:
 def test_scenario_decisions(facts: object, expected: str) -> None:
     assert isinstance(facts, dict)
     assert decide_scenario_action(facts) == expected
+
+
+def test_inconsistent_avoidable_component_facts_are_rejected() -> None:
+    facts = _scenario(
+        "over-engineered",
+        "simplify",
+        mature_reuse_available=False,
+        avoidable_custom_components=1,
+    )["facts"]
+    assert isinstance(facts, dict)
+
+    with pytest.raises(
+        BehavioralGuardrailError,
+        match="avoidable custom components require mature_reuse_available",
+    ):
+        decide_scenario_action(facts)
 
 
 def test_valid_guardrails_allow_an_immutable_role_flow_release(tmp_path: Path) -> None:

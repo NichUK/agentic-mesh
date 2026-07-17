@@ -82,11 +82,13 @@ def decide_scenario_action(facts: Mapping[str, object]) -> str:
         raise BehavioralGuardrailError(
             "proposed_handoffs cannot be lower than necessary_handoffs"
         )
+    if custom_components > 0 and not mature_reuse_available:
+        raise BehavioralGuardrailError(
+            "avoidable custom components require mature_reuse_available"
+        )
     if material_ambiguity:
         return "ask_sponsor"
-    if (mature_reuse_available and custom_components > 0) or (
-        proposed_handoffs > necessary_handoffs
-    ):
+    if custom_components > 0 or proposed_handoffs > necessary_handoffs:
         return "simplify"
     return "proceed"
 
