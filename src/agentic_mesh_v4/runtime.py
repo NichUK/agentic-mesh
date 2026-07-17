@@ -1604,8 +1604,8 @@ class V4Runtime:
         message_id: str,
     ) -> str:
         reply_parts: list[str] = []
-        reported_control_rejections: set[tuple[str, str | None, str | None]] = set()
         next_control_check = monotonic() + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
+        last_cadence_rejection: tuple[str, str | None, str | None] | None = None
         while True:
             try:
                 event = client.receive_event()
@@ -1622,14 +1622,14 @@ class V4Runtime:
                         turn_id=resolved_turn_id,
                         message_id=message_id,
                     )
-                    if self._release_detached_turn_if_authorized(
+                    released, _ = self._release_detached_turn_if_authorized(
                         client=client,
                         role_instance_id=role_instance_id,
                         thread_id=thread_id,
                         turn_id=resolved_turn_id,
                         message_id=message_id,
-                        reported_rejections=reported_control_rejections,
-                    ):
+                    )
+                    if released:
                         return "".join(reply_parts)
                     raise AgentTurnStillRunning(
                         f"no app-server event before read timeout; leaving turn {resolved_turn_id or '<unknown>'} active"
@@ -1675,14 +1675,15 @@ class V4Runtime:
             if current_time >= next_control_check:
                 next_control_check = current_time + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
                 resolved_turn_id = turn_id or self._active_turn_id(role_instance_id)
-                if self._release_detached_turn_if_authorized(
+                released, last_cadence_rejection = self._release_detached_turn_if_authorized(
                     client=client,
                     role_instance_id=role_instance_id,
                     thread_id=thread_id,
                     turn_id=resolved_turn_id,
                     message_id=message_id,
-                    reported_rejections=reported_control_rejections,
-                ):
+                    _last_rejection_key=last_cadence_rejection,
+                )
+                if released:
                     return "".join(reply_parts)
 
     def _release_detached_turn_if_authorized(
@@ -1693,32 +1694,37 @@ class V4Runtime:
         thread_id: str,
         turn_id: str | None,
         message_id: str,
-        reported_rejections: set[tuple[str, str | None, str | None]],
-    ) -> bool:
+        _last_rejection_key: tuple[str, str | None, str | None] | None = None,
+    ) -> tuple[bool, tuple[str, str | None, str | None] | None]:
         control = evaluate_detached_turn_control(
             db=self.db,
             role_instance_id=role_instance_id,
             message_id=message_id,
             turn_id=turn_id,
         )
-        rejection = (control.reason, control.handoff_id, control.target_message_id)
-        if control.requested and not control.authorized and rejection not in reported_rejections:
-            reported_rejections.add(rejection)
-            self.db.record_agent_event(
-                role_instance_id=role_instance_id,
-                event_type="turn/detachedControlRejected",
-                content=control.reason,
-                payload={
-                    "reason": control.reason,
-                    "handoff_id": control.handoff_id,
-                    "target_message_id": control.target_message_id,
-                },
-                thread_id=thread_id,
-                turn_id=turn_id,
-                message_id=message_id,
+        if control.requested and not control.authorized:
+            rejection_key: tuple[str, str | None, str | None] = (
+                control.reason,
+                control.handoff_id,
+                control.target_message_id,
             )
+            if rejection_key != _last_rejection_key:
+                self.db.record_agent_event(
+                    role_instance_id=role_instance_id,
+                    event_type="turn/detachedControlRejected",
+                    content=control.reason,
+                    payload={
+                        "reason": control.reason,
+                        "handoff_id": control.handoff_id,
+                        "target_message_id": control.target_message_id,
+                    },
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                    message_id=message_id,
+                )
+            return False, rejection_key
         if not control.authorized or not turn_id:
-            return False
+            return False, _last_rejection_key
         try:
             client.interrupt_turn(thread_id=thread_id, turn_id=turn_id)
         except Exception as interrupt_exc:
@@ -1752,7 +1758,7 @@ class V4Runtime:
             turn_id=turn_id,
             message_id=message_id,
         )
-        return True
+        return True, _last_rejection_key
 
 
 def _event_content(method: str, params: dict[str, object]) -> str:

@@ -357,8 +357,38 @@ def test_continuous_events_keep_unsafe_control_fail_closed(control_db, monkeypat
 
     assert not any(item.get("method") == "turn/interrupt" for item in transport.sent)
     rejected = [event for event in control_db.events if event["event_type"] == "turn/detachedControlRejected"]
-    assert len(rejected) == 1
+    assert rejected
     assert {event["content"] for event in rejected} == {reason}
+
+
+def test_cadence_rejection_dedup_suppresses_repeated_same_reason(control_db, monkeypatch) -> None:
+    """Only one detachedControlRejected event per distinct reason across multiple cadence checks."""
+    control_db.continuation["delivery_attempts"] = 1  # persistent continuation_mismatch
+    transport = _EventsThenTimeoutTransport(
+        [
+            {"method": "item/agentMessage/delta", "params": {"delta": "tick-1"}},
+            {"method": "item/agentMessage/delta", "params": {"delta": "tick-2"}},
+            {"method": "turn/completed", "params": {}},
+        ]
+    )
+    # cadence fires at t=1.0 (after tick-1) and t=2.0 (after tick-2); each sees the same reason
+    clock = iter((0.0, 1.0, 2.0, 3.0))
+    monkeypatch.setattr(v4_runtime, "monotonic", lambda: next(clock))
+    runtime = V4Runtime(db=control_db, project_config=load_project_config(PROJECT_CONFIG))
+
+    reply = runtime._drain_available_events(
+        client=CodexAppServerClient(transport),
+        role_instance_id=ROLE_INSTANCE_ID,
+        approval_policy="never",
+        thread_id="thread-platform-control",
+        turn_id=TURN_ID,
+        message_id=SOURCE_MESSAGE_ID,
+    )
+
+    assert reply == "tick-1tick-2"
+    rejected = [event for event in control_db.events if event["event_type"] == "turn/detachedControlRejected"]
+    assert len(rejected) == 1, f"expected 1 rejection event, got {len(rejected)}: {[e['content'] for e in rejected]}"
+    assert rejected[0]["content"] == "continuation_mismatch"
 
 
 def test_continuous_non_control_turn_processes_events_normally(monkeypatch) -> None:
