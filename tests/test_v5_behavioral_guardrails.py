@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agentic_mesh_v5 import config_activation
 from agentic_mesh_v5.behavioral_guardrails import BehavioralGuardrailError
 from agentic_mesh_v5.behavioral_guardrails import decide_scenario_action
 from agentic_mesh_v5.behavioral_guardrails import evaluate_behavioral_guardrails
@@ -227,10 +228,32 @@ def test_behavioral_regressions_block_release_creation(
         policy_path.write_text(json.dumps(content), encoding="utf-8")
     store = ConfigActivationStore(root)
 
-    with pytest.raises(ConfigActivationError, match="behavioral promotion check failed"):
+    with pytest.raises(
+        ConfigActivationError, match="behavioral promotion check failed"
+    ) as caught:
         store.create_release(references, actor="prompt-engineer")
 
+    if regression == "missing-policy":
+        assert "policy is required for role or flow releases" in str(caught.value)
     assert not store.releases_dir.exists()
+
+
+def test_existing_legacy_release_remains_idempotently_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _, _ = _repository(tmp_path)
+    references = ["role/engineering@0.1.0", "flow/sdlc@0.1.0"]
+    store = ConfigActivationStore(root)
+    monkeypatch.setattr(
+        config_activation, "evaluate_behavioral_guardrails", lambda resolved: None
+    )
+    legacy = store.create_release(references, actor="legacy-operator")
+    monkeypatch.undo()
+
+    repeated = store.create_release(references, actor="new-operator")
+
+    assert repeated == legacy
+    assert repeated.created_by == "legacy-operator"
 
 
 def test_non_prompt_release_is_not_subject_to_prompt_guardrails(tmp_path: Path) -> None:

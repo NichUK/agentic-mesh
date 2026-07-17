@@ -157,12 +157,6 @@ class ConfigActivationStore:
     ) -> ConfigRelease:
         actor = self._actor(actor)
         resolved = self.validate_draft(references)
-        try:
-            evaluate_behavioral_guardrails(resolved)
-        except BehavioralGuardrailError as exc:
-            raise ConfigActivationError(
-                f"behavioral promotion check failed: {exc}"
-            ) from exc
         release = ConfigRelease(
             digest=resolved.digest,
             created_at=self._timestamp(),
@@ -179,6 +173,12 @@ class ConfigActivationStore:
                         f"immutable release conflicts with digest {release.digest}"
                     )
                 return existing
+            try:
+                evaluate_behavioral_guardrails(resolved)
+            except BehavioralGuardrailError as exc:
+                raise ConfigActivationError(
+                    f"behavioral promotion check failed: {exc}"
+                ) from exc
             self.releases_dir.mkdir(parents=True, exist_ok=True)
             self._atomic_write(path, release.to_dict())
         return release

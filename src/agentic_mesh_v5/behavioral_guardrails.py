@@ -99,6 +99,10 @@ def evaluate_behavioral_guardrails(
     if "role" not in resolved.settings and "flow" not in resolved.settings:
         return GuardrailEvaluation(applicable=False, policy_id=None, scenarios=())
 
+    if "behavioral_guardrails" not in resolved.settings:
+        raise BehavioralGuardrailError(
+            "behavioral-guardrails policy is required for role or flow releases"
+        )
     policy = _object(
         resolved.settings.get("behavioral_guardrails"), "behavioral_guardrails"
     )
