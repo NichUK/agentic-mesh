@@ -3,6 +3,15 @@
 This file records the context needed to resume Agentic Mesh in a fresh chat
 after opening `C:\Dev\agentic-mesh` as the workspace.
 
+## 2026-07-17 - V5 Clean Runtime Boundary
+
+- V4 remains the deployed baseline while the ordered `AMV5-*` backlog builds
+  V5 as a clean replacement.
+- V5 code lives under `src/agentic_mesh_v5` and automated checks reject imports
+  from V2, V3, or V4 runtime packages.
+- The unversioned CLI continues to target V4 until qualified cutover; V5 uses
+  the explicit `agentic-mesh-v5` entry point during development.
+
 ## 2026-07-15 - Bounded Missing-Output Repair
 
 - When a V4 role completes a turn without the safe-output required by its

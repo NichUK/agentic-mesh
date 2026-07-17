@@ -4,6 +4,11 @@ Agentic Mesh is a project-scoped mesh of role agents, collaboration
 connectors, storage backends, worker/model adapters, and observable runtime
 services.
 
+V4 remains the deployed baseline during the V5 build. V5 is a clean package
+boundary under `src/agentic_mesh_v5`; it cannot import V4 runtime modules.
+Cross-version reuse occurs only through explicit asset classification and
+porting stories so V5 does not inherit V4 execution mechanics accidentally.
+
 The current architecture direction is recorded in:
 
 - `docs/architecture/v3-agent-owned-runtime.md`

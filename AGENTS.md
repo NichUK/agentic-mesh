@@ -29,12 +29,17 @@ Committed architecture decisions:
 - `ADR-002`: Queue-aware agent hibernation and open-core direction.
 - `ADR-003`: Project-scoped build and deployment outputs.
 - `ADR-004`: V3 agent-owned runtime reset.
+- `ADR-005`: Clean V5 replacement boundary.
 - V4 remote-control runtime supersedes V3 for active dogfood/runtime work.
 
 Core principles:
 
-- The active implementation is V4. Runtime code lives under
-  `src/agentic_mesh_v4`.
+- V4 remains the active deployed runtime while V5 is built under
+  `src/agentic_mesh_v5`. New product development follows the ordered V5
+  backlog; V4 changes are limited to operational fixes needed before cutover.
+- V5 must not import V4 runtime modules. Reusable V4 assets are explicitly
+  classified, then ported, rewritten, referenced, or rejected in later V5
+  stories.
 - Do not add new runtime code under removed or legacy package paths. V2 and V3
   implementation packages and tests have been removed; no active deployment,
   prompt, Compose profile, or role workflow should depend on them or recreate

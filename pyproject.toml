@@ -29,6 +29,7 @@ dependencies = [
 [project.scripts]
 agentic-mesh = "agentic_mesh_v4.cli:main"
 agentic-mesh-v4 = "agentic_mesh_v4.cli:main"
+agentic-mesh-v5 = "agentic_mesh_v5.cli:main"
 
 [project.optional-dependencies]
 dev = [
