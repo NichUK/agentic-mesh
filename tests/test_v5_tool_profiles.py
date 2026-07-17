@@ -156,6 +156,20 @@ def test_synthetic_finance_category_uses_the_same_registry(tmp_path: Path) -> No
             "mount.target must be an absolute",
         ),
         (
+            lambda profile: profile["mounts"][0].update(id="workspace.data"),
+            "mount.id is invalid",
+        ),
+        (
+            lambda profile: profile["credentials"][0].update(id="codex.auth"),
+            "credential.id is invalid",
+        ),
+        (
+            lambda profile: profile["credentials"][0].update(
+                target="/mesh/../escape"
+            ),
+            "mounted credential target must be an absolute contained",
+        ),
+        (
             lambda profile: profile["image"].update(repository="user:secret@registry/image"),
             "must not contain @",
         ),

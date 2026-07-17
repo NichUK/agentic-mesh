@@ -205,7 +205,7 @@ def _parse_profile(reference: str, digest: str, value: object) -> ToolProfile:
             raise ToolProfileError("mount.access is invalid")
         mounts.append(
             MountRequirement(
-                _identifier(item.get("id"), "mount.id"),
+                _package_id(item.get("id"), "mount.id"),
                 _string(item.get("source"), "mount.source"),
                 target,
                 access,
@@ -222,11 +222,16 @@ def _parse_profile(reference: str, digest: str, value: object) -> ToolProfile:
         if delivery not in {"mount", "environment", "provider"}:
             raise ToolProfileError("credential.delivery is invalid")
         target = _string(item.get("target"), "credential.target")
-        if delivery == "mount" and not PurePosixPath(target).is_absolute():
-            raise ToolProfileError("mounted credential target must be absolute")
+        credential_target = PurePosixPath(target)
+        if delivery == "mount" and (
+            not credential_target.is_absolute() or ".." in credential_target.parts
+        ):
+            raise ToolProfileError(
+                "mounted credential target must be an absolute contained POSIX path"
+            )
         credentials.append(
             CredentialRequirement(
-                _identifier(item.get("id"), "credential.id"),
+                _package_id(item.get("id"), "credential.id"),
                 _string(item.get("kind"), "credential.kind"),
                 delivery,
                 target,
