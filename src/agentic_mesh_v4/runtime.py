@@ -1628,6 +1628,7 @@ class V4Runtime:
                         thread_id=thread_id,
                         turn_id=resolved_turn_id,
                         message_id=message_id,
+                        _last_rejection_key=last_cadence_rejection,
                     )
                     if released:
                         return "".join(reply_parts)
