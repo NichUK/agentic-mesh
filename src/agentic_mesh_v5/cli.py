@@ -7,6 +7,8 @@ from typing import Sequence
 
 from agentic_mesh_v5 import __version__
 from agentic_mesh_v5.boundary import find_runtime_boundary_violations
+from agentic_mesh_v5.package_resolver import PackageResolutionError
+from agentic_mesh_v5.package_resolver import resolve_packages
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="source directory to inspect; defaults to the installed V5 package",
     )
+    resolve = subparsers.add_parser(
+        "resolve-config", help="resolve external configuration packages"
+    )
+    resolve.add_argument("--config-root", type=Path, required=True)
+    resolve.add_argument("--package", action="append", required=True, dest="packages")
     return parser
 
 
@@ -42,6 +49,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "status": "bootstrap-ready",
                 "version": __version__,
             },
+            as_json=args.json,
+        )
+        return 0
+
+    if args.command == "resolve-config":
+        try:
+            resolved = resolve_packages(args.config_root, args.packages)
+        except PackageResolutionError as exc:
+            _write(
+                {"runtime": "agentic-mesh-v5", "status": "rejected", "error": str(exc)},
+                as_json=args.json,
+            )
+            return 2
+        _write(
+            {"runtime": "agentic-mesh-v5", "status": "resolved", **resolved.to_dict()},
             as_json=args.json,
         )
         return 0
