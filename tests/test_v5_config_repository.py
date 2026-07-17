@@ -33,6 +33,10 @@ def test_mounted_repository_requires_schema_and_versioned_packages(tmp_path: Pat
         validate_mounted_repository(tmp_path)
     package = tmp_path / "packages" / "system" / "core" / "0.1.0" / "package.json"
     package.parent.mkdir(parents=True)
+    package.mkdir()
+    with pytest.raises(ConfigRepositoryError, match="versioned packages"):
+        validate_mounted_repository(tmp_path)
+    package.rmdir()
     package.write_text("{}\n", encoding="utf-8")
 
     validate_mounted_repository(tmp_path)

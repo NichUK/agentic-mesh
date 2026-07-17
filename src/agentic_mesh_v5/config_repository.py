@@ -61,5 +61,6 @@ def validate_mounted_repository(root: Path) -> None:
         raise ConfigRepositoryError(f"configuration mount is not a directory: {root}")
     if not (root / "schemas" / "package.schema.json").is_file():
         raise ConfigRepositoryError("configuration mount has no package schema")
-    if not any((root / "packages").glob("*/*/*/package.json")):
+    manifests = (root / "packages").glob("*/*/*/package.json")
+    if not any(manifest.is_file() for manifest in manifests):
         raise ConfigRepositoryError("configuration mount has no versioned packages")
