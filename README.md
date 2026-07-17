@@ -74,6 +74,7 @@ target the V4 package and project topology.
 - `src/agentic_mesh_v4/`: active V4 remote-control runtime package
 - `src/agentic_mesh_v5/`: clean V5 replacement under development
 - `tests/test_v5_*.py`: V5 boundary and feature tests
+- `config/v5/organization-config-repository.json`: external V5 package repository reference
 - `tests/test_v4_*.py`: active V4 regression tests
 - `examples/projects/agentic-mesh-dev/deploy/compose/`: dogfood compose
   deployment, currently V4-first

@@ -1,0 +1,6 @@
+{
+  "repository_url": "https://github.com/NichUK/agentic-mesh-config.git",
+  "default_ref": "develop",
+  "mount_path": "/mesh/config",
+  "secret_resolution": "external-references-only"
+}
