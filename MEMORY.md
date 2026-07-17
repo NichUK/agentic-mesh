@@ -11,6 +11,9 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   from V2, V3, or V4 runtime packages.
 - The unversioned CLI continues to target V4 until qualified cutover; V5 uses
   the explicit `agentic-mesh-v5` entry point during development.
+- V4 reuse is governed by
+  `docs/architecture/v5/v4-asset-inventory.yaml`; port and rewrite decisions
+  create new V5 assets and never authorize importing the V4 package.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
