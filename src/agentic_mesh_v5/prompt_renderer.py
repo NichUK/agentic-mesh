@@ -104,7 +104,7 @@ def _route_lines(value: object) -> list[str]:
             f"- {route_id}: on {outcome}, hand off to {target_role} in {target_state}; "
             f"when={_condition(item.get('when'))}"
         )
-    return lines or ["- None; this is a terminal state"]
+    return lines or ["- None"]
 
 
 def render_role_state_prompt(

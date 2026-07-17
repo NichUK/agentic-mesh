@@ -209,6 +209,21 @@ def test_unknown_state_and_wrong_package_kind_are_rejected(tmp_path: Path) -> No
         )
 
 
+def test_empty_routes_do_not_imply_a_terminal_state(tmp_path: Path) -> None:
+    root = _repository(tmp_path)
+    flow_path = root / "packages" / "flow" / "sdlc" / "0.1.0" / "flow.json"
+    content = json.loads(flow_path.read_text(encoding="utf-8"))
+    content["flow"]["states"]["implementation"]["routes"] = []
+    flow_path.write_text(json.dumps(content), encoding="utf-8")
+
+    rendered = render_role_state_prompt(
+        root, "role/engineering@0.1.0", "flow/sdlc@0.1.0", "implementation"
+    )
+
+    assert "Terminal: no" in rendered.text
+    assert "Routes and handoffs:\n- None" in rendered.text
+
+
 def test_package_and_content_role_identity_must_match(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     role_path = root / "packages" / "role" / "engineering" / "0.1.0" / "role.json"
