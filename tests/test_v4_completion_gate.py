@@ -47,7 +47,7 @@ def test_completion_observes_message_correlated_cli_handoff_across_role_instance
         [
             {
                 "call_id": "call-exact-artifact",
-                "role_instance_id": "quantauma.project-manager.2",
+                "role_instance_id": "example-project.project-manager.2",
                 "tool_name": "document.link_artifact",
                 "message_id": "message-1",
                 "turn_id": "turn-1",
@@ -55,7 +55,7 @@ def test_completion_observes_message_correlated_cli_handoff_across_role_instance
             },
             {
                 "call_id": "call-cli-handoff",
-                "role_instance_id": "quantauma.project-manager.1",
+                "role_instance_id": "example-project.project-manager.1",
                 "tool_name": "handoff.require",
                 "message_id": "message-1",
                 "turn_id": None,
@@ -67,7 +67,7 @@ def test_completion_observes_message_correlated_cli_handoff_across_role_instance
     result = evaluate_completion_contract(
         db=db,
         contract=_handoff_contract(),
-        role_instance_id="quantauma.project-manager.2",
+        role_instance_id="example-project.project-manager.2",
         message_id="message-1",
         turn_id="turn-1",
     )
@@ -84,7 +84,7 @@ def test_completion_does_not_observe_cli_handoff_from_another_message() -> None:
         [
             {
                 "call_id": "call-exact-artifact",
-                "role_instance_id": "quantauma.project-manager.2",
+                "role_instance_id": "example-project.project-manager.2",
                 "tool_name": "document.link_artifact",
                 "message_id": "message-1",
                 "turn_id": "turn-1",
@@ -92,7 +92,7 @@ def test_completion_does_not_observe_cli_handoff_from_another_message() -> None:
             },
             {
                 "call_id": "call-unrelated-handoff",
-                "role_instance_id": "quantauma.project-manager.1",
+                "role_instance_id": "example-project.project-manager.1",
                 "tool_name": "handoff.require",
                 "message_id": "message-older",
                 "turn_id": None,
@@ -104,7 +104,7 @@ def test_completion_does_not_observe_cli_handoff_from_another_message() -> None:
     result = evaluate_completion_contract(
         db=db,
         contract=_handoff_contract(),
-        role_instance_id="quantauma.project-manager.2",
+        role_instance_id="example-project.project-manager.2",
         message_id="message-1",
         turn_id="turn-1",
     )
@@ -126,7 +126,7 @@ def test_completion_does_not_observe_message_correlated_handoff_from_another_rol
         [
             {
                 "call_id": "call-other-role-handoff",
-                "role_instance_id": "quantauma.release-manager.1",
+                "role_instance_id": "example-project.release-manager.1",
                 "tool_name": "handoff.require",
                 "message_id": "message-1",
                 "turn_id": None,
@@ -138,7 +138,7 @@ def test_completion_does_not_observe_message_correlated_handoff_from_another_rol
     result = evaluate_completion_contract(
         db=db,
         contract=_handoff_contract(),
-        role_instance_id="quantauma.project-manager.2",
+        role_instance_id="example-project.project-manager.2",
         message_id="message-1",
         turn_id="turn-1",
     )
