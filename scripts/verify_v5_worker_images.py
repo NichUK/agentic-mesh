@@ -60,6 +60,20 @@ def _string_list(value: object, label: str, errors: list[str]) -> list[str]:
     return value
 
 
+def _dockerfile_stage(
+    dockerfile_text: str, target: str, errors: list[str]
+) -> str:
+    match = re.search(
+        rf"^FROM\s+[^\r\n]+\s+AS\s+{re.escape(target)}\s*$.*?(?=^FROM\s|\Z)",
+        dockerfile_text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        errors.append(f"{target}: Dockerfile target is missing")
+        return ""
+    return match.group(0)
+
+
 def _validate_external_profile(
     manifest: dict[str, Any], config_root: Path, errors: list[str]
 ) -> None:
@@ -158,8 +172,11 @@ def validate_worker_images(root: Path, config_root: Path | None = None) -> list[
         target = manifest.get("target")
         if not isinstance(image, str) or not image.endswith(":0.1.0"):
             errors.append(f"{profile_id}: image must use the 0.1.0 tag")
-        if not isinstance(target, str) or f"AS {target}" not in dockerfile_text:
-            errors.append(f"{profile_id}: Dockerfile target is missing")
+        stage_text = (
+            _dockerfile_stage(dockerfile_text, target, errors)
+            if isinstance(target, str)
+            else ""
+        )
         if isinstance(image, str) and f"image: {image}" not in compose_text:
             errors.append(f"{profile_id}: Compose image is missing")
         if isinstance(target, str) and f"target: {target}" not in compose_text:
@@ -173,9 +190,9 @@ def validate_worker_images(root: Path, config_root: Path | None = None) -> list[
             errors,
         )
         label = ",".join(sorted(capabilities))
-        if f'io.agentic-mesh.profile="{profile_id}"' not in dockerfile_text:
+        if f'io.agentic-mesh.profile="{profile_id}"' not in stage_text:
             errors.append(f"{profile_id}: Dockerfile profile label is missing")
-        if f'io.agentic-mesh.capabilities="{label}"' not in dockerfile_text:
+        if f'io.agentic-mesh.capabilities="{label}"' not in stage_text:
             errors.append(f"{profile_id}: Dockerfile capability label differs")
         if config_root is not None:
             _validate_external_profile(manifest, config_root, errors)

@@ -124,3 +124,22 @@ def test_manifest_or_secret_regressions_are_rejected(tmp_path: Path) -> None:
 
     assert any("capability label differs" in item for item in errors)
     assert any("possible credential material" in item for item in errors)
+
+
+def test_labels_are_validated_within_their_target_stage(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    (root / "docker").mkdir(parents=True)
+    shutil.copytree(ROOT / "docker" / "v5", root / "docker" / "v5")
+    dockerfile_path = root / "docker" / "v5" / "Dockerfile"
+    dockerfile = dockerfile_path.read_text(encoding="utf-8")
+    general_label = 'io.agentic-mesh.profile="general"'
+    development_label = 'io.agentic-mesh.profile="development"'
+    dockerfile = dockerfile.replace(general_label, "profile-swap-placeholder")
+    dockerfile = dockerfile.replace(development_label, general_label)
+    dockerfile = dockerfile.replace("profile-swap-placeholder", development_label)
+    dockerfile_path.write_text(dockerfile, encoding="utf-8")
+
+    errors = VERIFIER.validate_worker_images(root)
+
+    assert "general: Dockerfile profile label is missing" in errors
+    assert "development: Dockerfile profile label is missing" in errors
