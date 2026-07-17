@@ -16,7 +16,7 @@ from agentic_mesh_v5.tool_profiles import ToolProfileError  # noqa: E402
 from agentic_mesh_v5.tool_profiles import ToolProfileRegistry  # noqa: E402
 
 
-PROFILE_IDS = ("general", "development", "qa", "operations", "ux")
+PROFILE_IDS = ("general", "development", "qa", "operations", "ux", "recovery")
 MANIFEST_FIELDS = {
     "schema_version",
     "profile_id",
@@ -95,6 +95,11 @@ def _validate_external_profile(
         errors.append(f"{profile.profile_id}: embedded and external capabilities differ")
     if profile.health.command != ("agentic-mesh-worker-healthcheck",):
         errors.append(f"{profile.profile_id}: external health command is incompatible")
+    if profile.profile_id == "recovery" and (
+        profile.launch_policy.normal_routing
+        or profile.launch_policy.allowed_launchers != ("recovery-supervisor",)
+    ):
+        errors.append("recovery: external launch policy is not supervisor-only")
 
 
 def validate_worker_images(root: Path, config_root: Path | None = None) -> list[str]:
@@ -135,6 +140,7 @@ def validate_worker_images(root: Path, config_root: Path | None = None) -> list[
         "!Dockerfile",
         "!worker-healthcheck.py",
         "!ux-smoke-test.mjs",
+        "!recovery-drill.py",
         "!manifests/",
         "!manifests/*.json",
     ]

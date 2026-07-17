@@ -22,6 +22,7 @@ PROFILE_FIELDS = {
     "health",
     "resources",
 }
+PROFILE_OPTIONAL_FIELDS = {"launch_policy"}
 
 
 class ToolProfileError(ValueError):
@@ -75,6 +76,12 @@ class ResourceLimits:
 
 
 @dataclass(frozen=True, slots=True)
+class LaunchPolicy:
+    normal_routing: bool
+    allowed_launchers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ToolProfile:
     reference: str
     configuration_digest: str
@@ -85,6 +92,7 @@ class ToolProfile:
     credentials: tuple[CredentialRequirement, ...]
     health: HealthCheck
     resources: ResourceLimits
+    launch_policy: LaunchPolicy
 
     @property
     def capability_ids(self) -> frozenset[str]:
@@ -101,6 +109,21 @@ class ToolProfile:
         if missing:
             raise ToolProfileError(
                 f"tool profile {self.profile_id} lacks capabilities: {list(missing)}"
+            )
+
+    def authorize_launch(
+        self, launcher: str, *, via_normal_routing: bool
+    ) -> None:
+        launcher_id = _package_id(launcher, "launcher")
+        if via_normal_routing and not self.launch_policy.normal_routing:
+            raise ToolProfileError(
+                f"tool profile {self.profile_id} is excluded from normal routing"
+            )
+        allowed = self.launch_policy.allowed_launchers
+        if allowed and launcher_id not in allowed:
+            raise ToolProfileError(
+                f"launcher {launcher_id} is not authorized for tool profile "
+                f"{self.profile_id}"
             )
 
 
@@ -160,10 +183,20 @@ def _required_boolean(value: object, label: str) -> bool:
     return value
 
 
+def _profile_fields(value: Mapping[str, object]) -> None:
+    keys = set(value)
+    missing = sorted(PROFILE_FIELDS - keys)
+    unexpected = sorted(keys - PROFILE_FIELDS - PROFILE_OPTIONAL_FIELDS)
+    if missing or unexpected:
+        raise ToolProfileError(
+            "tool_profile fields do not match the tool-profile contract"
+        )
+
+
 def _parse_profile(reference: str, digest: str, value: object) -> ToolProfile:
     package_reference = PackageReference.parse(reference)
     profile = _object(value, "tool_profile")
-    _fields(profile, PROFILE_FIELDS, "tool_profile")
+    _profile_fields(profile)
     profile_id = _package_id(profile.get("profile_id"), "profile_id")
     if profile.get("schema_version") != 1:
         raise ToolProfileError("unsupported tool-profile schema_version")
@@ -279,6 +312,34 @@ def _parse_profile(reference: str, digest: str, value: object) -> ToolProfile:
             "resources.ephemeral_storage_mb",
         ),
     )
+    if "launch_policy" not in profile:
+        launch_policy = LaunchPolicy(True, ())
+    else:
+        launch_value = profile["launch_policy"]
+        launch = _object(launch_value, "launch_policy")
+        _fields(
+            launch,
+            {"normal_routing", "allowed_launchers"},
+            "launch_policy",
+        )
+        normal_routing = _required_boolean(
+            launch.get("normal_routing"), "launch_policy.normal_routing"
+        )
+        if normal_routing:
+            raise ToolProfileError(
+                "explicit launch_policy is only for profiles excluded from normal routing"
+            )
+        raw_launchers = launch.get("allowed_launchers")
+        if not isinstance(raw_launchers, list) or not raw_launchers:
+            raise ToolProfileError(
+                "launch_policy.allowed_launchers must be a non-empty list"
+            )
+        allowed_launchers = tuple(
+            _package_id(item, "launch_policy.allowed_launcher")
+            for item in raw_launchers
+        )
+        _unique(allowed_launchers, "launch_policy allowed launchers")
+        launch_policy = LaunchPolicy(False, allowed_launchers)
     return ToolProfile(
         reference,
         digest,
@@ -289,6 +350,7 @@ def _parse_profile(reference: str, digest: str, value: object) -> ToolProfile:
         tuple(credentials),
         health,
         resources,
+        launch_policy,
     )
 
 
@@ -307,3 +369,17 @@ class ToolProfileRegistry:
         if set(resolved.settings) != {"tool_profile"}:
             raise ToolProfileError("resolved package must contain exactly one tool_profile object")
         return _parse_profile(reference, resolved.digest, resolved.settings["tool_profile"])
+
+    def load_for_launch(
+        self,
+        reference: str,
+        *,
+        launcher: str,
+        via_normal_routing: bool,
+    ) -> ToolProfile:
+        profile = self.load(reference)
+        profile.authorize_launch(
+            launcher,
+            via_normal_routing=via_normal_routing,
+        )
+        return profile

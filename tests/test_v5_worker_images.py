@@ -58,6 +58,11 @@ def _synthetic_config_repository(root: Path) -> Path:
                 },
             }
         }
+        if profile_id == "recovery":
+            profile["tool_profile"]["launch_policy"] = {
+                "normal_routing": False,
+                "allowed_launchers": ["recovery-supervisor"],
+            }
         (package_root / "tool-profile.json").write_text(
             json.dumps(profile) + "\n", encoding="utf-8"
         )
@@ -91,7 +96,7 @@ def test_worker_images_match_external_tool_profiles(tmp_path: Path) -> None:
 def test_every_worker_image_has_one_shared_base_and_exact_build_inputs() -> None:
     dockerfile = (ROOT / "docker" / "v5" / "Dockerfile").read_text(encoding="utf-8")
 
-    assert dockerfile.count("FROM v5-worker-base AS v5-") == 5
+    assert dockerfile.count("FROM v5-worker-base AS v5-") == 6
     assert "python:3.12.11-slim-bookworm@sha256:" in dockerfile
     assert "ARG CODEX_VERSION=0.144.3" in dockerfile
     assert "ARG SOURCE_DATE_EPOCH=1751328000" in dockerfile
@@ -136,6 +141,30 @@ def test_build_context_allowlist_excludes_project_material() -> None:
     assert ignore.splitlines()[0] == "*"
     for forbidden in ("src", "config", "examples", ".git", "state", "prompts"):
         assert f"!{forbidden}" not in ignore
+
+
+def test_recovery_image_is_supervisor_only_and_drills_real_repair() -> None:
+    dockerfile = (ROOT / "docker" / "v5" / "Dockerfile").read_text(encoding="utf-8")
+    compose = (ROOT / "docker" / "v5" / "compose.yaml").read_text(encoding="utf-8")
+    drill = (ROOT / "docker" / "v5" / "recovery-drill.py").read_text(
+        encoding="utf-8"
+    )
+    stage = VERIFIER._dockerfile_stage(dockerfile, "v5-recovery-worker", [])
+
+    assert "ARG COMPOSE_VERSION=v5.3.1" in stage
+    assert "ARG COMPOSE_SHA256=f9ebc6eb" in stage
+    assert 'io.agentic-mesh.normal-routing="disabled"' in stage
+    assert 'io.agentic-mesh.allowed-launcher="recovery-supervisor"' in stage
+    assert 'profiles: ["recovery-supervisor"]' in compose
+    for operation in (
+        '"build"',
+        '"inspect"',
+        '"restart"',
+        '"--force-recreate"',
+        '"down"',
+        'evidence["status"] = "passed"',
+    ):
+        assert operation in drill
 
 
 def test_manifest_or_secret_regressions_are_rejected(tmp_path: Path) -> None:
