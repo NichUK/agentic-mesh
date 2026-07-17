@@ -91,10 +91,10 @@ class ToolProfile:
         return frozenset(item.id for item in self.capabilities)
 
     def missing_capabilities(self, required: Sequence[str]) -> tuple[str, ...]:
-        invalid = [item for item in required if not isinstance(item, str) or not item.strip()]
-        if invalid:
-            raise ToolProfileError("required capability ids must be non-empty strings")
-        return tuple(sorted(set(required) - self.capability_ids))
+        identifiers = tuple(
+            _identifier(item, "required capability id") for item in required
+        )
+        return tuple(sorted(set(identifiers) - self.capability_ids))
 
     def require_capabilities(self, required: Sequence[str]) -> None:
         missing = self.missing_capabilities(required)
@@ -118,6 +118,8 @@ def _fields(value: Mapping[str, object], expected: set[str], label: str) -> None
 def _string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ToolProfileError(f"{label} must be a non-empty string")
+    if value != value.strip():
+        raise ToolProfileError(f"{label} must not have surrounding whitespace")
     return value
 
 

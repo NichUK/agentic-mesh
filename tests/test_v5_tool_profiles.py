@@ -110,6 +110,8 @@ def test_loads_typed_general_profile_and_checks_capabilities(tmp_path: Path) -> 
     profile.require_capabilities(["structured-output"])
     with pytest.raises(ToolProfileError, match="lacks capabilities.*browser.test"):
         profile.require_capabilities(["browser.test"])
+    with pytest.raises(ToolProfileError, match="must not have surrounding whitespace"):
+        profile.require_capabilities([" structured-output "])
 
 
 def test_synthetic_finance_category_uses_the_same_registry(tmp_path: Path) -> None:
@@ -172,6 +174,10 @@ def test_synthetic_finance_category_uses_the_same_registry(tmp_path: Path) -> No
         (
             lambda profile: profile["image"].update(repository="user:secret@registry/image"),
             "must not contain @",
+        ),
+        (
+            lambda profile: profile["image"].update(tag=" 0.1.0"),
+            "image.tag must not have surrounding whitespace",
         ),
         (
             lambda profile: profile["health"].update(timeout_seconds=31),
