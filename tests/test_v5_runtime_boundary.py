@@ -105,6 +105,20 @@ def test_current_v5_source_has_a_clean_runtime_boundary() -> None:
     assert find_runtime_boundary_violations(V5_PACKAGE_ROOT) == ()
 
 
+def test_boundary_check_honours_python_source_encoding(tmp_path: Path) -> None:
+    source = tmp_path / "encoded.py"
+    source.write_bytes(
+        "# -*- coding: cp1252 -*-\n# £\nimport agentic_mesh_v4.runtime\n".encode(
+            "cp1252"
+        )
+    )
+
+    violations = find_runtime_boundary_violations(tmp_path)
+
+    assert len(violations) == 1
+    assert violations[0].module == "agentic_mesh_v4.runtime"
+
+
 @pytest.mark.parametrize(
     "statement,module",
     [
@@ -132,3 +146,4 @@ def test_v5_console_entry_point_is_declared() -> None:
         project = tomllib.load(handle)
 
     assert project["project"]["scripts"]["agentic-mesh-v5"] == "agentic_mesh_v5.cli:main"
+    assert __version__ == project["project"]["version"]

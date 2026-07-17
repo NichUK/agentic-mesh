@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
+import tokenize
 
 
 FORBIDDEN_RUNTIME_IMPORTS = (
@@ -50,7 +51,8 @@ def find_runtime_boundary_violations(
     violations: list[BoundaryViolation] = []
 
     for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        with tokenize.open(path) as source:
+            tree = ast.parse(source.read(), filename=str(path))
         for node in ast.walk(tree):
             modules: tuple[str, ...] = ()
             if isinstance(node, ast.Import):
