@@ -1,0 +1,5 @@
+*
+!Dockerfile
+!worker-healthcheck.py
+!manifests/
+!manifests/*.json

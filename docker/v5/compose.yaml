@@ -1,0 +1,27 @@
+x-worker-build: &worker-build
+  context: .
+  args:
+    SOURCE_DATE_EPOCH: "1751328000"
+  provenance: false
+
+services:
+  general:
+    image: agentic-mesh/worker-general:0.1.0
+    build:
+      <<: *worker-build
+      target: v5-general-worker
+  development:
+    image: agentic-mesh/worker-development:0.1.0
+    build:
+      <<: *worker-build
+      target: v5-development-worker
+  qa:
+    image: agentic-mesh/worker-qa:0.1.0
+    build:
+      <<: *worker-build
+      target: v5-qa-worker
+  operations:
+    image: agentic-mesh/worker-operations:0.1.0
+    build:
+      <<: *worker-build
+      target: v5-operations-worker

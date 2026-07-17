@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "profile_id": "development",
+  "image": "agentic-mesh/worker-development:0.1.0",
+  "target": "v5-development-worker",
+  "tool_profile_reference": "tool-profile/development@0.1.0",
+  "capabilities": ["build.execute", "filesystem.read", "filesystem.write", "source-control.git", "structured-output", "test.execute"],
+  "required_commands": ["codex", "gcc", "gh", "git", "make", "node", "npm", "pkg-config", "python", "rg"]
+}

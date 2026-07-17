@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "profile_id": "general",
+  "image": "agentic-mesh/worker-general:0.1.0",
+  "target": "v5-general-worker",
+  "tool_profile_reference": "tool-profile/general@0.2.0",
+  "capabilities": ["filesystem.read", "structured-output"],
+  "required_commands": ["codex", "curl", "git", "jq", "node", "npm", "python", "rg"]
+}
