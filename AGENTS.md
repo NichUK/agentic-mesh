@@ -217,9 +217,14 @@ Branch expectations:
 - Push the active feature branch after meaningful commits so GitHub is the
   shared source of truth for review and recovery.
 - At the end of every feature, fix, spike, or documentation slice, promote the
-  branch back to `develop` through a pull request, request GitHub Copilot review
-  with `@copilot review`, address review feedback where appropriate, and merge
-  only after the branch is ready for integration.
+  branch back to `develop` through a pull request and request GitHub Copilot as
+  an actual reviewer (for example,
+  `gh api --method POST repos/OWNER/REPO/pulls/NUMBER/requested_reviewers -f 'reviewers[]=copilot-pull-request-reviewer[bot]'`).
+  Do not use an `@copilot review` issue comment: after an earlier review GitHub
+  may route that comment to the coding agent instead of starting a new review.
+  Verify that a `Running Copilot Code Review` run exists for the current head,
+  address review feedback where appropriate, and merge only after the branch is
+  ready for integration.
 - Do not commit directly to `main` during normal development.
 - Do not commit directly to `develop` for normal feature work. Use a feature
   branch and merge it back through review unless the sponsor explicitly directs

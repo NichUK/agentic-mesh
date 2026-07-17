@@ -2626,8 +2626,20 @@ def test_v4_compose_runs_codex_app_server_and_excludes_v3_broker_paths() -> None
         "${AGENTIC_MESH_PROJECT_MANAGER_SSH_HOST_PATH:-../../state/worker_mounts/project-manager/.ssh}}"
         ":/mesh/home/.ssh:ro"
     ) in rendered
+    assert (
+        "${AGENTIC_MESH_GITHUB_TOKEN_FILE_HOST_PATH:-../../state/secrets/github-token}"
+        ":/run/secrets/github-token:ro"
+    ) in rendered
+    project_manager = rendered.split("  agentic-mesh-dev-project-manager-1:", 1)[1].split("\n\n", 1)[0]
     engineering = rendered.split("  agentic-mesh-dev-engineering-1:", 1)[1].split("\n\n", 1)[0]
+    delivery_manager = rendered.split("  agentic-mesh-dev-delivery-manager-1:", 1)[1].split("\n\n", 1)[0]
+    assert ":/run/secrets/github-token:ro" in project_manager
     assert ":/mesh/home/.ssh:ro" in engineering
+    assert ":/run/secrets/github-token:ro" in engineering
+    assert ":/run/secrets/github-token:ro" not in delivery_manager
+    assert "export GH_TOKEN=" not in delivery_manager
+    assert 'export GH_TOKEN="$(tr -d \'\\r\\n\' < /run/secrets/github-token)"' in engineering
+    assert 'export GITHUB_TOKEN="$$GH_TOKEN" GH_PROMPT_DISABLED=1' in engineering
     assert "cp -r /mesh/home/.ssh/. /root/.ssh/" in engineering
     assert "cp -r /mesh/home/.ssh/. /root/.ssh/" in rendered
     assert 'sed -i "s#/mesh/home/.ssh#/root/.ssh#g" /root/.ssh/config' in rendered
