@@ -9,6 +9,9 @@ from agentic_mesh_v5 import __version__
 from agentic_mesh_v5.boundary import find_runtime_boundary_violations
 from agentic_mesh_v5.config_activation import ConfigActivationError
 from agentic_mesh_v5.config_activation import ConfigActivationStore
+from agentic_mesh_v5.database import DatabaseError
+from agentic_mesh_v5.database import MigrationRunner
+from agentic_mesh_v5.database import database_url_from_environment
 from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.package_resolver import resolve_packages
 
@@ -58,6 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
         "release-status", help="show the active configuration release and audit history"
     )
     release_status.add_argument("--config-root", type=Path, required=True)
+    subparsers.add_parser(
+        "database-migrate", help="apply pending V5 Postgres migrations"
+    )
+    subparsers.add_parser(
+        "database-status", help="show V5 Postgres migration status"
+    )
     return parser
 
 
@@ -93,6 +102,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         _write(
             {"runtime": "agentic-mesh-v5", "status": "resolved", **resolved.to_dict()},
+            as_json=args.json,
+        )
+        return 0
+
+    if args.command in {"database-migrate", "database-status"}:
+        try:
+            runner = MigrationRunner(database_url_from_environment())
+            result = (
+                runner.migrate()
+                if args.command == "database-migrate"
+                else runner.status()
+            )
+        except DatabaseError as exc:
+            _write(
+                {
+                    "runtime": "agentic-mesh-v5",
+                    "status": "rejected",
+                    "error": str(exc),
+                },
+                as_json=args.json,
+            )
+            return 2
+        _write(
+            {
+                "runtime": "agentic-mesh-v5",
+                "status": (
+                    "database-pending"
+                    if result.pending_versions
+                    else "database-current"
+                ),
+                **result.to_dict(),
+            },
             as_json=args.json,
         )
         return 0
