@@ -346,3 +346,42 @@ If V3 cannot prove one real end-to-end dogfood slice, keep V2 available as the
 running local runtime while retaining V3 design and code as an experimental
 branch. Do not migrate production use to V3 until the dogfood slice reaches
 release and closure with complete evidence.
+
+## ADR-005 - Clean V5 Replacement Boundary
+
+Date: 2026-07-17
+
+Status: accepted
+
+Implementation record:
+`docs/implementation-slices/amv5-001-clean-runtime-boundary.md`
+
+### Context
+
+V4 proved valuable runtime, governance, delivery, and recovery behaviour, but
+also accumulated mechanics that must not become implicit dependencies of the
+replacement. V5 must be able to evolve and eventually remove V4 without an
+in-place rewrite or a hidden compatibility layer.
+
+### Decision
+
+Build V5 under the standalone `agentic_mesh_v5` package. V5 source cannot
+import V2, V3, or V4 runtime packages. Automated source-boundary checks run in
+the test suite and can be invoked from the V5 CLI. Reuse begins with an
+inventory and explicit port, rewrite, reference, or reject disposition.
+
+V4 remains the deployed baseline until V5 passes its qualification and cutover
+stories. The unversioned `agentic-mesh` console command continues to target V4
+until that intentional cutover; V5 uses `agentic-mesh-v5` meanwhile.
+
+### Consequences
+
+- V5 can be installed, imported, tested, and started without V4.
+- Useful V4 concepts can be retained without coupling V5 to V4 modules.
+- Some code may be rewritten before later consolidation behind stable ports.
+- V4 operational fixes remain possible while the V5 backlog progresses.
+
+### Rollback
+
+Remove the V5 package and console entry point while leaving V4 untouched. Do
+not weaken the boundary check to make an implicit V4 dependency pass.

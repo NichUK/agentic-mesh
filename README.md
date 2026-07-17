@@ -3,11 +3,20 @@
 Agentic Mesh is an enterprise-oriented runtime for composing long-running AI
 role agents into project-scoped collaboration networks.
 
-The active development direction is the V4 remote-control runtime reset. V4
-replaces the V3 broker-wrapped worker model with one Codex app-server
-remote-control container per configured role instance.
+V4 remains the running remote-control runtime while V5 is built as a clean,
+standalone replacement. V5 code lives under `src/agentic_mesh_v5` and must not
+import V4 runtime modules. Useful V4 assets are classified and ported or
+rewritten through explicit V5 stories rather than coupling the runtimes.
 
 ## Current Runtime Direction
+
+V5 development follows the ordered `AMV5-*` Azure DevOps backlog. The initial
+bootstrap package can be checked without starting V4:
+
+```powershell
+python -m agentic_mesh_v5 --json boundary-check
+python -m agentic_mesh_v5 --json status
+```
 
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
 infrastructure: Teams/API ingress, Postgres-backed message queues, Codex
@@ -63,6 +72,8 @@ target the V4 package and project topology.
 ## Repository Layout
 
 - `src/agentic_mesh_v4/`: active V4 remote-control runtime package
+- `src/agentic_mesh_v5/`: clean V5 replacement under development
+- `tests/test_v5_*.py`: V5 boundary and feature tests
 - `tests/test_v4_*.py`: active V4 regression tests
 - `examples/projects/agentic-mesh-dev/deploy/compose/`: dogfood compose
   deployment, currently V4-first
