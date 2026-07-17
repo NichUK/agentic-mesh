@@ -34,10 +34,7 @@ def test_retired_named_project_has_no_active_runtime_or_fixture_reference() -> N
     retired_project_marker = "quantu" + "auma"
     references = []
     for path in _active_files():
-        try:
-            content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
+        content = path.read_bytes().decode("utf-8", errors="ignore")
         if retired_project_marker in content.casefold():
             references.append(path.relative_to(ROOT).as_posix())
 
