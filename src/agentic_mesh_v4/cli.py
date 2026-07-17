@@ -226,6 +226,10 @@ def build_parser() -> argparse.ArgumentParser:
     handoff.add_argument("--message")
     handoff.add_argument("--message-id")
     handoff.add_argument("--turn-id")
+    handoff.add_argument("--detached-turn-control-lease")
+    handoff.add_argument("--detached-turn-control-process-id")
+    handoff.add_argument("--detached-turn-control-dispatcher-hold-id")
+    handoff.add_argument("--detached-turn-control-expires-at")
 
     handoff_accept = safe_output_subparsers.add_parser("handoff-accept")
     handoff_accept.add_argument("--handoff-id", required=True)
@@ -1536,6 +1540,23 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
     if command == "handoff":
         project_config.role(args.from_role)
         project_config.role(args.to_role)
+        detached_control_values = (
+            args.detached_turn_control_lease,
+            args.detached_turn_control_process_id,
+            args.detached_turn_control_dispatcher_hold_id,
+            args.detached_turn_control_expires_at,
+        )
+        if any(detached_control_values) and not all(detached_control_values):
+            raise ValueError("detached turn control requires lease, process, dispatcher hold, and expiry")
+        if all(detached_control_values) and (
+            args.from_role != "platform-engineer"
+            or args.to_role != "project-manager"
+            or not args.message_id
+            or not args.turn_id
+        ):
+            raise ValueError(
+                "detached turn control requires an exact Platform to Project Manager handoff with message and turn IDs"
+            )
         from_role_instance_id = _role_instance_id(project_config, args.from_role)
         call_id = f"call-{secrets.token_hex(16)}"
         lifecycle_result = create_handoff(
@@ -1559,6 +1580,14 @@ def _handle_safe_output(*, args, db: V4Database, project_config) -> None:
             "reason": args.reason,
             "handoff_id": lifecycle_result["handoff_id"],
         }
+        if all(detached_control_values):
+            payload["detached_turn_control"] = {
+                "lease_path": args.detached_turn_control_lease,
+                "process_id": args.detached_turn_control_process_id,
+                "dispatcher_hold_id": args.detached_turn_control_dispatcher_hold_id,
+                "expires_at": args.detached_turn_control_expires_at,
+                "role_instance_id": from_role_instance_id,
+            }
         db.record_safe_output_call(
             role_instance_id=from_role_instance_id,
             tool_name="handoff.require",
