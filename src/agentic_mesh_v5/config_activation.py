@@ -11,6 +11,8 @@ import threading
 from typing import Callable, Iterator, Mapping, Sequence
 from uuid import uuid4
 
+from agentic_mesh_v5.behavioral_guardrails import BehavioralGuardrailError
+from agentic_mesh_v5.behavioral_guardrails import evaluate_behavioral_guardrails
 from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.package_resolver import ResolvedConfiguration
 from agentic_mesh_v5.package_resolver import calculate_configuration_digest
@@ -171,6 +173,12 @@ class ConfigActivationStore:
                         f"immutable release conflicts with digest {release.digest}"
                     )
                 return existing
+            try:
+                evaluate_behavioral_guardrails(resolved)
+            except BehavioralGuardrailError as exc:
+                raise ConfigActivationError(
+                    f"behavioral promotion check failed: {exc}"
+                ) from exc
             self.releases_dir.mkdir(parents=True, exist_ok=True)
             self._atomic_write(path, release.to_dict())
         return release
