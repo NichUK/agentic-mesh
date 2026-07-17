@@ -163,15 +163,20 @@ def _load_package(root: Path, reference: PackageReference) -> _Package:
     content: list[_Content] = []
     seen_paths: set[str] = set()
     for value in content_values:
-        content_path = package_root / value
+        item_path = Path(value)
+        if item_path.is_absolute() or ".." in item_path.parts:
+            raise PackageResolutionError(f"invalid content path for {reference}: {value}")
+        content_path = package_root / item_path
         try:
             resolved_content = content_path.resolve(strict=True)
-            resolved_content.relative_to(resolved_package_root)
+            package_relative_path = resolved_content.relative_to(
+                resolved_package_root
+            ).as_posix()
         except (OSError, RuntimeError, ValueError) as exc:
             raise PackageResolutionError(f"invalid content path for {reference}: {value}") from exc
-        if not resolved_content.is_file() or value in seen_paths:
+        if not resolved_content.is_file() or package_relative_path in seen_paths:
             raise PackageResolutionError(f"invalid content path for {reference}: {value}")
-        seen_paths.add(value)
+        seen_paths.add(package_relative_path)
         try:
             payload = resolved_content.read_bytes()
             text = payload.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
@@ -247,7 +252,16 @@ def resolve_packages(root: Path, references: Sequence[str]) -> ResolvedConfigura
     for reference in roots:
         visit(reference)
 
-    ordered = sorted(packages.values(), key=lambda package: _reference_key(package.reference))
+    topological_index = {
+        reference: index for index, reference in enumerate(packages)
+    }
+    ordered = sorted(
+        packages.values(),
+        key=lambda package: (
+            KIND_PRECEDENCE[package.reference.kind],
+            topological_index[package.reference],
+        ),
+    )
     settings: dict[str, Any] = {}
     text_sections: list[TextSection] = []
     provenance: list[ContentProvenance] = []

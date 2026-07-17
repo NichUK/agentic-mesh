@@ -161,6 +161,29 @@ def test_missing_dependency_and_cycle_are_rejected(tmp_path: Path) -> None:
         resolve_packages(cycle_root, ["system/one@1.0.0"])
 
 
+def test_same_kind_dependency_is_applied_before_its_dependent(tmp_path: Path) -> None:
+    root = _repository(tmp_path)
+    _package(
+        root,
+        "role/z-base@1.0.0",
+        json_content={"source": "base"},
+    )
+    _package(
+        root,
+        "role/a-dependent@1.0.0",
+        dependencies=["role/z-base@1.0.0"],
+        json_content={"source": "dependent"},
+    )
+
+    resolved = resolve_packages(root, ["role/a-dependent@1.0.0"])
+
+    assert resolved.packages == (
+        "role/z-base@1.0.0",
+        "role/a-dependent@1.0.0",
+    )
+    assert resolved.settings["source"] == "dependent"
+
+
 def test_content_cannot_escape_package_directory(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     package_root = root / "packages" / "system" / "core" / "1.0.0"
@@ -175,6 +198,29 @@ def test_content_cannot_escape_package_directory(tmp_path: Path) -> None:
                 "kind": "system",
                 "version": "1.0.0",
                 "content": ["../outside.md"],
+                "dependencies": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageResolutionError, match="invalid content path"):
+        resolve_packages(root, ["system/core@1.0.0"])
+
+
+def test_content_aliases_cannot_duplicate_one_resolved_file(tmp_path: Path) -> None:
+    root = _repository(tmp_path)
+    package_root = root / "packages" / "system" / "core" / "1.0.0"
+    package_root.mkdir(parents=True)
+    (package_root / "settings.json").write_text("{}\n", encoding="utf-8")
+    (package_root / "package.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "id": "core",
+                "kind": "system",
+                "version": "1.0.0",
+                "content": ["settings.json", "./settings.json"],
                 "dependencies": [],
             }
         ),
