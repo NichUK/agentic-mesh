@@ -46,7 +46,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    violations = find_runtime_boundary_violations(args.package_root)
+    package_root = args.package_root
+    if package_root is not None and (
+        not package_root.exists() or not package_root.is_dir()
+    ):
+        _write(
+            {
+                "error": "package root must be an existing directory",
+                "path": str(package_root),
+                "runtime": "agentic-mesh-v5",
+                "status": "error",
+            },
+            as_json=args.json,
+        )
+        return 2
+
+    violations = find_runtime_boundary_violations(package_root)
     payload = {
         "runtime": "agentic-mesh-v5",
         "status": "clean" if not violations else "rejected",

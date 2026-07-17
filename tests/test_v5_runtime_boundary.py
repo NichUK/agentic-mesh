@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tomllib
 
 import pytest
 
@@ -54,8 +56,44 @@ def test_v5_cli_starts_independently() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert '"runtime": "agentic-mesh-v5"' in result.stdout
-    assert '"status": "bootstrap-ready"' in result.stdout
+    assert json.loads(result.stdout) == {
+        "runtime": "agentic-mesh-v5",
+        "status": "bootstrap-ready",
+        "version": "5.0.0.dev0",
+    }
+
+
+@pytest.mark.parametrize("path_kind", ["missing", "file"])
+def test_v5_boundary_cli_rejects_invalid_package_root(
+    tmp_path: Path, path_kind: str
+) -> None:
+    package_root = tmp_path / path_kind
+    if path_kind == "file":
+        package_root.write_text("not a package\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "agentic_mesh_v5",
+            "--json",
+            "boundary-check",
+            "--package-root",
+            str(package_root),
+        ],
+        cwd=REPOSITORY_ROOT,
+        env=_subprocess_environment(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert json.loads(result.stdout) == {
+        "error": "package root must be an existing directory",
+        "path": str(package_root),
+        "runtime": "agentic-mesh-v5",
+        "status": "error",
+    }
 
 
 def test_current_v5_source_has_a_clean_runtime_boundary() -> None:
@@ -85,6 +123,7 @@ def test_boundary_check_rejects_superseded_runtime_imports(
 
 
 def test_v5_console_entry_point_is_declared() -> None:
-    project = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as handle:
+        project = tomllib.load(handle)
 
-    assert 'agentic-mesh-v5 = "agentic_mesh_v5.cli:main"' in project
+    assert project["project"]["scripts"]["agentic-mesh-v5"] == "agentic_mesh_v5.cli:main"
