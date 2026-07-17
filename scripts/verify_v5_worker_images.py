@@ -97,33 +97,49 @@ def validate_worker_images(root: Path, config_root: Path | None = None) -> list[
         re.MULTILINE,
     ) is None:
         errors.append("shared Python base must be pinned by sha256 digest")
-    if re.search(r"^ARG CODEX_VERSION=[0-9]+\.[0-9]+\.[0-9]+$", dockerfile_text, re.MULTILINE) is None:
+    if (
+        re.search(
+            r"^ARG CODEX_VERSION=[0-9]+\.[0-9]+\.[0-9]+$",
+            dockerfile_text,
+            re.MULTILINE,
+        )
+        is None
+    ):
         errors.append("Codex CLI must use an exact semantic version")
-    if re.search(r"^ARG SOURCE_DATE_EPOCH=[0-9]+$", dockerfile_text, re.MULTILINE) is None:
+    if (
+        re.search(
+            r"^ARG SOURCE_DATE_EPOCH=[0-9]+$", dockerfile_text, re.MULTILINE
+        )
+        is None
+    ):
         errors.append("worker image creation time must use a fixed SOURCE_DATE_EPOCH")
     if "FROM v5-worker-base" not in dockerfile_text:
         errors.append("worker targets must share v5-worker-base")
 
-    expected_ignore = {
+    expected_ignore = [
         "*",
         "!Dockerfile",
         "!worker-healthcheck.py",
         "!manifests/",
         "!manifests/*.json",
-    }
+    ]
     try:
-        actual_ignore = {
+        actual_ignore = [
             line.strip()
             for line in (context / ".dockerignore").read_text(encoding="utf-8").splitlines()
             if line.strip()
-        }
+        ]
     except (OSError, UnicodeError) as exc:
-        actual_ignore = set()
+        actual_ignore = []
         errors.append(f"could not read V5 .dockerignore: {exc}")
     if actual_ignore != expected_ignore:
         errors.append("V5 build context allowlist does not match the project-neutral contract")
 
-    compose_text = (context / "compose.yaml").read_text(encoding="utf-8")
+    try:
+        compose_text = (context / "compose.yaml").read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        compose_text = ""
+        errors.append(f"could not read V5 Compose file: {exc}")
     if "provenance: false" not in compose_text or "SOURCE_DATE_EPOCH:" not in compose_text:
         errors.append("Compose must disable volatile provenance and pass SOURCE_DATE_EPOCH")
     manifests: dict[str, dict[str, Any]] = {}
@@ -190,7 +206,12 @@ def inspect_built_images(root: Path) -> list[str]:
                     text=True,
                 ).stdout
             )[0]
-        except (OSError, subprocess.CalledProcessError, json.JSONDecodeError, IndexError) as exc:
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+            json.JSONDecodeError,
+            IndexError,
+        ) as exc:
             errors.append(f"{profile_id}: could not inspect built image: {exc}")
             continue
         labels = inspected.get("Config", {}).get("Labels", {}) or {}
@@ -201,7 +222,9 @@ def inspect_built_images(root: Path) -> list[str]:
             errors.append(f"{profile_id}: built image capability label differs")
         inspect_payload = json.dumps(inspected.get("Config", {})).encode("utf-8")
         if any(pattern.search(inspect_payload) for pattern in SECRET_PATTERNS):
-            errors.append(f"{profile_id}: built image configuration contains credential material")
+            errors.append(
+                f"{profile_id}: built image configuration contains credential material"
+            )
         health = subprocess.run(
             ["docker", "run", "--rm", "--entrypoint", "agentic-mesh-worker-healthcheck", image],
             check=False,
@@ -209,7 +232,10 @@ def inspect_built_images(root: Path) -> list[str]:
             text=True,
         )
         if health.returncode != 0:
-            errors.append(f"{profile_id}: built image healthcheck failed: {health.stdout}{health.stderr}")
+            errors.append(
+                f"{profile_id}: built image healthcheck failed: "
+                f"{health.stdout}{health.stderr}"
+            )
         embedded = subprocess.run(
             [
                 "docker",
