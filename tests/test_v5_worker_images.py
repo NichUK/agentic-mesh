@@ -100,6 +100,7 @@ def test_every_worker_image_has_one_shared_base_and_exact_build_inputs() -> None
 
 def test_ux_image_pins_and_exercises_specialist_tools() -> None:
     dockerfile = (ROOT / "docker" / "v5" / "Dockerfile").read_text(encoding="utf-8")
+    ux_stage = VERIFIER._dockerfile_stage(dockerfile, "v5-ux-worker", [])
     smoke = (ROOT / "docker" / "v5" / "ux-smoke-test.mjs").read_text(
         encoding="utf-8"
     )
@@ -107,6 +108,7 @@ def test_ux_image_pins_and_exercises_specialist_tools() -> None:
     assert "ARG PLAYWRIGHT_VERSION=1.61.1" in dockerfile
     assert "ARG AXE_PLAYWRIGHT_VERSION=4.12.1" in dockerfile
     assert "playwright install --with-deps chromium" in dockerfile
+    assert "--mount=type=cache,target=/root/.npm" in ux_stage
     assert "agentic-mesh-ux-smoke" in dockerfile
     for operation in (
         "AxeBuilder",
@@ -120,6 +122,8 @@ def test_ux_image_pins_and_exercises_specialist_tools() -> None:
         assert operation in smoke
     assert "baselineScreenshot" in smoke
     assert "candidateScreenshot" in smoke
+    assert "accessibility.violations.length > 0" in smoke
+    assert "changedPixels > 0" in smoke
 
 
 def test_build_context_allowlist_excludes_project_material() -> None:

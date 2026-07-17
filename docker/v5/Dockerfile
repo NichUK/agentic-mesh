@@ -100,7 +100,8 @@ ARG AXE_PLAYWRIGHT_VERSION=4.12.1
 ARG PIXELMATCH_VERSION=7.2.0
 ARG PNGJS_VERSION=7.0.0
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN mkdir -p /opt/agentic-mesh/ux-tools \
+RUN --mount=type=cache,target=/root/.npm \
+    mkdir -p /opt/agentic-mesh/ux-tools \
     && npm install --prefix /opt/agentic-mesh/ux-tools --omit=dev --no-audit --no-fund \
         "@axe-core/playwright@${AXE_PLAYWRIGHT_VERSION}" \
         "pixelmatch@${PIXELMATCH_VERSION}" \

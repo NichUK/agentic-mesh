@@ -53,17 +53,22 @@ try {
   );
   execFileSync("pdfinfo", [pdf], { stdio: "ignore" });
 
-  console.log(
-    JSON.stringify({
-      status: "passed",
-      browser: "chromium",
-      accessibilityViolations: accessibility.violations.length,
-      changedPixels,
-      baselineScreenshotBytes: (await readFile(baselineScreenshot)).length,
-      candidateScreenshotBytes: (await readFile(candidateScreenshot)).length,
-      pdfBytes: (await readFile(pdf)).length,
-    }),
-  );
+  const evidence = {
+    status:
+      accessibility.violations.length === 0 && changedPixels === 0
+        ? "passed"
+        : "failed",
+    browser: "chromium",
+    accessibilityViolations: accessibility.violations.length,
+    changedPixels,
+    baselineScreenshotBytes: (await readFile(baselineScreenshot)).length,
+    candidateScreenshotBytes: (await readFile(candidateScreenshot)).length,
+    pdfBytes: (await readFile(pdf)).length,
+  };
+  console.log(JSON.stringify(evidence));
+  if (accessibility.violations.length > 0 || changedPixels > 0) {
+    throw new Error("UX smoke evidence did not meet the clean baseline");
+  }
 } finally {
   if (context) await context.close();
   if (browser) await browser.close();
