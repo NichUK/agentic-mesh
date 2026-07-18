@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.lifecycle import LifecycleStore
+import agentic_mesh_v5.read_models as read_model_module
 from agentic_mesh_v5.read_models import DOMAINS
 from agentic_mesh_v5.read_models import ReadModelStore
 
@@ -254,6 +256,57 @@ def test_event_batches_resume_in_order_without_holding_database_state(
     assert "alpha-2" in {item.entity_id for item in combined}
 
 
+def test_snapshot_bounds_catch_up_and_reports_projection_lag(
+    postgres_database: str, monkeypatch
+) -> None:
+    MigrationRunner(postgres_database).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        _seed_project(connection, "alpha")
+        for index in range(5):
+            _insert_work(connection, "alpha", f"work-{index}")
+    monkeypatch.setattr(read_model_module, "SNAPSHOT_BATCH_SIZE", 2)
+    monkeypatch.setattr(read_model_module, "SNAPSHOT_MAX_BATCHES", 1)
+
+    snapshot = ReadModelStore(postgres_database).snapshot("alpha")
+
+    assert snapshot["last_event_id"] < snapshot["latest_event_id"]
+    assert snapshot["caught_up"] is False
+
+
+def test_snapshot_recomputes_clock_dependent_queue_readiness(
+    postgres_database: str,
+) -> None:
+    MigrationRunner(postgres_database).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        _seed_project(connection, "alpha")
+        _insert_work(connection, "alpha", "work-1")
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.role_queues(project_id, queue_id, role_id)
+            VALUES ('alpha', 'engineering', 'engineering')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.queue_items
+                (project_id, queue_item_id, queue_id, work_item_id,
+                 available_at, idempotency_key)
+            VALUES ('alpha', 'delayed', 'engineering', 'work-1', %s, 'idem-delayed')
+            """,
+            (datetime.now(timezone.utc) + timedelta(seconds=1),),
+        )
+    store = ReadModelStore(postgres_database)
+    delayed = store.snapshot("alpha")
+    time.sleep(1.2)
+    ready = store.snapshot("alpha")
+
+    assert delayed["domains"]["queue"][0]["delayed"] == 1
+    assert delayed["domains"]["queue"][0]["ready"] == 0
+    assert ready["domains"]["queue"][0]["delayed"] == 0
+    assert ready["domains"]["queue"][0]["ready"] == 1
+    assert ready["latest_event_id"] == delayed["latest_event_id"]
+
+
 def _authorization() -> TokenAuthorizer:
     return TokenAuthorizer(
         [
@@ -325,6 +378,7 @@ def test_authorized_snapshot_and_sse_resume_never_cross_projects(
     )
 
     assert snapshot.status_code == 200
+    assert snapshot.json()["caught_up"] is True
     assert "bravo-1" not in json.dumps(snapshot.json())
     assert initial.headers["content-type"].startswith("text/event-stream")
     assert resumed_payloads

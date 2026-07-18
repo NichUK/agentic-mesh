@@ -14,6 +14,8 @@ from agentic_mesh_v5.database import SCHEMA
 
 DOMAINS = ("project", "work", "queue", "role", "instance", "progress")
 READ_MODEL_LOCK_SEED = 5_019
+SNAPSHOT_BATCH_SIZE = 1000
+SNAPSHOT_MAX_BATCHES = 10
 
 
 class ReadModelError(DatabaseError):
@@ -104,8 +106,9 @@ class ReadModelStore:
 
     def snapshot(self, project_id: str) -> dict[str, object]:
         project_id = _required(project_id, "project_id")
-        while self.advance(project_id, limit=1000) == 1000:
-            pass
+        for _batch in range(SNAPSHOT_MAX_BATCHES):
+            if self.advance(project_id, limit=SNAPSHOT_BATCH_SIZE) < SNAPSHOT_BATCH_SIZE:
+                break
         try:
             with psycopg.connect(self._database_url) as connection:
                 self._lock_project(connection, project_id)
@@ -116,6 +119,13 @@ class ReadModelStore:
                     """,
                     (project_id,),
                 ).fetchone()
+                latest = connection.execute(
+                    f"""
+                    SELECT COALESCE(max(event_id), 0)
+                    FROM {SCHEMA}.read_model_events WHERE project_id = %s
+                    """,
+                    (project_id,),
+                ).fetchone()[0]
                 rows = connection.execute(
                     f"""
                     SELECT domain, entity_id, payload
@@ -125,14 +135,65 @@ class ReadModelStore:
                     """,
                     (project_id,),
                 ).fetchall()
+                queue_rows = connection.execute(
+                    f"""
+                    WITH observed AS (SELECT clock_timestamp() AS now)
+                    SELECT queue.queue_id,
+                           count(item.queue_item_id) FILTER (
+                               WHERE item.status IN ('ready', 'leased')
+                           ) AS depth,
+                           count(item.queue_item_id) FILTER (
+                               WHERE item.status = 'ready'
+                                 AND item.available_at <= (SELECT now FROM observed)
+                           ) AS ready,
+                           count(item.queue_item_id) FILTER (
+                               WHERE item.status = 'ready'
+                                 AND item.available_at > (SELECT now FROM observed)
+                           ) AS delayed,
+                           count(item.queue_item_id) FILTER (
+                               WHERE item.status = 'leased'
+                           ) AS leased,
+                           EXTRACT(epoch FROM (SELECT now FROM observed)
+                               - min(item.available_at) FILTER (
+                                   WHERE item.status = 'ready'
+                                     AND item.available_at <= (SELECT now FROM observed)
+                               )) AS oldest_ready_age_seconds,
+                           COALESCE(sum(item.attempt_count), 0) AS total_attempts
+                    FROM {SCHEMA}.role_queues AS queue
+                    LEFT JOIN {SCHEMA}.queue_items AS item
+                      ON item.project_id = queue.project_id
+                     AND item.queue_id = queue.queue_id
+                    WHERE queue.project_id = %s
+                    GROUP BY queue.queue_id
+                    """,
+                    (project_id,),
+                ).fetchall()
         except Exception as exc:
             raise ReadModelError("read-model snapshot failed") from exc
         domains: dict[str, list[dict[str, Any]]] = {item: [] for item in DOMAINS}
+        queue_metrics = {
+            row[0]: {
+                "depth": row[1],
+                "ready": row[2],
+                "delayed": row[3],
+                "leased": row[4],
+                "oldest_ready_age_seconds": (
+                    None if row[5] is None else float(row[5])
+                ),
+                "total_attempts": row[6],
+            }
+            for row in queue_rows
+        }
         for domain, _entity_id, payload in rows:
+            if domain == "queue":
+                payload = {**payload, **queue_metrics.get(_entity_id, {})}
             domains[domain].append(payload)
+        last_event_id = 0 if cursor is None else cursor[0]
         return {
             "project_id": project_id,
-            "last_event_id": 0 if cursor is None else cursor[0],
+            "last_event_id": last_event_id,
+            "latest_event_id": latest,
+            "caught_up": last_event_id >= latest,
             "domains": domains,
         }
 

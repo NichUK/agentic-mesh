@@ -219,6 +219,8 @@ class AgentsResponse(ApiModel):
 class ReadModelSnapshotResponse(ApiModel):
     project_id: str
     last_event_id: int
+    latest_event_id: int
+    caught_up: bool
     domains: dict[str, list[dict[str, Any]]]
 
 

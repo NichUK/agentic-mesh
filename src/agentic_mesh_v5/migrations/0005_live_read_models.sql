@@ -98,14 +98,6 @@ BEGIN
                 'depth', count(item.queue_item_id) FILTER (
                     WHERE item.status IN ('ready', 'leased')
                 ),
-                'ready', count(item.queue_item_id) FILTER (
-                    WHERE item.status = 'ready'
-                      AND item.available_at <= clock_timestamp()
-                ),
-                'delayed', count(item.queue_item_id) FILTER (
-                    WHERE item.status = 'ready'
-                      AND item.available_at > clock_timestamp()
-                ),
                 'leased', count(item.queue_item_id) FILTER (WHERE item.status = 'leased'),
                 'total_attempts', COALESCE(sum(item.attempt_count), 0)
             )
@@ -216,12 +208,6 @@ SELECT queue.project_id, 'queue', queue.queue_id, 'upsert', jsonb_strip_nulls(
         'queue_id', queue.queue_id, 'role_id', queue.role_id,
         'capability', queue.capability, 'paused', queue.paused,
         'depth', count(item.queue_item_id) FILTER (WHERE item.status IN ('ready', 'leased')),
-        'ready', count(item.queue_item_id) FILTER (
-            WHERE item.status = 'ready' AND item.available_at <= clock_timestamp()
-        ),
-        'delayed', count(item.queue_item_id) FILTER (
-            WHERE item.status = 'ready' AND item.available_at > clock_timestamp()
-        ),
         'leased', count(item.queue_item_id) FILTER (WHERE item.status = 'leased'),
         'total_attempts', COALESCE(sum(item.attempt_count), 0)
     )
