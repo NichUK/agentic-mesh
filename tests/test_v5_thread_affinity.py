@@ -585,6 +585,23 @@ def test_store_failures_are_redacted() -> None:
     assert "127.0.0.1" not in str(captured.value)
 
 
+def test_product_modules_cannot_bypass_the_affinity_coordinator() -> None:
+    source_root = Path(__file__).resolve().parents[1] / "src" / "agentic_mesh_v5"
+    allowed = {
+        "codex_provider.py",
+        "thread_affinity.py",
+        "worker_provider.py",
+    }
+    bypasses = []
+    for path in source_root.glob("*.py"):
+        if path.name in allowed:
+            continue
+        source = path.read_text(encoding="utf-8")
+        if ".start_thread(" in source or ".resume_thread(" in source:
+            bypasses.append(path.name)
+    assert bypasses == []
+
+
 @pytest.mark.skipif(
     not os.environ.get("AGENTIC_MESH_TEST_CODEX_HOME"),
     reason="explicit external Codex home not supplied",

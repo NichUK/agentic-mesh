@@ -29,6 +29,11 @@ changes. Unrelated work and roles must never share provider context.
 - parsing provider thread history or copying private conversation content;
 - connector conversation discovery.
 
+V5 has no worker dispatch loop at this story boundary. This slice supplies the
+production `ThreadAffinityCoordinator` that AMV5-029 must call and adds a source
+guard preventing future product code from bypassing it. Activating queue-driven
+turn execution remains routing work, not hidden scope in this slice.
+
 ## Acceptance criteria
 
 1. The database stores exactly one active thread binding for each
