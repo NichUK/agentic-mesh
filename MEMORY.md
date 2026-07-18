@@ -55,6 +55,12 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   release require that token, and the next claim transaction reclaims expired
   work using database time. Queue readiness, delay, lease, age, and attempts are
   queryable from durable state.
+- The V5 FastAPI control boundary exposes implemented project, work, gate,
+  approval, and queue operations under `/api/v1`, plus authorized reads for
+  existing agent, handoff, progress, package, and audit records. Usage and
+  recovery remain explicitly planned rather than simulated. Bootstrap bearer
+  identities come from an external hash-only principals file, every project
+  route checks project and scope, and failures use structured problem details.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

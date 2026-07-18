@@ -17,12 +17,14 @@ classifiers = [
 ]
 dependencies = [
   "bleach>=6.1",
+  "fastapi>=0.115,<1",
   "Markdown>=3.7",
   "opentelemetry-api==1.42.1",
   "opentelemetry-exporter-otlp-proto-grpc==1.42.1",
   "opentelemetry-sdk==1.42.1",
   "psycopg[binary]>=3.2",
   "PyYAML>=6.0",
+  "uvicorn>=0.34,<1",
   "websocket-client>=1.8",
 ]
 
@@ -33,6 +35,7 @@ agentic-mesh-v5 = "agentic_mesh_v5.cli:main"
 
 [project.optional-dependencies]
 dev = [
+  "httpx>=0.28,<1",
   "jsonschema>=4.23",
   "pytest>=8.0",
 ]
