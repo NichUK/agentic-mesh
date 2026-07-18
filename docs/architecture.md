@@ -66,7 +66,10 @@ operational support.
   agents; provides broker, connector, document-library, configuration,
   reporting, and telemetry services.
 - Worker adapter: executes model or CLI work through Codex, OpenAI, Anthropic,
-  Claude Code, MiniMax, DeepSeek, or future providers.
+  Claude Code, MiniMax, DeepSeek, or future providers. V5 exposes only neutral
+  engine, thread, turn, event, completion, usage, and safe-error contracts. Its
+  first implementation wraps the official Codex Python SDK's local stdio
+  app-server; Codex wire methods and generated SDK types stop at the adapter.
 - Message queue: provides durable inbox/outbox delivery. The active V4 runtime
   uses Postgres-backed queues; other queue backends remain future adapter
   options.

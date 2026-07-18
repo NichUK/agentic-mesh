@@ -82,6 +82,13 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   and remains paused until an explicit operator resume. Operations and recovery
   images include `pg_dump`, `pg_restore`, and `psql`; database credentials stay
   in child-process environment rather than arguments, output, or manifests.
+- V5 worker execution has provider-neutral engine, thread, active-turn, event,
+  completion, usage, policy, and safe-error contracts. The Codex implementation
+  uses the official version-pinned `openai-codex` Python SDK and one local stdio
+  app-server per opened engine. Codex notification models and exception text do
+  not cross the adapter; overload/transport failures are retryable, interruption
+  is distinct from failure, credentials remain external, and close is
+  deterministic and retryable after a cleanup failure.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

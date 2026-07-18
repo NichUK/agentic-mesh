@@ -461,15 +461,33 @@ or storage backend.
 
 ## Worker Adapter Abstraction
 
-Worker adapters execute role work. They receive a normalized request and return
-a normalized result.
+Worker providers execute role work behind a provider-neutral lifecycle. V5
+models a warm engine containing resumable threads, with one streamed turn at a
+time per thread. Provider events are translated into stable progress, item,
+plan, usage, error, and completion events before they reach product code.
 
 ```text
-WorkerAdapter
-  run(AgentRunRequest) -> AgentRunResult
+WorkerProvider
+  open() -> WorkerEngine
+WorkerEngine
+  start_thread(ThreadRequest) -> WorkerThread
+  resume_thread(thread_id, ThreadRequest) -> WorkerThread
+WorkerThread
+  start_turn(TurnRequest) -> WorkerTurn
+WorkerTurn
+  events() -> ProviderEvent stream
+  interrupt()
 ```
 
-Supported initial adapters:
+The first V5 implementation is the local Codex provider. It uses the official,
+version-pinned `openai-codex` Python SDK to control a local app-server over its
+stable interface and reuses the existing external Codex authentication. Codex
+JSON-RPC notification shapes and SDK exceptions remain inside the adapter;
+queues, projects, flow rules, and workers depend only on the neutral contract.
+An engine stays warm across turns and is closed on hibernation or failure.
+
+Planned and possible providers remain adapter choices rather than product
+semantics:
 
 - `codex-cli`
 - `openai-api`
@@ -479,9 +497,11 @@ Supported initial adapters:
 - `minimax-api`
 - `manual-human`
 
-The runtime must define an internal tool protocol rather than leaking provider
-tool-call formats into the product. Adapters map the internal tool protocol to
-provider-specific capabilities where available.
+The runtime must define internal event and tool protocols rather than leaking
+provider formats into the product. Adapters map those protocols to
+provider-specific capabilities where available. Authentication, capacity, and
+transport failures are classified without copying raw provider messages, which
+may contain secrets or prompt content, into durable runtime state.
 
 Worker authentication is configured separately from role semantics. A project
 selects an auth method from the system catalog in `config/auth-methods.yaml`
