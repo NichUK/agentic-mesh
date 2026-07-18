@@ -112,8 +112,10 @@ class ControlApiClient:
         body_file: Path | None = None,
     ) -> ControlResult:
         normalized_method = method.upper()
-        if normalized_method not in {"GET", "POST"}:
-            raise ApiClientConfigurationError("control method must be GET or POST")
+        if normalized_method not in {"GET", "POST", "PUT"}:
+            raise ApiClientConfigurationError(
+                "control method must be GET, POST, or PUT"
+            )
         normalized_path = _validated_api_path(path)
         if normalized_method == "GET" and body_file is not None:
             raise ApiClientConfigurationError("GET control calls cannot include a body")

@@ -175,6 +175,16 @@ class Telemetry:
         self._health_count.add(1, attributes)
         self._health_duration.record(max(0.0, duration), attributes)
 
+    @staticmethod
+    def record_safe_failure(span: Span, *, code: str) -> None:
+        safe_code = _operation_name(code)
+        span.record_exception(
+            RuntimeError("operation failed"),
+            attributes={"mesh.error.code": safe_code},
+            escaped=False,
+        )
+        span.set_status(Status(StatusCode.ERROR))
+
     def shutdown(self) -> None:
         if not self._owns_providers:
             return

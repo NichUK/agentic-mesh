@@ -395,6 +395,21 @@ Hibernation rules:
 - Multi-instance roles can hibernate some instances while keeping a minimum
   warm pool where configured.
 
+V5 materializes the lifecycle policy in Postgres while keeping its source
+configuration external. A project pre-registers a bounded pool of stable
+role-instance identities. Reconciliation wakes an instance immediately when a
+zero-sized role receives ready work, adds one instance when busy capacity has
+left ready work waiting for the configured threshold (60 seconds by default),
+and hibernates surplus specialists after the idle grace period (300 seconds by
+default). The Project Manager retains a minimum of one warm instance.
+
+The desired `starting` or `hibernating` transition and its action id are
+durable before the orchestration adapter is called. Deployment adapters apply
+an action idempotently, so a control-plane restart repeats rather than loses
+the operation. An unreleased work lease, active thread operation, or pending
+instance-correlated outbox record prevents hibernation. Prompt-pinned thread
+affinity and queued work remain durable outside the worker container.
+
 Configuration example:
 
 ```yaml

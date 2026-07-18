@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
@@ -12,6 +13,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 import psycopg
 from psycopg import sql
 import pytest
@@ -175,6 +177,48 @@ def test_unmatched_paths_and_operation_spans_do_not_capture_content() -> None:
         "mesh.work_item.id": "work-1",
         "mesh.correlation.id": "corr-1",
     }
+
+
+def test_fleet_loop_records_redacted_failure_and_keeps_running() -> None:
+    telemetry, exporter, _metric_reader = _telemetry()
+
+    class Supervisor:
+        def apply(self, _action) -> None:
+            raise AssertionError("no action can exist without the database")
+
+    app = create_app(
+        "postgresql://db-user:db-password@127.0.0.1:1/mesh?connect_timeout=1",
+        authorizer=_authorizer(),
+        telemetry=telemetry,
+        fleet_supervisor=Supervisor(),
+        fleet_reconcile_interval_seconds=0.05,
+    )
+    with TestClient(app):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if any(
+                span.name == "mesh.fleet.reconcile"
+                for span in exporter.get_finished_spans()
+            ):
+                break
+            time.sleep(0.01)
+
+    spans = [
+        span for span in exporter.get_finished_spans()
+        if span.name == "mesh.fleet.reconcile"
+    ]
+    assert spans
+    assert spans[-1].status.status_code == StatusCode.ERROR
+    serialized = json.dumps(
+        [
+            {"name": event.name, "attributes": dict(event.attributes)}
+            for span in spans for event in span.events
+        ],
+        sort_keys=True,
+    )
+    assert "fleet.reconciliation_failed" in serialized
+    assert "db-password" not in serialized
+    assert "postgresql://" not in serialized
 
 
 def test_liveness_is_database_independent_and_readiness_is_redacted() -> None:

@@ -134,6 +134,7 @@ def test_clean_database_migrates_and_repeat_is_noop(postgres_database: str) -> N
         "audit_records",
         "thread_affinities",
         "thread_reseeds",
+        "role_scaling_policies",
         "schema_migrations",
     }.issubset(tables)
     assert "(project_id, available_at, outbox_id)" in outbox_index
@@ -224,6 +225,53 @@ def test_handoff_acceptance_migration_preserves_legacy_offer(
             """
         ).fetchone()
     assert row == ("offered", True, None, None)
+
+
+def test_fleet_migration_normalizes_legacy_transitional_instances(
+    postgres_database: str,
+) -> None:
+    packaged = load_migrations()
+    fleet = next(item for item in packaged if item.name == "fleet_scaling")
+    MigrationRunner(
+        postgres_database,
+        migrations=tuple(item for item in packaged if item.version < fleet.version),
+    ).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.projects(project_id, display_name)
+            VALUES ('alpha', 'Alpha')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.roles(project_id, role_id, template_id)
+            VALUES ('alpha', 'engineering', 'engineering')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.role_instances
+                (project_id, instance_id, role_id, status)
+            VALUES ('alpha', 'eng-1', 'engineering', 'starting')
+            """
+        )
+
+    MigrationRunner(postgres_database, migrations=packaged).migrate()
+
+    with psycopg.connect(postgres_database) as connection:
+        row = connection.execute(
+            """
+            SELECT status, lifecycle_action_id, lifecycle_reason
+            FROM agentic_mesh_v5.role_instances
+            WHERE project_id = 'alpha' AND instance_id = 'eng-1'
+            """
+        ).fetchone()
+    assert row == (
+        "stopped",
+        None,
+        "normalized legacy transition during fleet migration",
+    )
 
 
 def test_failed_run_rolls_back_history_and_schema(postgres_database: str) -> None:

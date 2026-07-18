@@ -20,6 +20,7 @@ from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
 from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
+from agentic_mesh_v5.fleet import FleetAction
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.usage import CapacityDraft
 from agentic_mesh_v5.usage import TurnUsageDraft
@@ -177,6 +178,11 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     ) in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/usage" in paths
     assert f"{API_PREFIX}/pm-monitor/sweep" in paths
+    assert f"{API_PREFIX}/fleet/reconcile" in paths
+    assert (
+        f"{API_PREFIX}/projects/{{project_id}}/fleet/policies/{{role_id}}"
+        in paths
+    )
     assert f"{API_PREFIX}/projects/{{project_id}}/recovery" in paths
     assert (
         f"{API_PREFIX}/projects/{{project_id}}/work-items/"
@@ -230,6 +236,75 @@ def test_global_pm_monitor_api_is_operator_only_and_hides_token_from_status(
     assert sweep.json()["observations"] == []
     assert sweep.json()["sweep_count"] == 1
     assert forbidden.status_code == 403
+
+
+def test_fleet_policy_and_reconciliation_api_are_strictly_scoped(
+    api_database: tuple[str, TestClient],
+) -> None:
+    database_url, _client = api_database
+
+    class Supervisor:
+        def __init__(self) -> None:
+            self.actions: list[FleetAction] = []
+
+        def apply(self, action: FleetAction) -> None:
+            self.actions.append(action)
+
+    supervisor = Supervisor()
+    client = TestClient(
+        create_app(
+            database_url,
+            authorizer=_authorizer(),
+            fleet_supervisor=supervisor,
+            fleet_reconcile_interval_seconds=300,
+        )
+    )
+    configured = client.put(
+        f"{API_PREFIX}/projects/alpha/fleet/policies/engineering",
+        headers=_headers("alpha"),
+        json={
+            "min_warm_instances": 0,
+            "max_instances": 2,
+            "scale_after_seconds": 60,
+            "idle_grace_seconds": 300,
+            "hibernation_enabled": True,
+        },
+    )
+    policies = client.get(
+        f"{API_PREFIX}/projects/alpha/fleet/policies",
+        headers=_headers("viewer"),
+    )
+    reconciled = client.post(
+        f"{API_PREFIX}/fleet/reconcile",
+        headers=_headers("operator"),
+        json={"project_id": "alpha"},
+    )
+    forbidden_reconcile = client.post(
+        f"{API_PREFIX}/fleet/reconcile",
+        headers=_headers("alpha"),
+        json={"project_id": "alpha"},
+    )
+    forbidden_project = client.get(
+        f"{API_PREFIX}/projects/alpha/fleet/policies",
+        headers=_headers("bravo"),
+    )
+
+    assert configured.status_code == 200
+    assert configured.json()["max_instances"] == 2
+    assert policies.status_code == 200
+    assert [item["role_id"] for item in policies.json()] == ["engineering"]
+    assert reconciled.status_code == 200
+    assert reconciled.json()["project_id"] == "alpha"
+    assert reconciled.json()["actions"] == []
+    assert forbidden_reconcile.status_code == 403
+    assert forbidden_project.status_code == 403
+    unavailable = _client.post(
+        f"{API_PREFIX}/fleet/reconcile",
+        headers=_headers("operator"),
+        json={"project_id": "alpha"},
+    )
+    assert unavailable.status_code == 503
+    assert unavailable.json()["type"].endswith(":fleet_supervisor_unavailable")
 
 
 def test_progress_write_is_structured_project_scoped_and_stale_safe(

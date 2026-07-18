@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
 from functools import partial
+import math
 import re
 from typing import Any, Literal
 import uuid
@@ -27,6 +28,12 @@ from agentic_mesh_v5.database import database_url_from_environment
 from agentic_mesh_v5.continuation import ContinuationAuthorizationError
 from agentic_mesh_v5.continuation import ContinuationConflict
 from agentic_mesh_v5.continuation import ContinuationMonitor
+from agentic_mesh_v5.fleet import FleetConflict
+from agentic_mesh_v5.fleet import FleetNotFound
+from agentic_mesh_v5.fleet import FleetScaler
+from agentic_mesh_v5.fleet import FleetSupervisor
+from agentic_mesh_v5.fleet import FleetSupervisorError
+from agentic_mesh_v5.fleet import ScalingPolicy
 from agentic_mesh_v5.health import HealthReporter
 from agentic_mesh_v5.handoffs import HandoffAuthorizationError
 from agentic_mesh_v5.handoffs import HandoffConflict
@@ -328,6 +335,49 @@ class PmMonitorSweepResponse(ApiModel):
     observations: list[ContinuationObservationResponse]
 
 
+class FleetPolicyUpsert(ApiModel):
+    min_warm_instances: int = Field(ge=0, le=1000)
+    max_instances: int = Field(ge=1, le=1000)
+    scale_after_seconds: int = Field(default=60, ge=1, le=3600)
+    idle_grace_seconds: int = Field(default=300, ge=1, le=86400)
+    hibernation_enabled: bool = True
+
+
+class FleetPolicyResponse(ApiModel):
+    project_id: str
+    role_id: str
+    min_warm_instances: int
+    max_instances: int
+    scale_after_seconds: int
+    idle_grace_seconds: int
+    hibernation_enabled: bool
+    updated_at: str | None
+
+
+class FleetReconcileRequest(ApiModel):
+    project_id: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN)
+
+
+class FleetActionResponse(ApiModel):
+    action_id: str
+    project_id: str
+    role_id: str
+    instance_id: str
+    action: Literal["wake", "hibernate"]
+    reason: str
+
+
+class FleetActionResultResponse(ApiModel):
+    action: FleetActionResponse
+    status: Literal["completed", "failed", "superseded"]
+    detail: str
+
+
+class FleetReconcileResponse(ApiModel):
+    project_id: str | None
+    actions: list[FleetActionResultResponse]
+
+
 class QueueMetricsResponse(ApiModel):
     project_id: str
     queue_id: str
@@ -508,7 +558,9 @@ class ControlQueries:
             "instances": self._all(
                 f"""
                 SELECT instance_id, role_id, status, provider_ref,
-                       started_at, heartbeat_at, hibernated_at
+                       started_at, heartbeat_at, hibernated_at, idle_since,
+                       lifecycle_action_id, lifecycle_reason, last_wake_at,
+                       last_lifecycle_error
                 FROM {SCHEMA}.role_instances
                 WHERE project_id = %s ORDER BY instance_id
                 """,
@@ -579,7 +631,17 @@ def create_app(
     *,
     authorizer: TokenAuthorizer | None = None,
     telemetry: Telemetry | None = None,
+    fleet_supervisor: FleetSupervisor | None = None,
+    fleet_reconcile_interval_seconds: float = 5.0,
 ) -> FastAPI:
+    if (
+        isinstance(fleet_reconcile_interval_seconds, bool)
+        or not isinstance(fleet_reconcile_interval_seconds, (int, float))
+        or not math.isfinite(float(fleet_reconcile_interval_seconds))
+        or fleet_reconcile_interval_seconds <= 0
+        or fleet_reconcile_interval_seconds > 300
+    ):
+        raise ValueError("fleet reconciliation interval is invalid")
     selected_authorizer = authorizer or TokenAuthorizer.from_environment()
     selected_telemetry = telemetry or Telemetry()
     lifecycle = LifecycleStore(database_url)
@@ -589,6 +651,7 @@ def create_app(
     router = Router(database_url)
     handoff_store = HandoffStore(database_url)
     continuation_monitor = ContinuationMonitor(database_url)
+    fleet_scaler = FleetScaler(database_url, fleet_supervisor)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
@@ -596,8 +659,35 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        yield
-        selected_telemetry.shutdown()
+        async def reconcile_fleet() -> None:
+            while True:
+                with selected_telemetry.operation("fleet.reconcile") as span:
+                    try:
+                        result = await anyio.to_thread.run_sync(
+                            fleet_scaler.reconcile
+                        )
+                        if any(item.status == "failed" for item in result.actions):
+                            selected_telemetry.record_safe_failure(
+                                span, code="fleet.supervisor_failed"
+                            )
+                    except (DatabaseError, FleetSupervisorError, psycopg.Error):
+                        selected_telemetry.record_safe_failure(
+                            span, code="fleet.reconciliation_failed"
+                        )
+                await anyio.sleep(float(fleet_reconcile_interval_seconds))
+
+        try:
+            if fleet_supervisor is None:
+                yield
+            else:
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(reconcile_fleet)
+                    try:
+                        yield
+                    finally:
+                        tasks.cancel_scope.cancel()
+        finally:
+            selected_telemetry.shutdown()
 
     app = FastAPI(
         title="Agentic Mesh V5 Control API",
@@ -721,6 +811,7 @@ def create_app(
     @app.exception_handler(UsageNotFound)
     @app.exception_handler(RoutingNotFound)
     @app.exception_handler(HandoffNotFound)
+    @app.exception_handler(FleetNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
@@ -731,6 +822,7 @@ def create_app(
     @app.exception_handler(RoutingConflict)
     @app.exception_handler(HandoffConflict)
     @app.exception_handler(ContinuationConflict)
+    @app.exception_handler(FleetConflict)
     async def conflict(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 409, "conflict", str(exc))
 
@@ -744,6 +836,15 @@ def create_app(
     @app.exception_handler(ValueError)
     async def invalid_value(request: Request, exc: ValueError) -> JSONResponse:
         return _problem_response(request, 422, "validation_failed", str(exc))
+
+    @app.exception_handler(FleetSupervisorError)
+    async def fleet_unavailable(
+        request: Request, _exc: FleetSupervisorError
+    ) -> JSONResponse:
+        return _problem_response(
+            request, 503, "fleet_supervisor_unavailable",
+            "fleet supervisor is unavailable",
+        )
 
     @app.exception_handler(DatabaseError)
     @app.exception_handler(psycopg.Error)
@@ -831,6 +932,47 @@ def create_app(
     def get_pm_monitor(identity: Principal = Depends(principal)):
         organization_access(identity, "read")
         return asdict(continuation_monitor.status())
+
+    @app.put(
+        f"{API_PREFIX}/projects/{{project_id}}/fleet/policies/{{role_id}}",
+        response_model=FleetPolicyResponse,
+        tags=["fleet"],
+    )
+    def configure_fleet_policy(
+        project_id: str,
+        role_id: str,
+        payload: FleetPolicyUpsert,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        return asdict(
+            fleet_scaler.configure(
+                ScalingPolicy(project_id=project_id, role_id=role_id, **payload.model_dump())
+            )
+        )
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/fleet/policies",
+        response_model=list[FleetPolicyResponse],
+        tags=["fleet"],
+    )
+    def fleet_policies(
+        project_id: str, identity: Principal = Depends(principal)
+    ):
+        project_access(identity, project_id, "read")
+        return [asdict(item) for item in fleet_scaler.policies(project_id)]
+
+    @app.post(
+        f"{API_PREFIX}/fleet/reconcile",
+        response_model=FleetReconcileResponse,
+        tags=["fleet"],
+    )
+    def reconcile_fleet(
+        payload: FleetReconcileRequest,
+        identity: Principal = Depends(principal),
+    ):
+        organization_access(identity, "write")
+        return asdict(fleet_scaler.reconcile(payload.project_id))
 
     @app.get(f"{API_PREFIX}/projects", response_model=list[ProjectResponse], tags=["projects"])
     def list_projects(identity: Principal = Depends(principal)):

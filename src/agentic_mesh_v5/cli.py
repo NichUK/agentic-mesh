@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_call = subparsers.add_parser(
         "control-call", help="call a versioned control API operation"
     )
-    control_call.add_argument("method", choices=("GET", "POST"))
+    control_call.add_argument("method", choices=("GET", "POST", "PUT"))
     control_call.add_argument("path")
     control_call.add_argument("--body-file", type=Path)
     return parser
