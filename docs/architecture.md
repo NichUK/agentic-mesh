@@ -116,3 +116,8 @@ operational support.
   document-root, Teams-channel, and ADO-project claims are exclusive unless an
   exact external grant authorizes sharing; project-scoped credential names are
   isolated by project.
+- Git workspace: each mutating work item pins its project-manifest digest and
+  exact base commits, then receives deterministic external worktrees for its
+  selected repositories. Postgres records branch/path/revision evidence and
+  supports crash pickup; cleanup removes only registered clean worktrees and
+  never resets live source, deletes branches, or discards dirty user work.

@@ -916,3 +916,17 @@ or `release_review`.
 - Project credential identifiers are namespaced. Organization credentials and
   foreign resources require exact external grants; resource collisions fail
   closed unless expressly granted. No secret value is accepted or persisted.
+
+## 2026-07-18 V5 Isolated Multi-Repository Worktrees
+
+- A mutating work item has one durable Postgres workspace pinned to its
+  manifest digest, with deterministic branches and external worktree paths for
+  each selected manifest repository. Replacement role instances can resume the
+  exact plan without using a live source checkout as their mutation target.
+- Sorted advisory locks serialize work-item and shared Git-metadata changes.
+  Partial creation is reconciled only when URL, source, path, branch, and base
+  evidence match; later manifest or default-branch changes do not alter it.
+- Cleanup retains branches and final revisions, removes only registered clean
+  worktrees, and leaves dirty, moved, occupied, or substituted resources intact
+  in a visible blocked/error state. The coordinator never fetches, pushes,
+  resets, cleans, merges, or deletes branches.
