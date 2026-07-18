@@ -12,8 +12,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from agentic_mesh_v5.database import SCHEMA
-from agentic_mesh_v5.database import DatabaseConfigurationError, DatabaseError
+from agentic_mesh_v5.database import SCHEMA, DatabaseConfigurationError, DatabaseError
 
 
 MemoryScope = Literal["project_role", "project", "organization_role"]
