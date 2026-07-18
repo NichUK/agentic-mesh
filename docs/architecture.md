@@ -110,3 +110,9 @@ operational support.
   records, and generated artifacts.
 - Event journal: records an append-only audit/replay history regardless of
   queue backend.
+- Project manifest: V5 loads the strict, Git-owned
+  `agentic-mesh/project.yaml`, validates only external resource and credential
+  references, and activates an immutable Postgres snapshot. Repository,
+  document-root, Teams-channel, and ADO-project claims are exclusive unless an
+  exact external grant authorizes sharing; project-scoped credential names are
+  isolated by project.
