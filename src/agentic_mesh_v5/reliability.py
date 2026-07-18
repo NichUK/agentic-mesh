@@ -15,6 +15,7 @@ from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.events import EventDraft
 from agentic_mesh_v5.events import EventUnitOfWork
 from agentic_mesh_v5.events import OutboundDraft
+from agentic_mesh_v5.progress import reject_sensitive_content
 from agentic_mesh_v5.routing import RouteDraft
 from agentic_mesh_v5.routing import Router
 from agentic_mesh_v5.routing import RoutingConflict
@@ -119,6 +120,8 @@ class ReliabilityStore:
         failure_category = _identifier(failure_category, "failure_category")
         safe_summary = _bounded(safe_summary, "safe_summary", 1000)
         source_ref = _bounded(source_ref, "source_ref", 1000)
+        reject_sensitive_content(safe_summary, "safe_summary")
+        reject_sensitive_content(source_ref, "source_ref")
         actor_id = _bounded(actor_id, "actor_id", 512)
         request = {
             "project_id": project_id,
@@ -334,6 +337,35 @@ class ReliabilityStore:
                         raise ReliabilityConflict(
                             "attempt does not match the required retry stage"
                         )
+                    if stage == "recovery":
+                        supervisor_result = connection.execute(
+                            f"""
+                            SELECT run.run_id, run.safe_summary,
+                                   run.verification_ref, run.usage_used,
+                                   run.usage_limit, run.tool_profile_reference,
+                                   run.tool_profile_digest
+                            FROM {SCHEMA}.recovery_supervisor_runs AS run
+                            JOIN {SCHEMA}.recovery_requests AS request
+                              ON request.project_id = run.project_id
+                             AND request.recovery_request_id = run.recovery_request_id
+                            WHERE run.project_id = %s AND run.run_id = %s
+                              AND request.incident_id = %s
+                              AND run.status = 'reported' AND run.outcome = %s
+                            """,
+                            (project_id, attempt_id, incident_id, outcome),
+                        ).fetchone()
+                        if supervisor_result is None or evidence_value != {
+                            "recovery_run_id": supervisor_result[0],
+                            "safe_summary": supervisor_result[1],
+                            "verification_ref": supervisor_result[2],
+                            "usage_used": supervisor_result[3],
+                            "usage_limit": supervisor_result[4],
+                            "tool_profile_reference": supervisor_result[5],
+                            "tool_profile_digest": supervisor_result[6],
+                        }:
+                            raise ReliabilityConflict(
+                                "recovery attempt requires a verified supervisor result"
+                            )
                     if correction_digest is not None and connection.execute(
                         f"""
                         SELECT 1 FROM {SCHEMA}.failure_attempts

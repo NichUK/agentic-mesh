@@ -55,6 +55,7 @@ from agentic_mesh_v5.queues import QueueNotFound
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.read_models import ReadModelNotFound
 from agentic_mesh_v5.read_models import ReadModelStore
+from agentic_mesh_v5.recovery_supervisor import RecoverySupervisorStore
 from agentic_mesh_v5.reliability import ReliabilityConflict
 from agentic_mesh_v5.reliability import ReliabilityNotFound
 from agentic_mesh_v5.reliability import ReliabilityStore
@@ -227,6 +228,11 @@ class ReliabilityStatusResponse(ApiModel):
     incident: FailureIncidentResponse
     attempts: list[FailureAttemptResponse]
     recovery_request: RecoveryRequestResponse | None
+
+
+class RecoveryOverviewResponse(ApiModel):
+    project_id: str
+    items: list[dict[str, Any]]
 
 
 class GateOpen(ApiModel):
@@ -742,6 +748,7 @@ def create_app(
     continuation_monitor = ContinuationMonitor(database_url)
     fleet_scaler = FleetScaler(database_url, fleet_supervisor)
     reliability = ReliabilityStore(database_url)
+    recovery_supervisor = RecoverySupervisorStore(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
@@ -1217,6 +1224,12 @@ def create_app(
         identity: Principal = Depends(principal),
     ):
         project_access(identity, project_id, "write")
+        if payload.stage == "recovery":
+            raise ControlApiError(
+                403,
+                "independent_recovery_required",
+                "recovery results are accepted only from the independent supervisor",
+            )
         selected_telemetry.annotate(
             project_id=project_id, work_item_id=work_item_id
         )
@@ -1714,9 +1727,18 @@ def create_app(
             account_scope=account_scope,
         )
 
-    @app.get(f"{API_PREFIX}/projects/{{project_id}}/recovery", response_model=DomainAvailability, tags=["recovery"])
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/recovery",
+        response_model=RecoveryOverviewResponse,
+        tags=["recovery"],
+    )
     def recovery(project_id: str, identity: Principal = Depends(principal)):
-        return planned_domain("recovery", "AMV5-034", project_id, identity)
+        project_access(identity, project_id, "read")
+        queries.project(project_id)
+        return {
+            "project_id": project_id,
+            "items": recovery_supervisor.list_project(project_id),
+        }
 
     @app.get(
         f"{API_PREFIX}/projects/{{project_id}}/read-model",

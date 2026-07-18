@@ -88,7 +88,7 @@ class ControlApiClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._base_url = _validated_base_url(base_url)
-        self._token = _load_token(token_file)
+        self._token = load_opaque_token(token_file)
         if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
             raise ApiClientConfigurationError("timeout_seconds must be positive")
         self._timeout = float(timeout_seconds)
@@ -229,7 +229,7 @@ def _validated_api_path(value: str) -> str:
     return path
 
 
-def _load_token(path: Path) -> str:
+def load_opaque_token(path: Path) -> str:
     if not path.exists() or not path.is_file():
         raise ApiClientConfigurationError("API token path must be an existing file")
     try:

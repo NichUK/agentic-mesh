@@ -88,6 +88,11 @@ operational support.
   technical retries, three distinct Project Manager corrections, and one
   independent recovery request. Attempt/event history is append-only, and the
   lifecycle rejects terminal error until a failed recovery makes it eligible.
+- Independent recovery: a standalone, direct-to-Postgres supervisor leases the
+  exact recorded goal outside FastAPI and the normal fleet. It authorizes only
+  external `recovery:execute` identities, pins the restricted tool profile,
+  defaults to a 120-minute deadline, enforces a usage cap, and durably captures
+  verified results before idempotently applying them to the failure policy.
 - Message queue: provides durable inbox/outbox delivery. The active V4 runtime
   uses Postgres-backed queues; other queue backends remain future adapter
   options.

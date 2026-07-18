@@ -682,6 +682,18 @@ def test_reliability_api_is_project_scoped_and_guards_early_terminal_error(
     )
     assert invalid_recovery.status_code == 422
     assert invalid_recovery.json()["errors"][0]["location"] == ["body"]
+    direct_recovery = client.post(
+        f"{path}/{incident_id}/attempts",
+        headers=headers,
+        json={
+            "attempt_id": "direct-recovery",
+            "stage": "recovery",
+            "attempt_number": 1,
+            "outcome": "failed",
+        },
+    )
+    assert direct_recovery.status_code == 403
+    assert direct_recovery.json()["type"].endswith(":independent_recovery_required")
     invalid_instruction = client.post(
         f"{path}/{incident_id}/attempts",
         headers=headers,

@@ -114,16 +114,57 @@ def _attempt(
         if stage == "pm_correction"
         else None
     )
+    attempt_id = f"{work_item_id}-{stage}-{number}"
+    evidence = {"source": f"evidence://{work_item_id}/{stage}/{number}"}
+    if stage == "recovery":
+        verification_ref = f"evidence://{work_item_id}/recovery/1"
+        with psycopg.connect(store._database_url) as connection:
+            connection.execute(
+                """
+                INSERT INTO agentic_mesh_v5.recovery_supervisor_runs
+                    (project_id, recovery_request_id, run_id, status,
+                     owner_id, lease_token, lease_expires_at, deadline_at,
+                     time_limit_minutes, usage_limit, tool_profile_reference,
+                     tool_profile_digest, outcome, safe_summary,
+                     verification_ref, usage_used, result_fingerprint,
+                     reported_at)
+                SELECT project_id, recovery_request_id, %s, 'reported',
+                       'recovery-supervisor', %s,
+                       clock_timestamp() + interval '1 minute',
+                       clock_timestamp() + interval '2 minutes',
+                       120, 200000, 'tool-profile/recovery@0.1.0',
+                       repeat('a', 64), %s, 'Verified test recovery result.',
+                       %s, 1, repeat('b', 64), clock_timestamp()
+                FROM agentic_mesh_v5.recovery_requests
+                WHERE project_id = 'alpha' AND incident_id = %s
+                """,
+                (
+                    attempt_id,
+                    f"lease-{attempt_id}",
+                    outcome,
+                    verification_ref,
+                    incident_id,
+                ),
+            )
+        evidence = {
+            "recovery_run_id": attempt_id,
+            "safe_summary": "Verified test recovery result.",
+            "verification_ref": verification_ref,
+            "usage_used": 1,
+            "usage_limit": 200000,
+            "tool_profile_reference": "tool-profile/recovery@0.1.0",
+            "tool_profile_digest": "a" * 64,
+        }
     return store.record_attempt(
         project_id="alpha",
         work_item_id=work_item_id,
         incident_id=incident_id,
-        attempt_id=f"{work_item_id}-{stage}-{number}",
+        attempt_id=attempt_id,
         stage=stage,
         attempt_number=number,
         outcome=outcome,
         correction_instruction=correction,
-        evidence={"source": f"evidence://{work_item_id}/{stage}/{number}"},
+        evidence=evidence,
         actor_id="project-manager" if stage == "pm_correction" else "engineering",
     )
 

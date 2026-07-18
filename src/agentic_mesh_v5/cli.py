@@ -7,9 +7,11 @@ from typing import Sequence
 
 from agentic_mesh_v5 import __version__
 from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
+from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.api_client import ApiCallError
 from agentic_mesh_v5.api_client import ApiClientConfigurationError
 from agentic_mesh_v5.api_client import ControlApiClient
+from agentic_mesh_v5.api_client import load_opaque_token
 from agentic_mesh_v5.boundary import find_runtime_boundary_violations
 from agentic_mesh_v5.config_activation import ConfigActivationError
 from agentic_mesh_v5.config_activation import ConfigActivationStore
@@ -20,6 +22,11 @@ from agentic_mesh_v5.database_operations import DatabaseBackupService
 from agentic_mesh_v5.database_operations import MaintenanceStore
 from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.package_resolver import resolve_packages
+from agentic_mesh_v5.recovery_supervisor import CommandRecoveryLauncher
+from agentic_mesh_v5.recovery_supervisor import RecoverySupervisor
+from agentic_mesh_v5.recovery_supervisor import RecoverySupervisorError
+from agentic_mesh_v5.tool_profiles import ToolProfileError
+from agentic_mesh_v5.tool_profiles import ToolProfileRegistry
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -110,6 +117,18 @@ def build_parser() -> argparse.ArgumentParser:
     control_call.add_argument("method", choices=("GET", "POST", "PUT"))
     control_call.add_argument("path")
     control_call.add_argument("--body-file", type=Path)
+    recovery_run = subparsers.add_parser(
+        "recovery-run-once",
+        help="run one independent recovery directly against Postgres",
+    )
+    recovery_run.add_argument("--config-root", type=Path, required=True)
+    recovery_run.add_argument("--tool-profile", required=True)
+    recovery_run.add_argument("--launcher-command-file", type=Path, required=True)
+    recovery_run.add_argument("--token-file", type=Path, required=True)
+    recovery_run.add_argument("--owner", required=True)
+    recovery_run.add_argument("--time-limit-minutes", type=int, default=120)
+    recovery_run.add_argument("--usage-limit", type=int, default=200_000)
+    recovery_run.add_argument("--lease-seconds", type=int, default=60)
     return parser
 
 
@@ -305,6 +324,49 @@ def main(argv: Sequence[str] | None = None) -> int:
             _write_control(exc.to_dict(), as_json=args.json)
             return exc.exit_code
         _write_control(result.to_dict(), as_json=args.json)
+        return 0
+
+    if args.command == "recovery-run-once":
+        try:
+            token = load_opaque_token(args.token_file)
+            identity = TokenAuthorizer.from_environment().resolve(token)
+            if identity is None:
+                raise RecoverySupervisorError("independent recovery token is invalid")
+            supervisor = RecoverySupervisor(
+                database_url=database_url_from_environment(),
+                principal=identity,
+                owner_id=args.owner,
+                registry=ToolProfileRegistry(args.config_root),
+                tool_profile_reference=args.tool_profile,
+                launcher=CommandRecoveryLauncher.from_file(
+                    args.launcher_command_file
+                ),
+                time_limit_minutes=args.time_limit_minutes,
+                usage_limit=args.usage_limit,
+                lease_seconds=args.lease_seconds,
+            )
+            result = supervisor.execute_once()
+        except (
+            ApiClientConfigurationError,
+            AuthenticationConfigurationError,
+            DatabaseError,
+            RecoverySupervisorError,
+            ToolProfileError,
+            ValueError,
+        ) as exc:
+            _write(
+                {
+                    "runtime": "agentic-mesh-v5",
+                    "status": "rejected",
+                    "error": str(exc),
+                },
+                as_json=args.json,
+            )
+            return 2
+        _write(
+            {"runtime": "agentic-mesh-v5", **result.to_safe_dict()},
+            as_json=args.json,
+        )
         return 0
 
     if args.command.startswith("release-"):

@@ -286,7 +286,7 @@ def _required_text(value: object, field_name: str, maximum: int) -> str:
     value = value.strip()
     if not value or len(value) > maximum:
         raise ValueError(f"{field_name} is invalid")
-    _reject_sensitive(value, field_name)
+    reject_sensitive_content(value, field_name)
     return value
 
 
@@ -296,7 +296,7 @@ def _optional_text(value: object, field_name: str, maximum: int) -> str | None:
     return _required_text(value, field_name, maximum)
 
 
-def _reject_sensitive(value: str, field_name: str) -> None:
+def reject_sensitive_content(value: str, field_name: str) -> None:
     if any(pattern.search(value) is not None for pattern in _SENSITIVE_PATTERNS):
         raise ProgressSensitiveContent(
             f"{field_name} contains restricted content"
