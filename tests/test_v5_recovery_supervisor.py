@@ -19,8 +19,10 @@ from agentic_mesh_v5.cli import main
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.queues import RoleQueueStore
+from agentic_mesh_v5.recovery_supervisor import CommandRecoveryLauncher
 from agentic_mesh_v5.recovery_supervisor import RecoveryAuthorizationError
 from agentic_mesh_v5.recovery_supervisor import RecoveryConflict
+from agentic_mesh_v5.recovery_supervisor import RecoveryExecutionError
 from agentic_mesh_v5.recovery_supervisor import RecoveryJob
 from agentic_mesh_v5.recovery_supervisor import RecoveryResult
 from agentic_mesh_v5.recovery_supervisor import RecoverySupervisor
@@ -563,3 +565,30 @@ print(json.dumps({
         "alpha", "cli-work", pending.incident.incident_id
     )
     assert final.incident.status == "recovered"
+
+
+def test_command_launcher_normalizes_postgres_time_and_reports_invalid_utf8(
+    tmp_path: Path
+) -> None:
+    launcher_script = tmp_path / "invalid-output.py"
+    launcher_script.write_text(
+        "import sys\nsys.stdout.buffer.write(b'\\xff')\n", encoding="utf-8"
+    )
+    job = RecoveryJob(
+        project_id="alpha",
+        recovery_request_id="request-1",
+        incident_id="incident-1",
+        work_item_id="work-1",
+        run_id="run-1",
+        exact_goal="Restore the verified fixture.",
+        deadline_at="2099-01-01 00:00:00+00",
+        usage_limit=100,
+        tool_profile_reference="tool-profile/recovery@0.1.0",
+        tool_profile_digest="a" * 64,
+        image="agentic-mesh/worker-recovery:0.1.0",
+        mount_references=(),
+        credential_references=(),
+    )
+
+    with pytest.raises(RecoveryExecutionError, match="invalid UTF-8 output"):
+        CommandRecoveryLauncher([sys.executable, str(launcher_script)]).launch(job)

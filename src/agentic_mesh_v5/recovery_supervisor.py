@@ -157,7 +157,15 @@ class CommandRecoveryLauncher:
         return cls(argv)
 
     def launch(self, job: RecoveryJob) -> RecoveryResult:
-        deadline = datetime.fromisoformat(job.deadline_at)
+        timestamp = job.deadline_at.strip().replace(" ", "T", 1)
+        if re.search(r"[+-][0-9]{2}$", timestamp):
+            timestamp += ":00"
+        try:
+            deadline = datetime.fromisoformat(timestamp)
+        except ValueError as exc:
+            raise RecoveryExecutionError("recovery deadline is invalid") from exc
+        if deadline.tzinfo is None:
+            raise RecoveryExecutionError("recovery deadline must include a time zone")
         remaining = max(0.1, (deadline - datetime.now(timezone.utc)).total_seconds())
         safe_environment = {
             key: value
@@ -167,11 +175,8 @@ class CommandRecoveryLauncher:
         try:
             completed = subprocess.run(
                 self._argv,
-                input=json.dumps(job.to_dict(), sort_keys=True),
+                input=json.dumps(job.to_dict(), sort_keys=True).encode("utf-8"),
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="strict",
                 env=safe_environment,
                 shell=False,
                 timeout=remaining,
@@ -184,8 +189,15 @@ class CommandRecoveryLauncher:
                 f"supervisor://time-limit/{job.run_id}",
                 0,
             )
-        except (OSError, UnicodeError) as exc:
+        except OSError as exc:
             raise RecoveryExecutionError("external recovery launcher failed to start") from exc
+        try:
+            stdout = completed.stdout.decode("utf-8", errors="strict")
+            completed.stderr.decode("utf-8", errors="strict")
+        except UnicodeError as exc:
+            raise RecoveryExecutionError(
+                "external recovery launcher returned invalid UTF-8 output"
+            ) from exc
         if completed.returncode != 0:
             return RecoveryResult(
                 "failed",
@@ -193,10 +205,10 @@ class CommandRecoveryLauncher:
                 f"launcher://exit/{job.run_id}/{completed.returncode}",
                 0,
             )
-        if len(completed.stdout.encode("utf-8")) > 65_536:
+        if len(completed.stdout) > 65_536:
             raise RecoveryExecutionError("recovery launcher result is too large")
         try:
-            value = json.loads(completed.stdout)
+            value = json.loads(stdout)
         except json.JSONDecodeError as exc:
             raise RecoveryExecutionError("recovery launcher returned invalid JSON") from exc
         if not isinstance(value, Mapping) or set(value) != {
