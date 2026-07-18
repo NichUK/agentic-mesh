@@ -66,7 +66,7 @@ def postgres_database() -> str:
 
 @pytest.fixture
 def governed(postgres_database: str) -> SharedMemoryStore:
-    assert MigrationRunner(postgres_database).migrate().current_version == 20
+    assert MigrationRunner(postgres_database).migrate().current_version == 21
     with psycopg.connect(postgres_database, autocommit=True) as connection:
         connection.execute(
             """
@@ -144,7 +144,7 @@ def test_migration_backfills_legacy_organization_memory(postgres_database):
             (f"mem-{'1' * 32}",),
         )
 
-    assert MigrationRunner(postgres_database).migrate().current_version == 20
+    assert MigrationRunner(postgres_database).migrate().current_version == 21
     with psycopg.connect(postgres_database, autocommit=True) as connection:
         row = connection.execute(
             """
