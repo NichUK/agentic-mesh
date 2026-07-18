@@ -975,3 +975,44 @@ or `release_review`.
   Project-specific and uncertain candidates fail closed to project-role scope.
   The current entry and every immutable revision retain classification, policy
   version, reason codes, and redaction evidence.
+
+## 2026-07-18 V5 External Flow Engine
+
+- V5 pins a validated external flow snapshot and digest per work item. State,
+  conditional routes, artifact/consult/gate/inform obligations, and transition
+  reservations are durable Postgres records; V4 workflow modules are not
+  imported.
+- A transition commits only after its routed handoff is offered, claimed, and
+  accepted. Stable operation IDs and an immutable journal recover interruption
+  without duplicating handoffs or lifecycle changes.
+- The flow remains the only lifecycle/routing authority. Later governance and
+  sponsor services satisfy its declared obligations rather than creating
+  parallel workflow state.
+
+## 2026-07-18 V5 SDLC Role Pack
+
+- The 15 externally configured SDLC roles activate into project-scoped role
+  bindings that pin template/package digest, tool profile, queue, prompt
+  provenance, and shared-memory scope.
+- Any compatible external role, including a synthetic future finance role,
+  activates through the same generic path without a control-plane or schema
+  change. Restricted profiles fail closed when capabilities do not match.
+- Concrete instances share their logical role binding, queue, prompt persona,
+  and role memory while work-item provider threads remain isolated.
+
+## 2026-07-18 V5 TOGAF, RACI, And Owner Gates
+
+- Flow artifacts are satisfied only through the configured `DocumentStore`;
+  immutable evidence retains the exact project-relative path and eTag. Missing
+  documents cannot be replaced by a free-text assertion.
+- Required consultations need a durable response from the consulted role or a
+  reasoned exception by the current owner/flow leader. Inform obligations still
+  require durable dispatch. Gate decisions require the configured accountable
+  role and a verified state artifact; rejection does not satisfy the gate.
+- Architecture-impact assessment records `no-material`, `material`, or
+  `uncertain`. The flow engine injects that value into route selection and
+  rejects conflicting caller fields, so material/uncertain work cannot bypass
+  configured Enterprise Alignment or conformance paths.
+- Governance evidence is immutable, project scoped, actor-attributed, and
+  idempotent under concurrent retry. Sponsor/human-response gates are reserved
+  for the separate sponsor-approval boundary in AMV5-044.

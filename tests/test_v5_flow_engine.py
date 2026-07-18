@@ -11,15 +11,47 @@ from psycopg import sql
 import pytest
 
 from agentic_mesh_v5.database import MigrationRunner
+from agentic_mesh_v5.document_store import DocumentContent
+from agentic_mesh_v5.document_store import DocumentMetadata
+from agentic_mesh_v5.document_store import DocumentPage
 from agentic_mesh_v5.flow_definition import validate_flow
 from agentic_mesh_v5.flow_engine import FlowEngine
 from agentic_mesh_v5.flow_engine import FlowEngineConflict
 from agentic_mesh_v5.flow_engine import FlowEngineError
 from agentic_mesh_v5.flow_engine import TransitionSource
+from agentic_mesh_v5.governance import GovernanceConflict
+from agentic_mesh_v5.governance import GovernanceStore
 from agentic_mesh_v5.handoffs import HandoffStore
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.routing import Router
+
+
+class _Documents:
+    def stat(self, path: str) -> DocumentMetadata:
+        return DocumentMetadata(
+            item_id=path,
+            name=path.rsplit("/", 1)[-1],
+            path=path,
+            size=100,
+            etag=f'"{path}"',
+            is_folder=False,
+            mime_type="text/markdown",
+            created_at=None,
+            modified_at=None,
+        )
+
+    def list(self, path="", *, cursor=None, page_size=200):
+        return DocumentPage((), None)
+
+    def read(self, path):
+        return DocumentContent(self.stat(path), b"")
+
+    def create(self, path, content, *, content_type):
+        return self.stat(path)
+
+    def update(self, path, content, *, content_type, expected_etag):
+        return self.stat(path)
 
 
 @pytest.fixture
@@ -92,7 +124,7 @@ def _flow_value():
 
 @pytest.fixture
 def flow_database(postgres_database: str):
-    assert MigrationRunner(postgres_database).migrate().current_version == 22
+    assert MigrationRunner(postgres_database).migrate().current_version == 23
     lifecycle = LifecycleStore(postgres_database)
     lifecycle.create_project(
         project_id="alpha", display_name="Alpha", sponsor_ids=("sponsor-1",)
@@ -151,14 +183,43 @@ def flow_database(postgres_database: str):
     return postgres_database, lifecycle, queues, source
 
 
-def _satisfy(engine: FlowEngine, kind: str, obligation_id: str) -> None:
-    engine.satisfy(
+def _verify_artifact(database_url: str, engine: FlowEngine) -> None:
+    run = engine.get("alpha", "work-1")
+    path = f"projects/alpha/work/work-1/{run.current_state}.md"
+    GovernanceStore(database_url, _Documents()).verify_artifact(
         project_id="alpha",
         work_item_id="work-1",
-        kind=kind,
+        path=path,
+        actor_role_id=run.owner_role_id,
+        record_id=f"{run.current_state}-artifact",
+    )
+
+
+def _approve_gate(database_url: str, engine: FlowEngine, obligation_id: str) -> None:
+    obligation = next(
+        item for item in engine.obligations("alpha", "work-1")
+        if item.kind == "gate" and item.obligation_id == obligation_id
+    )
+    GovernanceStore(database_url, _Documents()).decide_gate(
+        project_id="alpha",
+        work_item_id="work-1",
         obligation_id=obligation_id,
+        decision="approved",
+        actor_role_id=obligation.accountable_role_id,
+        record_id=f"{obligation.state}-{obligation_id}",
         evidence={"uri": f"evidence://{obligation_id}"},
-        actor_id="business-analyst",
+    )
+
+
+def _respond_to_consult(database_url: str, obligation_id: str) -> None:
+    GovernanceStore(database_url, _Documents()).record_consultation(
+        project_id="alpha",
+        work_item_id="work-1",
+        obligation_id=obligation_id,
+        decision="responded",
+        actor_role_id="reviewer",
+        record_id=f"consult-{obligation_id}",
+        evidence={"response": "reviewed"},
     )
 
 
@@ -181,17 +242,18 @@ def _ready_flow(flow_database):
             obligation_id=obligation_id,
             actor_id="business-analyst",
         )
-    _satisfy(engine, "artifact", "artifact")
-    _satisfy(engine, "gate", "owner-gate")
-    _satisfy(engine, "gate", "owner-gate")
-    with pytest.raises(FlowEngineConflict, match="evidence differs"):
-        engine.satisfy(
+    _respond_to_consult(database_url, "review")
+    _verify_artifact(database_url, engine)
+    _approve_gate(database_url, engine, "owner-gate")
+    with pytest.raises(GovernanceConflict, match="record id conflicts"):
+        GovernanceStore(database_url, _Documents()).decide_gate(
             project_id="alpha",
             work_item_id="work-1",
-            kind="gate",
             obligation_id="owner-gate",
-            evidence={"uri": "evidence://changed"},
-            actor_id="business-analyst",
+            decision="rejected",
+            actor_role_id="reviewer",
+            record_id="analysis-owner-gate",
+            reason="changed request",
         )
     return database_url, engine, source
 
@@ -267,8 +329,9 @@ def test_flow_run_requires_obligations_and_accepted_handoff(flow_database) -> No
             obligation_id=obligation_id,
             actor_id="business-analyst",
         ).status == "dispatched"
-    _satisfy(engine, "artifact", "artifact")
-    _satisfy(engine, "gate", "owner-gate")
+    _respond_to_consult(database_url, "review")
+    _verify_artifact(database_url, engine)
+    _approve_gate(database_url, engine, "owner-gate")
 
     changed_snapshot = flow.snapshot
     changed_snapshot["states"]["analysis"]["routes"][0]["target_state"] = "changed"
@@ -348,7 +411,7 @@ def test_flow_run_requires_obligations_and_accepted_handoff(flow_database) -> No
         "release-manager"
     )
 
-    _satisfy(engine, "artifact", "artifact")
+    _verify_artifact(database_url, engine)
     completed = engine.complete(
         project_id="alpha",
         work_item_id="work-1",

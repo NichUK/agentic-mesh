@@ -723,6 +723,38 @@ reason codes, policy version, and redaction type/count are stored in current and
 immutable revision records. Updates pass through the same policy, preventing a
 generic organization entry from later acquiring project-specific content.
 
+### External SDLC Flow And Governance
+
+V5 pins one validated external flow snapshot and package digest when a work item
+starts. The flow engine owns current state, conditional routes, declared
+artifacts, RACI consultations/informs, review gates, and accepted handoffs. It
+does not infer obligations from prompts or import V4 workflow mechanics. Active
+state is recoverable after interruption and the immutable transition journal
+retains every completed lifecycle move.
+
+The SDLC role pack activates the externally defined role-to-queue,
+tool-profile, and prompt bindings needed by that flow. Multiple instances can
+claim a logical role's queue without changing its persona or shared role
+memory. New compatible role categories remain configuration additions rather
+than control-plane schema changes.
+
+Governance is evidence attached to those existing obligations, not another
+workflow engine. A state artifact is satisfied only after the configured
+`DocumentStore` verifies its exact project-relative path and eTag. A required
+consultation needs a response from its configured role, or an exception by the
+state owner/flow leader with a reason. Inform obligations require durable
+dispatch. Non-sponsor gates require their accountable role and a verified state
+artifact; rejection remains pending, while approval or a justified exception
+is retained as immutable evidence. Sponsor approvals use the separate sponsor
+decision boundary.
+
+Architecture-impact assessment stores one canonical `no-material`, `material`,
+or `uncertain` value. The flow engine injects that stored value into conditional
+route selection and rejects a conflicting caller value. This prevents material
+or uncertain work from bypassing Enterprise Alignment or later configured
+conformance obligations. Governance records are project scoped and keep actor,
+reason, document path/version, evidence, and an idempotency fingerprint.
+
 ### Artifact Store
 
 Purpose:

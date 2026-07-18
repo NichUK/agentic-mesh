@@ -171,6 +171,11 @@ into one methodology.
   update the durable architecture portfolio and receive Enterprise Architect
   conformance review, while low-impact work records why detailed review is not
   required.
+- V5 enforces this with version-pinned external flow obligations and immutable
+  project-scoped evidence. Document path/eTag verification, consultation
+  response or justified exception, and accountable review decisions must exist
+  before their obligations are ready; routes use the recorded impact rather
+  than caller input.
 - ISTQB and BDD practice inform QA planning and evidence handling.
 - OWASP SAMM and NIST SSDF inform secure SDLC expectations and residual-risk
   recording.
