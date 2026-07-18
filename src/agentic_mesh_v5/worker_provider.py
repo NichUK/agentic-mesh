@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Iterator, Protocol, runtime_checkable
@@ -94,6 +95,46 @@ class ProviderUsage:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderRateLimitWindow:
+    used_percent: int
+    resets_at: datetime | None
+    window_minutes: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderCredits:
+    balance: str | None
+    has_credits: bool
+    unlimited: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSpendControl:
+    limit: str
+    used: str
+    remaining_percent: int
+    resets_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderCapacity:
+    available: bool
+    limit_id: str | None = None
+    limit_name: str | None = None
+    plan_type: str | None = None
+    primary: ProviderRateLimitWindow | None = None
+    secondary: ProviderRateLimitWindow | None = None
+    credits: ProviderCredits | None = None
+    individual_limit: ProviderSpendControl | None = None
+    reset_credits_available: int | None = None
+    reset_credits_earliest_expiry: datetime | None = None
+
+    @classmethod
+    def unknown(cls) -> ProviderCapacity:
+        return cls(available=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderPlanStep:
     step: str
     status: PlanStepStatus
@@ -148,6 +189,11 @@ class WorkerEngine(Protocol):
     def resume_thread(self, thread_id: str, request: ThreadRequest) -> WorkerThread: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class CapacityAwareWorkerEngine(Protocol):
+    def read_capacity(self) -> ProviderCapacity: ...
 
 
 @runtime_checkable

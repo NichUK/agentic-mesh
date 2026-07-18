@@ -27,12 +27,15 @@ from agentic_mesh_v5.thread_affinity import ThreadAffinityKey
 from agentic_mesh_v5.thread_affinity import ThreadAffinityStore
 from agentic_mesh_v5.thread_affinity import ThreadPromptMismatch
 from agentic_mesh_v5.thread_affinity import UNPINNED_DIGEST
+from agentic_mesh_v5.usage import UsageStore
 from agentic_mesh_v5.warm_engines import RoleInstanceKey
 from agentic_mesh_v5.warm_engines import WarmEnginePool
 from agentic_mesh_v5.worker_provider import EngineMetadata
 from agentic_mesh_v5.worker_provider import ProviderErrorInfo
 from agentic_mesh_v5.worker_provider import ProviderErrorKind
+from agentic_mesh_v5.worker_provider import ProviderEvent
 from agentic_mesh_v5.worker_provider import ProviderEventKind
+from agentic_mesh_v5.worker_provider import ProviderUsage
 from agentic_mesh_v5.worker_provider import SandboxPolicy
 from agentic_mesh_v5.worker_provider import ThreadRequest
 from agentic_mesh_v5.worker_provider import TurnCompletionStatus
@@ -115,7 +118,20 @@ class FakeThread:
         self.thread_id = thread_id
 
     def start_turn(self, request):
-        return request
+        return FakeTurn(self.thread_id)
+
+
+class FakeTurn:
+    def __init__(self, thread_id: str) -> None:
+        self.thread_id = thread_id
+        self.turn_id = f"{thread_id}-turn"
+
+    def events(self):
+        yield ProviderEvent(ProviderEventKind.USAGE_UPDATED, self.thread_id, self.turn_id,
+                            usage=ProviderUsage(10, 2, 4, 1, 15))
+
+    def interrupt(self) -> None:
+        pass
 
 
 class FakeBackend:
@@ -209,6 +225,29 @@ def _coordinator(
     factory = FakeProviderFactory(selected, provider_id)
     pool = WarmEnginePool(factory)
     return ThreadAffinityCoordinator(store, pool), pool, factory, selected
+
+
+def test_coordinator_captures_turn_usage_and_missing_capacity(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    database_url, store = affinity_database
+    coordinator, _pool, _factory, _backend = _coordinator(store)
+
+    coordinator.run(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
+        request=_request(tmp_path),
+        operation=lambda thread: tuple(
+            thread.start_turn(TurnRequest("work")).events()
+        ),
+    )
+    summary = UsageStore(database_url).summary("alpha", provider_id="fake", account_scope="default")
+
+    assert summary["turn_count"] == 1
+    assert summary["total_tokens"] == 15
+    assert summary["capacity"]["status"] == "unknown"
+    assert summary["capacity"]["observed_at"] is not None
 
 
 def test_migration_has_project_role_conversation_and_global_thread_constraints(

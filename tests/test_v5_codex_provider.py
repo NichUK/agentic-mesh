@@ -77,6 +77,9 @@ class FakeSdk:
         self.start_calls = []
         self.resume_calls = []
         self.close_count = 0
+        self.request_calls = []
+        self.capacity_response = None
+        self._client = SimpleNamespace(request=self.request)
 
     def thread_start(self, **kwargs):
         self.start_calls.append(kwargs)
@@ -88,6 +91,10 @@ class FakeSdk:
 
     def close(self):
         self.close_count += 1
+
+    def request(self, method, params, *, response_model):
+        self.request_calls.append((method, params, response_model))
+        return self.capacity_response
 
 
 def _scripted_notifications() -> list[SimpleNamespace]:
@@ -225,6 +232,77 @@ def test_codex_adapter_maps_configuration_events_and_interrupts(tmp_path: Path) 
     assert events[-1].completion is TurnCompletionStatus.INTERRUPTED
     assert handle.interrupt_count == 1
     assert sdk.close_count == 1
+
+
+def test_codex_adapter_reads_typed_capacity_without_account_identity(
+    tmp_path: Path,
+) -> None:
+    sdk = FakeSdk(FakeHandle())
+    sdk.capacity_response = SimpleNamespace(
+        rate_limits=SimpleNamespace(
+            limit_id="codex",
+            limit_name="Codex weekly",
+            plan_type="plus",
+            primary=SimpleNamespace(
+                used_percent=25,
+                resets_at=1_800_000_000,
+                window_duration_mins=300,
+            ),
+            secondary=SimpleNamespace(
+                used_percent=80,
+                resets_at=1_800_086_400,
+                window_duration_mins=10_080,
+            ),
+            credits=SimpleNamespace(
+                balance="12.50", has_credits=True, unlimited=False
+            ),
+            individual_limit=SimpleNamespace(
+                limit="50", used="7.5", remaining_percent=85,
+                resets_at=1_800_086_400,
+            ),
+        ),
+        rate_limit_reset_credits=SimpleNamespace(
+            available_count=2,
+            credits=[
+                SimpleNamespace(expires_at=1_800_172_800),
+                SimpleNamespace(expires_at=1_800_086_400),
+            ],
+        ),
+    )
+
+    engine = CodexWorkerProvider(
+        CodexProviderConfig(cwd=tmp_path), sdk_factory=lambda _config: sdk
+    ).open()
+    capacity = engine.read_capacity()
+
+    assert sdk.request_calls[0][0:2] == ("account/rateLimits/read", None)
+    assert capacity.available is True
+    assert capacity.limit_id == "codex"
+    assert capacity.limit_name == "Codex weekly"
+    assert capacity.primary is not None
+    assert capacity.primary.used_percent == 25
+    assert capacity.secondary is not None
+    assert capacity.secondary.window_minutes == 10_080
+    assert capacity.credits is not None and capacity.credits.balance == "12.50"
+    assert capacity.individual_limit is not None
+    assert capacity.individual_limit.remaining_percent == 85
+    assert capacity.reset_credits_available == 2
+    assert capacity.reset_credits_earliest_expiry is not None
+    assert capacity.reset_credits_earliest_expiry.timestamp() == 1_800_086_400
+
+
+def test_codex_adapter_accepts_absent_optional_capacity_fields(tmp_path: Path) -> None:
+    sdk = FakeSdk(FakeHandle())
+    sdk.capacity_response = SimpleNamespace(
+        rate_limits=SimpleNamespace(**dict.fromkeys(
+            ("limit_id", "limit_name", "plan_type", "primary", "secondary", "credits", "individual_limit")
+        )), rate_limit_reset_credits=None)
+    engine = CodexWorkerProvider(CodexProviderConfig(cwd=tmp_path), sdk_factory=lambda _config: sdk).open()
+    capacity = engine.read_capacity()
+
+    assert capacity.available is True
+    assert capacity.primary is None
+    assert capacity.reset_credits_available is None
 
 
 def test_resume_validation_and_cross_turn_events_fail_closed(tmp_path: Path) -> None:
