@@ -930,3 +930,18 @@ or `release_review`.
   worktrees, and leaves dirty, moved, occupied, or substituted resources intact
   in a visible blocked/error state. The coordinator never fetches, pushes,
   resets, cleans, merges, or deletes branches.
+
+## 2026-07-18 V5 OneDrive DocumentStore
+
+- V5 exposes provider-neutral document browse, metadata, read, create, and
+  conditional-update operations. The OneDrive factory resolves one named root
+  from the active manifest and obtains its token from an external credential
+  provider on each Graph operation; workers require no document filesystem
+  mount and secret values are neither stored nor returned.
+- Paths are canonical and root-relative. Paging cursors contain only the path
+  and Graph skip token, redirected downloads strip authorization and verify
+  eTag/size, and project/root selection fails closed.
+- Creates fail on name conflict, updates require an expected eTag, and large
+  files use sequential 10-MiB upload-session ranges without bearer headers.
+  Stable errors distinguish permissions, missing items, conflicts, size limits,
+  unavailable service, and malformed provider data.
