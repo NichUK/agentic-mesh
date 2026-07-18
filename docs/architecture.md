@@ -126,3 +126,9 @@ operational support.
   selected repositories. Postgres records branch/path/revision evidence and
   supports crash pickup; cleanup removes only registered clean worktrees and
   never resets live source, deletes branches, or discards dirty user work.
+- Shared memory: V5 stores concise, source-linked accelerators at project-role,
+  project, and organization-role scope. Logical role instances share these
+  records, but provider threads never enter the memory model. Every write must
+  cite a current authoritative source; reads reverify it and visibly retain,
+  but do not serve, stale or removed memory. Optimistic versions and immutable
+  revisions prevent silent concurrent replacement.

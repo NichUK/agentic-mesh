@@ -945,3 +945,18 @@ or `release_review`.
   files use sequential 10-MiB upload-session ranges without bearer headers.
   Stable errors distinguish permissions, missing items, conflicts, size limits,
   unavailable service, and malformed provider data.
+
+## 2026-07-18 V5 Layered Shared Memory
+
+- V5 shared memory is scoped structurally as project-role, project, or
+  organization-role. Same-role worker instances use one logical record set;
+  work-item Codex threads and role-instance identity are not stored or used as
+  memory authority.
+- Each entry cites exactly one versioned document, work item, event, decision,
+  policy, or release. An injected verifier rejects missing/stale writes and
+  rechecks reads; stale or removed entries remain inspectable but are excluded
+  from current-memory results.
+- Postgres holds an optimistic current pointer and immutable full-snapshot
+  revisions for creates, updates, retirements, and source-state changes. Stable
+  operation IDs make exact retries idempotent and version checks ensure that
+  concurrent role instances cannot silently overwrite one another.

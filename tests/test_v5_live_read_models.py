@@ -145,7 +145,14 @@ def test_migration_backfill_rebuilds_without_changing_authoritative_rows(
             for table in before
         }
     for table in before:
-        if table == "queue_items":
+        if table == "projects":
+            normalized = []
+            for row in after[table]:
+                item = dict(row[0])
+                assert item.pop("organization_id") == "default"
+                normalized.append((item,))
+            assert normalized == before[table]
+        elif table == "queue_items":
             normalized = []
             for row in after[table]:
                 item = dict(row[0])

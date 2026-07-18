@@ -691,6 +691,28 @@ AWS backend:
 - DynamoDB
 - S3 metadata where appropriate
 
+### Layered Shared Memory
+
+Shared memory is a retrieval accelerator, not a new source of truth. V5 keeps
+three structural scopes: project-role for one logical role in one project,
+project for all roles in one project, and organization-role for one role across
+projects in one organization. Concrete worker-instance and provider-thread
+identifiers are deliberately absent, so replacement instances share useful
+role memory without sharing work-item conversation context.
+
+Every record contains one permitted source reference and observed version.
+The source-verifier port accepts document, work-item, event, decision, policy,
+and release sources; thread, turn, prompt, conversation, and raw model output
+are not authoritative sources. Writes require a live matching source version.
+Reads reverify sources, exclude stale or removed records from the current view,
+and retain their explicit state for inspection and correction.
+
+Current records use optimistic integer versions. Create, update, retire, and
+source-status operations append immutable full snapshots with stable operation
+IDs, giving concurrent role instances deterministic conflict and replay
+semantics. Classification, redaction, and controlled promotion into broader
+scope are a separate policy layer.
+
 ### Artifact Store
 
 Purpose:
