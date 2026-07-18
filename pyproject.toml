@@ -18,6 +18,7 @@ classifiers = [
 dependencies = [
   "bleach>=6.1",
   "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
   "Markdown>=3.7",
   "opentelemetry-api==1.42.1",
   "opentelemetry-exporter-otlp-proto-grpc==1.42.1",
@@ -35,7 +36,6 @@ agentic-mesh-v5 = "agentic_mesh_v5.cli:main"
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.28,<1",
   "jsonschema>=4.23",
   "pytest>=8.0",
 ]
