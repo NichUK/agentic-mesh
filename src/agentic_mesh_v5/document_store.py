@@ -774,8 +774,8 @@ def _graph_error_code(response: HttpResponse) -> str | None:
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
-    matches = [value for key, value in headers.items() if key.casefold() == name]
-    return matches[0] if len(matches) == 1 else None
+    needle = name.casefold()
+    return next((value for key, value in headers.items() if key.casefold() == needle), None)
 
 
 def _preauthenticated_url(value: str) -> str:
