@@ -206,7 +206,7 @@ def test_browse_metadata_and_opaque_paging_stay_inside_root() -> None:
 def test_read_redirect_strips_token_and_enforces_size() -> None:
     transport = ScriptedTransport(
         _response(200, _file(size=7)),
-        HttpResponse(302, {"location": "https://content.example.invalid/download?id=1"}, b""),
+        HttpResponse(302, {"Location": "https://content.example.invalid/download?id=1"}, b""),
         HttpResponse(200, {"content-type": "text/markdown"}, b"content"),
     )
     store = _store(transport)
@@ -362,6 +362,19 @@ def test_invalid_responses_and_upload_limits_fail_closed() -> None:
     assert "bearer-value" not in str(caught.value)
     assert caught.value.__cause__ is None
     assert no_transport.requests == []
+
+    override = ScriptedTransport(HttpResponse(200, {}, b"{}"))
+    override_store = _store(override)
+    override_store._graph_request(
+        "GET",
+        "https://graph.microsoft.com/v1.0/drives/drive-alpha/root",
+        headers={"authorization": "Bearer attacker", "X-Test": "kept"},
+        content=None,
+    )
+    assert override.requests[0]["headers"] == {
+        "Authorization": "Bearer alpha-token",
+        "X-Test": "kept",
+    }
 
 
 def _manifest(project_id: str, drive_id: str, root: str) -> dict[str, object]:

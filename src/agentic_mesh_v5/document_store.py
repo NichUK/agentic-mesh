@@ -257,7 +257,7 @@ class OneDriveDocumentStore:
             redirects += 1
             if redirects > 3:
                 raise DocumentInvalidResponse("Graph download redirected too many times")
-            location = response.headers.get("location")
+            location = _header(response.headers, "location")
             if not isinstance(location, str):
                 raise DocumentInvalidResponse("Graph download redirect is missing")
             download_url = _preauthenticated_url(location)
@@ -473,7 +473,12 @@ class OneDriveDocumentStore:
             raise DocumentUnavailable("document credential resolution failed") from None
         if not isinstance(token, str) or not token or "\r" in token or "\n" in token:
             raise DocumentUnavailable("document credential resolution failed")
-        request_headers = {"Authorization": f"Bearer {token}", **dict(headers)}
+        request_headers = {
+            key: value
+            for key, value in headers.items()
+            if key.casefold() != "authorization"
+        }
+        request_headers["Authorization"] = f"Bearer {token}"
         return self._send(
             method,
             url,
@@ -761,6 +766,11 @@ def _graph_error_code(response: HttpResponse) -> str | None:
     if not isinstance(code, str) or not code or len(code) > 100:
         return None
     return code if re.fullmatch(r"[A-Za-z0-9._-]+", code) else None
+
+
+def _header(headers: Mapping[str, str], name: str) -> str | None:
+    matches = [value for key, value in headers.items() if key.casefold() == name]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _preauthenticated_url(value: str) -> str:
