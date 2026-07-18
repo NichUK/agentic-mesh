@@ -166,7 +166,10 @@ class CommandRecoveryLauncher:
             raise RecoveryExecutionError("recovery deadline is invalid") from exc
         if deadline.tzinfo is None:
             raise RecoveryExecutionError("recovery deadline must include a time zone")
-        remaining = max(0.1, (deadline - datetime.now(timezone.utc)).total_seconds())
+        # Cap at poll()'s int32-millisecond limit (~24.8 days) to avoid OverflowError
+        # on platforms where select/poll use a 32-bit millisecond timeout.
+        _MAX_TIMEOUT = 2**31 // 1000 - 1
+        remaining = max(0.1, min((deadline - datetime.now(timezone.utc)).total_seconds(), _MAX_TIMEOUT))
         safe_environment = {
             key: value
             for key, value in os.environ.items()
