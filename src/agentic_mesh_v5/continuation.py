@@ -111,7 +111,11 @@ class ContinuationMonitor:
                             )
                         return MonitorClaim(LOGICAL_PM_ID, owner_id, *row[1:5])
                     token = uuid.uuid4().hex
-                    action = "pm-monitor.claimed" if row is None else "pm-monitor.taken-over"
+                    action = (
+                        "pm-monitor.claimed"
+                        if row is None or row[0] == owner_id
+                        else "pm-monitor.taken-over"
+                    )
                     result = connection.execute(
                         f"""
                         INSERT INTO {SCHEMA}.pm_monitor_lease
@@ -294,7 +298,7 @@ class ContinuationMonitor:
                 values = ("sponsor_question", gate_id, question)
             else:
                 values = self._route_pm(
-                    project_id, work_item_id, owner_role_id, version,
+                    connection, project_id, work_item_id, owner_role_id, version,
                     "material ambiguity needs a concrete sponsor question",
                 )
         elif self._has_continuation(connection, project_id, work_item_id):
@@ -306,7 +310,7 @@ class ContinuationMonitor:
                 else "nonterminal work has no durable continuation"
             )
             values = self._route_pm(
-                project_id, work_item_id, owner_role_id, version, reason
+                connection, project_id, work_item_id, owner_role_id, version, reason
             )
         return self._record_observation(
             connection, project_id, work_item_id, version, *values, actor_id
@@ -314,6 +318,7 @@ class ContinuationMonitor:
 
     def _route_pm(
         self,
+        connection,
         project_id: str,
         work_item_id: str,
         owner_role_id: str,
@@ -322,7 +327,8 @@ class ContinuationMonitor:
     ) -> tuple[str, str | None, str]:
         key = _action_id("pm-continuation", project_id, work_item_id, version)
         try:
-            routed = self._router.route(
+            routed = self._router.route_in_transaction(
+                connection,
                 RouteDraft(
                     project_id=project_id,
                     work_item_id=work_item_id,

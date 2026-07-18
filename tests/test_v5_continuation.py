@@ -12,6 +12,7 @@ import pytest
 
 from agentic_mesh_v5.continuation import ContinuationConflict
 from agentic_mesh_v5.continuation import ContinuationAuthorizationError
+from agentic_mesh_v5.continuation import ContinuationError
 from agentic_mesh_v5.continuation import ContinuationMonitor
 from agentic_mesh_v5.continuation import LOGICAL_PM_ID
 from agentic_mesh_v5.database import MigrationRunner
@@ -239,7 +240,19 @@ def test_monitor_claim_is_singleton_and_restart_is_idempotent(
     assert len(claims) == 1
     first = claims[0]
     assert monitor.claim(owner_id=first.owner_id, lease_seconds=60) == first
-    monitor.sweep(owner_id=first.owner_id, lease_token=first.lease_token)
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            """
+            UPDATE agentic_mesh_v5.pm_monitor_lease
+            SET acquired_at = clock_timestamp() - interval '2 seconds',
+                heartbeat_at = clock_timestamp() - interval '2 seconds',
+                expires_at = clock_timestamp() - interval '1 second'
+            WHERE monitor_id = %s
+            """,
+            (LOGICAL_PM_ID,),
+        )
+    same_owner = monitor.claim(owner_id=first.owner_id, lease_seconds=60)
+    monitor.sweep(owner_id=same_owner.owner_id, lease_token=same_owner.lease_token)
     with psycopg.connect(database_url) as connection:
         connection.execute(
             """
@@ -269,6 +282,41 @@ def test_monitor_claim_is_singleton_and_restart_is_idempotent(
             WHERE action = 'pm-monitor.taken-over'
             """
         ).fetchone()[0] == 1
+        assert connection.execute(
+            """
+            SELECT count(*) FROM agentic_mesh_v5.audit_records
+            WHERE action = 'pm-monitor.claimed'
+            """
+        ).fetchone()[0] == 2
+
+
+def test_sweep_rolls_back_pm_route_when_observation_fails(
+    continuation_database, monkeypatch
+) -> None:
+    database_url, monitor = continuation_database
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            """
+            UPDATE agentic_mesh_v5.work_items SET status = 'completed'
+            WHERE work_item_id <> 'orphan'
+            """
+        )
+    claim = monitor.claim(owner_id="pm-process-1", lease_seconds=60)
+
+    def fail_observation(*_args, **_kwargs):
+        raise RuntimeError("crash after route")
+
+    monkeypatch.setattr(monitor, "_record_observation", fail_observation)
+    with pytest.raises(ContinuationError, match="monitor operation failed"):
+        monitor.sweep(owner_id=claim.owner_id, lease_token=claim.lease_token)
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            """
+            SELECT count(*) FROM agentic_mesh_v5.queue_items
+            WHERE queue_id = 'project-manager'
+            """
+        ).fetchone()[0] == 0
+        assert monitor.status().sweep_count == 0
 
 
 def _try_claim(monitor: ContinuationMonitor, owner: str):
