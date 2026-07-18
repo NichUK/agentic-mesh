@@ -419,6 +419,20 @@ class RoleQueueStore:
                 queue_item_id, expired = lease
                 if expired:
                     raise LeaseExpired("lease has expired")
+                if item_status == "completed":
+                    pending_handoff = connection.execute(
+                        f"""
+                        SELECT handoff_id FROM {SCHEMA}.handoffs
+                        WHERE project_id = %s AND source_queue_item_id = %s
+                          AND status <> 'accepted'
+                        LIMIT 1
+                        """,
+                        (project_id, queue_item_id),
+                    ).fetchone()
+                    if pending_handoff is not None:
+                        raise QueueConflict(
+                            "source work cannot complete before handoff acceptance"
+                        )
                 connection.execute(
                     f"""
                     UPDATE {SCHEMA}.leases

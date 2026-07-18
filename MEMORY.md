@@ -819,3 +819,18 @@ or `release_review`.
   genuinely terminal, have a queued/active durable handoff, or have a
   successfully delivered Sponsor decision. Milestone states such as
   `stage1_complete` cannot silently end the overall job.
+
+## 2026-07-18 V5 Explicit Handoff Acceptance
+
+- V5 handoff offers compose with the existing project/role/capability router in
+  one Postgres transaction, so a target queue item and its handoff cannot
+  separate across a crash.
+- The target role instance claims and accepts the handoff using the durable
+  lease for that exact queue item. Exact retries are safe, and a replacement
+  lease can resume an unaccepted handoff after expiry.
+- A source queue item cannot complete until all of its outbound handoffs are
+  accepted. Acceptance transfers responsibility but does not complete the
+  target's work.
+- Handoff records expose the 10-second queue-materialisation, 90-second claim,
+  and 120-second post-claim acceptance targets without a second broker or
+  summariser.

@@ -170,6 +170,11 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     assert f"{API_PREFIX}/projects/{{project_id}}/work-items" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/queues/{{queue_id}}/claim" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/routes" in paths
+    assert f"{API_PREFIX}/projects/{{project_id}}/handoffs" in paths
+    assert (
+        f"{API_PREFIX}/projects/{{project_id}}/handoffs/"
+        "{handoff_id}/accept"
+    ) in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/usage" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/recovery" in paths
     assert (
@@ -622,6 +627,124 @@ def test_authenticated_route_is_idempotent_capability_bound_and_isolated(
     assert forbidden.status_code == 403
     assert invalid.status_code == 422
     assert invalid.json()["errors"][0]["location"][-1] == "idempotency_key"
+
+
+def test_authenticated_handoff_requires_target_claim_and_acceptance(
+    api_database,
+) -> None:
+    database_url, client = api_database
+    headers = _headers("alpha")
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.roles(project_id, role_id, template_id)
+            VALUES ('alpha', 'qa', 'qa')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.role_instances
+                (project_id, instance_id, role_id, status)
+            VALUES ('alpha', 'qa-1', 'qa', 'running')
+            """
+        )
+    assert client.post(
+        f"{API_PREFIX}/projects/alpha/work-items",
+        headers=headers,
+        json={
+            "work_item_id": "handoff-work",
+            "title": "Handoff work",
+            "owner_role_id": "engineering",
+            "correlation_id": "handoff-correlation",
+        },
+    ).status_code == 201
+    for queue_id, role_id in (("engineering-handoff", "engineering"), ("qa", "qa")):
+        assert client.post(
+            f"{API_PREFIX}/projects/alpha/queues",
+            headers=headers,
+            json={"queue_id": queue_id, "role_id": role_id},
+        ).status_code == 201
+    assert client.post(
+        f"{API_PREFIX}/projects/alpha/queues/engineering-handoff/items",
+        headers=headers,
+        json={
+            "queue_item_id": "handoff-source",
+            "work_item_id": "handoff-work",
+            "idempotency_key": "handoff-source",
+        },
+    ).status_code == 201
+    source = client.post(
+        f"{API_PREFIX}/projects/alpha/queues/engineering-handoff/claim",
+        headers=headers,
+        json={"owner_instance_id": "eng-1", "lease_seconds": 3600},
+    ).json()
+    offer_payload = {
+        "source_lease_id": source["lease_id"],
+        "source_lease_token": source["lease_token"],
+        "target_role_id": "qa",
+        "idempotency_key": "api-handoff",
+        "summary": "Verify this work.",
+        "payload": {"evidence": ["test://api"]},
+    }
+    offered = client.post(
+        f"{API_PREFIX}/projects/alpha/handoffs",
+        headers=headers,
+        json=offer_payload,
+    )
+    repeated = client.post(
+        f"{API_PREFIX}/projects/alpha/handoffs",
+        headers=headers,
+        json=offer_payload,
+    )
+    body = offered.json()
+    assert offered.status_code == repeated.status_code == 201
+    assert body == repeated.json()
+    assert "lease_token" not in body
+    assert client.get(
+        f"{API_PREFIX}/projects/alpha/handoffs/{body['handoff_id']}",
+        headers=_headers("viewer"),
+    ).status_code == 200
+    assert client.post(
+        f"{API_PREFIX}/projects/alpha/leases/{source['lease_id']}/complete",
+        headers=headers,
+        json={"lease_token": source["lease_token"]},
+    ).status_code == 409
+
+    target = client.post(
+        f"{API_PREFIX}/projects/alpha/queues/qa/claim",
+        headers=headers,
+        json={"owner_instance_id": "qa-1", "lease_seconds": 3600},
+    ).json()
+    action = {"lease_id": target["lease_id"], "lease_token": target["lease_token"]}
+    claimed = client.post(
+        f"{API_PREFIX}/projects/alpha/handoffs/{body['handoff_id']}/claim",
+        headers=headers,
+        json=action,
+    )
+    accepted = client.post(
+        f"{API_PREFIX}/projects/alpha/handoffs/{body['handoff_id']}/accept",
+        headers=headers,
+        json=action,
+    )
+    foreign = client.get(
+        f"{API_PREFIX}/projects/bravo/handoffs/{body['handoff_id']}",
+        headers=_headers("bravo"),
+    )
+    forbidden = client.post(
+        f"{API_PREFIX}/projects/alpha/handoffs",
+        headers=_headers("viewer"),
+        json={**offer_payload, "idempotency_key": "forbidden-handoff"},
+    )
+
+    assert claimed.json()["status"] == "claimed"
+    assert accepted.json()["status"] == "accepted"
+    assert foreign.status_code == 404
+    assert forbidden.status_code == 403
+    assert client.post(
+        f"{API_PREFIX}/projects/alpha/leases/{source['lease_id']}/complete",
+        headers=headers,
+        json={"lease_token": source["lease_token"]},
+    ).json()["status"] == "completed"
 
 
 def test_validation_and_store_failures_are_actionable_and_redacted() -> None:

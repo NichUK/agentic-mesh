@@ -87,77 +87,12 @@ class Router:
         self._database_url = database_url
 
     def route(self, draft: RouteDraft) -> QueueItemRecord:
-        if not isinstance(draft, RouteDraft):
-            raise ValueError("route draft is invalid")
-        lock_key = f"{draft.project_id}\x1f{draft.idempotency_key}"
-        fingerprint = _fingerprint(draft)
         try:
             with psycopg.connect(
                 self._database_url, autocommit=True, connect_timeout=5
             ) as connection:
                 with connection.transaction():
-                    connection.execute(
-                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                        (lock_key,),
-                    )
-                    existing = self._existing(connection, draft, fingerprint)
-                    if existing is not None:
-                        return existing
-                    if connection.execute(
-                        f"""
-                        SELECT 1 FROM {SCHEMA}.work_items
-                        WHERE project_id = %s AND work_item_id = %s
-                        """,
-                        (draft.project_id, draft.work_item_id),
-                    ).fetchone() is None:
-                        raise RoutingNotFound("project work item not found")
-                    target = connection.execute(
-                        f"""
-                        SELECT queue.queue_id
-                        FROM {SCHEMA}.role_queues AS queue
-                        JOIN {SCHEMA}.roles AS role
-                          ON role.project_id = queue.project_id
-                         AND role.role_id = queue.role_id
-                        WHERE queue.project_id = %s AND queue.role_id = %s
-                          AND queue.capability IS NOT DISTINCT FROM %s
-                          AND NOT queue.paused AND role.status = 'active'
-                        """,
-                        (
-                            draft.project_id,
-                            draft.target_role_id,
-                            draft.capability,
-                        ),
-                    ).fetchone()
-                    if target is None:
-                        raise RoutingNotFound("active role capability target not found")
-                    queue_item_id = _route_item_id(
-                        draft.project_id, draft.idempotency_key
-                    )
-                    row = connection.execute(
-                        f"""
-                        INSERT INTO {SCHEMA}.queue_items
-                            (project_id, queue_item_id, queue_id, work_item_id,
-                             priority, available_at, payload, idempotency_key,
-                             route_fingerprint)
-                        VALUES (%s, %s, %s, %s, %s,
-                                COALESCE(%s, clock_timestamp()), %s, %s, %s)
-                        RETURNING project_id, queue_item_id, queue_id,
-                                  work_item_id, status, priority, attempt_count,
-                                  available_at::text, payload, idempotency_key
-                        """,
-                        (
-                            draft.project_id,
-                            queue_item_id,
-                            target[0],
-                            draft.work_item_id,
-                            draft.priority,
-                            draft.available_at,
-                            Jsonb(draft.payload),
-                            draft.idempotency_key,
-                            fingerprint,
-                        ),
-                    ).fetchone()
-                    return _record(row)
+                    return self.route_in_transaction(connection, draft)
         except RoutingError:
             raise
         except psycopg.errors.ForeignKeyViolation:
@@ -166,6 +101,73 @@ class Router:
             raise RoutingConflict("route idempotency conflict") from None
         except Exception:
             raise RoutingError(_STORE_ERROR) from None
+
+    def route_in_transaction(
+        self,
+        connection: psycopg.Connection[object],
+        draft: RouteDraft,
+    ) -> QueueItemRecord:
+        """Route using the caller's transaction for atomic composition."""
+        if not isinstance(draft, RouteDraft):
+            raise ValueError("route draft is invalid")
+        lock_key = f"{draft.project_id}\x1f{draft.idempotency_key}"
+        fingerprint = _fingerprint(draft)
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (lock_key,),
+        )
+        existing = self._existing(connection, draft, fingerprint)
+        if existing is not None:
+            return existing
+        if connection.execute(
+            f"""
+            SELECT 1 FROM {SCHEMA}.work_items
+            WHERE project_id = %s AND work_item_id = %s
+            """,
+            (draft.project_id, draft.work_item_id),
+        ).fetchone() is None:
+            raise RoutingNotFound("project work item not found")
+        target = connection.execute(
+            f"""
+            SELECT queue.queue_id
+            FROM {SCHEMA}.role_queues AS queue
+            JOIN {SCHEMA}.roles AS role
+              ON role.project_id = queue.project_id
+             AND role.role_id = queue.role_id
+            WHERE queue.project_id = %s AND queue.role_id = %s
+              AND queue.capability IS NOT DISTINCT FROM %s
+              AND NOT queue.paused AND role.status = 'active'
+            """,
+            (draft.project_id, draft.target_role_id, draft.capability),
+        ).fetchone()
+        if target is None:
+            raise RoutingNotFound("active role capability target not found")
+        queue_item_id = _route_item_id(draft.project_id, draft.idempotency_key)
+        row = connection.execute(
+            f"""
+            INSERT INTO {SCHEMA}.queue_items
+                (project_id, queue_item_id, queue_id, work_item_id,
+                 priority, available_at, payload, idempotency_key,
+                 route_fingerprint)
+            VALUES (%s, %s, %s, %s, %s,
+                    COALESCE(%s, clock_timestamp()), %s, %s, %s)
+            RETURNING project_id, queue_item_id, queue_id,
+                      work_item_id, status, priority, attempt_count,
+                      available_at::text, payload, idempotency_key
+            """,
+            (
+                draft.project_id,
+                queue_item_id,
+                target[0],
+                draft.work_item_id,
+                draft.priority,
+                draft.available_at,
+                Jsonb(draft.payload),
+                draft.idempotency_key,
+                fingerprint,
+            ),
+        ).fetchone()
+        return _record(row)
 
     @staticmethod
     def _existing(

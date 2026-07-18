@@ -737,6 +737,20 @@ The journal records:
 - action response received
 - work completed, blocked, failed, or retried
 
+### Durable Routing And Explicit Handoff Acceptance
+
+V5 role routing uses the project-qualified Postgres role queues and durable
+leases. A handoff is stronger than a routed message: its source offer and target
+queue item commit atomically, the target instance claims it with the lease for
+that exact item, and the target explicitly accepts responsibility. The source
+queue item cannot complete while one of its outbound handoffs is unaccepted.
+
+Offer, claim and acceptance are retry-safe. An expired target lease may be
+replaced by a later valid lease without creating another handoff or target item.
+The durable record measures queue materialisation within 10 seconds, target
+claim within 90 seconds, and acceptance within 120 seconds of claim. These are
+observable service targets, not extra workflow components.
+
 ## Service Bus Position
 
 Azure Service Bus is a strong enterprise delivery backend, but it should not be
