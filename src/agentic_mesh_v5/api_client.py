@@ -135,7 +135,7 @@ class ControlApiClient:
                     normalized_method,
                     normalized_path,
                     headers=headers,
-                    json=body,
+                    **({"json": body} if body is not None else {}),
                 )
         except httpx.RequestError as exc:
             raise ApiCallError(

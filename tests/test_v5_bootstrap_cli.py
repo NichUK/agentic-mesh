@@ -124,6 +124,7 @@ def test_client_rejects_paths_outside_the_versioned_boundary(
 
 def test_client_redacts_secrets_and_maps_problem_exit_codes(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        assert request.content == b""
         action_id = request.headers["x-request-id"]
         if request.url.path == "/api/v1/ok":
             return httpx.Response(
