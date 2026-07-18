@@ -544,7 +544,7 @@ class FlowEngine:
         evidence = _fields(evidence)
         if not evidence:
             raise ValueError("completion evidence is required")
-        digest = _digest("complete", expected_version, actor_id, evidence)
+        digest = _digest("complete", work_item_id, expected_version, actor_id, evidence)
         with psycopg.connect(self._database_url, autocommit=True) as connection:
             with connection.transaction():
                 replay = self._replay(connection, project_id, operation_id, digest)
