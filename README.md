@@ -24,6 +24,14 @@ python -m agentic_mesh_v5 --json database-migrate
 python -m agentic_mesh_v5 api-serve
 ```
 
+Independent recovery remains callable when that API process is unavailable.
+`recovery-run-once` connects directly to Postgres, resolves the externally
+pinned recovery tool profile, authenticates an external `recovery:execute`
+token, and invokes one external launcher command without a shell. The command
+receives only the exact durable goal, project scope, limits, and credential or
+mount references; secret values remain outside runtime state and CLI output.
+The default recovery limit is 120 minutes.
+
 The V5 API exposes database-independent liveness at `/api/v1/health/live` and
 schema-aware readiness at `/api/v1/health/ready`. It creates local
 OpenTelemetry spans and metrics without requiring a collector. Set the standard

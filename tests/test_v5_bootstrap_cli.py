@@ -325,7 +325,8 @@ def test_cli_operates_lifecycle_and_sponsor_gate_through_real_api(
     assert all(len(output["action_id"]) == 32 for output in outputs)
     assert len({output["action_id"] for output in outputs}) == len(outputs)
     assert outputs[-1]["result"]["approver_id"] == "sponsor-1"
-    assert recovery["status"] == "planned"
+    assert recovery["status"] == "ok"
+    assert recovery["result"] == {"project_id": "alpha", "items": []}
     assert fleet_policy["result"]["max_instances"] == 1
     assert configuration["result"] == {"records": []}
     assert "status: ok" in human_status and "http_status: 200" in human_status

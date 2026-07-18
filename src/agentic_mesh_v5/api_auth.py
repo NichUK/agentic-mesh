@@ -11,7 +11,7 @@ import re
 
 
 API_PRINCIPALS_FILE_ENV = "AGENTIC_MESH_V5_API_PRINCIPALS_FILE"
-ALLOWED_SCOPES = frozenset({"project:create", "read", "write"})
+ALLOWED_SCOPES = frozenset({"project:create", "read", "write", "recovery:execute"})
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 

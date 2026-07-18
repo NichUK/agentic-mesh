@@ -872,3 +872,20 @@ or `release_review`.
   eligibility atomically while recording the incident ID in terminal evidence.
 - Success ends the incident without ending the work item. Recovery success
   routes the original work back to its configured owner exactly once.
+
+## 2026-07-18 V5 Independent Recovery Supervisor
+
+- Recovery is executable through a standalone CLI path that connects directly
+  to Postgres; it does not require FastAPI, the PM monitor, or the normal role
+  fleet to be running.
+- An externally configured `recovery:execute` identity can lease only its
+  authorized projects. The restricted tool profile is pinned on first claim,
+  and the launcher receives the exact durable goal, project scope, 120-minute
+  default deadline, usage cap, and external credential/mount references without
+  secret values.
+- Stable run IDs, renewable leases, and deadline-aware reclamation prevent
+  abandoned work from disappearing. Lease expiry retries the same run; the
+  overall deadline and usage cap create explicit supervisor verification.
+- Results are persisted before application to the 3/3/1 reliability policy.
+  Crash replay is idempotent: success resumes the original owner once and only
+  a verified failure makes terminal error eligible.

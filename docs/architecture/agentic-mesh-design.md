@@ -791,6 +791,20 @@ failed recovery makes terminal error eligible; the work-item error transition
 locks and consumes that eligibility in the same transaction. Early terminal
 error therefore cannot race or bypass the 3/3/1 chain.
 
+The independent recovery supervisor does not depend on the FastAPI process or
+normal worker fleet. It authenticates an external `recovery:execute` identity,
+connects directly to Postgres, and leases a pending request to the restricted
+recovery profile. The launcher receives the exact goal, project identifier,
+pinned profile digest, deadline, usage cap, and external mount/credential
+references—never credential values. The default deadline is 120 minutes.
+
+Supervisor runs use stable identifiers and renewable leases. Lease expiry is
+reclaimable work; the fixed deadline or usage cap produces a verifiable failed
+result. Launcher results are stored before they are applied to the retry policy,
+so interruption at that boundary replays one idempotent recovery attempt. A
+successful application resumes the original owner once, while only a verified
+failed application makes terminal error eligible.
+
 Attempt records and event-journal entries are append-only. Exact caller retries
 are idempotent, route creation is atomic with policy advancement, and missing
 routes roll back the attempted advancement. A successful recovery routes the
