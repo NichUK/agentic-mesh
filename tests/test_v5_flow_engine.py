@@ -276,6 +276,7 @@ def test_flow_run_requires_obligations_and_accepted_handoff(flow_database) -> No
     assert pending.status == "handoff_pending"
     assert pending.pending_target_state == "release"
     assert pending.version == 2
+    assert len(engine.obligations("alpha", "work-1")) == 4
     assert engine.prepare_transition(
         project_id="alpha",
         work_item_id="work-1",

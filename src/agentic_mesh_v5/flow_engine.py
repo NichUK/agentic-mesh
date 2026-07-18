@@ -17,6 +17,7 @@ from agentic_mesh_v5.events import EventDraft, EventStore, OutboundDraft
 from agentic_mesh_v5.flow_definition import FlowDefinition, FlowDefinitionError
 from agentic_mesh_v5.flow_definition import FlowState, validate_flow
 from agentic_mesh_v5.handoffs import HandoffOffer, HandoffStore
+from agentic_mesh_v5.lifecycle import LifecycleConflict
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.routing import RouteDraft, Router
 
@@ -553,17 +554,24 @@ class FlowEngine:
                     )
         work = self._lifecycle.get_work_item(project_id, work_item_id)
         if work.status == "active":
-            self._lifecycle.transition_work_item(
-                project_id=project_id,
-                work_item_id=work_item_id,
-                target_status="completed",
-                actor_id=actor_id,
-                correlation_id=operation_id,
-                expected_version=work.version,
-                reason="external flow completed",
-                evidence=evidence,
-            )
-        elif work.status != "completed":
+            try:
+                work = self._lifecycle.transition_work_item(
+                    project_id=project_id,
+                    work_item_id=work_item_id,
+                    target_status="completed",
+                    actor_id=actor_id,
+                    correlation_id=operation_id,
+                    expected_version=work.version,
+                    reason="external flow completed",
+                    evidence=evidence,
+                )
+            except LifecycleConflict:
+                work = self._lifecycle.get_work_item(project_id, work_item_id)
+        if (
+            work.status != "completed"
+            or work.terminal_reason != "external flow completed"
+            or dict(work.terminal_evidence) != evidence
+        ):
             raise FlowEngineConflict("kernel work item cannot complete")
         with self._events.transaction() as transaction:
             run = self._lock(transaction, project_id, work_item_id)
@@ -609,10 +617,27 @@ class FlowEngine:
     ) -> tuple[FlowObligation, ...]:
         project_id, work_item_id = _identifiers(project_id, work_item_id)
         run = self.get(project_id, work_item_id)
-        clause = "AND state = %s AND entry_version = %s" if current_only else ""
+        clause = (
+            f"""
+                AND state = %s
+                AND entry_version = (
+                    SELECT max(current.entry_version)
+                    FROM {SCHEMA}.flow_obligations AS current
+                    WHERE current.project_id = %s AND current.work_item_id = %s
+                      AND current.state = %s
+                )
+            """
+            if current_only
+            else ""
+        )
         parameters: tuple[object, ...] = (project_id, work_item_id)
         if current_only:
-            parameters += (run.current_state, run.version)
+            parameters += (
+                run.current_state,
+                project_id,
+                work_item_id,
+                run.current_state,
+            )
         with psycopg.connect(self._database_url, autocommit=True) as connection:
             rows = connection.execute(
                 f"""
