@@ -133,6 +133,18 @@ def _create(
     )
 
 
+def _synchronize_initial_replay(store: SharedMemoryStore) -> None:
+    original = store._find_replay
+    barrier = threading.Barrier(2)
+
+    def synchronized(*args):
+        result = original(*args)
+        barrier.wait(timeout=5)
+        return result
+
+    store._find_replay = synchronized
+
+
 def test_same_logical_role_shares_memory_without_instance_or_thread_context(memory):
     store, _verifier = memory
     created = _create(store)
@@ -314,27 +326,22 @@ def test_operations_are_idempotent_but_cannot_be_reused_for_other_requests(memor
             operation_id="op-create-memory",
         )
 
-    updated = store.update(
-        ALPHA_ENGINEERING,
-        first.memory_id,
-        expected_version=1,
-        summary="Updated once.",
-        tags=[],
-        source=ARCHITECTURE,
-        actor_id="engineering",
-        operation_id="op-idempotent-update",
-    )
-    update_replay = store.update(
-        ALPHA_ENGINEERING,
-        first.memory_id,
-        expected_version=1,
-        summary="Updated once.",
-        tags=[],
-        source=ARCHITECTURE,
-        actor_id="engineering",
-        operation_id="op-idempotent-update",
-    )
-    assert update_replay == updated
+    def duplicate_update():
+        return store.update(
+            ALPHA_ENGINEERING,
+            first.memory_id,
+            expected_version=1,
+            summary="Updated once.",
+            tags=[],
+            source=ARCHITECTURE,
+            actor_id="engineering",
+            operation_id="op-idempotent-update",
+        )
+
+    _synchronize_initial_replay(store)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        updates = list(executor.map(lambda _index: duplicate_update(), (1, 2)))
+    assert updates[0] == updates[1]
     assert len(store.history(ALPHA_ENGINEERING, first.memory_id)) == 2
 
 
@@ -362,14 +369,21 @@ def test_retirement_is_versioned_and_hidden_from_default_inspection(memory):
     store, _verifier = memory
     created = _create(store)
 
-    retired = store.retire(
-        ALPHA_ENGINEERING,
-        created.memory_id,
-        expected_version=1,
-        actor_id="engineering",
-        operation_id="op-retire-memory",
-    )
+    def duplicate_retire():
+        return store.retire(
+            ALPHA_ENGINEERING,
+            created.memory_id,
+            expected_version=1,
+            actor_id="engineering",
+            operation_id="op-retire-memory",
+        )
 
+    _synchronize_initial_replay(store)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        retirements = list(executor.map(lambda _index: duplicate_retire(), (1, 2)))
+    retired = retirements[0]
+
+    assert retirements[1] == retired
     assert (retired.status, retired.version) == ("retired", 2)
     assert store.inspect(ALPHA_ENGINEERING) == ()
     assert store.inspect(ALPHA_ENGINEERING, include_retired=True) == (retired,)

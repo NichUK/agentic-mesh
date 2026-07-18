@@ -305,6 +305,11 @@ class SharedMemoryStore:
                         return replay.entry
                     current = self._lock_visible(connection, context, memory_id)
                     if current.status == "retired" or current.version != expected_version:
+                        replay = self._find_replay_in(
+                            connection, context, operation_id, digest
+                        )
+                        if replay is not None:
+                            return replay.entry
                         raise SharedMemoryConflict(
                             f"memory version changed: expected {expected_version}, "
                             f"found {current.version}"
@@ -424,9 +429,19 @@ class SharedMemoryStore:
                     if replay is not None:
                         return replay.entry
                     current = self._lock_visible(connection, context, memory_id)
-                    if current.status != "active":
-                        raise SharedMemoryConflict("retired memory cannot be updated")
-                    if current.version != expected_version:
+                    if (
+                        current.status != "active"
+                        or current.version != expected_version
+                    ):
+                        replay = self._find_replay_in(
+                            connection, context, operation_id, digest
+                        )
+                        if replay is not None:
+                            return replay.entry
+                        if current.status != "active":
+                            raise SharedMemoryConflict(
+                                "retired memory cannot be updated"
+                            )
                         raise SharedMemoryConflict(
                             f"memory version changed: expected {expected_version}, "
                             f"found {current.version}"
