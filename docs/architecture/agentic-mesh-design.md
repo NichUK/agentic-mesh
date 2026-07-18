@@ -710,8 +710,18 @@ and retain their explicit state for inspection and correction.
 Current records use optimistic integer versions. Create, update, retire, and
 source-status operations append immutable full snapshots with stable operation
 IDs, giving concurrent role instances deterministic conflict and replay
-semantics. Classification, redaction, and controlled promotion into broader
-scope are a separate policy layer.
+semantics.
+
+The first classification policy is deliberately deterministic and local. It
+hard-rejects secret patterns, redacts email addresses and telephone numbers in
+summaries without retaining originals, and scans structured fields rather than
+changing their identity. It considers every registered project id/display name
+in the organization plus configured aliases. Organization-role promotion needs
+a clean policy or release source under the current organization namespace;
+other content is uncertain and remains project-role scoped. Classification,
+reason codes, policy version, and redaction type/count are stored in current and
+immutable revision records. Updates pass through the same policy, preventing a
+generic organization entry from later acquiring project-specific content.
 
 ### Artifact Store
 

@@ -960,3 +960,18 @@ or `release_review`.
   revisions for creates, updates, retirements, and source-state changes. Stable
   operation IDs make exact retries idempotent and version checks ensure that
   concurrent role instances cannot silently overwrite one another.
+
+## 2026-07-18 V5 Memory Classification And Redaction
+
+- Every shared-memory create and update passes through one deterministic local
+  policy. It rejects private keys, bearer credentials, secret assignments,
+  credential-bearing URLs, and signed access strings before persistence.
+- Email addresses and telephone numbers in summaries become typed placeholders;
+  only type/count evidence is retained. Personal data in identity-bearing
+  fields rejects because silently changing subjects, tags, or source references
+  would corrupt their meaning.
+- Organization promotion requires a clean organization-namespaced policy or
+  release source and no registered project id/display name or configured alias.
+  Project-specific and uncertain candidates fail closed to project-role scope.
+  The current entry and every immutable revision retain classification, policy
+  version, reason codes, and redaction evidence.

@@ -14,6 +14,10 @@ from psycopg.types.json import Jsonb
 
 from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.database import DatabaseConfigurationError, DatabaseError
+from agentic_mesh_v5.memory_policy import ConservativeMemoryPolicy
+from agentic_mesh_v5.memory_policy import MemoryPolicy
+from agentic_mesh_v5.memory_policy import MemoryPolicyDecision
+from agentic_mesh_v5.memory_policy import MemoryPolicyError
 
 
 MemoryScope = Literal["project_role", "project", "organization_role"]
@@ -118,6 +122,9 @@ class MemoryEntry:
     subject: str
     summary: str
     tags: tuple[str, ...]
+    classification: str
+    policy_evidence: dict[str, object]
+    redactions: tuple[dict[str, object], ...]
     source: MemorySource
     source_state: SourceState
     current_source_version: str | None
@@ -138,6 +145,9 @@ class MemoryEntry:
             "subject": self.subject,
             "summary": self.summary,
             "tags": list(self.tags),
+            "classification": self.classification,
+            "policy_evidence": self.policy_evidence,
+            "redactions": list(self.redactions),
             "source": {
                 "kind": self.source.kind,
                 "reference": self.source.reference,
@@ -165,11 +175,18 @@ class MemoryRevision:
 
 
 class SharedMemoryStore:
-    def __init__(self, database_url: str, *, verifier: MemorySourceVerifier) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        *,
+        verifier: MemorySourceVerifier,
+        policy: MemoryPolicy | None = None,
+    ) -> None:
         if not database_url.startswith(("postgresql://", "postgres://")):
             raise DatabaseConfigurationError("the V5 database URL must use Postgres")
         self._database_url = database_url
         self._verifier = verifier
+        self._policy = policy or ConservativeMemoryPolicy()
 
     def create(
         self,
@@ -183,14 +200,32 @@ class SharedMemoryStore:
         actor_id: str,
         operation_id: str,
     ) -> MemoryEntry:
-        coordinates = _coordinates(context, scope)
         subject = _subject(subject)
         summary = _summary(summary)
         tags = _tags(tags)
         actor_id = _external_id(actor_id, "actor_id")
         operation_id = _operation_id(operation_id)
+        decision = self._policy.evaluate(
+            context,
+            requested_scope=scope,
+            subject=subject,
+            summary=summary,
+            tags=tags,
+            source=source,
+            project_identifiers=self._organization_project_identifiers(context),
+        )
+        summary = _summary(decision.sanitized_summary)
+        scope = decision.effective_scope
+        coordinates = _coordinates(context, scope)
         digest = _digest(
-            "create", coordinates, subject, summary, tags, _source_payload(source), actor_id
+            "create",
+            coordinates,
+            subject,
+            summary,
+            tags,
+            _source_payload(source),
+            _policy_payload(decision),
+            actor_id,
         )
         replay = self._find_replay(context, operation_id, digest)
         if replay is not None:
@@ -215,9 +250,9 @@ class SharedMemoryStore:
                              subject, summary, tags, source_kind, source_ref,
                              observed_source_version, source_state,
                              current_source_version, status, version, created_by,
-                             updated_by)
+                             updated_by, classification, policy_evidence, redactions)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                'current', %s, 'active', 1, %s, %s)
+                                'current', %s, 'active', 1, %s, %s, %s, %s, %s)
                         RETURNING *
                         """,
                         (
@@ -233,6 +268,9 @@ class SharedMemoryStore:
                             source.observed_version,
                             actor_id,
                             actor_id,
+                            decision.classification,
+                            Jsonb(decision.evidence()),
+                            Jsonb(decision.redaction_evidence()),
                         ),
                     ).fetchone()
                     assert row is not None
@@ -263,16 +301,34 @@ class SharedMemoryStore:
         actor_id: str,
         operation_id: str,
     ) -> MemoryEntry:
+        memory_id = _memory_id(memory_id)
+        summary = _summary(summary)
+        tags = _tags(tags)
+        current = self._read_policy_target(context, memory_id)
+        decision = self._policy.evaluate(
+            context,
+            requested_scope=current.scope,
+            subject=current.subject,
+            summary=summary,
+            tags=tags,
+            source=source,
+            project_identifiers=self._organization_project_identifiers(context),
+        )
+        if decision.effective_scope != current.scope:
+            raise MemoryPolicyError(
+                "organization memory update lacks generic classification evidence"
+            )
         return self._mutate(
             context,
             memory_id,
             expected_version=expected_version,
-            summary=_summary(summary),
-            tags=_tags(tags),
+            summary=_summary(decision.sanitized_summary),
+            tags=tags,
             source=source,
             actor_id=_external_id(actor_id, "actor_id"),
             operation_id=_operation_id(operation_id),
             action="update",
+            decision=decision,
         )
 
     def retire(
@@ -401,6 +457,7 @@ class SharedMemoryStore:
         actor_id: str,
         operation_id: str,
         action: Literal["update"],
+        decision: MemoryPolicyDecision,
     ) -> MemoryEntry:
         memory_id = _memory_id(memory_id)
         expected_version = _version(expected_version)
@@ -411,6 +468,7 @@ class SharedMemoryStore:
             summary,
             tags,
             _source_payload(source),
+            _policy_payload(decision),
             actor_id,
         )
         replay = self._find_replay(context, operation_id, digest)
@@ -429,6 +487,8 @@ class SharedMemoryStore:
                     if replay is not None:
                         return replay.entry
                     current = self._lock_visible(connection, context, memory_id)
+                    if current.scope != decision.effective_scope:
+                        raise MemoryPolicyError("memory policy scope changed concurrently")
                     if (
                         current.status != "active"
                         or current.version != expected_version
@@ -452,6 +512,8 @@ class SharedMemoryStore:
                         SET summary = %s, tags = %s, source_kind = %s,
                             source_ref = %s, observed_source_version = %s,
                             source_state = 'current', current_source_version = %s,
+                            classification = %s, policy_evidence = %s,
+                            redactions = %s,
                             version = version + 1, updated_by = %s,
                             updated_at = clock_timestamp()
                         WHERE memory_id = %s AND version = %s
@@ -464,6 +526,9 @@ class SharedMemoryStore:
                             source.reference,
                             source.observed_version,
                             source.observed_version,
+                            decision.classification,
+                            Jsonb(decision.evidence()),
+                            Jsonb(decision.redaction_evidence()),
                             actor_id,
                             memory_id,
                             expected_version,
@@ -582,6 +647,42 @@ class SharedMemoryStore:
         except psycopg.Error as exc:
             raise SharedMemoryError("shared memory idempotency check failed") from exc
 
+    def _read_policy_target(
+        self, context: MemoryContext, memory_id: str
+    ) -> MemoryEntry:
+        try:
+            with psycopg.connect(
+                self._database_url, autocommit=True, row_factory=dict_row
+            ) as connection:
+                self._validate_context(connection, context)
+                return self._read_visible(connection, context, memory_id)
+        except SharedMemoryError:
+            raise
+        except psycopg.Error as exc:
+            raise SharedMemoryError("shared memory policy lookup failed") from exc
+
+    def _organization_project_identifiers(
+        self, context: MemoryContext
+    ) -> tuple[str, ...]:
+        try:
+            with psycopg.connect(
+                self._database_url, autocommit=True, row_factory=dict_row
+            ) as connection:
+                self._validate_context(connection, context)
+                rows = connection.execute(
+                    f"""
+                    SELECT project_id, display_name FROM {SCHEMA}.projects
+                    WHERE organization_id = %s
+                    ORDER BY project_id
+                    """,
+                    (context.organization_id,),
+                ).fetchall()
+            return tuple(value for row in rows for value in row.values())
+        except SharedMemoryError:
+            raise
+        except psycopg.Error as exc:
+            raise SharedMemoryError("memory policy context lookup failed") from exc
+
     def _find_replay_in(
         self,
         connection: psycopg.Connection,
@@ -673,9 +774,10 @@ class SharedMemoryStore:
                  organization_id, project_id, role_id, subject, summary, tags,
                  source_kind, source_ref, observed_source_version, source_state,
                  current_source_version, status, created_by, updated_by,
-                 created_at, updated_at, actor_id)
+                 created_at, updated_at, classification, policy_evidence,
+                 redactions, actor_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 entry.memory_id,
@@ -700,6 +802,9 @@ class SharedMemoryStore:
                 entry.updated_by,
                 entry.created_at,
                 entry.updated_at,
+                entry.classification,
+                Jsonb(entry.policy_evidence),
+                Jsonb(list(entry.redactions)),
                 actor_id,
             ),
         )
@@ -757,6 +862,9 @@ def _entry(row: dict) -> MemoryEntry:
         subject=row["subject"],
         summary=row["summary"],
         tags=tuple(row["tags"]),
+        classification=row["classification"],
+        policy_evidence=row["policy_evidence"],
+        redactions=tuple(row["redactions"]),
         source=MemorySource(
             row["source_kind"], row["source_ref"], row["observed_source_version"]
         ),
@@ -785,6 +893,15 @@ def _revision(row: dict) -> MemoryRevision:
 
 def _source_payload(source: MemorySource) -> tuple[str, str, str]:
     return source.kind, source.reference, source.observed_version
+
+
+def _policy_payload(decision: MemoryPolicyDecision) -> tuple[object, ...]:
+    return (
+        decision.classification,
+        decision.effective_scope,
+        decision.evidence(),
+        decision.redaction_evidence(),
+    )
 
 
 def _source_operation_id(

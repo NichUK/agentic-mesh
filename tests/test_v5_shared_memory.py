@@ -71,7 +71,7 @@ def postgres_database() -> str:
 @pytest.fixture
 def memory(postgres_database: str) -> tuple[SharedMemoryStore, MutableSourceVerifier]:
     status = MigrationRunner(postgres_database).migrate()
-    assert status.current_version == 19
+    assert status.current_version == 20
     with psycopg.connect(postgres_database, autocommit=True) as connection:
         connection.execute(
             """
@@ -98,6 +98,7 @@ def memory(postgres_database: str) -> tuple[SharedMemoryStore, MutableSourceVeri
             "document://gamma/architecture": "etag-g1",
             "work-item://alpha/39": "rev-1",
             "event://alpha/100": "event-1",
+            "policy://seerstone/engineering-practice": "policy-1",
         }
     )
     return SharedMemoryStore(postgres_database, verifier=verifier), verifier
@@ -110,6 +111,9 @@ BETA_QA = MemoryContext("seerstone", "beta", "qa")
 GAMMA_ENGINEERING = MemoryContext("other", "gamma", "engineering")
 ARCHITECTURE = MemorySource(
     "document", "document://alpha/architecture", "etag-1"
+)
+ENGINEERING_POLICY = MemorySource(
+    "policy", "policy://seerstone/engineering-practice", "policy-1"
 )
 
 
@@ -181,10 +185,14 @@ def test_project_and_organization_role_visibility_is_structural(memory):
         subject="delivery-policy",
         operation_id="op-project-memory",
     )
-    organization_entry = _create(
-        store,
+    organization_entry = store.create(
+        ALPHA_ENGINEERING,
         scope="organization_role",
         subject="engineering-practice",
+        summary="Engineering changes require review evidence.",
+        tags=["engineering", "review"],
+        source=ENGINEERING_POLICY,
+        actor_id="engineering",
         operation_id="op-organization-memory",
     )
 
