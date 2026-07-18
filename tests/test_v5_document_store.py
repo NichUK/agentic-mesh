@@ -206,7 +206,11 @@ def test_browse_metadata_and_opaque_paging_stay_inside_root() -> None:
 def test_read_redirect_strips_token_and_enforces_size() -> None:
     transport = ScriptedTransport(
         _response(200, _file(size=7)),
-        HttpResponse(302, {"Location": "https://content.example.invalid/download?id=1"}, b""),
+        HttpResponse(
+            302,
+            {"Location": "https://content.example.invalid/download?id=1"},
+            b"",
+        ),
         HttpResponse(200, {"content-type": "text/markdown"}, b"content"),
     )
     store = _store(transport)
@@ -238,6 +242,20 @@ def test_read_redirect_strips_token_and_enforces_size() -> None:
     )
     with pytest.raises(DocumentConflict, match="folders"):
         _store(folder).read("plans")
+
+    ambiguous = ScriptedTransport(
+        _response(200, _file(size=7)),
+        HttpResponse(
+            302,
+            {
+                "Location": "https://content.example.invalid/one",
+                "location": "https://content.example.invalid/two",
+            },
+            b"",
+        ),
+    )
+    with pytest.raises(DocumentInvalidResponse, match="ambiguous"):
+        _store(ambiguous).read("plans/plan.md")
 
 
 def test_create_large_document_uses_aligned_unauthenticated_ranges() -> None:

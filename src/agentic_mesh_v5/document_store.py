@@ -506,7 +506,7 @@ class OneDriveDocumentStore:
             )
             return HttpResponse(
                 raw.status_code,
-                {key.casefold(): value for key, value in raw.headers.items()},
+                _normalized_headers(raw.headers),
                 raw.content,
             )
         except DocumentTransportError:
@@ -774,8 +774,19 @@ def _graph_error_code(response: HttpResponse) -> str | None:
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
-    needle = name.casefold()
-    return next((value for key, value in headers.items() if key.casefold() == needle), None)
+    return headers.get(name.casefold())
+
+
+def _normalized_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in headers.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise DocumentInvalidResponse("document response headers are invalid")
+        folded = key.casefold()
+        if folded in normalized:
+            raise DocumentInvalidResponse("document response headers are ambiguous")
+        normalized[folded] = value
+    return normalized
 
 
 def _preauthenticated_url(value: str) -> str:
