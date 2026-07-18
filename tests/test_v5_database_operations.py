@@ -342,6 +342,7 @@ def test_native_backup_restore_reproduces_acknowledged_state(
     assert backup.size_bytes > 0
     assert backup.table_counts["events"] >= 2
     assert "thread_affinities" in backup.table_counts
+    assert "thread_reseeds" in backup.table_counts
     assert MaintenanceStore(source_url).status().status == "active"
 
     restored = DatabaseBackupService(target_url, tools=tools).restore(archive)

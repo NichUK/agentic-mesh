@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from pathlib import Path
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock
 import time
 import uuid
 from urllib.parse import urlsplit, urlunsplit
@@ -14,13 +15,18 @@ import pytest
 
 from agentic_mesh_v5.codex_provider import CodexProviderConfig
 from agentic_mesh_v5.codex_provider import CodexWorkerProvider
+from agentic_mesh_v5.config_activation import ConfigActivationStore
 from agentic_mesh_v5.database import MigrationRunner
+from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.thread_affinity import ThreadAffinityAuthorizationError
+from agentic_mesh_v5.thread_affinity import ThreadAffinityBusy
 from agentic_mesh_v5.thread_affinity import ThreadAffinityConflict
 from agentic_mesh_v5.thread_affinity import ThreadAffinityCoordinator
 from agentic_mesh_v5.thread_affinity import ThreadAffinityError
 from agentic_mesh_v5.thread_affinity import ThreadAffinityKey
 from agentic_mesh_v5.thread_affinity import ThreadAffinityStore
+from agentic_mesh_v5.thread_affinity import ThreadPromptMismatch
+from agentic_mesh_v5.thread_affinity import UNPINNED_DIGEST
 from agentic_mesh_v5.warm_engines import RoleInstanceKey
 from agentic_mesh_v5.warm_engines import WarmEnginePool
 from agentic_mesh_v5.worker_provider import EngineMetadata
@@ -182,6 +188,8 @@ class FakeProviderFactory:
 
 
 KEY = ThreadAffinityKey("alpha", "work-1", "engineering", "primary")
+DIGEST_A = "a" * 64
+DIGEST_B = "b" * 64
 
 
 def _request(tmp_path: Path, *, ephemeral: bool = False) -> ThreadRequest:
@@ -239,6 +247,13 @@ def test_migration_has_project_role_conversation_and_global_thread_constraints(
         "created_at",
         "last_resumed_at",
         "updated_at",
+        "prompt_digest",
+        "generation",
+        "affinity_state",
+        "active_operation_id",
+        "active_instance_id",
+        "active_started_at",
+        "pending_reseed_id",
     }
     assert "PRIMARY KEY (project_id, work_item_id, role_id, conversation_id)" in constraints
     assert "UNIQUE (provider_id, thread_id)" in constraints
@@ -249,10 +264,11 @@ def test_migration_has_project_role_conversation_and_global_thread_constraints(
                 """
                 INSERT INTO agentic_mesh_v5.thread_affinities
                     (project_id, work_item_id, role_id, conversation_id,
-                     provider_id, thread_id, last_instance_id)
+                     provider_id, thread_id, last_instance_id, prompt_digest)
                 VALUES ('alpha', 'work-1', 'engineering', 'invalid-instance-role',
-                        'fake', 'wrong-role-thread', 'qa-1')
-                """
+                        'fake', 'wrong-role-thread', 'qa-1', %s)
+                """,
+                (DIGEST_A,),
             )
 
 
@@ -275,6 +291,7 @@ def test_concurrent_first_bind_creates_one_provider_thread(
             KEY,
             instance_id="engineering-1",
             provider_id="fake",
+            prompt_digest=DIGEST_A,
             create_thread=create,
         )
 
@@ -294,12 +311,14 @@ def test_repeated_operations_resume_one_recorded_thread(
     first = coordinator.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
     second = coordinator.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
@@ -323,6 +342,7 @@ def test_another_same_role_instance_can_take_over_after_hibernation(
     assert coordinator.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     ) == "thread-1"
@@ -331,6 +351,7 @@ def test_another_same_role_instance_can_take_over_after_hibernation(
     resumed = coordinator.run(
         KEY,
         instance_id="engineering-2",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
@@ -350,6 +371,7 @@ def test_fatal_engine_failure_reopens_and_resumes_same_thread(
     coordinator.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
@@ -364,6 +386,7 @@ def test_fatal_engine_failure_reopens_and_resumes_same_thread(
         coordinator.run(
             KEY,
             instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path),
             operation=lambda _thread: (_ for _ in ()).throw(transport),
         )
@@ -371,6 +394,7 @@ def test_fatal_engine_failure_reopens_and_resumes_same_thread(
     assert coordinator.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     ) == "thread-1"
@@ -396,6 +420,7 @@ def test_every_affinity_dimension_prevents_context_sharing(
         coordinator.run(
             key,
             instance_id=instance,
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path),
             operation=lambda thread: thread.thread_id,
         )
@@ -422,6 +447,7 @@ def test_different_work_items_run_concurrently_without_sharing_context(
             coordinator.run,
             KEY,
             instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path),
             operation=operation,
         )
@@ -429,6 +455,7 @@ def test_different_work_items_run_concurrently_without_sharing_context(
             coordinator.run,
             ThreadAffinityKey("alpha", "work-2", "engineering", "primary"),
             instance_id="engineering-2",
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path),
             operation=operation,
         )
@@ -457,6 +484,7 @@ def test_wrong_role_or_project_is_rejected_before_provider_open(
         coordinator.run(
             key,
             instance_id=instance_id,
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path),
             operation=lambda thread: thread.thread_id,
         )
@@ -472,6 +500,7 @@ def test_provider_thread_id_is_unique_across_projects_and_contexts(
         KEY,
         instance_id="engineering-1",
         provider_id="fake",
+        prompt_digest=DIGEST_A,
         create_thread=lambda: "shared-thread",
     )
     assert created
@@ -481,6 +510,7 @@ def test_provider_thread_id_is_unique_across_projects_and_contexts(
             ThreadAffinityKey("bravo", "work-1", "engineering", "primary"),
             instance_id="engineering-1",
             provider_id="fake",
+            prompt_digest=DIGEST_A,
             create_thread=lambda: "shared-thread",
         )
 
@@ -494,6 +524,7 @@ def test_provider_change_for_existing_affinity_fails_closed(
     first.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
@@ -503,6 +534,7 @@ def test_provider_change_for_existing_affinity_fails_closed(
         second.run(
             KEY,
             instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path),
             operation=lambda thread: thread.thread_id,
         )
@@ -518,6 +550,7 @@ def test_missing_recorded_thread_never_creates_replacement(
     coordinator.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
@@ -526,6 +559,7 @@ def test_missing_recorded_thread_never_creates_replacement(
         coordinator.run(
             KEY,
             instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path),
             operation=lambda thread: thread.thread_id,
         )
@@ -543,6 +577,7 @@ def test_malformed_resume_is_protocol_failure_and_evicts_engine(
     coordinator.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
@@ -551,6 +586,7 @@ def test_malformed_resume_is_protocol_failure_and_evicts_engine(
         coordinator.run(
             KEY,
             instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path),
             operation=lambda thread: thread.thread_id,
         )
@@ -569,11 +605,548 @@ def test_ephemeral_request_is_rejected_before_database_or_provider(
         coordinator.run(
             KEY,
             instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
             request=_request(tmp_path, ephemeral=True),
             operation=lambda thread: thread.thread_id,
         )
     assert factory.keys == []
     assert store.read(KEY) is None
+    pool.shutdown()
+
+
+def test_prompt_digest_is_pinned_and_failed_operations_release_claim(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    _database_url, store = affinity_database
+    coordinator, pool, _factory, _backend = _coordinator(store)
+    assert coordinator.run(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
+        request=_request(tmp_path),
+        operation=lambda thread: thread.thread_id,
+    ) == "thread-1"
+
+    with pytest.raises(ThreadPromptMismatch):
+        coordinator.run(
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_B,
+            request=_request(tmp_path),
+            operation=lambda thread: thread.thread_id,
+        )
+    with pytest.raises(RuntimeError, match="synthetic operation failure"):
+        coordinator.run(
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=lambda _thread: (_ for _ in ()).throw(
+                RuntimeError("synthetic operation failure")
+            ),
+        )
+
+    binding = store.read(KEY)
+    assert binding is not None
+    assert binding.prompt_digest == DIGEST_A
+    assert binding.generation == 1
+    assert binding.active_operation_id is None
+    assert coordinator.run(
+        KEY,
+        instance_id="engineering-2",
+        prompt_digest=DIGEST_A,
+        request=_request(tmp_path),
+        operation=lambda thread: thread.thread_id,
+    ) == "thread-1"
+    pool.shutdown()
+
+
+def test_configuration_activation_does_not_silently_change_existing_affinity(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    _database_url, affinity_store = affinity_database
+    config_root = tmp_path / "config"
+    schema = config_root / "schemas" / "package.schema.json"
+    schema.parent.mkdir(parents=True)
+    schema.write_text("{}\n", encoding="utf-8")
+    for version, instruction in (("1.0.0", "simple"), ("2.0.0", "revised")):
+        package_root = config_root / "packages" / "system" / "core" / version
+        package_root.mkdir(parents=True)
+        (package_root / "settings.json").write_text(
+            json.dumps({"instruction": instruction}) + "\n", encoding="utf-8"
+        )
+        (package_root / "package.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "id": "core",
+                    "kind": "system",
+                    "version": version,
+                    "content": ["settings.json"],
+                    "dependencies": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    configs = ConfigActivationStore(config_root)
+    first = configs.create_release(["system/core@1.0.0"], actor="pm")
+    second = configs.create_release(["system/core@2.0.0"], actor="pm")
+    configs.activate(first.digest, actor="pm", expected_active=None)
+    coordinator, pool, _factory, _backend = _coordinator(affinity_store)
+    thread_id = coordinator.run(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=first.digest,
+        request=_request(tmp_path),
+        operation=lambda thread: thread.thread_id,
+    )
+
+    configs.activate(
+        second.digest,
+        actor="pm",
+        reason="approved global activation",
+        expected_active=first.digest,
+    )
+
+    binding = affinity_store.read(KEY)
+    assert binding is not None
+    assert binding.prompt_digest == first.digest
+    assert coordinator.run(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=first.digest,
+        request=_request(tmp_path),
+        operation=lambda thread: thread.thread_id,
+    ) == thread_id
+    with pytest.raises(ThreadPromptMismatch):
+        coordinator.run(
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=second.digest,
+            request=_request(tmp_path),
+            operation=lambda thread: thread.thread_id,
+        )
+    pool.shutdown()
+
+
+def test_active_affinity_rejects_concurrent_use_and_reseed(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    _database_url, store = affinity_database
+    coordinator, pool, _factory, _backend = _coordinator(store)
+    entered = Event()
+    release = Event()
+
+    def hold(thread: FakeThread) -> str:
+        entered.set()
+        assert release.wait(timeout=10)
+        return thread.thread_id
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        active = executor.submit(
+            coordinator.run,
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=hold,
+        )
+        assert entered.wait(timeout=10)
+        with pytest.raises(ThreadAffinityBusy):
+            coordinator.run(
+                KEY,
+                instance_id="engineering-2",
+                prompt_digest=DIGEST_A,
+                request=_request(tmp_path),
+                operation=lambda thread: thread.thread_id,
+            )
+        with pytest.raises(ThreadAffinityBusy, match="active"):
+            store.reseed(
+                KEY,
+                expected_digest=DIGEST_A,
+                new_digest=DIGEST_B,
+                actor_id="pm",
+                reason="approved prompt upgrade",
+            )
+        release.set()
+        assert active.result(timeout=10) == "thread-1"
+    assert store.read(KEY).active_operation_id is None  # type: ignore[union-attr]
+    pool.shutdown()
+
+
+def test_first_thread_creator_atomically_wins_operation_claim(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    _database_url, store = affinity_database
+    coordinator, pool, _factory, backend = _coordinator(store)
+    start_entered = Event()
+    allow_start = Event()
+    operation_entered = Event()
+    release_operation = Event()
+    original_start = backend.start
+
+    def delayed_start() -> FakeThread:
+        start_entered.set()
+        assert allow_start.wait(timeout=10)
+        return original_start()
+
+    def hold(thread: FakeThread) -> str:
+        operation_entered.set()
+        assert release_operation.wait(timeout=10)
+        return thread.thread_id
+
+    backend.start = delayed_start  # type: ignore[method-assign]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        creator = executor.submit(
+            coordinator.run,
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=hold,
+        )
+        assert start_entered.wait(timeout=10)
+        contender = executor.submit(
+            coordinator.run,
+            KEY,
+            instance_id="engineering-2",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=lambda thread: thread.thread_id,
+        )
+        allow_start.set()
+        assert operation_entered.wait(timeout=10)
+        with pytest.raises(ThreadAffinityBusy):
+            contender.result(timeout=10)
+        release_operation.set()
+        assert creator.result(timeout=10) == "thread-1"
+    assert backend.start_count == 1
+    pool.shutdown()
+
+
+def test_reseed_waits_for_bind_claim_lock_and_then_observes_active_operation(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    database_url, store = affinity_database
+    store.bind_or_read(
+        KEY,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest=DIGEST_A,
+        create_thread=lambda: "thread-one",
+    )
+    claim_entered = Event()
+    allow_claim = Event()
+    operation_entered = Event()
+    finish_operation = Event()
+
+    class PausingClaimStore(ThreadAffinityStore):
+        def _claim_binding(
+            self,
+            connection,
+            key,
+            instance_id,
+            prompt_digest,
+            operation_id,
+        ):
+            claim_entered.set()
+            assert allow_claim.wait(timeout=10)
+            return ThreadAffinityStore._claim_binding(
+                connection, key, instance_id, prompt_digest, operation_id
+            )
+
+    pausing_store = PausingClaimStore(database_url)
+    backend = FakeBackend()
+    backend.threads.add("thread-one")
+    coordinator, pool, _factory, _backend = _coordinator(pausing_store, backend)
+
+    def hold(thread: FakeThread) -> str:
+        operation_entered.set()
+        assert finish_operation.wait(timeout=10)
+        return thread.thread_id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        active = executor.submit(
+            coordinator.run,
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=hold,
+        )
+        assert claim_entered.wait(timeout=10)
+        reseed = executor.submit(
+            pausing_store.reseed,
+            KEY,
+            expected_digest=DIGEST_A,
+            new_digest=DIGEST_B,
+            actor_id="pm",
+            reason="approved prompt upgrade",
+        )
+        time.sleep(0.1)
+        assert not reseed.done()
+        allow_claim.set()
+        assert operation_entered.wait(timeout=10)
+        with pytest.raises(ThreadAffinityBusy, match="active"):
+            reseed.result(timeout=10)
+        finish_operation.set()
+        assert active.result(timeout=10) == "thread-one"
+    pool.shutdown()
+
+
+def test_release_failure_does_not_mask_original_operation_failure(
+    affinity_database: tuple[str, ThreadAffinityStore],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _database_url, store = affinity_database
+    coordinator, pool, _factory, _backend = _coordinator(store)
+
+    def fail_release(_claim) -> None:
+        raise ThreadAffinityError("synthetic release failure")
+
+    monkeypatch.setattr(store, "release_operation", fail_release)
+    with pytest.raises(RuntimeError, match="original operation failure") as captured:
+        coordinator.run(
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=lambda _thread: (_ for _ in ()).throw(
+                RuntimeError("original operation failure")
+            ),
+        )
+    assert captured.value.__notes__ == [
+        "durable thread operation claim release also failed"
+    ]
+    pool.shutdown()
+
+
+def test_reseed_preserves_immutable_history_and_creates_new_thread(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    database_url, store = affinity_database
+    coordinator, pool, _factory, backend = _coordinator(store)
+    old_thread = coordinator.run(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
+        request=_request(tmp_path),
+        operation=lambda thread: thread.thread_id,
+    )
+    other_key = ThreadAffinityKey(
+        "alpha", "work-2", "engineering", "primary"
+    )
+    store.bind_or_read(
+        other_key,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest=DIGEST_A,
+        create_thread=lambda: "other-work-thread",
+    )
+    record = store.reseed(
+        KEY,
+        expected_digest=DIGEST_A,
+        new_digest=DIGEST_B,
+        actor_id="pm",
+        reason="approved prompt upgrade",
+    )
+    pending = store.read(KEY)
+    assert pending is not None
+    assert pending.affinity_state == "pending_seed"
+    assert pending.thread_id is None
+    assert pending.prompt_digest == DIGEST_B
+    assert pending.generation == 2
+    assert record.old_thread_id == old_thread
+    assert store.read_reseeds(KEY) == (record,)
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            connection.execute(
+                """
+                UPDATE agentic_mesh_v5.thread_affinities
+                SET provider_id = NULL, thread_id = NULL,
+                    prompt_digest = %s, generation = 2,
+                    affinity_state = 'pending_seed', pending_reseed_id = %s
+                WHERE project_id = 'alpha' AND work_item_id = 'work-2'
+                  AND role_id = 'engineering' AND conversation_id = 'primary'
+                """,
+                (DIGEST_B, record.reseed_id),
+            )
+
+    with pytest.raises(ThreadPromptMismatch):
+        coordinator.run(
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=lambda thread: thread.thread_id,
+        )
+    new_thread = coordinator.run(
+        KEY,
+        instance_id="engineering-2",
+        prompt_digest=DIGEST_B,
+        request=_request(tmp_path),
+        operation=lambda thread: thread.thread_id,
+    )
+    assert new_thread != old_thread
+    assert backend.start_count == 2
+    current = store.read(KEY)
+    assert current is not None
+    assert current.affinity_state == "active"
+    assert current.thread_id == new_thread
+    assert current.generation == 2
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+            connection.execute(
+                """
+                UPDATE agentic_mesh_v5.thread_reseeds SET reason = 'changed'
+                WHERE project_id = 'alpha' AND reseed_id = %s
+                """,
+                (record.reseed_id,),
+            )
+    pool.shutdown()
+
+
+def test_reseed_requires_valid_changed_digest_actor_reason_and_expected_version(
+    affinity_database: tuple[str, ThreadAffinityStore],
+) -> None:
+    _database_url, store = affinity_database
+    store.bind_or_read(
+        KEY,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest=DIGEST_A,
+        create_thread=lambda: "thread-one",
+    )
+    with pytest.raises(ThreadPromptMismatch):
+        store.reseed(
+            KEY,
+            expected_digest=DIGEST_B,
+            new_digest="c" * 64,
+            actor_id="pm",
+            reason="expected version changed",
+        )
+    with pytest.raises(ThreadAffinityConflict, match="must change"):
+        store.reseed(
+            KEY,
+            expected_digest=DIGEST_A,
+            new_digest=DIGEST_A,
+            actor_id="pm",
+            reason="no change",
+        )
+    for values in (
+        {"new_digest": "invalid"},
+        {"actor_id": " "},
+        {"reason": ""},
+    ):
+        arguments = {
+            "expected_digest": DIGEST_A,
+            "new_digest": DIGEST_B,
+            "actor_id": "pm",
+            "reason": "approved prompt upgrade",
+        }
+        arguments.update(values)
+        with pytest.raises(ValueError):
+            store.reseed(KEY, **arguments)
+    assert store.read_reseeds(KEY) == ()
+
+
+def test_stale_operation_claim_cannot_release_current_claim(
+    affinity_database: tuple[str, ThreadAffinityStore],
+) -> None:
+    _database_url, store = affinity_database
+    store.bind_or_read(
+        KEY,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest=DIGEST_A,
+        create_thread=lambda: "thread-one",
+    )
+    first = store.claim_operation(
+        KEY, instance_id="engineering-1", prompt_digest=DIGEST_A
+    )
+    store.release_operation(first)
+    current = store.claim_operation(
+        KEY, instance_id="engineering-2", prompt_digest=DIGEST_A
+    )
+    with pytest.raises(ThreadAffinityBusy, match="no longer current"):
+        store.release_operation(first)
+    binding = store.read(KEY)
+    assert binding is not None
+    assert binding.active_operation_id == current.operation_id
+    store.release_operation(current)
+
+
+def test_existing_unpinned_binding_requires_explicit_reseed(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    migrations = load_migrations()
+    MigrationRunner(postgres_database, migrations=migrations[:7]).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.projects(project_id, display_name)
+            VALUES ('alpha', 'Alpha')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.roles(project_id, role_id, template_id)
+            VALUES ('alpha', 'engineering', 'engineering')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.role_instances
+                (project_id, instance_id, role_id, status, provider_ref)
+            VALUES ('alpha', 'engineering-1', 'engineering', 'running', 'fake')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.work_items
+                (project_id, work_item_id, assigned_role_id, title)
+            VALUES ('alpha', 'work-1', 'engineering', 'First')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.thread_affinities
+                (project_id, work_item_id, role_id, conversation_id,
+                 provider_id, thread_id, last_instance_id)
+            VALUES ('alpha', 'work-1', 'engineering', 'primary',
+                    'fake', 'legacy-thread', 'engineering-1')
+            """
+        )
+    MigrationRunner(postgres_database).migrate()
+    store = ThreadAffinityStore(postgres_database)
+    assert store.read(KEY).prompt_digest == UNPINNED_DIGEST  # type: ignore[union-attr]
+    coordinator, pool, _factory, _backend = _coordinator(store)
+    with pytest.raises(ThreadPromptMismatch, match="controlled reseed"):
+        coordinator.run(
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=lambda thread: thread.thread_id,
+        )
+    store.reseed(
+        KEY,
+        expected_digest=UNPINNED_DIGEST,
+        new_digest=DIGEST_A,
+        actor_id="pm",
+        reason="pin upgraded conversation",
+    )
+    assert coordinator.run(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
+        request=_request(tmp_path),
+        operation=lambda thread: thread.thread_id,
+    ) == "thread-1"
     pool.shutdown()
 
 
@@ -606,7 +1179,7 @@ def test_product_modules_cannot_bypass_the_affinity_coordinator() -> None:
     not os.environ.get("AGENTIC_MESH_TEST_CODEX_HOME"),
     reason="explicit external Codex home not supplied",
 )
-def test_current_codex_engine_resumes_persistent_thread_after_hibernation(
+def test_current_codex_engine_resumes_and_reseeds_persistent_thread(
     affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
 ) -> None:
     _database_url, store = affinity_database
@@ -630,6 +1203,7 @@ def test_current_codex_engine_resumes_persistent_thread_after_hibernation(
     first = coordinator.run(
         KEY,
         instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=complete_persistence_probe,
     )
@@ -637,10 +1211,36 @@ def test_current_codex_engine_resumes_persistent_thread_after_hibernation(
     resumed = coordinator.run(
         KEY,
         instance_id="engineering-2",
+        prompt_digest=DIGEST_A,
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
 
     assert resumed == first
     assert store.read(KEY).thread_id == first  # type: ignore[union-attr]
+    assert pool.hibernate(RoleInstanceKey("alpha", "engineering-2"))
+    store.reseed(
+        KEY,
+        expected_digest=DIGEST_A,
+        new_digest=DIGEST_B,
+        actor_id="acceptance-test",
+        reason="verify controlled current-auth reseed",
+    )
+    reseeded = coordinator.run(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=DIGEST_B,
+        request=_request(tmp_path),
+        operation=complete_persistence_probe,
+    )
+    assert reseeded != first
+    assert pool.hibernate(RoleInstanceKey("alpha", "engineering-1"))
+    assert coordinator.run(
+        KEY,
+        instance_id="engineering-2",
+        prompt_digest=DIGEST_B,
+        request=_request(tmp_path),
+        operation=lambda thread: thread.thread_id,
+    ) == reseeded
+    assert store.read_reseeds(KEY)[0].old_thread_id == first
     pool.shutdown()

@@ -109,6 +109,12 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   creation is transactionally serialized, role-instance authorization is also
   enforced by a composite foreign key, and a missing recorded thread fails
   instead of silently creating unrelated context.
+- V5 affinities pin the immutable effective configuration digest and serialize
+  one durable operation across all same-role instances. Activating another
+  configuration cannot silently change existing work. Explicit idle-only
+  reseeding records actor, reason, old thread, old/new digest, and generation in
+  append-only Postgres history, then requires the next real operation to create
+  a new thread. Upgraded legacy affinities remain `unpinned` until reseeded.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

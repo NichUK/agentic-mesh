@@ -76,7 +76,10 @@ operational support.
 - Thread affinity: stores one globally unique provider thread for each
   project/work-item/logical-role/conversation key. Concrete same-role instances
   may resume it after hibernation or failure, but unrelated contexts fail
-  closed rather than receiving a fresh or foreign thread.
+  closed rather than receiving a fresh or foreign thread. Each conversation
+  pins its effective package digest and permits one durable active operation.
+  Configuration activation never changes that pin; an explicit, idle-only,
+  audited reseed advances the generation and starts a new thread.
 - Message queue: provides durable inbox/outbox delivery. The active V4 runtime
   uses Postgres-backed queues; other queue backends remain future adapter
   options.
