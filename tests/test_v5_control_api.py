@@ -344,7 +344,8 @@ def test_queue_claim_is_concurrent_and_lease_token_controls_completion(
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = list(pool.map(claim, ["eng-1", "eng-2"]))
-    claims = [response.json() for response in responses if response.json() is not None]
+    payloads = [response.json() for response in responses]
+    claims = [payload for payload in payloads if payload is not None]
 
     assert all(response.status_code == 200 for response in responses)
     assert len(claims) == 1

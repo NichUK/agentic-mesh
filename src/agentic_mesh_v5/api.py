@@ -370,11 +370,7 @@ def create_app(
             code: {
                 "model": Problem,
                 "description": description,
-                "content": {
-                    "application/problem+json": {
-                        "schema": {"$ref": "#/components/schemas/Problem"}
-                    }
-                },
+                "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}},
             }
             for code, description in {
                 401: "Authentication required or invalid",
@@ -469,6 +465,10 @@ def create_app(
         return _problem_response(
             request, 503, "durable_store_unavailable", "durable store operation failed"
         )
+
+    @app.exception_handler(Exception)
+    async def unexpected_failure(request: Request, _exc: Exception) -> JSONResponse:
+        return _problem_response(request, 500, "internal_error", "unexpected control-plane failure")
 
     @app.get(f"{API_PREFIX}/health", response_model=HealthResponse, tags=["system"])
     def health() -> dict[str, Any]:

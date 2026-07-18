@@ -18,8 +18,7 @@ Entra, dashboard reads, handoffs, usage, recovery, and config writes come later.
 
 ## Bootstrap authentication
 
-`AGENTIC_MESH_V5_API_PRINCIPALS_FILE` must point to external hashes of random,
-high-entropy tokens. Plaintext tokens remain in the caller's secret store.
+`AGENTIC_MESH_V5_API_PRINCIPALS_FILE` must point to external hashes of random, high-entropy tokens; plaintext remains in the caller's secret store.
 
 ```json
 {
