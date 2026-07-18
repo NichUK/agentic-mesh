@@ -89,6 +89,13 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   not cross the adapter; overload/transport failures are retryable, interruption
   is distinct from failure, credentials remain external, and close is
   deterministic and retryable after a cleanup failure.
+- V5 resolves named Codex OAuth caches only from a deployment-supplied registry
+  and rejects missing, relative, or repository-contained paths. Local workers
+  receive the external path as `CODEX_HOME`; containers mount it at
+  `/mesh/worker-auth/codex`. The runtime never reads or copies credential files.
+  The official SDK account probe requests token refresh and reports only safe
+  authenticated, sign-in-required, or wrong-method state without identity,
+  cache paths, or raw provider errors.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
