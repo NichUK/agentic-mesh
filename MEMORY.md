@@ -50,6 +50,11 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   `completed`, or `error`, with optimistic versions. Only sponsor decisions
   resume a gate, ownership is preserved across the pause, concurrent decisions
   resolve once, and terminal completion/error remain distinct and immutable.
+- V5 role queues are project/role qualified and use Postgres row locks plus one
+  active-lease constraint. Claims carry opaque tokens, heartbeat/completion and
+  release require that token, and the next claim transaction reclaims expired
+  work using database time. Queue readiness, delay, lease, age, and attempts are
+  queryable from durable state.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
