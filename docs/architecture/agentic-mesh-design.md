@@ -718,6 +718,27 @@ route through Enterprise Alignment and require conformance or an approved
 exception before implementation/release; low-impact changes record why the
 full architecture stage is unnecessary.
 
+#### V5 DocumentStore And OneDrive Adapter
+
+Workers access the canonical project library through a backend-neutral
+`DocumentStore`; they do not need a filesystem document mount. The active
+project-manifest snapshot selects a named adapter, drive, absolute remote root,
+and external credential reference. One store instance is permanently bounded
+to that root, and all caller paths are validated as canonical relative paths
+before Graph addressing.
+
+The first adapter uses Microsoft Graph for OneDrive. It pages folder metadata
+with locally encoded cursors, follows pre-authenticated download redirects
+without forwarding the bearer token, and binds reads to the observed eTag.
+Creates use fail-on-conflict upload sessions and updates require `If-Match`.
+Large content uses ordered 10-MiB ranges; tokens and upload URLs never enter
+runtime records or errors.
+
+Stable product errors distinguish missing content, conflict, permission,
+configured size limits, service unavailability, and invalid provider data.
+Graph request/response types stop at the adapter so another document backend
+can implement the same contract.
+
 Local backend:
 
 - Git workspace and filesystem

@@ -108,6 +108,11 @@ operational support.
   approvals.
 - Artifact store: owns docs, decisions, stories, test evidence, release
   records, and generated artifacts.
+- Document store: gives workers provider-neutral browse, metadata, read,
+  create, and conditional-update operations. The V5 OneDrive adapter binds one
+  instance to one manifest root, resolves bearer tokens only through external
+  credential references, uses conflict-aware upload sessions for large files,
+  and never forwards authorization to pre-authenticated content URLs.
 - Event journal: records an append-only audit/replay history regardless of
   queue backend.
 - Project manifest: V5 loads the strict, Git-owned
