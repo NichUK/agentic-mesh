@@ -12,7 +12,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from agentic_mesh_v5.database import SCHEMA, DatabaseConfigurationError, DatabaseError
+from agentic_mesh_v5.database import SCHEMA
+from agentic_mesh_v5.database import DatabaseConfigurationError, DatabaseError
 
 
 MemoryScope = Literal["project_role", "project", "organization_role"]
@@ -575,18 +576,15 @@ class SharedMemoryStore:
     ) -> MemoryRevision | None:
         row = connection.execute(
             f"""
-            SELECT *,
-                   request_digest = %s AS digest_match
-            FROM {SCHEMA}.shared_memory_revisions
-            WHERE organization_id = %s
-              AND operation_id = %s
+            SELECT * FROM {SCHEMA}.shared_memory_revisions
+            WHERE organization_id = %s AND operation_id = %s
             """,
-            (digest, context.organization_id, operation_id),
+            (context.organization_id, operation_id),
         ).fetchone()
         if row is None:
             return None
         revision = _revision(row)
-        if not row["digest_match"] or not _visible(context, revision.entry):
+        if revision.request_digest != digest or not _visible(context, revision.entry):
             raise SharedMemoryConflict("operation id conflicts with another request")
         return revision
 
