@@ -53,12 +53,12 @@ class Telemetry:
         self._request_count = self.meter.create_counter(
             "agentic_mesh.control.requests",
             unit="{request}",
-            description="Completed V5 control API requests",
+            description="V5 control API requests that reached a response",
         )
         self._request_duration = self.meter.create_histogram(
-            "agentic_mesh.control.request.duration",
+            "agentic_mesh.control.response.start.duration",
             unit="s",
-            description="V5 control API request duration",
+            description="Time until the V5 control API starts a response",
         )
         self._health_count = self.meter.create_counter(
             "agentic_mesh.health.checks",

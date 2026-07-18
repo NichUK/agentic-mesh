@@ -431,11 +431,11 @@ def create_app(
         with selected_telemetry.request(
             method=method,
             request_id=request_id,
-            carrier=dict(request.headers),
+            carrier=request.headers,
         ) as observation:
             try:
                 response = await call_next(request)
-            except BaseException:
+            except Exception:
                 selected_telemetry.finish_request(
                     observation,
                     method=method,

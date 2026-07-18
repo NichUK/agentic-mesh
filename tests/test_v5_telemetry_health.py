@@ -120,16 +120,23 @@ def test_request_trace_continuity_safe_attributes_and_metrics() -> None:
     assert "db-password" not in serialized
     assert "postgresql://" not in serialized
 
-    metrics = metric_reader.get_metrics_data()
+    metric_data = metric_reader.get_metrics_data()
+    metric_names = {
+        metric.name
+        for resource_metric in metric_data.resource_metrics
+        for scope_metric in resource_metric.scope_metrics
+        for metric in scope_metric.metrics
+    }
     points = [
         point
-        for resource_metric in metrics.resource_metrics
+        for resource_metric in metric_data.resource_metrics
         for scope_metric in resource_metric.scope_metrics
         for metric in scope_metric.metrics
         for point in metric.data.data_points
         if metric.name == "agentic_mesh.control.requests"
     ]
     assert len(points) == 1
+    assert "agentic_mesh.control.response.start.duration" in metric_names
     assert points[0].attributes == {
         "http.request.method": "GET",
         "http.route": "/api/v1/projects/{project_id}",

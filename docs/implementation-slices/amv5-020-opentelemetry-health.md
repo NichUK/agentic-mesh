@@ -29,8 +29,9 @@ do not yet exist remain in their ordered later stories.
   response exposes the active trace context and stable request ID.
 - Request spans use route templates, record safe domain identifiers and outcome,
   and do not contain tokens, bodies, database URLs, or raw unmatched paths.
-- Request count/duration and dependency health metrics use bounded attributes
-  rather than project or work-item identifiers.
+- Request count/time-to-response-start and dependency health metrics use bounded
+  attributes rather than project or work-item identifiers. Stream-lifetime
+  metrics remain separate so long-lived SSE responses are not misrepresented.
 - `/api/v1/health/live` does not depend on Postgres; readiness reports the
   packaged and applied schema state and returns HTTP 503 when Postgres is
   unavailable or migrations are pending.
