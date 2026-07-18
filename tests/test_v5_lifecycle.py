@@ -11,6 +11,7 @@ import pytest
 
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import MigrationRunner
+from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.events import EventStore
 from agentic_mesh_v5.lifecycle import LifecycleAuthorizationError
 from agentic_mesh_v5.lifecycle import LifecycleConflict
@@ -125,6 +126,44 @@ def test_project_requires_unique_sponsors(postgres_database: str) -> None:
             display_name="Alpha",
             sponsor_ids=("sponsor", "sponsor"),
         )
+
+
+def test_v3_migration_backfills_existing_gate_correlation(
+    postgres_database: str,
+) -> None:
+    migrations = load_migrations()
+    MigrationRunner(postgres_database, migrations=migrations[:2]).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.projects(project_id, display_name)
+            VALUES ('legacy', 'Legacy')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.work_items(project_id, work_item_id, title)
+            VALUES ('legacy', 'work-legacy', 'Legacy work')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.gates
+                (project_id, gate_id, work_item_id, gate_type, requested_by)
+            VALUES ('legacy', 'gate-legacy', 'work-legacy', 'sponsor', 'pm')
+            """
+        )
+
+    MigrationRunner(postgres_database, migrations=migrations).migrate()
+
+    with psycopg.connect(postgres_database) as connection:
+        correlation = connection.execute(
+            """
+            SELECT correlation_id FROM agentic_mesh_v5.gates
+            WHERE project_id = 'legacy' AND gate_id = 'gate-legacy'
+            """
+        ).fetchone()[0]
+    assert correlation == "legacy-gate:gate-legacy"
 
 
 def test_create_and_activate_work_are_atomic_and_correlated(lifecycle_database) -> None:
@@ -260,6 +299,34 @@ def test_rejection_resumes_same_owner_for_rework(lifecycle_database) -> None:
     assert store.get_gate("alpha", "gate-work-1").status == "rejected"
     resumed = store.get_work_item("alpha", "work-1")
     assert (resumed.status, resumed.owner_role_id) == ("active", "engineering")
+
+
+def test_duplicate_gate_id_is_conflict_and_rolls_back(lifecycle_database) -> None:
+    _database_url, store = lifecycle_database
+    _create_work(store, work_item_id="work-1")
+    _activate(store, work_item_id="work-1")
+    _open_gate(store, work_item_id="work-1")
+    _create_work(store, work_item_id="work-2")
+    _activate(store, work_item_id="work-2")
+
+    with pytest.raises(LifecycleConflict, match="gate already exists"):
+        store.open_gate(
+            project_id="alpha",
+            work_item_id="work-2",
+            gate_id="gate-work-1",
+            gate_type="sponsor",
+            requested_by="project-manager",
+            sponsor_ids=("sponsor-1",),
+            correlation_id="corr-work-2",
+            expected_version=2,
+        )
+
+    work = store.get_work_item("alpha", "work-2")
+    assert (work.status, work.version, work.owner_role_id) == (
+        "active",
+        2,
+        "engineering",
+    )
 
 
 def test_unauthorized_and_cross_project_decisions_mutate_nothing(

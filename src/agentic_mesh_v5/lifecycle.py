@@ -284,23 +284,26 @@ class LifecycleStore:
             }
             if authorized != set(sponsors):
                 raise LifecycleAuthorizationError("gate approver is not a project sponsor")
-            transaction.execute(
-                f"""
-                INSERT INTO {SCHEMA}.gates
-                    (project_id, gate_id, work_item_id, gate_type, requested_by,
-                     correlation_id, evidence)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    project_id,
-                    gate_id,
-                    work_item_id,
-                    gate_type,
-                    requested_by,
-                    correlation_id,
-                    Jsonb(evidence_value),
-                ),
-            )
+            try:
+                transaction.execute(
+                    f"""
+                    INSERT INTO {SCHEMA}.gates
+                        (project_id, gate_id, work_item_id, gate_type, requested_by,
+                         correlation_id, evidence)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        project_id,
+                        gate_id,
+                        work_item_id,
+                        gate_type,
+                        requested_by,
+                        correlation_id,
+                        Jsonb(evidence_value),
+                    ),
+                )
+            except psycopg.errors.UniqueViolation as exc:
+                raise LifecycleConflict("gate already exists") from exc
             transaction.execute(
                 f"""
                 UPDATE {SCHEMA}.work_items

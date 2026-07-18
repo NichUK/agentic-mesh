@@ -13,8 +13,17 @@ ALTER TABLE agentic_mesh_v5.work_items
     ADD COLUMN terminal_evidence jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE agentic_mesh_v5.gates
-    ADD COLUMN correlation_id text NOT NULL CHECK (btrim(correlation_id) <> ''),
-    ADD COLUMN evidence jsonb NOT NULL DEFAULT '{}'::jsonb,
+    ADD COLUMN correlation_id text,
+    ADD COLUMN evidence jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+UPDATE agentic_mesh_v5.gates
+SET correlation_id = 'legacy-gate:' || gate_id
+WHERE correlation_id IS NULL;
+
+ALTER TABLE agentic_mesh_v5.gates
+    ALTER COLUMN correlation_id SET NOT NULL,
+    ADD CONSTRAINT gates_correlation_id_check
+        CHECK (btrim(correlation_id) <> ''),
     ADD CONSTRAINT gates_status_check
         CHECK (status IN ('pending', 'approved', 'rejected'));
 
