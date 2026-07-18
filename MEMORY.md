@@ -46,6 +46,10 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   and outbound rows share one explicit transaction. Dispatch is at least once:
   `FOR UPDATE SKIP LOCKED` prevents concurrent delivery, while a stable
   idempotency key lets downstream adapters deduplicate a retry after a crash.
+- The V5 kernel lifecycle keeps work items in `new`, `active`, `gated`,
+  `completed`, or `error`, with optimistic versions. Only sponsor decisions
+  resume a gate, ownership is preserved across the pause, concurrent decisions
+  resolve once, and terminal completion/error remain distinct and immutable.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
