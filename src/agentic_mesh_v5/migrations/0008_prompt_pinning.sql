@@ -63,6 +63,7 @@ CREATE TABLE agentic_mesh_v5.thread_reseeds (
     recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (project_id, reseed_id),
     UNIQUE (project_id, work_item_id, role_id, conversation_id, generation),
+    UNIQUE (project_id, work_item_id, role_id, conversation_id, reseed_id),
     FOREIGN KEY (project_id, work_item_id)
         REFERENCES agentic_mesh_v5.work_items(project_id, work_item_id)
         ON DELETE RESTRICT,
@@ -72,8 +73,11 @@ CREATE TABLE agentic_mesh_v5.thread_reseeds (
 
 ALTER TABLE agentic_mesh_v5.thread_affinities
     ADD CONSTRAINT thread_affinities_pending_reseed_fk
-        FOREIGN KEY (project_id, pending_reseed_id)
-        REFERENCES agentic_mesh_v5.thread_reseeds(project_id, reseed_id);
+        FOREIGN KEY (project_id, work_item_id, role_id, conversation_id,
+                     pending_reseed_id)
+        REFERENCES agentic_mesh_v5.thread_reseeds(
+            project_id, work_item_id, role_id, conversation_id, reseed_id
+        );
 
 CREATE OR REPLACE FUNCTION agentic_mesh_v5.reject_thread_reseed_mutation()
 RETURNS trigger

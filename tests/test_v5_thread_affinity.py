@@ -935,6 +935,16 @@ def test_reseed_preserves_immutable_history_and_creates_new_thread(
         request=_request(tmp_path),
         operation=lambda thread: thread.thread_id,
     )
+    other_key = ThreadAffinityKey(
+        "alpha", "work-2", "engineering", "primary"
+    )
+    store.bind_or_read(
+        other_key,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest=DIGEST_A,
+        create_thread=lambda: "other-work-thread",
+    )
     record = store.reseed(
         KEY,
         expected_digest=DIGEST_A,
@@ -950,6 +960,20 @@ def test_reseed_preserves_immutable_history_and_creates_new_thread(
     assert pending.generation == 2
     assert record.old_thread_id == old_thread
     assert store.read_reseeds(KEY) == (record,)
+
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            connection.execute(
+                """
+                UPDATE agentic_mesh_v5.thread_affinities
+                SET provider_id = NULL, thread_id = NULL,
+                    prompt_digest = %s, generation = 2,
+                    affinity_state = 'pending_seed', pending_reseed_id = %s
+                WHERE project_id = 'alpha' AND work_item_id = 'work-2'
+                  AND role_id = 'engineering' AND conversation_id = 'primary'
+                """,
+                (DIGEST_B, record.reseed_id),
+            )
 
     with pytest.raises(ThreadPromptMismatch):
         coordinator.run(
@@ -1101,7 +1125,7 @@ def test_existing_unpinned_binding_requires_explicit_reseed(
     store = ThreadAffinityStore(postgres_database)
     assert store.read(KEY).prompt_digest == UNPINNED_DIGEST  # type: ignore[union-attr]
     coordinator, pool, _factory, _backend = _coordinator(store)
-    with pytest.raises(ThreadPromptMismatch):
+    with pytest.raises(ThreadPromptMismatch, match="controlled reseed"):
         coordinator.run(
             KEY,
             instance_id="engineering-1",

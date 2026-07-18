@@ -51,11 +51,12 @@ version requires an explicit, recorded, idle-only reseed.
 5. Reseed requires actor, reason, expected current digest, and a different valid
    target digest, and is rejected while active or on optimistic mismatch.
 6. Reseed history is immutable and source-linked by affinity key and generation.
-   It records identifiers only, never prompt text or private thread content.
+   Its pending pointer is database-bound to that complete affinity key. It
+   records identifiers only, never prompt text or private thread content.
 7. After reseed the old thread cannot be resumed. The next operation using the
    new digest creates a distinct thread and activates the next generation.
-8. Existing unpinned upgrade rows cannot run silently but may be moved through
-   the same explicit reseed operation.
+8. Existing unpinned upgrade rows cannot run silently, return an actionable
+   controlled-reseed error, and may use that same explicit reseed operation.
 9. Hibernation, engine failure, or global config changes do not alter a pinned
    digest or trigger reseeding.
 

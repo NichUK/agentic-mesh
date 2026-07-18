@@ -224,9 +224,7 @@ class ThreadAffinityStore:
                     existing = self._select(connection, key)
                     if existing is not None:
                         if existing.prompt_digest != prompt_digest:
-                            raise ThreadPromptMismatch(
-                                "thread affinity prompt digest does not match"
-                            )
+                            raise _prompt_mismatch(existing.prompt_digest)
                         if existing.affinity_state == "pending_seed":
                             thread_id = _required(create_thread(), "thread_id")
                             row = connection.execute(
@@ -641,7 +639,7 @@ class ThreadAffinityStore:
         if binding is None:
             raise ThreadAffinityNotFound("thread affinity not found")
         if binding.prompt_digest != prompt_digest:
-            raise ThreadPromptMismatch("thread affinity prompt digest does not match")
+            raise _prompt_mismatch(binding.prompt_digest)
         if binding.affinity_state != "active":
             raise ThreadAffinityBusy("thread affinity is pending reseed")
         raise ThreadAffinityBusy("thread affinity already has an active operation")
@@ -831,3 +829,11 @@ def _stored_digest(value: object) -> str:
     if value == UNPINNED_DIGEST:
         return value
     return _digest(value)
+
+
+def _prompt_mismatch(stored_digest: str) -> ThreadPromptMismatch:
+    if stored_digest == UNPINNED_DIGEST:
+        return ThreadPromptMismatch(
+            "thread affinity is unpinned; controlled reseed is required"
+        )
+    return ThreadPromptMismatch("thread affinity prompt digest does not match")
