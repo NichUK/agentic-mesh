@@ -25,6 +25,11 @@ from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.database import database_url_from_environment
 from agentic_mesh_v5.health import HealthReporter
+from agentic_mesh_v5.handoffs import HandoffAuthorizationError
+from agentic_mesh_v5.handoffs import HandoffConflict
+from agentic_mesh_v5.handoffs import HandoffNotFound
+from agentic_mesh_v5.handoffs import HandoffOffer
+from agentic_mesh_v5.handoffs import HandoffStore
 from agentic_mesh_v5.lifecycle import LifecycleAuthorizationError
 from agentic_mesh_v5.lifecycle import LifecycleConflict
 from agentic_mesh_v5.lifecycle import LifecycleNotFound
@@ -227,6 +232,51 @@ class LeaseClaimResponse(ApiModel):
 
 class LeaseHeartbeatResponse(ApiModel):
     expires_at: str
+
+
+class HandoffOfferCreate(ApiModel):
+    source_lease_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    source_lease_token: str = Field(min_length=1, max_length=512)
+    target_role_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    capability: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN)
+    idempotency_key: str = Field(pattern=IDENTIFIER_PATTERN)
+    summary: str = Field(min_length=1, max_length=4000)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    priority: int = 0
+
+
+class HandoffLeaseAction(ApiModel):
+    lease_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    lease_token: str = Field(min_length=1, max_length=512)
+
+
+class HandoffResponse(ApiModel):
+    project_id: str
+    handoff_id: str
+    work_item_id: str
+    source_role_id: str
+    source_instance_id: str | None
+    source_queue_item_id: str | None
+    source_lease_id: str | None
+    target_role_id: str
+    target_instance_id: str | None
+    queue_item_id: str | None
+    target_lease_id: str | None
+    status: str
+    summary: str
+    idempotency_key: str
+    offered_at: str
+    queued_at: str
+    claimed_at: str | None
+    accepted_at: str | None
+    delivery_latency_seconds: float
+    claim_latency_seconds: float | None
+    acceptance_latency_seconds: float | None
+    delivery_target_met: bool
+    claim_target_met: bool | None
+    acceptance_target_met: bool | None
+    claim_overdue: bool
+    acceptance_overdue: bool
 
 
 class QueueMetricsResponse(ApiModel):
@@ -488,6 +538,7 @@ def create_app(
     usage_store = UsageStore(database_url)
     queues = RoleQueueStore(database_url)
     router = Router(database_url)
+    handoff_store = HandoffStore(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
@@ -611,6 +662,7 @@ def create_app(
     @app.exception_handler(ProgressNotFound)
     @app.exception_handler(UsageNotFound)
     @app.exception_handler(RoutingNotFound)
+    @app.exception_handler(HandoffNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
@@ -619,11 +671,13 @@ def create_app(
     @app.exception_handler(LeaseExpired)
     @app.exception_handler(ProgressConflict)
     @app.exception_handler(RoutingConflict)
+    @app.exception_handler(HandoffConflict)
     async def conflict(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 409, "conflict", str(exc))
 
     @app.exception_handler(LifecycleAuthorizationError)
     @app.exception_handler(QueueAuthorizationError)
+    @app.exception_handler(HandoffAuthorizationError)
     async def forbidden(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 403, "operation_forbidden", str(exc))
 
@@ -864,6 +918,105 @@ def create_app(
             capability=payload.capability,
         )
         return {"project_id": project_id, "queue_id": payload.queue_id}
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/handoffs",
+        response_model=HandoffResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["handoffs"],
+    )
+    def offer_handoff(
+        project_id: str,
+        payload: HandoffOfferCreate,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        offered = handoff_store.offer(
+            HandoffOffer(
+                project_id=project_id,
+                source_lease_id=payload.source_lease_id,
+                source_lease_token=payload.source_lease_token,
+                target_role_id=payload.target_role_id,
+                capability=payload.capability,
+                idempotency_key=payload.idempotency_key,
+                summary=payload.summary,
+                payload=payload.payload,
+                priority=payload.priority,
+            )
+        )
+        selected_telemetry.annotate(
+            project_id=project_id,
+            work_item_id=offered.work_item_id,
+            handoff_id=offered.handoff_id,
+        )
+        return asdict(offered)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/handoffs/{{handoff_id}}",
+        response_model=HandoffResponse,
+        tags=["handoffs"],
+    )
+    def get_handoff(
+        project_id: str,
+        handoff_id: str,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return asdict(handoff_store.get(project_id, handoff_id))
+
+    def transition_handoff(
+        action: Literal["claim", "accept"],
+        project_id: str,
+        handoff_id: str,
+        payload: HandoffLeaseAction,
+        identity: Principal,
+    ):
+        project_access(identity, project_id, "write")
+        operation = (
+            handoff_store.claim if action == "claim" else handoff_store.accept
+        )
+        transitioned = operation(
+            project_id=project_id,
+            handoff_id=handoff_id,
+            lease_id=payload.lease_id,
+            lease_token=payload.lease_token,
+        )
+        selected_telemetry.annotate(
+            project_id=project_id,
+            work_item_id=transitioned.work_item_id,
+            handoff_id=handoff_id,
+        )
+        return asdict(transitioned)
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/handoffs/{{handoff_id}}/claim",
+        response_model=HandoffResponse,
+        tags=["handoffs"],
+    )
+    def claim_handoff(
+        project_id: str,
+        handoff_id: str,
+        payload: HandoffLeaseAction,
+        identity: Principal = Depends(principal),
+    ):
+        return transition_handoff(
+            "claim", project_id, handoff_id, payload, identity
+        )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/handoffs/{{handoff_id}}/accept",
+        response_model=HandoffResponse,
+        tags=["handoffs"],
+    )
+    def accept_handoff(
+        project_id: str,
+        handoff_id: str,
+        payload: HandoffLeaseAction,
+        identity: Principal = Depends(principal),
+    ):
+        return transition_handoff(
+            "accept", project_id, handoff_id, payload, identity
+        )
 
     @app.post(
         f"{API_PREFIX}/projects/{{project_id}}/routes",

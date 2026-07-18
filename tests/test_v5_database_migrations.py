@@ -170,6 +170,54 @@ def test_ordered_upgrade_and_checksum_drift(postgres_database: str) -> None:
         MigrationRunner(postgres_database, migrations=(first, second)).status()
 
 
+def test_handoff_acceptance_migration_preserves_legacy_offer(
+    postgres_database: str,
+) -> None:
+    packaged = load_migrations()
+    MigrationRunner(postgres_database, migrations=packaged[:-1]).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.projects(project_id, display_name)
+            VALUES ('alpha', 'Alpha')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.roles(project_id, role_id, template_id)
+            VALUES ('alpha', 'engineering', 'engineering'), ('alpha', 'qa', 'qa')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.work_items(project_id, work_item_id, title)
+            VALUES ('alpha', 'work-1', 'Work 1')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.handoffs
+                (project_id, handoff_id, work_item_id, source_role_id,
+                 target_role_id, summary, idempotency_key)
+            VALUES ('alpha', 'legacy', 'work-1', 'engineering', 'qa',
+                    'Legacy offer', 'legacy')
+            """
+        )
+
+    MigrationRunner(postgres_database, migrations=packaged).migrate()
+
+    with psycopg.connect(postgres_database) as connection:
+        row = connection.execute(
+            """
+            SELECT status, queued_at = offered_at, queue_item_id,
+                   request_fingerprint
+            FROM agentic_mesh_v5.handoffs
+            WHERE project_id = 'alpha' AND handoff_id = 'legacy'
+            """
+        ).fetchone()
+    assert row == ("offered", True, None, None)
+
+
 def test_failed_run_rolls_back_history_and_schema(postgres_database: str) -> None:
     migrations = (
         _migration(

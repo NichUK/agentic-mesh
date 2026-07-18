@@ -107,7 +107,9 @@ class Telemetry:
         span.set_attribute("http.route", safe_route)
         span.set_attribute("http.response.status_code", status_code)
         for name, value in identifiers.items():
-            if name in {"project_id", "work_item_id", "queue_id", "gate_id"}:
+            if name in {
+                "project_id", "work_item_id", "queue_id", "gate_id", "handoff_id"
+            }:
                 span.set_attribute(
                     f"mesh.{name.removesuffix('_id')}.id", _safe_identifier(value)
                 )
@@ -129,6 +131,7 @@ class Telemetry:
         project_id: str | None = None,
         work_item_id: str | None = None,
         queue_id: str | None = None,
+        handoff_id: str | None = None,
         correlation_id: str | None = None,
     ) -> None:
         span = trace.get_current_span()
@@ -136,6 +139,7 @@ class Telemetry:
             "mesh.project.id": project_id,
             "mesh.work_item.id": work_item_id,
             "mesh.queue.id": queue_id,
+            "mesh.handoff.id": handoff_id,
             "mesh.correlation.id": correlation_id,
         }.items():
             if value:
