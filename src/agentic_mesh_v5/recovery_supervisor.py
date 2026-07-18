@@ -168,8 +168,8 @@ class CommandRecoveryLauncher:
             raise RecoveryExecutionError("recovery deadline must include a time zone")
         # Cap at poll()'s int32-millisecond limit (~24.8 days) to avoid OverflowError
         # on platforms where select/poll use a 32-bit millisecond timeout.
-        _MAX_TIMEOUT = 2**31 // 1000 - 1
-        remaining = max(0.1, min((deadline - datetime.now(timezone.utc)).total_seconds(), _MAX_TIMEOUT))
+        MAX_POLL_TIMEOUT_SECONDS = 2**31 // 1000 - 1
+        remaining = max(0.1, min((deadline - datetime.now(timezone.utc)).total_seconds(), MAX_POLL_TIMEOUT_SECONDS))
         safe_environment = {
             key: value
             for key, value in os.environ.items()

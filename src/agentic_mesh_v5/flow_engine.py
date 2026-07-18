@@ -305,8 +305,6 @@ class FlowEngine:
                 project_id, work_item_id, run.current_state, run.version,
                 kind, obligation_id, row[0], row[1], "dispatched", row[3]
             )
-        except FlowEngineError:
-            raise
         except Exception as exc:
             raise FlowEngineError("flow action dispatch failed") from exc
 
