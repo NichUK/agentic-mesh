@@ -45,7 +45,7 @@ def _authorizer() -> TokenAuthorizer:
                 "operator", TOKENS["operator"], ["*"],
                 ["project:create", "read", "write"],
             ),
-            _record("sponsor-1", TOKENS["alpha"], ["alpha"], ["read", "write"]),
+            _record("sponsor-1", TOKENS["alpha"], ["alpha"], ["project:create", "read", "write"]),
             _record(
                 "bravo-sponsor", TOKENS["bravo"], ["bravo"], ["read", "write"]
             ),
@@ -160,12 +160,8 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     assert f"{API_PREFIX}/projects/{{project_id}}/queues/{{queue_id}}/claim" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/usage" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/recovery" in paths
-    assert (
-        "application/problem+json"
-        in paths[f"{API_PREFIX}/projects/{{project_id}}"]["get"]["responses"]["401"][
-            "content"
-        ]
-    )
+    responses = paths[f"{API_PREFIX}/projects/{{project_id}}"]["get"]["responses"]
+    assert all("application/problem+json" in responses[code]["content"] for code in ("401", "500"))
 
     response = client.get(f"{API_PREFIX}/projects/alpha")
 
@@ -200,15 +196,9 @@ def test_project_authorization_and_read_views_are_isolated(api_database) -> None
     usage = client.get(
         f"{API_PREFIX}/projects/alpha/usage", headers=_headers("viewer")
     )
-    forbidden_write = client.post(
-        f"{API_PREFIX}/projects/alpha/work-items",
-        headers=_headers("viewer"),
-        json={
-            "work_item_id": "no-write",
-            "title": "No write",
-            "owner_role_id": "engineering",
-            "correlation_id": "corr-no-write",
-        },
+    forbidden_create = client.post(
+        f"{API_PREFIX}/projects", headers=_headers("alpha"),
+        json={"project_id": "foreign", "display_name": "Foreign", "sponsor_ids": ["sponsor"]},
     )
 
     assert health.json()["status"] == "ok"
@@ -228,7 +218,7 @@ def test_project_authorization_and_read_views_are_isolated(api_database) -> None
         "planned_story": "AMV5-028",
         "available_operations": [],
     }
-    assert forbidden_write.status_code == 403
+    assert forbidden_create.status_code == 403
 
 
 def test_lifecycle_operations_use_authenticated_actor_and_structured_conflicts(

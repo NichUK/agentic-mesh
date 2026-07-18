@@ -378,7 +378,7 @@ def create_app(
                 404: "Project resource not found",
                 409: "Concurrent or lifecycle conflict",
                 422: "Request validation failed",
-                503: "Durable store unavailable",
+                500: "Unexpected internal failure", 503: "Durable store unavailable",
             }.items()
         },
     )
@@ -493,7 +493,7 @@ def create_app(
         tags=["projects"],
     )
     def create_project(payload: ProjectCreate, identity: Principal = Depends(principal)):
-        scope_access(identity, "project:create")
+        project_access(identity, payload.project_id, "project:create")
         lifecycle.create_project(
             project_id=payload.project_id,
             display_name=payload.display_name,
