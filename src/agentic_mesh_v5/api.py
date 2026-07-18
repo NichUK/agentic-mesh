@@ -464,7 +464,8 @@ def create_app(
         return _problem_response(request, 422, "validation_failed", str(exc))
 
     @app.exception_handler(DatabaseError)
-    async def service_failure(request: Request, _exc: DatabaseError) -> JSONResponse:
+    @app.exception_handler(psycopg.Error)
+    async def service_failure(request: Request, _exc: DatabaseError | psycopg.Error) -> JSONResponse:
         return _problem_response(
             request, 503, "durable_store_unavailable", "durable store operation failed"
         )

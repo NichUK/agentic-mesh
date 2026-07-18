@@ -335,11 +335,12 @@ def test_queue_claim_is_concurrent_and_lease_token_controls_completion(
     ).status_code == 201
 
     def claim(instance_id: str):
-        return client.post(
-            f"{API_PREFIX}/projects/alpha/queues/engineering/claim",
-            headers=headers,
-            json={"owner_instance_id": instance_id, "lease_seconds": 60},
-        )
+        with TestClient(client.app) as isolated:
+            return isolated.post(
+                f"{API_PREFIX}/projects/alpha/queues/engineering/claim",
+                headers=headers,
+                json={"owner_instance_id": instance_id, "lease_seconds": 60},
+            )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = list(pool.map(claim, ["eng-1", "eng-2"]))
@@ -383,7 +384,7 @@ def test_validation_and_store_failures_are_actionable_and_redacted() -> None:
         headers=_headers("operator"),
         json={"project_id": "alpha", "display_name": "Alpha", "sponsor_ids": []},
     )
-    unavailable = client.get(f"{API_PREFIX}/health")
+    unavailable = client.get(f"{API_PREFIX}/projects/alpha/work-items/missing", headers=_headers("alpha"))
 
     assert invalid.status_code == 422
     assert invalid.json()["errors"][0]["location"][-1] == "sponsor_ids"
