@@ -15,6 +15,8 @@ an uncommitted change publishes nothing.
   or more outbound messages;
 - create deterministic, unique idempotency keys for each event/topic delivery;
 - read the project journal in committed event order;
+- reject migration from unsupported, manually populated v1 journals and retain
+  projects with journal history rather than cascading event deletion;
 - dispatch one pending outbox message under `FOR UPDATE SKIP LOCKED`, recording
   success or a bounded failure summary; and
 - deliver the same idempotency key again after a crash between the external
@@ -37,6 +39,8 @@ stable idempotency key.
   the next attempt uses the identical idempotency key.
 - A delivery exception records an attempt and redacted error without marking
   the row dispatched.
+- The v1-to-v2 migration fails explicitly if pre-writer event rows exist, and a
+  project with journal history must be retired rather than hard-deleted.
 - Migration upgrade, unit tests, disposable-Postgres integration tests, V5
   boundary checks, packaging, and the full regression suite pass or retain only
   the documented unrelated baseline failures.

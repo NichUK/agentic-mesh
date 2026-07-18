@@ -14,7 +14,9 @@ from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
 
 
-def _required(value: str, field: str) -> str:
+def _required(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{field} is required")

@@ -11,7 +11,9 @@ from psycopg import sql
 import pytest
 
 from agentic_mesh_v5.database import DatabaseError
+from agentic_mesh_v5.database import MigrationError
 from agentic_mesh_v5.database import MigrationRunner
+from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.events import EventDraft
 from agentic_mesh_v5.events import EventStore
 from agentic_mesh_v5.events import OutboundDraft
@@ -105,6 +107,17 @@ def _append_outbound(database_url: str, *, project_id: str = "alpha") -> str:
 
 
 def test_event_identifiers_and_outbound_topics_are_required() -> None:
+    with pytest.raises(ValueError, match="project_id must be a string"):
+        EventDraft(
+            project_id=None,  # type: ignore[arg-type]
+            work_item_id="work-a",
+            actor_id="project-manager",
+            correlation_id="corr-1",
+            aggregate_type="work-item",
+            aggregate_id="work-a",
+            event_type="work.started",
+            payload={},
+        )
     with pytest.raises(ValueError, match="actor_id is required"):
         EventDraft(
             project_id="alpha",
@@ -118,6 +131,43 @@ def test_event_identifiers_and_outbound_topics_are_required() -> None:
         )
     with pytest.raises(ValueError, match="topic is required"):
         OutboundDraft(topic=" ", payload={})
+
+
+def test_v2_upgrade_rejects_unsupported_pre_writer_events(
+    postgres_database: str,
+) -> None:
+    migrations = load_migrations()
+    MigrationRunner(postgres_database, migrations=migrations[:1]).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.projects(project_id, display_name)
+            VALUES ('legacy', 'Legacy')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.events
+                (project_id, aggregate_type, aggregate_id, event_type, payload)
+            VALUES ('legacy', 'manual', 'row-1', 'manual.created', '{}'::jsonb)
+            """
+        )
+
+    with pytest.raises(MigrationError, match=r"migration 2 .* failed"):
+        MigrationRunner(postgres_database, migrations=migrations).migrate()
+
+    status = MigrationRunner(postgres_database, migrations=migrations).status()
+    assert status.current_version == 1
+    with psycopg.connect(postgres_database) as connection:
+        actor_column = connection.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'agentic_mesh_v5'
+              AND table_name = 'events'
+              AND column_name = 'actor_id'
+            """
+        ).fetchone()
+    assert actor_column is None
 
 
 def test_source_event_and_outbox_commit_together(event_database: str) -> None:
@@ -243,6 +293,10 @@ def test_database_rejects_event_update_and_delete(event_database: str) -> None:
             connection.execute(
                 "UPDATE agentic_mesh_v5.events SET actor_id = 'other' WHERE event_id = %s",
                 (stored.event_id,),
+            )
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            connection.execute(
+                "DELETE FROM agentic_mesh_v5.projects WHERE project_id = 'alpha'"
             )
         with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
             connection.execute(
