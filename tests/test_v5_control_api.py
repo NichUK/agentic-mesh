@@ -113,6 +113,7 @@ def api_database(postgres_database: str) -> tuple[str, TestClient]:
             """
             INSERT INTO agentic_mesh_v5.roles(project_id, role_id, template_id)
             VALUES ('alpha', 'engineering', 'engineering'),
+                   ('alpha', 'project-manager', 'project-manager'),
                    ('bravo', 'engineering', 'engineering')
             """
         )
@@ -178,6 +179,14 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     ) in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/usage" in paths
     assert f"{API_PREFIX}/pm-monitor/sweep" in paths
+    assert (
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "reliability/incidents"
+    ) in paths
+    assert (
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "reliability/incidents/{incident_id}/attempts"
+    ) in paths
     assert f"{API_PREFIX}/fleet/reconcile" in paths
     assert (
         f"{API_PREFIX}/projects/{{project_id}}/fleet/policies/{{role_id}}"
@@ -607,6 +616,109 @@ def test_lifecycle_operations_use_authenticated_actor_and_structured_conflicts(
             """
         ).fetchone()[0]
     assert actor == "sponsor-1"
+
+
+def test_reliability_api_is_project_scoped_and_guards_early_terminal_error(
+    api_database,
+) -> None:
+    _database_url, client = api_database
+    headers = _headers("alpha")
+    client.post(
+        f"{API_PREFIX}/projects/alpha/work-items",
+        headers=headers,
+        json={
+            "work_item_id": "reliability-work",
+            "title": "Reliability work",
+            "owner_role_id": "engineering",
+            "correlation_id": "reliability-work",
+        },
+    )
+    client.post(
+        f"{API_PREFIX}/projects/alpha/work-items/reliability-work/transitions",
+        headers=headers,
+        json={
+            "target_status": "active",
+            "expected_version": 1,
+            "correlation_id": "reliability-work",
+        },
+    )
+    for role_id in ("engineering", "project-manager"):
+        assert client.post(
+            f"{API_PREFIX}/projects/alpha/queues",
+            headers=headers,
+            json={"queue_id": role_id, "role_id": role_id},
+        ).status_code == 201
+    path = (
+        f"{API_PREFIX}/projects/alpha/work-items/reliability-work/"
+        "reliability/incidents"
+    )
+    payload = {
+        "idempotency_key": "reliability-failure",
+        "failure_category": "execution",
+        "safe_summary": "Acceptance remains unhealthy",
+        "source_ref": "evidence://reliability",
+    }
+    assert client.post(path, headers=_headers("viewer"), json=payload).status_code == 403
+    assert client.post(path, headers=_headers("bravo"), json=payload).status_code == 403
+    started = client.post(path, headers=headers, json=payload)
+    assert started.status_code == 201
+    assert started.json()["incident"]["next_stage"] == "technical"
+    incident_id = started.json()["incident"]["incident_id"]
+    viewed = client.get(
+        f"{API_PREFIX}/projects/alpha/work-items/reliability-work/reliability",
+        headers=_headers("viewer"),
+    )
+    assert viewed.status_code == 200
+    assert viewed.json()["incident"]["incident_id"] == incident_id
+    invalid_recovery = client.post(
+        f"{path}/{incident_id}/attempts",
+        headers=headers,
+        json={
+            "attempt_id": "bad-recovery",
+            "stage": "recovery",
+            "attempt_number": 2,
+            "outcome": "failed",
+        },
+    )
+    assert invalid_recovery.status_code == 422
+    assert invalid_recovery.json()["errors"][0]["location"] == ["body"]
+    invalid_instruction = client.post(
+        f"{path}/{incident_id}/attempts",
+        headers=headers,
+        json={
+            "attempt_id": "bad-instruction",
+            "stage": "technical",
+            "attempt_number": 1,
+            "outcome": "failed",
+            "correction_instruction": "not valid for technical retry",
+        },
+    )
+    assert invalid_instruction.status_code == 422
+    assert "only valid for PM correction" in invalid_instruction.json()["errors"][0]["message"]
+    early = client.post(
+        f"{API_PREFIX}/projects/alpha/work-items/reliability-work/transitions",
+        headers=headers,
+        json={
+            "target_status": "error",
+            "expected_version": 2,
+            "correlation_id": "early-terminal",
+            "reason": "too early",
+        },
+    )
+    assert early.status_code == 409
+    assert "exhausted retry" in early.json()["detail"]
+    recorded = client.post(
+        f"{path}/{incident_id}/attempts",
+        headers=headers,
+        json={
+            "attempt_id": "technical-result-1",
+            "stage": "technical",
+            "attempt_number": 1,
+            "outcome": "failed",
+        },
+    )
+    assert recorded.status_code == 201
+    assert recorded.json()["incident"]["next_attempt_number"] == 2
 
 
 def test_queue_claim_is_concurrent_and_lease_token_controls_completion(

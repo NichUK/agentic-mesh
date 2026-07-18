@@ -203,6 +203,36 @@ class LifecycleStore:
                 raise LifecycleConflict(
                     f"invalid work item transition: {current.status} -> {target_status}"
                 )
+            if target_status == "completed" and transaction.execute(
+                f"""
+                SELECT 1 FROM {SCHEMA}.failure_incidents
+                WHERE project_id = %s AND work_item_id = %s
+                  AND status IN ('active', 'terminal_eligible')
+                FOR UPDATE
+                """,
+                (project_id, work_item_id),
+            ).fetchone() is not None:
+                raise LifecycleConflict(
+                    "completed work requires its failure incident to be resolved"
+                )
+            failure_incident_id = None
+            if target_status == "error":
+                exhausted = transaction.execute(
+                    f"""
+                    SELECT incident_id
+                    FROM {SCHEMA}.failure_incidents
+                    WHERE project_id = %s AND work_item_id = %s
+                      AND status = 'terminal_eligible'
+                    FOR UPDATE
+                    """,
+                    (project_id, work_item_id),
+                ).fetchone()
+                if exhausted is None:
+                    raise LifecycleConflict(
+                        "terminal error requires exhausted retry and recovery chain"
+                    )
+                failure_incident_id = exhausted[0]
+                evidence_value["failure_incident_id"] = failure_incident_id
             row = transaction.execute(
                 f"""
                 UPDATE {SCHEMA}.work_items
@@ -220,6 +250,16 @@ class LifecycleStore:
                     work_item_id,
                 ),
             ).fetchone()
+            if failure_incident_id is not None:
+                transaction.execute(
+                    f"""
+                    UPDATE {SCHEMA}.failure_incidents
+                    SET status = 'terminal', resolved_at = clock_timestamp()
+                    WHERE project_id = %s AND incident_id = %s
+                      AND status = 'terminal_eligible'
+                    """,
+                    (project_id, failure_incident_id),
+                )
             values = {
                 "project_id": project_id,
                 "work_item_id": work_item_id,

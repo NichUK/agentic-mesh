@@ -262,6 +262,12 @@ class ContinuationMonitor:
                             WHERE queued.status = 'ready'
                                OR (queued.status = 'leased'
                                    AND lease.lease_id IS NOT NULL)
+                            UNION
+                            SELECT request.project_id, request.work_item_id
+                            FROM {SCHEMA}.recovery_requests AS request
+                            JOIN active_items AS item
+                              USING (project_id, work_item_id)
+                            WHERE request.status = 'pending'
                         ),
                         sponsors AS (
                             SELECT sponsor.project_id,

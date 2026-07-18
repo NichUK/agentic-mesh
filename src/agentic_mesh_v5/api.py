@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Header, Query, Request, Response, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 import psycopg
 from psycopg.rows import dict_row
 
@@ -55,6 +55,9 @@ from agentic_mesh_v5.queues import QueueNotFound
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.read_models import ReadModelNotFound
 from agentic_mesh_v5.read_models import ReadModelStore
+from agentic_mesh_v5.reliability import ReliabilityConflict
+from agentic_mesh_v5.reliability import ReliabilityNotFound
+from agentic_mesh_v5.reliability import ReliabilityStore
 from agentic_mesh_v5.routing import RouteDraft
 from agentic_mesh_v5.routing import Router
 from agentic_mesh_v5.routing import RoutingConflict
@@ -138,6 +141,92 @@ class WorkItemResponse(ApiModel):
     version: int
     terminal_reason: str | None
     terminal_evidence: dict[str, Any]
+
+
+class FailureIncidentCreate(ApiModel):
+    idempotency_key: str = Field(pattern=IDENTIFIER_PATTERN)
+    failure_category: str = Field(pattern=IDENTIFIER_PATTERN)
+    safe_summary: str = Field(min_length=1, max_length=1000)
+    source_ref: str = Field(min_length=1, max_length=1000)
+
+
+class FailureAttemptCreate(ApiModel):
+    attempt_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    stage: Literal["technical", "pm_correction", "recovery"]
+    attempt_number: int = Field(
+        ge=1, le=3, description="Attempt 1 for recovery; attempts 1-3 otherwise."
+    )
+    outcome: Literal["succeeded", "failed"]
+    correction_instruction: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Required for PM correction and forbidden for other stages.",
+    )
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_stage_contract(self):
+        if self.stage == "recovery" and self.attempt_number != 1:
+            raise ValueError("recovery requires attempt_number 1")
+        if self.stage == "pm_correction":
+            if (
+                self.correction_instruction is None
+                or not self.correction_instruction.strip()
+            ):
+                raise ValueError("PM correction requires correction_instruction")
+        elif self.correction_instruction is not None:
+            raise ValueError(
+                "correction_instruction is only valid for PM correction"
+            )
+        return self
+
+
+class FailureIncidentResponse(ApiModel):
+    project_id: str
+    incident_id: str
+    work_item_id: str
+    owner_role_id: str
+    failure_category: str
+    safe_summary: str
+    source_ref: str
+    status: str
+    next_stage: str
+    next_attempt_number: int | None
+    started_by: str
+    started_at: str
+    resolved_at: str | None
+
+
+class FailureAttemptResponse(ApiModel):
+    project_id: str
+    attempt_id: str
+    incident_id: str
+    ordinal: int
+    stage: str
+    stage_attempt: int
+    outcome: str
+    correction_instruction: str | None
+    actor_id: str
+    evidence: dict[str, Any]
+    recorded_at: str
+
+
+class RecoveryRequestResponse(ApiModel):
+    project_id: str
+    recovery_request_id: str
+    incident_id: str
+    work_item_id: str
+    exact_goal: str
+    status: str
+    requested_at: str
+    resolved_at: str | None
+    evidence: dict[str, Any]
+
+
+class ReliabilityStatusResponse(ApiModel):
+    incident: FailureIncidentResponse
+    attempts: list[FailureAttemptResponse]
+    recovery_request: RecoveryRequestResponse | None
 
 
 class GateOpen(ApiModel):
@@ -652,6 +741,7 @@ def create_app(
     handoff_store = HandoffStore(database_url)
     continuation_monitor = ContinuationMonitor(database_url)
     fleet_scaler = FleetScaler(database_url, fleet_supervisor)
+    reliability = ReliabilityStore(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
@@ -812,6 +902,7 @@ def create_app(
     @app.exception_handler(RoutingNotFound)
     @app.exception_handler(HandoffNotFound)
     @app.exception_handler(FleetNotFound)
+    @app.exception_handler(ReliabilityNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
@@ -823,6 +914,7 @@ def create_app(
     @app.exception_handler(HandoffConflict)
     @app.exception_handler(ContinuationConflict)
     @app.exception_handler(FleetConflict)
+    @app.exception_handler(ReliabilityConflict)
     async def conflict(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 409, "conflict", str(exc))
 
@@ -1082,6 +1174,80 @@ def create_app(
                 evidence=payload.evidence,
             )
         )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/reliability/incidents",
+        response_model=ReliabilityStatusResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["reliability"],
+    )
+    def start_failure_incident(
+        project_id: str,
+        work_item_id: str,
+        payload: FailureIncidentCreate,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        selected_telemetry.annotate(
+            project_id=project_id, work_item_id=work_item_id
+        )
+        return asdict(
+            reliability.start(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                idempotency_key=payload.idempotency_key,
+                failure_category=payload.failure_category,
+                safe_summary=payload.safe_summary,
+                source_ref=payload.source_ref,
+                actor_id=identity.subject,
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/reliability/incidents/{{incident_id}}/attempts",
+        response_model=ReliabilityStatusResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["reliability"],
+    )
+    def record_failure_attempt(
+        project_id: str,
+        work_item_id: str,
+        incident_id: str,
+        payload: FailureAttemptCreate,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        selected_telemetry.annotate(
+            project_id=project_id, work_item_id=work_item_id
+        )
+        return asdict(
+            reliability.record_attempt(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                incident_id=incident_id,
+                attempt_id=payload.attempt_id,
+                stage=payload.stage,
+                attempt_number=payload.attempt_number,
+                outcome=payload.outcome,
+                correction_instruction=payload.correction_instruction,
+                evidence=payload.evidence,
+                actor_id=identity.subject,
+            )
+        )
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/reliability",
+        response_model=ReliabilityStatusResponse,
+        tags=["reliability"],
+    )
+    def failure_status(
+        project_id: str,
+        work_item_id: str,
+        incident_id: str | None = Query(default=None, pattern=IDENTIFIER_PATTERN),
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return asdict(reliability.status(project_id, work_item_id, incident_id))
 
     @app.post(
         f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/gates",

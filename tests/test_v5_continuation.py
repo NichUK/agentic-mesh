@@ -85,6 +85,7 @@ def continuation_database(postgres_database: str):
             ("alpha", "orphan", "active", {}),
             ("alpha", "progressing", "active", {}),
             ("alpha", "expired", "active", {}),
+            ("alpha", "recovering", "active", {}),
             ("alpha", "ambiguous", "active", {
                 "material_ambiguity": True,
                 "sponsor_question": "Should this project prefer option A or B?",
@@ -156,6 +157,28 @@ def continuation_database(postgres_database: str):
             WHERE project_id = 'alpha' AND queue_item_id = 'progressing-item'
             """
         )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.failure_incidents
+                (project_id, incident_id, work_item_id, owner_role_id,
+                 idempotency_key, request_fingerprint, failure_category,
+                 safe_summary, source_ref, next_stage, next_attempt_number,
+                 started_by)
+            VALUES ('alpha', 'recovering-incident', 'recovering', 'engineering',
+                    'recovering-incident', repeat('a', 64), 'execution',
+                    'Mesh repair is required', 'evidence://recovering',
+                    'recovery', 1, 'project-manager')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.recovery_requests
+                (project_id, recovery_request_id, incident_id, work_item_id,
+                 exact_goal)
+            VALUES ('alpha', 'recovery-request', 'recovering-incident',
+                    'recovering', 'Restore the Mesh and record evidence')
+            """
+        )
     lifecycle = LifecycleStore(postgres_database)
     lifecycle.open_gate(
         project_id="alpha", work_item_id="gate-alpha", gate_id="gate-alpha",
@@ -188,6 +211,7 @@ def test_one_global_sweep_routes_orphans_and_respects_gates(
     assert result.logical_pm_id == LOGICAL_PM_ID
     assert observed[("alpha", "orphan")].disposition == "pm_routed"
     assert observed[("alpha", "progressing")].disposition == "progressing"
+    assert observed[("alpha", "recovering")].disposition == "progressing"
     assert observed[("alpha", "expired")].disposition == "pm_routed"
     assert observed[("alpha", "gate-alpha")].disposition == "waiting_sponsor"
     assert observed[("bravo", "gate-bravo")].disposition == "waiting_sponsor"

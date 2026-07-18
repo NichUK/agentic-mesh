@@ -857,3 +857,18 @@ or `release_review`.
   operations, and pending durable output prevent hibernation.
 - The Project Manager retains one warm instance. Queues and prompt-pinned
   thread affinity remain outside the worker and survive hibernation.
+
+## 2026-07-18 V5 Retry And Terminal-Error Policy
+
+- A verified failure opens one project/work-item incident and automatically
+  advances through three technical retries, three distinct PM corrections, and
+  one independent recovery request. Normal retries reuse project role queues;
+  recovery deliberately remains outside the normal fleet for AMV5-034.
+- Completed attempts and reliability journal events are append-only. Each
+  state change, queue continuation, audit record, event, and outbox message is
+  committed atomically and caller retries use stable idempotency keys.
+- Direct or early terminal error is rejected. Only a failed recovery marks the
+  incident terminal-eligible, and the lifecycle error transition consumes that
+  eligibility atomically while recording the incident ID in terminal evidence.
+- Success ends the incident without ending the work item. Recovery success
+  routes the original work back to its configured owner exactly once.
