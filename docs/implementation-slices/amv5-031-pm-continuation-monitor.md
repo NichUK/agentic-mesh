@@ -14,6 +14,10 @@ and preserves the logical identity `global-project-manager`.
 - A pending sponsor gate is an intentional stop, not an orphan.
 - Active work with structured `material_ambiguity: true` and a non-empty
   `sponsor_question` opens one deterministic sponsor-clarification gate.
+- A project with no configured sponsor is routed visibly to its Project Manager
+  instead of aborting the organization-wide sweep.
+- Each sweep bulk-loads active work, pending gates, durable continuations and
+  sponsors once; observation does not issue per-item discovery queries.
 - Nonterminal work with no continuation is routed once to that project's
   `project-manager` queue for its current version.
 - Missing PM routing is persisted and returned as `routing_blocked`; it can
