@@ -63,6 +63,13 @@ pinned digest or perform an explicit, audited, idle-only reseed. Durable
 operation claims serialize one conversation across same-role instances, and a
 new thread's creator acquires that claim in the same database transaction. A
 reseed creates a new generation and provider thread without copying old context.
+Role workers publish progress through structured checkpoints rather than model
+text. Each checkpoint carries explicit goal, step, completed action, activity,
+blocker, next action, and a caller-supplied safe summary. Work-item sequence
+preconditions reject stale writers, checkpoint ids make retries idempotent, and
+common credential/private-reasoning patterns are rejected before persistence.
+The existing read model and SSE path publish the stored fields directly; no
+summarizer model or free-text parser is involved.
 The V5 worker dispatch loop is intentionally introduced later by AMV5-029; when
 added, it must use `ThreadAffinityCoordinator` rather than call provider thread
 start/resume directly.

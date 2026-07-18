@@ -161,6 +161,10 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     assert f"{API_PREFIX}/projects/{{project_id}}/queues/{{queue_id}}/claim" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/usage" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/recovery" in paths
+    assert (
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/"
+        "{work_item_id}/progress"
+    ) in paths
     responses = paths[f"{API_PREFIX}/projects/{{project_id}}"]["get"]["responses"]
     assert all("application/problem+json" in responses[code]["content"] for code in ("401", "500"))
 
@@ -172,6 +176,77 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     assert response.headers["x-request-id"] == response.json()["request_id"]
     assert response.json()["type"].endswith(":authentication_required")
     assert TOKENS["alpha"] not in response.text
+
+
+def test_progress_write_is_structured_project_scoped_and_stale_safe(
+    api_database: tuple[str, TestClient],
+) -> None:
+    _database_url, client = api_database
+    created_work = client.post(
+        f"{API_PREFIX}/projects/alpha/work-items",
+        headers=_headers("alpha"),
+        json={
+            "work_item_id": "progress-work",
+            "title": "Progress work",
+            "owner_role_id": "engineering",
+            "correlation_id": "corr-progress",
+        },
+    )
+    assert created_work.status_code == 201
+    payload = {
+        "checkpoint_id": "checkpoint-api-1",
+        "role_instance_id": "eng-1",
+        "expected_previous_sequence": 0,
+        "status": "working",
+        "goal": "Deliver structured progress",
+        "step": "Record the first checkpoint",
+        "completed_action": None,
+        "activity": "Writing the API test",
+        "blocker": None,
+        "next_action": "Read the live progress view",
+        "safe_summary": "The first checkpoint is recorded.",
+    }
+
+    recorded = client.post(
+        f"{API_PREFIX}/projects/alpha/work-items/progress-work/progress",
+        headers=_headers("alpha"),
+        json=payload,
+    )
+
+    assert recorded.status_code == 201
+    assert recorded.json()["sequence"] == 1
+    assert recorded.json()["safe_summary"] == payload["safe_summary"]
+    progress = client.get(
+        f"{API_PREFIX}/projects/alpha/progress", headers=_headers("alpha")
+    )
+    assert progress.status_code == 200
+    assert progress.json()["records"][0]["checkpoint_id"] == "checkpoint-api-1"
+
+    stale = client.post(
+        f"{API_PREFIX}/projects/alpha/work-items/progress-work/progress",
+        headers=_headers("alpha"),
+        json={**payload, "checkpoint_id": "checkpoint-api-2"},
+    )
+    assert stale.status_code == 409
+    restricted = "sk-" + "a" * 32
+    rejected = client.post(
+        f"{API_PREFIX}/projects/alpha/work-items/progress-work/progress",
+        headers=_headers("alpha"),
+        json={
+            **payload,
+            "checkpoint_id": "checkpoint-api-3",
+            "expected_previous_sequence": 1,
+            "safe_summary": restricted,
+        },
+    )
+    assert rejected.status_code == 422
+    assert restricted not in rejected.text
+    forbidden = client.post(
+        f"{API_PREFIX}/projects/alpha/work-items/progress-work/progress",
+        headers=_headers("viewer"),
+        json={**payload, "checkpoint_id": "checkpoint-api-4"},
+    )
+    assert forbidden.status_code == 403
 
 
 def test_project_authorization_and_read_views_are_isolated(api_database) -> None:

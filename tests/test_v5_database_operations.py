@@ -25,6 +25,8 @@ from agentic_mesh_v5.database_operations import PostgresNativeTools
 from agentic_mesh_v5.events import EventStore
 from agentic_mesh_v5.health import HealthReporter
 from agentic_mesh_v5.lifecycle import LifecycleStore
+from agentic_mesh_v5.progress import ProgressDraft
+from agentic_mesh_v5.progress import ProgressStore
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.telemetry import Telemetry
 
@@ -116,6 +118,23 @@ def _populate(database_url: str):
         actor_id="sponsor-1",
         correlation_id="corr-1",
         expected_version=1,
+    )
+    ProgressStore(database_url).record(
+        ProgressDraft(
+            project_id="alpha",
+            work_item_id="work-1",
+            role_instance_id="eng-1",
+            checkpoint_id="backup-checkpoint",
+            expected_previous_sequence=0,
+            status="working",
+            goal="Verify durable state",
+            step="Back up the checkpoint",
+            completed_action=None,
+            activity="Preparing backup",
+            blocker=None,
+            next_action="Restore the checkpoint",
+            safe_summary="Progress is ready for backup.",
+        )
     )
     queues.create_queue(
         project_id="alpha", queue_id="engineering", role_id="engineering"
@@ -356,6 +375,8 @@ def test_native_backup_restore_reproduces_acknowledged_state(
     ]
     restored_item = RoleQueueStore(target_url).get_item("alpha", "queue-1")
     assert restored_item.status == "leased"
+    restored_progress = ProgressStore(target_url).read("alpha", "backup-checkpoint")
+    assert restored_progress.safe_summary == "Progress is ready for backup."
     with psycopg.connect(target_url, autocommit=True) as connection:
         with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
             connection.execute(
