@@ -119,6 +119,11 @@ operational support.
   architecture classifications, owner/conformance decisions, and justified
   exceptions are immutable project-scoped evidence. The evidence layer never
   becomes a second lifecycle engine.
+- Sponsor approval: composes the existing lifecycle gate/approval records,
+  external-flow obligation, event/outbox, and role router atomically. API and
+  bootstrap CLI decisions require the configured project sponsor; approval
+  resumes the current flow owner once, while rejection or timeout returns the
+  still-pending obligation to the Project Manager for correction.
 - Role pack: binds externally configured role templates to project queues, tool
   profiles, and prompts. Concrete instances share the logical role binding and
   role memory while retaining separate instance and work-item thread identity.

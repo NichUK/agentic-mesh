@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 from typing import Sequence
 
 from agentic_mesh_v5 import __version__
@@ -117,6 +118,15 @@ def build_parser() -> argparse.ArgumentParser:
     control_call.add_argument("method", choices=("GET", "POST", "PUT"))
     control_call.add_argument("path")
     control_call.add_argument("--body-file", type=Path)
+    sponsor_decision = subparsers.add_parser(
+        "sponsor-decision",
+        help="approve or reject a sponsor gate through the authenticated control API",
+    )
+    sponsor_decision.add_argument("--project", required=True)
+    sponsor_decision.add_argument("--gate", required=True)
+    sponsor_decision.add_argument("--decision", choices=("approve", "reject"), required=True)
+    sponsor_decision.add_argument("--rationale", required=True)
+    sponsor_decision.add_argument("--evidence-file", type=Path)
     recovery_run = subparsers.add_parser(
         "recovery-run-once",
         help="run one independent recovery directly against Postgres",
@@ -153,6 +163,33 @@ def _write_control(payload: dict[str, object], *, as_json: bool) -> None:
     if "result" in payload:
         print("result:")
         print(json.dumps(payload["result"], indent=2, sort_keys=True))
+
+
+def _path_id(value: object, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value) is None
+    ):
+        raise ApiClientConfigurationError(f"{label} identifier is invalid")
+    return value
+
+
+def _load_evidence(path: Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    if not path.exists() or not path.is_file():
+        raise ApiClientConfigurationError(
+            "sponsor evidence path must be an existing file"
+        )
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ApiClientConfigurationError(
+            "sponsor evidence file must be valid UTF-8 JSON"
+        ) from exc
+    if not isinstance(value, dict):
+        raise ApiClientConfigurationError("sponsor evidence must be a JSON object")
+    return value
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -302,14 +339,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
-    if args.command in {"control-status", "control-call"}:
+    if args.command in {"control-status", "control-call", "sponsor-decision"}:
         try:
             client = ControlApiClient.from_environment()
-            result = client.call(
-                method="GET" if args.command == "control-status" else args.method,
-                path="/api/v1/health" if args.command == "control-status" else args.path,
-                body_file=None if args.command == "control-status" else args.body_file,
-            )
+            if args.command == "sponsor-decision":
+                evidence = _load_evidence(args.evidence_file)
+                result = client.call(
+                    method="POST",
+                    path=(
+                        f"/api/v1/projects/{_path_id(args.project, 'project')}/"
+                        f"gates/{_path_id(args.gate, 'gate')}/decision"
+                    ),
+                    body={
+                        "decision": (
+                            "approved" if args.decision == "approve" else "rejected"
+                        ),
+                        "rationale": args.rationale,
+                        "evidence": evidence,
+                    },
+                )
+            else:
+                result = client.call(
+                    method="GET" if args.command == "control-status" else args.method,
+                    path=(
+                        "/api/v1/health"
+                        if args.command == "control-status"
+                        else args.path
+                    ),
+                    body_file=(
+                        None if args.command == "control-status" else args.body_file
+                    ),
+                )
         except ApiClientConfigurationError as exc:
             _write_control(
                 {

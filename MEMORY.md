@@ -1016,3 +1016,21 @@ or `release_review`.
 - Governance evidence is immutable, project scoped, actor-attributed, and
   idempotent under concurrent retry. Sponsor/human-response gates are reserved
   for the separate sponsor-approval boundary in AMV5-044.
+
+## 2026-07-18 V5 Sponsor Approvals
+
+- A V5 sponsor request is one lifecycle gate round linked to the current
+  external-flow sponsor obligation and verified state artifact. It reuses the
+  existing `gates`, `approvals`, governance evidence, event/outbox, work state,
+  and router records; there is no parallel approval store.
+- The authenticated API and `sponsor-decision` bootstrap CLI work without Teams
+  or a dashboard. Project API scope is insufficient by itself: the deciding
+  identity must be one of the sponsors recorded for that exact gate.
+- Approval satisfies the flow obligation and routes its current owner exactly
+  once. Rejection or expiry leaves the obligation pending, restores active work,
+  routes the Project Manager, and allows a new uniquely identified request round
+  after correction.
+- Request fingerprints, row locks, router idempotency, and one database
+  transaction make exact duplicate and concurrent opens/decisions safe. Each
+  committed outcome has one audit event, outbox message, governance record, and
+  continuation queue item.

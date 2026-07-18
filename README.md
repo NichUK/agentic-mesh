@@ -176,6 +176,10 @@ into one methodology.
   response or justified exception, and accountable review decisions must exist
   before their obligations are ready; routes use the recorded impact rather
   than caller input.
+- Sponsor gates use the authenticated V5 API or `sponsor-decision` bootstrap
+  CLI without requiring Teams or a dashboard. Decisions are project-authorized,
+  audited, and resume one exact role continuation; rejection or timeout returns
+  the pending decision to the Project Manager for correction.
 - ISTQB and BDD practice inform QA planning and evidence handling.
 - OWASP SAMM and NIST SSDF inform secure SDLC expectations and residual-risk
   recording.
