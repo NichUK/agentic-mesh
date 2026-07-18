@@ -19,7 +19,7 @@ _STORE_ERROR = "routing operation failed"
 _ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _ITEM_COLUMNS = """
     item.project_id, item.queue_item_id, item.queue_id, item.work_item_id,
-    item.status, item.priority, item.attempt_count, item.available_at,
+    item.status, item.priority, item.attempt_count, item.available_at::text,
     item.payload, item.idempotency_key
 """
 
@@ -143,7 +143,7 @@ class Router:
                                 COALESCE(%s, clock_timestamp()), %s, %s, %s)
                         RETURNING project_id, queue_item_id, queue_id,
                                   work_item_id, status, priority, attempt_count,
-                                  available_at, payload, idempotency_key
+                                  available_at::text, payload, idempotency_key
                         """,
                         (
                             draft.project_id,
@@ -187,16 +187,14 @@ class Router:
         if row is None:
             return None
         if row[10] != fingerprint:
-            raise RoutingConflict("idempotency key is already used by another route")
+            raise RoutingConflict("idempotency key is already used by different work")
         return _record(row[:10])
 
 
 def _record(row: object) -> QueueItemRecord:
     if not isinstance(row, (tuple, list)) or len(row) != 10:
         raise RoutingError(_STORE_ERROR)
-    values = list(row)
-    values[7] = values[7].isoformat()
-    return QueueItemRecord(*values)
+    return QueueItemRecord(*row)
 
 
 def _route_item_id(project_id: str, idempotency_key: str) -> str:

@@ -448,6 +448,31 @@ def test_concurrent_duplicate_routes_return_one_item_and_conflicts_fail(
             )
         )
 
+    assert records[0].available_at == _store.get_item(
+        "alpha", records[0].queue_item_id
+    ).available_at
+
+
+def test_router_reports_conflict_with_an_item_created_outside_router(
+    queue_database,
+) -> None:
+    database_url, store = queue_database
+    store.enqueue(
+        project_id="alpha",
+        queue_id="engineering",
+        queue_item_id="ordinary-item",
+        work_item_id="work-1",
+        idempotency_key="shared-key",
+        payload={},
+    )
+
+    with pytest.raises(RoutingConflict, match="different work"):
+        Router(database_url).route(
+            RouteDraft(
+                "alpha", "work-1", "engineering", "shared-key", {}
+            )
+        )
+
 
 def test_router_rejects_invalid_paused_and_foreign_targets(queue_database) -> None:
     database_url, store = queue_database
