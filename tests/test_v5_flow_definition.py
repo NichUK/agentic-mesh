@@ -181,6 +181,26 @@ def test_state_obligations_are_conditionally_materialized(flow):
     assert [item for item in material if item.action_id == "enterprise_architecture_conformance_review"]
 
 
+def test_artifact_id_is_reserved_and_sponsor_gate_keeps_requested_principal(flow):
+    value = deepcopy(flow.snapshot)
+    value["states"]["business_analysis"]["gates"] = [
+        {
+            "id": "sponsor-approval",
+            "type": "sponsor_approval",
+            "requested_from": "sponsor",
+        }
+    ]
+    sponsor_flow = validate_flow(value, digest=flow.digest)
+    gate = sponsor_flow.state("business_analysis").gates[0]
+    assert gate.role_id == "sponsor"
+
+    value["states"]["business_analysis"]["consults"] = [
+        {"id": "artifact", "role": "product-manager"}
+    ]
+    with pytest.raises(FlowDefinitionError, match="duplicate action ids"):
+        validate_flow(value, digest=flow.digest)
+
+
 def test_released_external_sdlc_package_loads_when_available():
     package = CONFIG / "packages" / "flow" / "sdlc" / "0.1.0" / "package.json"
     if not package.exists():

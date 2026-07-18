@@ -174,7 +174,8 @@ def _state(state_id: object, value: object) -> FlowState:
     gates = _actions(value.get("gates", []), "gate", owner)
     informs = _actions(value.get("informs", []), "inform", owner)
     routes = _routes(value.get("routes", []))
-    identifiers = [item.action_id for item in (*consults, *gates, *informs)]
+    identifiers = ["artifact"]
+    identifiers += [item.action_id for item in (*consults, *gates, *informs)]
     identifiers += [item.route_id for item in routes]
     if len(identifiers) != len(set(identifiers)):
         raise FlowDefinitionError(f"state {state_id} has duplicate action ids")
@@ -193,7 +194,17 @@ def _actions(value: object, kind: str, owner: str) -> tuple[FlowAction, ...]:
     for index, raw in enumerate(value):
         if not isinstance(raw, Mapping):
             raise FlowDefinitionError(f"{kind} must be an object")
-        role_key = "reviewer_role" if kind == "gate" else "role"
+        if kind == "gate":
+            role_keys = [
+                key for key in ("reviewer_role", "requested_from") if key in raw
+            ]
+            if len(role_keys) > 1:
+                raise FlowDefinitionError(
+                    "gate must use either reviewer_role or requested_from"
+                )
+            role_key = role_keys[0] if role_keys else "reviewer_role"
+        else:
+            role_key = "role"
         role = _identifier(raw.get(role_key, owner), role_key)
         action_id = _identifier(raw.get("id", f"{kind}-{index + 1}"), f"{kind}_id")
         payload = {key: item for key, item in raw.items() if key != "when"}
