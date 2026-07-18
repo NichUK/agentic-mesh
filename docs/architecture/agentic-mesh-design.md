@@ -751,6 +751,16 @@ The durable record measures queue materialisation within 10 seconds, target
 claim within 90 seconds, and acceptance within 120 seconds of claim. These are
 observable service targets, not extra workflow components.
 
+### Global Project Manager Continuation
+
+One logical Project Manager monitor holds a durable singleton lease and sweeps
+all active projects. Process restarts can take over an expired lease without
+changing the logical identity. Pending sponsor gates are intentional stops;
+structured ambiguity opens a sponsor-clarification gate; and nonterminal work
+without a ready, delayed, or validly leased continuation is routed once to its
+project's Project Manager queue. An unavailable PM route is persisted as an
+operator-visible blocker rather than being treated as a successful sweep.
+
 ## Service Bus Position
 
 Azure Service Bus is a strong enterprise delivery backend, but it should not be
