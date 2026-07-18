@@ -184,61 +184,6 @@ class FlowEngine:
         except Exception as exc:
             raise FlowEngineError("flow start failed") from exc
 
-    def satisfy(
-        self,
-        *,
-        project_id: str,
-        work_item_id: str,
-        kind: str,
-        obligation_id: str,
-        evidence: Mapping[str, object],
-        actor_id: str,
-    ) -> FlowObligation:
-        project_id, work_item_id, actor_id, obligation_id = _identifiers(
-            project_id, work_item_id, actor_id, obligation_id
-        )
-        if kind not in {"artifact", "gate"}:
-            raise FlowEngineConflict("only artifact and gate obligations are satisfiable")
-        evidence = _fields(evidence)
-        if not evidence:
-            raise ValueError("obligation evidence is required")
-        try:
-            with psycopg.connect(self._database_url, autocommit=True) as connection:
-                with connection.transaction():
-                    run = self._lock(connection, project_id, work_item_id)
-                    if run.status != "active":
-                        raise FlowEngineConflict("flow run is not active")
-                    row = connection.execute(
-                        f"""
-                        UPDATE {SCHEMA}.flow_obligations
-                        SET status = 'satisfied', evidence = %s, updated_by = %s,
-                            updated_at = clock_timestamp()
-                        WHERE project_id = %s AND work_item_id = %s
-                          AND state = %s AND entry_version = %s
-                          AND obligation_kind = %s AND obligation_id = %s
-                          AND (status = 'pending' OR evidence = %s)
-                        RETURNING state, entry_version, accountable_role_id,
-                                  payload, status, evidence
-                        """,
-                        (
-                            Jsonb(evidence), actor_id, project_id, work_item_id,
-                            run.current_state, run.version, kind, obligation_id,
-                            Jsonb(evidence),
-                        ),
-                    ).fetchone()
-                    if row is None:
-                        raise FlowEngineConflict(
-                            "obligation is not pending or evidence differs"
-                        )
-            return FlowObligation(
-                project_id, work_item_id, row[0], row[1], kind, obligation_id,
-                row[2], row[3], row[4], row[5]
-            )
-        except FlowEngineError:
-            raise
-        except Exception as exc:
-            raise FlowEngineError("flow obligation update failed") from exc
-
     def dispatch(
         self,
         *,
@@ -360,7 +305,23 @@ class FlowEngine:
                     else:
                         if run.status != "active" or run.version != expected_version:
                             raise FlowEngineConflict("flow run is not ready at expected version")
+                        impact_row = connection.execute(
+                            f"""
+                            SELECT architecture_impact
+                            FROM {SCHEMA}.governance_context
+                            WHERE project_id = %s AND work_item_id = %s
+                            """,
+                            (project_id, work_item_id),
+                        ).fetchone()
                         merged = {**run.fields, **fields}
+                        if impact_row is not None:
+                            impact = impact_row[0]
+                            supplied = merged.get("architecture_impact")
+                            if supplied is not None and supplied != impact:
+                                raise FlowEngineConflict(
+                                    "architecture impact conflicts with governance evidence"
+                                )
+                            merged["architecture_impact"] = impact
                         flow = self._pinned_flow(connection, run)
                         state = flow.state(run.current_state)
                         if state.terminal:
@@ -701,14 +662,64 @@ class FlowEngine:
     def _require_ready(connection, run: FlowRun) -> None:
         pending = connection.execute(
             f"""
-            SELECT obligation_kind, obligation_id FROM {SCHEMA}.flow_obligations
-            WHERE project_id = %s AND work_item_id = %s AND state = %s
-              AND entry_version = %s AND (
-                  (obligation_kind IN ('artifact', 'gate') AND status <> 'satisfied')
-                  OR (obligation_kind IN ('consult', 'inform')
-                      AND status <> 'dispatched')
+            SELECT obligation.obligation_kind, obligation.obligation_id
+            FROM {SCHEMA}.flow_obligations AS obligation
+            WHERE obligation.project_id = %s AND obligation.work_item_id = %s
+              AND obligation.state = %s AND obligation.entry_version = %s AND (
+                  (
+                      obligation.obligation_kind = 'artifact'
+                      AND (
+                          obligation.status <> 'satisfied'
+                          OR NOT EXISTS (
+                              SELECT 1 FROM {SCHEMA}.governance_records AS evidence
+                              WHERE evidence.project_id = obligation.project_id
+                                AND evidence.work_item_id = obligation.work_item_id
+                                AND evidence.state = obligation.state
+                                AND evidence.entry_version = obligation.entry_version
+                                AND evidence.obligation_kind = 'artifact'
+                                AND evidence.obligation_id = obligation.obligation_id
+                                AND evidence.decision = 'verified'
+                          )
+                      )
+                  ) OR (
+                      obligation.obligation_kind = 'gate'
+                      AND (
+                          obligation.status <> 'satisfied'
+                          OR NOT EXISTS (
+                              SELECT 1 FROM {SCHEMA}.governance_records AS evidence
+                              WHERE evidence.project_id = obligation.project_id
+                                AND evidence.work_item_id = obligation.work_item_id
+                                AND evidence.state = obligation.state
+                                AND evidence.entry_version = obligation.entry_version
+                                AND evidence.obligation_kind = 'gate'
+                                AND evidence.obligation_id = obligation.obligation_id
+                                AND evidence.decision IN ('approved', 'exception')
+                          )
+                      )
+                  ) OR (
+                      obligation.obligation_kind = 'consult'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM {SCHEMA}.governance_records AS evidence
+                          WHERE evidence.project_id = obligation.project_id
+                            AND evidence.work_item_id = obligation.work_item_id
+                            AND evidence.state = obligation.state
+                            AND evidence.entry_version = obligation.entry_version
+                            AND evidence.obligation_kind = 'consult'
+                            AND evidence.obligation_id = obligation.obligation_id
+                            AND (
+                                evidence.decision = 'exception'
+                                OR (
+                                    evidence.decision = 'responded'
+                                    AND obligation.status = 'dispatched'
+                                )
+                            )
+                      )
+                  ) OR (
+                      obligation.obligation_kind = 'inform'
+                      AND obligation.status <> 'dispatched'
+                  )
               )
-            ORDER BY obligation_kind, obligation_id
+            ORDER BY obligation.obligation_kind, obligation.obligation_id
             """,
             (run.project_id, run.work_item_id, run.current_state, run.version),
         ).fetchall()

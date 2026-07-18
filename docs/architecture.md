@@ -113,6 +113,15 @@ operational support.
   instance to one manifest root, resolves bearer tokens only through external
   credential references, uses conflict-aware upload sessions for large files,
   and never forwards authorization to pre-authenticated content URLs.
+- External flow and governance: pins a validated flow snapshot per work item,
+  materializes only its declared state obligations, and routes state changes
+  through accepted durable handoffs. Document versions, consultation responses,
+  architecture classifications, owner/conformance decisions, and justified
+  exceptions are immutable project-scoped evidence. The evidence layer never
+  becomes a second lifecycle engine.
+- Role pack: binds externally configured role templates to project queues, tool
+  profiles, and prompts. Concrete instances share the logical role binding and
+  role memory while retaining separate instance and work-item thread identity.
 - Event journal: records an append-only audit/replay history regardless of
   queue backend.
 - Project manifest: V5 loads the strict, Git-owned
