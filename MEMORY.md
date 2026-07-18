@@ -41,6 +41,11 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   cross-project references. `agentic-mesh-v5 database-migrate` and
   `database-status` read the database URL only from
   `AGENTIC_MESH_V5_DATABASE_URL`.
+- V5 significant transitions use an append-only Postgres event journal and a
+  transactional outbox. Source SQL, the correlated project/work-item event,
+  and outbound rows share one explicit transaction. Dispatch is at least once:
+  `FOR UPDATE SKIP LOCKED` prevents concurrent delivery, while a stable
+  idempotency key lets downstream adapters deduplicate a retry after a crash.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
