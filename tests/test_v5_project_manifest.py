@@ -369,3 +369,66 @@ def test_foreign_declared_owner_requires_exact_external_grant(
         postgres_database, authorizer=StaticResourceAuthorizer((grant,))
     ).activate(manifest, source_revision="f" * 40, actor_id="project-admin")
     assert result.project_id == "beta"
+
+
+def test_active_collision_uses_declared_owner_not_claimant(
+    tmp_path: Path, postgres_database: str
+):
+    MigrationRunner(postgres_database).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.projects(project_id, display_name)
+            VALUES ('alpha', 'Alpha'), ('gamma', 'Gamma'), ('delta', 'Delta')
+            """
+        )
+
+    alpha = load_project_manifest(_write(tmp_path, _manifest("alpha", "Alpha"), "alpha.yaml"))
+    store = ProjectManifestStore(postgres_database)
+    store.activate(alpha, source_revision="a" * 40, actor_id="project-admin")
+    shared_url = alpha.snapshot["repositories"]["primary"]["url"]
+
+    gamma_value = _manifest("gamma", "Gamma")
+    gamma_reference = "grant://projects/alpha/gamma-primary"
+    gamma_value["repositories"]["primary"].update(
+        {
+            "url": shared_url,
+            "owner_project_id": "alpha",
+            "authorization_ref": gamma_reference,
+        }
+    )
+    gamma = load_project_manifest(_write(tmp_path, gamma_value, "gamma.yaml"))
+    gamma_resource = next(
+        item
+        for item in gamma.resources
+        if item.kind == "repository" and item.key == shared_url
+    )
+    gamma_grant = ResourceGrant(
+        "gamma", "alpha", "repository", gamma_resource.key, gamma_reference
+    )
+    ProjectManifestStore(
+        postgres_database, authorizer=StaticResourceAuthorizer((gamma_grant,))
+    ).activate(gamma, source_revision="b" * 40, actor_id="project-admin")
+
+    delta_value = _manifest("delta", "Delta")
+    delta_reference = "grant://projects/gamma/delta-primary"
+    delta_value["repositories"]["primary"].update(
+        {
+            "url": shared_url,
+            "owner_project_id": "gamma",
+            "authorization_ref": delta_reference,
+        }
+    )
+    delta = load_project_manifest(_write(tmp_path, delta_value, "delta.yaml"))
+    delta_resource = next(
+        item
+        for item in delta.resources
+        if item.kind == "repository" and item.key == shared_url
+    )
+    delta_grant = ResourceGrant(
+        "delta", "gamma", "repository", delta_resource.key, delta_reference
+    )
+    with pytest.raises(ProjectManifestAuthorizationError, match="belongs to project alpha"):
+        ProjectManifestStore(
+            postgres_database, authorizer=StaticResourceAuthorizer((delta_grant,))
+        ).activate(delta, source_revision="c" * 40, actor_id="project-admin")
