@@ -903,3 +903,16 @@ or `release_review`.
   deployment stages. The source-control boundary pushes only the generated
   branch and can create a pull request, but exposes no approval or merge path;
   normal release governance owns integration.
+
+## 2026-07-18 V5 Project Manifest Boundaries
+
+- V5 owns a strict, separate `agentic-mesh/project.yaml` contract for Git
+  repositories, OneDrive roots, Teams channels, ADO, external credential
+  references, package overrides, role tool profiles, and instance limits. It
+  does not reuse the V4 project overlay.
+- Git is canonical. Activation validates the manifest and atomically stores an
+  immutable, digest-addressed Postgres snapshot, its exact source commit/path,
+  resource claims, current pointer, and audit record.
+- Project credential identifiers are namespaced. Organization credentials and
+  foreign resources require exact external grants; resource collisions fail
+  closed unless expressly granted. No secret value is accepted or persisted.

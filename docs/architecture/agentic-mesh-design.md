@@ -929,6 +929,25 @@ model must remain generic so Slack can map the same action to Block Kit later.
 
 ## Git And Configuration
 
+### V5 Project Manifest Boundary
+
+V5 uses one strict `agentic-mesh/project.yaml` as the Git-canonical declaration
+of a project's repositories, OneDrive roots, Teams channels, ADO binding,
+credential references, package overrides, role tool profiles, and instance
+limits. This deliberately remains separate from the V4 project overlay.
+
+Activation stores a canonical, digest-addressed snapshot with the exact source
+commit and path in Postgres. Historical snapshots and resource claims are
+immutable; one project pointer identifies the current version. Project resource
+claims are locked and checked atomically, so two active projects cannot claim
+the same repository, document root, Teams channel, or ADO project by accident.
+Sharing a foreign or organization resource requires an exact external grant.
+
+Manifest credentials are references only. Project-scoped credential names are
+qualified by project, organization-scoped credentials require a grant, and
+secret values never enter Git or the snapshot. Later adapters consume the
+validated snapshot instead of reinterpreting untrusted project YAML.
+
 Git owns:
 
 - permanent role templates
