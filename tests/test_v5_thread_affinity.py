@@ -775,6 +775,56 @@ def test_active_affinity_rejects_concurrent_use_and_reseed(
     pool.shutdown()
 
 
+def test_first_thread_creator_atomically_wins_operation_claim(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    _database_url, store = affinity_database
+    coordinator, pool, _factory, backend = _coordinator(store)
+    start_entered = Event()
+    allow_start = Event()
+    operation_entered = Event()
+    release_operation = Event()
+    original_start = backend.start
+
+    def delayed_start() -> FakeThread:
+        start_entered.set()
+        assert allow_start.wait(timeout=10)
+        return original_start()
+
+    def hold(thread: FakeThread) -> str:
+        operation_entered.set()
+        assert release_operation.wait(timeout=10)
+        return thread.thread_id
+
+    backend.start = delayed_start  # type: ignore[method-assign]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        creator = executor.submit(
+            coordinator.run,
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=hold,
+        )
+        assert start_entered.wait(timeout=10)
+        contender = executor.submit(
+            coordinator.run,
+            KEY,
+            instance_id="engineering-2",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=lambda thread: thread.thread_id,
+        )
+        allow_start.set()
+        assert operation_entered.wait(timeout=10)
+        with pytest.raises(ThreadAffinityBusy):
+            contender.result(timeout=10)
+        release_operation.set()
+        assert creator.result(timeout=10) == "thread-1"
+    assert backend.start_count == 1
+    pool.shutdown()
+
+
 def test_reseed_preserves_immutable_history_and_creates_new_thread(
     affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
 ) -> None:

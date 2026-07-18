@@ -514,7 +514,9 @@ does not rewrite existing affinities, and every operation must present the
 recorded digest. A durable active-operation token allows only one same-context
 operation across all role instances. The token is released after both success
 and handled in-process failure; a process crash remains visibly fail-closed for
-later recovery supervision.
+later recovery supervision. First binding or post-reseed thread creation and
+the creator's operation claim commit in one transaction, so another instance
+cannot take ownership of an untouched provider thread between those steps.
 
 Changing an existing conversation requires a controlled reseed with the
 expected current digest, a different target digest, actor, and reason. Reseed is

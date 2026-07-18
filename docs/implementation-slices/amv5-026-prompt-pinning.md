@@ -15,7 +15,8 @@ version requires an explicit, recorded, idle-only reseed.
   and every thread operation;
 - fail closed when a caller presents a different active configuration digest;
 - serialize use of one affinity across role instances with a durable operation
-  token, released after the complete thread operation;
+  token, acquired atomically with first/post-reseed thread binding and released
+  after the complete thread operation;
 - preserve upgraded pre-pin bindings as `unpinned` and refuse to resume them;
 - add immutable reseed history containing old provider/thread/digest, new
   digest, generation, actor, reason, and timestamp;

@@ -149,10 +149,62 @@ class ThreadAffinityStore:
         prompt_digest: str,
         create_thread: Callable[[], str],
     ) -> tuple[ThreadBinding, bool]:
+        return self._bind_or_read(
+            key,
+            instance_id=instance_id,
+            provider_id=provider_id,
+            prompt_digest=prompt_digest,
+            create_thread=create_thread,
+            operation_id=None,
+        )
+
+    def bind_and_claim(
+        self,
+        key: ThreadAffinityKey,
+        *,
+        instance_id: str,
+        provider_id: str,
+        prompt_digest: str,
+        create_thread: Callable[[], str],
+    ) -> tuple[ThreadBinding, bool, ThreadOperationClaim]:
+        operation_id = uuid4().hex
+        binding, created = self._bind_or_read(
+            key,
+            instance_id=instance_id,
+            provider_id=provider_id,
+            prompt_digest=prompt_digest,
+            create_thread=create_thread,
+            operation_id=operation_id,
+        )
+        started_at = _required(binding.active_started_at, "active_started_at")
+        return (
+            binding,
+            created,
+            ThreadOperationClaim(
+                binding.key,
+                operation_id,
+                instance_id,
+                binding.prompt_digest,
+                started_at,
+            ),
+        )
+
+    def _bind_or_read(
+        self,
+        key: ThreadAffinityKey,
+        *,
+        instance_id: str,
+        provider_id: str,
+        prompt_digest: str,
+        create_thread: Callable[[], str],
+        operation_id: str | None,
+    ) -> tuple[ThreadBinding, bool]:
         key = _key(key)
         instance_id = _required(instance_id, "instance_id")
         provider_id = _required(provider_id, "provider_id")
         prompt_digest = _digest(prompt_digest)
+        if operation_id is not None:
+            operation_id = _required(operation_id, "operation_id")
         if not callable(create_thread):
             raise ValueError("create_thread must be callable")
         try:
@@ -205,10 +257,27 @@ class ThreadAffinityStore:
                                 raise ThreadAffinityConflict(
                                     "pending thread affinity changed"
                                 )
-                            return _binding(key, row), True
+                            binding = _binding(key, row)
+                            if operation_id is not None:
+                                binding = self._claim_binding(
+                                    connection,
+                                    key,
+                                    instance_id,
+                                    prompt_digest,
+                                    operation_id,
+                                )
+                            return binding, True
                         if existing.provider_id != provider_id:
                             raise ThreadAffinityConflict(
                                 "thread affinity provider does not match"
+                            )
+                        if operation_id is not None:
+                            existing = self._claim_binding(
+                                connection,
+                                key,
+                                instance_id,
+                                prompt_digest,
+                                operation_id,
                             )
                         return existing, False
                     thread_id = _required(create_thread(), "thread_id")
@@ -232,7 +301,16 @@ class ThreadAffinityStore:
                             instance_id,
                         ),
                     ).fetchone()
-                    return _binding(key, row), True
+                    binding = _binding(key, row)
+                    if operation_id is not None:
+                        binding = self._claim_binding(
+                            connection,
+                            key,
+                            instance_id,
+                            prompt_digest,
+                            operation_id,
+                        )
+                    return binding, True
         except (ThreadAffinityError, ValueError, WorkerProviderError):
             raise
         except psycopg.errors.UniqueViolation:
@@ -310,34 +388,19 @@ class ThreadAffinityStore:
                     raise ThreadAffinityAuthorizationError(
                         "role instance is not authorized for thread affinity"
                     )
-                row = connection.execute(
-                    f"""
-                    UPDATE {SCHEMA}.thread_affinities
-                    SET active_operation_id = %s,
-                        active_instance_id = %s,
-                        active_started_at = clock_timestamp(),
-                        updated_at = clock_timestamp()
-                    WHERE project_id = %s AND work_item_id = %s
-                      AND role_id = %s AND conversation_id = %s
-                      AND affinity_state = 'active'
-                      AND prompt_digest = %s
-                      AND active_operation_id IS NULL
-                    RETURNING active_started_at::text
-                    """,
-                    (
-                        operation_id,
-                        instance_id,
-                        key.project_id,
-                        key.work_item_id,
-                        key.role_id,
-                        key.conversation_id,
-                        prompt_digest,
-                    ),
-                ).fetchone()
-                if row is None:
-                    self._raise_claim_conflict(connection, key, prompt_digest)
+                binding = self._claim_binding(
+                    connection,
+                    key,
+                    instance_id,
+                    prompt_digest,
+                    operation_id,
+                )
                 return ThreadOperationClaim(
-                    key, operation_id, instance_id, prompt_digest, row[0]
+                    key,
+                    operation_id,
+                    instance_id,
+                    prompt_digest,
+                    _required(binding.active_started_at, "active_started_at"),
                 )
         except ThreadAffinityError:
             raise
@@ -530,6 +593,44 @@ class ThreadAffinityStore:
             raise ThreadAffinityError(_STORE_ERROR) from None
 
     @staticmethod
+    def _claim_binding(
+        connection: psycopg.Connection[object],
+        key: ThreadAffinityKey,
+        instance_id: str,
+        prompt_digest: str,
+        operation_id: str,
+    ) -> ThreadBinding:
+        row = connection.execute(
+            f"""
+            UPDATE {SCHEMA}.thread_affinities
+            SET active_operation_id = %s,
+                active_instance_id = %s,
+                active_started_at = clock_timestamp(),
+                updated_at = clock_timestamp()
+            WHERE project_id = %s AND work_item_id = %s
+              AND role_id = %s AND conversation_id = %s
+              AND affinity_state = 'active'
+              AND prompt_digest = %s
+              AND active_operation_id IS NULL
+            RETURNING {_BINDING_COLUMNS}
+            """,
+            (
+                operation_id,
+                instance_id,
+                key.project_id,
+                key.work_item_id,
+                key.role_id,
+                key.conversation_id,
+                prompt_digest,
+            ),
+        ).fetchone()
+        if row is None:
+            ThreadAffinityStore._raise_claim_conflict(
+                connection, key, prompt_digest
+            )
+        return _binding(key, row)
+
+    @staticmethod
     def _raise_claim_conflict(
         connection: psycopg.Connection[object],
         key: ThreadAffinityKey,
@@ -625,17 +726,12 @@ class ThreadAffinityCoordinator:
                 created_thread.append(thread)
                 return thread.thread_id
 
-            binding, created = self._store.bind_or_read(
+            binding, created, claim = self._store.bind_and_claim(
                 key,
                 instance_id=instance_id,
                 provider_id=provider_id,
                 prompt_digest=prompt_digest,
                 create_thread=create_thread,
-            )
-            claim = self._store.claim_operation(
-                key,
-                instance_id=instance_id,
-                prompt_digest=prompt_digest,
             )
             try:
                 if created:
