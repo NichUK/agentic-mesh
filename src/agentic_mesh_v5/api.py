@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Header, Query, Request, Response, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 import psycopg
 from psycopg.rows import dict_row
 
@@ -153,10 +153,32 @@ class FailureIncidentCreate(ApiModel):
 class FailureAttemptCreate(ApiModel):
     attempt_id: str = Field(pattern=IDENTIFIER_PATTERN)
     stage: Literal["technical", "pm_correction", "recovery"]
-    attempt_number: int = Field(ge=1, le=3)
+    attempt_number: int = Field(
+        ge=1, le=3, description="Attempt 1 for recovery; attempts 1-3 otherwise."
+    )
     outcome: Literal["succeeded", "failed"]
-    correction_instruction: str | None = Field(default=None, max_length=2000)
+    correction_instruction: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Required for PM correction and forbidden for other stages.",
+    )
     evidence: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_stage_contract(self):
+        if self.stage == "recovery" and self.attempt_number != 1:
+            raise ValueError("recovery requires attempt_number 1")
+        if self.stage == "pm_correction":
+            if (
+                self.correction_instruction is None
+                or not self.correction_instruction.strip()
+            ):
+                raise ValueError("PM correction requires correction_instruction")
+        elif self.correction_instruction is not None:
+            raise ValueError(
+                "correction_instruction is only valid for PM correction"
+            )
+        return self
 
 
 class FailureIncidentResponse(ApiModel):

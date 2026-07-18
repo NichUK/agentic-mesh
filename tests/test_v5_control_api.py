@@ -681,6 +681,20 @@ def test_reliability_api_is_project_scoped_and_guards_early_terminal_error(
         },
     )
     assert invalid_recovery.status_code == 422
+    assert invalid_recovery.json()["errors"][0]["location"] == ["body"]
+    invalid_instruction = client.post(
+        f"{path}/{incident_id}/attempts",
+        headers=headers,
+        json={
+            "attempt_id": "bad-instruction",
+            "stage": "technical",
+            "attempt_number": 1,
+            "outcome": "failed",
+            "correction_instruction": "not valid for technical retry",
+        },
+    )
+    assert invalid_instruction.status_code == 422
+    assert "only valid for PM correction" in invalid_instruction.json()["errors"][0]["message"]
     early = client.post(
         f"{API_PREFIX}/projects/alpha/work-items/reliability-work/transitions",
         headers=headers,

@@ -31,7 +31,9 @@ CREATE TABLE agentic_mesh_v5.failure_incidents (
         REFERENCES agentic_mesh_v5.roles(project_id, role_id),
     CHECK (
         (status = 'active' AND next_stage <> 'none'
-            AND next_attempt_number IS NOT NULL AND resolved_at IS NULL)
+            AND next_attempt_number IS NOT NULL
+            AND (next_stage <> 'recovery' OR next_attempt_number = 1)
+            AND resolved_at IS NULL)
         OR (status = 'terminal_eligible' AND next_stage = 'none'
             AND next_attempt_number IS NULL AND resolved_at IS NULL)
         OR (status IN ('recovered', 'terminal') AND next_stage = 'none'

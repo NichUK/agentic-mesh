@@ -431,3 +431,13 @@ def test_idempotency_distinct_corrections_concurrency_and_route_rollback(
             correction_instruction=correction.attempts[-1].correction_instruction,
             actor_id="project-manager",
         )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with psycopg.connect(database_url) as connection:
+            connection.execute(
+                """
+                UPDATE agentic_mesh_v5.failure_incidents
+                SET next_stage = 'recovery', next_attempt_number = 2
+                WHERE project_id = 'alpha' AND incident_id = %s
+                """,
+                (incident_id,),
+            )
