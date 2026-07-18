@@ -131,4 +131,7 @@ operational support.
   records, but provider threads never enter the memory model. Every write must
   cite a current authoritative source; reads reverify it and visibly retain,
   but do not serve, stale or removed memory. Optimistic versions and immutable
-  revisions prevent silent concurrent replacement.
+  revisions prevent silent concurrent replacement. A deterministic write
+  policy rejects secrets, redacts supported personal data, and permits
+  organization scope only with positive organization-source evidence and no
+  registered project identifier; uncertainty stays project-local.
