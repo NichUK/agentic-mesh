@@ -75,6 +75,13 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   independent; readiness reports current/pending/unavailable Postgres state
   with stable redacted reason codes. OTLP export is enabled only through
   external standard endpoint settings and startup does not require a collector.
+- V5 native Postgres backup enters a durable database-level write pause that
+  waits for existing writers, rejects new mutations, and keeps reads available.
+  Custom-format archives have a secret-free checksum/count manifest; restore
+  accepts only an empty target, verifies migration and every V5 table count,
+  and remains paused until an explicit operator resume. Operations and recovery
+  images include `pg_dump`, `pg_restore`, and `psql`; database credentials stay
+  in child-process environment rather than arguments, output, or manifests.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

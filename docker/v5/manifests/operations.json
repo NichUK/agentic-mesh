@@ -5,5 +5,5 @@
   "target": "v5-operations-worker",
   "tool_profile_reference": "tool-profile/operations@0.1.0",
   "capabilities": ["container.manage", "filesystem.read", "network.diagnose", "source-control.git", "structured-output"],
-  "required_commands": ["codex", "docker", "docker-compose", "gh", "git", "ip", "lsof", "nc", "python", "rg"]
+  "required_commands": ["codex", "docker", "docker-compose", "gh", "git", "ip", "lsof", "nc", "pg_dump", "pg_restore", "psql", "python", "rg"]
 }

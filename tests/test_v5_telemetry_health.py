@@ -19,6 +19,7 @@ import pytest
 from agentic_mesh_v5.api import API_PREFIX, create_app
 from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.database import MigrationError, MigrationRunner, load_migrations
+from agentic_mesh_v5.database_operations import MaintenanceStore
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.telemetry import Telemetry, telemetry_from_environment
 
@@ -239,6 +240,13 @@ def test_pending_and_current_migrations_control_readiness(
     pending = client.get(f"{API_PREFIX}/health")
     MigrationRunner(postgres_database).migrate()
     current = client.get(f"{API_PREFIX}/health/ready")
+    MaintenanceStore(postgres_database).pause(
+        actor="operator", reason="health maintenance test"
+    )
+    paused = client.get(f"{API_PREFIX}/health/ready")
+    MaintenanceStore(postgres_database).resume(
+        actor="operator", reason="health maintenance test complete"
+    )
     LifecycleStore(postgres_database).create_project(
         project_id="alpha", display_name="Alpha", sponsor_ids=("operator",)
     )
@@ -266,6 +274,12 @@ def test_pending_and_current_migrations_control_readiness(
     assert current.status_code == 200
     assert current.json()["status"] == "ok"
     assert current.json()["dependencies"][0]["reason"] == "schema_current"
+    assert paused.status_code == 503
+    assert paused.json()["dependencies"][0] == {
+        "name": "postgres",
+        "status": "degraded",
+        "reason": "maintenance_paused",
+    }
     assert work.status_code == 201
     work_span = next(
         item

@@ -167,6 +167,27 @@ def test_recovery_image_is_supervisor_only_and_drills_real_repair() -> None:
         assert operation in drill
 
 
+def test_operations_and_recovery_images_include_native_postgres_tools() -> None:
+    dockerfile = (ROOT / "docker" / "v5" / "Dockerfile").read_text(encoding="utf-8")
+    operations = VERIFIER._dockerfile_stage(dockerfile, "v5-operations-worker", [])
+    recovery = VERIFIER._dockerfile_stage(dockerfile, "v5-recovery-worker", [])
+
+    for stage in (operations, recovery):
+        assert "ARG POSTGRES_CLIENT_MAJOR=17" in stage
+        assert '"postgresql-client-${POSTGRES_CLIENT_MAJOR}"' in stage
+        assert "PGDG_SIGNING_SHA256=0144068502a1eddd" in stage
+        assert "sha256sum --check --status" in stage
+    for profile_id in ("operations", "recovery"):
+        manifest = json.loads(
+            (ROOT / "docker" / "v5" / "manifests" / f"{profile_id}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert {"pg_dump", "pg_restore", "psql"} <= set(
+            manifest["required_commands"]
+        )
+
+
 def test_manifest_or_secret_regressions_are_rejected(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     (root / "docker").mkdir(parents=True)

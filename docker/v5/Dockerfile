@@ -75,6 +75,8 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["agentic-mesh-worker-he
 
 FROM v5-worker-base AS v5-operations-worker
 
+ARG POSTGRES_CLIENT_MAJOR=17
+ARG PGDG_SIGNING_SHA256=0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         docker-compose \
@@ -83,6 +85,17 @@ RUN apt-get update \
         iproute2 \
         lsof \
         netcat-openbsd \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl --fail --location --show-error --silent \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "${PGDG_SIGNING_SHA256}  /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc" \
+        | sha256sum --check --status \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        "postgresql-client-${POSTGRES_CLIENT_MAJOR}" \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY manifests/operations.json /opt/agentic-mesh/image-manifest.json
@@ -129,6 +142,8 @@ FROM v5-worker-base AS v5-recovery-worker
 
 ARG COMPOSE_VERSION=v5.3.1
 ARG COMPOSE_SHA256=f9ebc6ebdb19d769b793c245a736caaeb198c62587f13b25c660c13b4987f959
+ARG POSTGRES_CLIENT_MAJOR=17
+ARG PGDG_SIGNING_SHA256=0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -141,6 +156,17 @@ RUN apt-get update \
         pkg-config \
         python3-dev \
         shellcheck \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl --fail --location --show-error --silent \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "${PGDG_SIGNING_SHA256}  /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc" \
+        | sha256sum --check --status \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        "postgresql-client-${POSTGRES_CLIENT_MAJOR}" \
     && python -m pip install --no-cache-dir pytest==8.4.2 \
     && install -d /usr/local/lib/docker/cli-plugins \
     && curl --fail --location --show-error --silent \

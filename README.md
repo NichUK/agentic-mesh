@@ -30,6 +30,18 @@ OpenTelemetry spans and metrics without requiring a collector. Set the standard
 `OTEL_EXPORTER_OTLP_ENDPOINT`, or its traces/metrics-specific endpoint, to
 enable OTLP/gRPC export; credentials and collector settings remain external.
 
+V5 database maintenance and native backup operations use the same external
+`AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,
+publishes a custom-format archive with its checksum manifest as the publication
+marker, and resumes only if it initiated the pause. Restore accepts an empty
+database and leaves it paused for explicit verification:
+
+```powershell
+python -m agentic_mesh_v5 --json database-backup --output C:\Backups\mesh.dump --actor operator --reason "scheduled backup"
+python -m agentic_mesh_v5 --json database-restore --archive C:\Backups\mesh.dump
+python -m agentic_mesh_v5 --json database-resume --actor operator --reason "restore verified"
+```
+
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
 infrastructure: Teams/API ingress, Postgres-backed message queues, Codex
 app-server WebSocket routing, safe-output tools for durable workflow effects,
