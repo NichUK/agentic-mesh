@@ -344,6 +344,16 @@ def test_overall_deadline_is_a_verified_failed_recovery(
 
     assert store.reconcile(_principal()) == 1
 
+    late_result = store.report(
+        principal=_principal(),
+        run=run,
+        result=RecoveryResult(
+            "succeeded", "Late launcher result.", "evidence://late", 17
+        ),
+    )
+    assert late_result.outcome == "failed"
+    assert late_result.usage_used == 0
+
     final = ReliabilityStore(recovery_database).status(
         "alpha", "deadline-work", pending.incident.incident_id
     )

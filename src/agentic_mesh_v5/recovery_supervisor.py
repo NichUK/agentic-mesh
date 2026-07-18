@@ -488,7 +488,7 @@ class RecoverySupervisorStore:
                                     "failed",
                                     "Recovery execution reached its configured time limit.",
                                     f"supervisor://time-limit/{run.run_id}",
-                                    usage,
+                                    current[10],
                                 )
                             )
                         if current[6] not in fingerprints:
