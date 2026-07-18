@@ -131,6 +131,13 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   provider data is explicitly `unknown`. Prompts, responses, reasoning,
   account identity, credentials, and raw provider payloads are never stored.
   Thread affinity refreshes capacity and persists usage before yielding it.
+- V5 routes work through the existing project role queues by exact role and
+  optional capability, with priority and availability retained on the queue
+  item. A canonical request fingerprint makes concurrent retries return one
+  item while conflicting reuse fails closed. Each role/capability target is
+  unique within a project. Outbox dispatch requires a typed adapter that
+  deduplicates the stable message key and returns a matching receipt, so a
+  crash retry cannot repeat the external action.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

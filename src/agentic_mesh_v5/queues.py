@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import re
 from typing import Any
 import uuid
 
@@ -11,6 +12,9 @@ from psycopg.types.json import Jsonb
 from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
+
+
+_CAPABILITY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 class QueueError(DatabaseError):
@@ -40,6 +44,15 @@ def _required(value: object, field: str) -> str:
     if not normalized:
         raise ValueError(f"{field} is required")
     return normalized
+
+
+def _optional_capability(value: object) -> str | None:
+    if value is None:
+        return None
+    capability = _required(value, "capability")
+    if _CAPABILITY.fullmatch(capability) is None:
+        raise ValueError("capability is invalid")
+    return capability
 
 
 @dataclass(frozen=True)
@@ -86,18 +99,27 @@ class RoleQueueStore:
             raise DatabaseConfigurationError("the V5 database URL must use Postgres")
         self._database_url = database_url
 
-    def create_queue(self, *, project_id: str, queue_id: str, role_id: str) -> None:
+    def create_queue(
+        self,
+        *,
+        project_id: str,
+        queue_id: str,
+        role_id: str,
+        capability: str | None = None,
+    ) -> None:
         project_id = _required(project_id, "project_id")
         queue_id = _required(queue_id, "queue_id")
         role_id = _required(role_id, "role_id")
+        capability = _optional_capability(capability)
         try:
             with psycopg.connect(self._database_url) as connection:
                 connection.execute(
                     f"""
-                    INSERT INTO {SCHEMA}.role_queues(project_id, queue_id, role_id)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO {SCHEMA}.role_queues
+                        (project_id, queue_id, role_id, capability)
+                    VALUES (%s, %s, %s, %s)
                     """,
-                    (project_id, queue_id, role_id),
+                    (project_id, queue_id, role_id, capability),
                 )
         except psycopg.errors.UniqueViolation as exc:
             raise QueueConflict("queue already exists") from exc

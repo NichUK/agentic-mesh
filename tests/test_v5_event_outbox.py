@@ -16,6 +16,7 @@ from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.events import EventDraft
 from agentic_mesh_v5.events import EventStore
+from agentic_mesh_v5.events import DeliveryReceipt
 from agentic_mesh_v5.events import OutboundDraft
 from agentic_mesh_v5.events import OutboxDispatcher
 
@@ -104,6 +105,30 @@ def _append_outbound(database_url: str, *, project_id: str = "alpha") -> str:
             """,
             (stored.event_id,),
         ).fetchone()[0]
+
+
+class RecordingDelivery:
+    def __init__(self, action=None, *, failure: Exception | None = None) -> None:
+        self.action = action
+        self.failure = failure
+        self.actions = []
+        self.receipts = {}
+        self.after_receipt = None
+
+    def deliver(self, message):
+        existing = self.receipts.get(message.idempotency_key)
+        if existing is not None:
+            return existing
+        if self.failure is not None:
+            raise self.failure
+        self.actions.append(message)
+        if self.action is not None:
+            self.action(message)
+        receipt = DeliveryReceipt(message.idempotency_key)
+        self.receipts[message.idempotency_key] = receipt
+        if self.after_receipt is not None:
+            self.after_receipt(message)
+        return receipt
 
 
 def test_event_identifiers_and_outbound_topics_are_required() -> None:
@@ -307,27 +332,47 @@ def test_database_rejects_event_update_and_delete(event_database: str) -> None:
 
 def test_successful_delivery_is_not_repeated(event_database: str) -> None:
     expected_key = _append_outbound(event_database)
-    delivered = []
+    adapter = RecordingDelivery()
     dispatcher = OutboxDispatcher(event_database)
 
-    result = dispatcher.dispatch_one(delivered.append)
+    result = dispatcher.dispatch_one(adapter)
 
     assert result.status == "delivered"
     assert result.idempotency_key == expected_key
-    assert delivered[0].idempotency_key == expected_key
-    assert delivered[0].attempt == 1
-    assert dispatcher.dispatch_one(delivered.append).status == "empty"
-    assert len(delivered) == 1
+    assert adapter.actions[0].idempotency_key == expected_key
+    assert adapter.actions[0].attempt == 1
+    assert dispatcher.dispatch_one(adapter).status == "empty"
+    assert len(adapter.actions) == 1
+
+
+def test_dispatch_requires_adapter_and_rejects_mismatched_receipt(
+    event_database: str,
+) -> None:
+    _append_outbound(event_database)
+    dispatcher = OutboxDispatcher(event_database)
+
+    with pytest.raises(ValueError, match="idempotent delivery adapter"):
+        dispatcher.dispatch_one(lambda _message: None)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="idempotent delivery adapter"):
+        dispatcher.dispatch_one(RecordingDelivery)  # type: ignore[arg-type]
+
+    class WrongReceipt:
+        def deliver(self, _message):
+            return DeliveryReceipt("different-key")
+
+    result = dispatcher.dispatch_one(WrongReceipt())
+
+    assert result.status == "failed"
+    assert result.error == "delivery failed: ValueError"
 
 
 def test_delivery_failure_records_redacted_error_then_retries(event_database: str) -> None:
     expected_key = _append_outbound(event_database)
     dispatcher = OutboxDispatcher(event_database)
+    adapter = RecordingDelivery(failure=RuntimeError("password=do-not-store"))
 
-    failed = dispatcher.dispatch_one(
-        lambda _: (_ for _ in ()).throw(RuntimeError("password=do-not-store"))
-    )
-    delivered = []
+    failed = dispatcher.dispatch_one(adapter)
 
     assert failed.status == "failed"
     assert failed.error == "delivery failed: RuntimeError"
@@ -351,10 +396,11 @@ def test_delivery_failure_records_redacted_error_then_retries(event_database: st
             (expected_key,),
         )
     assert failed_state == (1, True, "delivery failed: RuntimeError", True)
-    retried = dispatcher.dispatch_one(delivered.append)
+    adapter.failure = None
+    retried = dispatcher.dispatch_one(adapter)
     assert retried.status == "delivered"
     assert retried.idempotency_key == expected_key
-    assert delivered[0].attempt == 2
+    assert adapter.actions[0].attempt == 2
     with psycopg.connect(event_database) as connection:
         row = connection.execute(
             """
@@ -378,14 +424,13 @@ def test_failed_message_backoff_allows_later_work_to_progress(
         )
     dispatcher = OutboxDispatcher(event_database)
 
-    assert dispatcher.dispatch_one(
-        lambda _: (_ for _ in ()).throw(RuntimeError("poison"))
-    ).idempotency_key == first_key
-    delivered = []
-    result = dispatcher.dispatch_one(delivered.append)
+    poison = RecordingDelivery(failure=RuntimeError("poison"))
+    assert dispatcher.dispatch_one(poison).idempotency_key == first_key
+    adapter = RecordingDelivery()
+    result = dispatcher.dispatch_one(adapter)
 
     assert result.status == "delivered"
-    assert delivered[0].idempotency_key != first_key
+    assert adapter.actions[0].idempotency_key != first_key
 
 
 def test_crash_after_delivery_reuses_same_idempotency_key(event_database: str) -> None:
@@ -393,19 +438,17 @@ def test_crash_after_delivery_reuses_same_idempotency_key(event_database: str) -
         pass
 
     expected_key = _append_outbound(event_database)
-    seen = []
     dispatcher = OutboxDispatcher(event_database)
-
-    def crash(message) -> None:
-        seen.append(message.idempotency_key)
-        raise SimulatedCrash
+    adapter = RecordingDelivery()
+    adapter.after_receipt = lambda _message: (_ for _ in ()).throw(SimulatedCrash)
 
     with pytest.raises(SimulatedCrash):
-        dispatcher.dispatch_one(crash)
-    result = dispatcher.dispatch_one(lambda message: seen.append(message.idempotency_key))
+        dispatcher.dispatch_one(adapter)
+    adapter.after_receipt = None
+    result = dispatcher.dispatch_one(adapter)
 
     assert result.status == "delivered"
-    assert seen == [expected_key, expected_key]
+    assert [message.idempotency_key for message in adapter.actions] == [expected_key]
     with psycopg.connect(event_database) as connection:
         attempts = connection.execute(
             """
@@ -428,9 +471,9 @@ def test_concurrent_dispatcher_skips_locked_message(event_database: str) -> None
         assert release.wait(timeout=5)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(dispatcher.dispatch_one, hold)
+        first = pool.submit(dispatcher.dispatch_one, RecordingDelivery(hold))
         assert entered.wait(timeout=5)
-        second = pool.submit(dispatcher.dispatch_one, lambda _: None)
+        second = pool.submit(dispatcher.dispatch_one, RecordingDelivery())
         assert second.result(timeout=5).status == "empty"
         release.set()
         assert first.result(timeout=5).status == "delivered"
@@ -439,11 +482,11 @@ def test_concurrent_dispatcher_skips_locked_message(event_database: str) -> None
 def test_dispatch_project_filter_never_selects_foreign_work(event_database: str) -> None:
     _append_outbound(event_database, project_id="alpha")
     bravo_key = _append_outbound(event_database, project_id="bravo")
-    delivered = []
     dispatcher = OutboxDispatcher(event_database)
+    adapter = RecordingDelivery()
 
-    result = dispatcher.dispatch_one(delivered.append, project_id="bravo")
+    result = dispatcher.dispatch_one(adapter, project_id="bravo")
 
     assert result.idempotency_key == bravo_key
-    assert delivered[0].project_id == "bravo"
-    assert dispatcher.dispatch_one(lambda _: None, project_id="bravo").status == "empty"
+    assert adapter.actions[0].project_id == "bravo"
+    assert dispatcher.dispatch_one(adapter, project_id="bravo").status == "empty"

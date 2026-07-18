@@ -169,6 +169,7 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     }
     assert f"{API_PREFIX}/projects/{{project_id}}/work-items" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/queues/{{queue_id}}/claim" in paths
+    assert f"{API_PREFIX}/projects/{{project_id}}/routes" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/usage" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/recovery" in paths
     assert (
@@ -556,6 +557,71 @@ def test_queue_claim_is_concurrent_and_lease_token_controls_completion(
     assert completed.json()["status"] == "completed"
     assert metrics.json()["depth"] == 0
     assert metrics.json()["total_attempts"] == 1
+
+
+def test_authenticated_route_is_idempotent_capability_bound_and_isolated(
+    api_database,
+) -> None:
+    _database_url, client = api_database
+    headers = _headers("alpha")
+    client.post(
+        f"{API_PREFIX}/projects/alpha/work-items",
+        headers=headers,
+        json={
+            "work_item_id": "route-work",
+            "title": "Route work",
+            "owner_role_id": "engineering",
+            "correlation_id": "route-correlation",
+        },
+    )
+    queue = client.post(
+        f"{API_PREFIX}/projects/alpha/queues",
+        headers=headers,
+        json={
+            "queue_id": "engineering-browser",
+            "role_id": "engineering",
+            "capability": "browser",
+        },
+    )
+    route = {
+        "work_item_id": "route-work",
+        "target_role_id": "engineering",
+        "capability": "browser",
+        "idempotency_key": "route-once",
+        "priority": 25,
+        "payload": {"action": "test"},
+    }
+    first = client.post(
+        f"{API_PREFIX}/projects/alpha/routes", headers=headers, json=route
+    )
+    duplicate = client.post(
+        f"{API_PREFIX}/projects/alpha/routes", headers=headers, json=route
+    )
+    missing = client.post(
+        f"{API_PREFIX}/projects/alpha/routes",
+        headers=headers,
+        json={**route, "idempotency_key": "route-missing", "capability": "gpu"},
+    )
+    forbidden = client.post(
+        f"{API_PREFIX}/projects/alpha/routes",
+        headers=_headers("viewer"),
+        json={**route, "idempotency_key": "route-forbidden"},
+    )
+    invalid = client.post(
+        f"{API_PREFIX}/projects/alpha/routes",
+        headers=headers,
+        json={**route, "idempotency_key": "invalid route"},
+    )
+
+    assert queue.status_code == 201
+    assert first.status_code == duplicate.status_code == 201
+    assert first.json() == duplicate.json()
+    assert first.json()["queue_id"] == "engineering-browser"
+    assert first.json()["priority"] == 25
+    assert missing.status_code == 404
+    assert forbidden.status_code == 403
+    assert invalid.status_code == 422
+    assert invalid.json()["errors"][0]["location"][-1] == "idempotency_key"
 
 
 def test_validation_and_store_failures_are_actionable_and_redacted() -> None:

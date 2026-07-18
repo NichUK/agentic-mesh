@@ -40,6 +40,10 @@ from agentic_mesh_v5.queues import QueueNotFound
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.read_models import ReadModelNotFound
 from agentic_mesh_v5.read_models import ReadModelStore
+from agentic_mesh_v5.routing import RouteDraft
+from agentic_mesh_v5.routing import Router
+from agentic_mesh_v5.routing import RoutingConflict
+from agentic_mesh_v5.routing import RoutingNotFound
 from agentic_mesh_v5.telemetry import Telemetry
 from agentic_mesh_v5.telemetry import telemetry_from_environment
 from agentic_mesh_v5.usage import UsageNotFound
@@ -48,6 +52,7 @@ from agentic_mesh_v5.usage import UsageStore
 
 API_PREFIX = "/api/v1"
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+IDENTIFIER_PATTERN = r"^[A-Za-z0-9._:-]{1,128}$"
 
 
 class ApiModel(BaseModel):
@@ -160,12 +165,23 @@ class ApprovalResponse(ApiModel):
 class QueueCreate(ApiModel):
     queue_id: str = Field(min_length=1)
     role_id: str = Field(min_length=1)
+    capability: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN)
 
 
 class QueueItemCreate(ApiModel):
     queue_item_id: str = Field(min_length=1)
     work_item_id: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    priority: int = 0
+    available_at: datetime | None = None
+
+
+class RouteCreate(ApiModel):
+    work_item_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    target_role_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    capability: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN)
+    idempotency_key: str = Field(pattern=IDENTIFIER_PATTERN)
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = 0
     available_at: datetime | None = None
@@ -471,6 +487,7 @@ def create_app(
     progress_store = ProgressStore(database_url)
     usage_store = UsageStore(database_url)
     queues = RoleQueueStore(database_url)
+    router = Router(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
@@ -593,6 +610,7 @@ def create_app(
     @app.exception_handler(ReadModelNotFound)
     @app.exception_handler(ProgressNotFound)
     @app.exception_handler(UsageNotFound)
+    @app.exception_handler(RoutingNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
@@ -600,6 +618,7 @@ def create_app(
     @app.exception_handler(QueueConflict)
     @app.exception_handler(LeaseExpired)
     @app.exception_handler(ProgressConflict)
+    @app.exception_handler(RoutingConflict)
     async def conflict(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 409, "conflict", str(exc))
 
@@ -839,9 +858,43 @@ def create_app(
     ) -> dict[str, str]:
         project_access(identity, project_id, "write")
         queues.create_queue(
-            project_id=project_id, queue_id=payload.queue_id, role_id=payload.role_id
+            project_id=project_id,
+            queue_id=payload.queue_id,
+            role_id=payload.role_id,
+            capability=payload.capability,
         )
         return {"project_id": project_id, "queue_id": payload.queue_id}
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/routes",
+        response_model=QueueItemResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["routing"],
+    )
+    def route(
+        project_id: str,
+        payload: RouteCreate,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        selected_telemetry.annotate(
+            project_id=project_id,
+            work_item_id=payload.work_item_id,
+        )
+        return asdict(
+            router.route(
+                RouteDraft(
+                    project_id=project_id,
+                    work_item_id=payload.work_item_id,
+                    target_role_id=payload.target_role_id,
+                    capability=payload.capability,
+                    idempotency_key=payload.idempotency_key,
+                    payload=payload.payload,
+                    priority=payload.priority,
+                    available_at=payload.available_at,
+                )
+            )
+        )
 
     @app.post(
         f"{API_PREFIX}/projects/{{project_id}}/queues/{{queue_id}}/items",
