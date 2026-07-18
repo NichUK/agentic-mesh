@@ -103,6 +103,14 @@ def test_client_rejects_unsafe_api_urls(tmp_path: Path, url: str) -> None:
         ControlApiClient(base_url=url, token_file=_token_file(tmp_path))
 
 
+@pytest.mark.parametrize("token", ["token with space", "token-é", "token\x7f"])
+def test_client_rejects_header_unsafe_tokens(tmp_path: Path, token: str) -> None:
+    with pytest.raises(ApiClientConfigurationError, match="opaque ASCII"):
+        ControlApiClient(
+            base_url="https://mesh.example", token_file=_token_file(tmp_path, token)
+        )
+
+
 @pytest.mark.parametrize(
     "path",
     [

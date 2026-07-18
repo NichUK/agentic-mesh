@@ -234,8 +234,10 @@ def _load_token(path: Path) -> str:
         token = path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeError) as exc:
         raise ApiClientConfigurationError("API token file must be readable UTF-8") from exc
-    if not token or len(token) > 8192 or any(character.isspace() for character in token):
-        raise ApiClientConfigurationError("API token file must contain one opaque token")
+    if not token or len(token) > 8192 or any(
+        ord(character) < 0x21 or ord(character) > 0x7E for character in token
+    ):
+        raise ApiClientConfigurationError("API token file must contain one opaque ASCII token")
     return token
 
 
