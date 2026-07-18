@@ -119,6 +119,20 @@ The local profile can support:
 Credential cache mounts must be role-specific and must not mount a developer's
 entire home directory or full global agent state.
 
+V5 resolves a named Codex OAuth `mount_ref` from a deployment-owned registry.
+The resolved host directory must exist outside every configured system,
+configuration, and project repository root. Local worker processes receive it
+only as `CODEX_HOME`; containers mount the same directory at
+`/mesh/worker-auth/codex` and receive that container path as `CODEX_HOME`.
+Multiple workers may reuse the named binding, but no credential file is copied
+or parsed by Agentic Mesh.
+
+Authentication status is checked through the official Codex SDK account
+operation with token refresh requested. V5 records only `authenticated`,
+`sign_in_required`, or `wrong_method` and the non-sensitive account kind. Email,
+tokens, cache content, host paths, and raw provider errors are excluded from
+status, logs, traces, and durable records.
+
 The controller auth UI is the preferred local setup surface. It runs with the
 control-plane, lists reusable credential status, stores secret-backed
 credentials, and launches Codex OAuth device-auth sessions with

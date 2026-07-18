@@ -13,6 +13,7 @@ methods:
     category: oauth_cache
     applies_to:
       - codex-cli
+      - codex-local
     env_vars:
       - CODEX_HOME
     requires_secret_ref: false

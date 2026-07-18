@@ -47,6 +47,9 @@ completion, and safe-error contracts. The first adapter wraps the official
 `openai-codex` SDK and its local stdio app-server; Codex JSON-RPC methods and
 generated models remain inside that adapter. The SDK and V5 worker image share
 one pinned Codex version, while credentials and `CODEX_HOME` remain external.
+Named OAuth caches are supplied by the deployment and resolved into an external
+`CODEX_HOME`; V5 never reads or copies `auth.json`. An official-SDK status probe
+refreshes the existing login and reports only safe authentication state.
 
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
 infrastructure: Teams/API ingress, Postgres-backed message queues, Codex
