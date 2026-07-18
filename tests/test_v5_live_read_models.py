@@ -132,7 +132,7 @@ def test_migration_backfill_rebuilds_without_changing_authoritative_rows(
 
     MigrationRunner(postgres_database).migrate()
     store = ReadModelStore(postgres_database)
-    assert store.rebuild("alpha") == 6
+    assert store.rebuild("alpha") == 7
     snapshot = store.snapshot("alpha")
 
     with psycopg.connect(postgres_database) as connection:
@@ -144,7 +144,12 @@ def test_migration_backfill_rebuilds_without_changing_authoritative_rows(
             ).fetchall()
             for table in before
         }
-    assert after == before
+    for table in before:
+        if table != "progress":
+            assert after[table] == before[table]
+    migrated_progress = dict(after["progress"][0][0])
+    assert migrated_progress.pop("checkpoint_id") == "legacy-1"
+    assert migrated_progress == before["progress"][0][0]
     assert set(snapshot["domains"]) == set(DOMAINS)
     assert all(len(snapshot["domains"][domain]) == 1 for domain in DOMAINS)
     assert "metadata" not in snapshot["domains"]["instance"][0]

@@ -80,6 +80,10 @@ operational support.
   pins its effective package digest and permits one durable active operation.
   Configuration activation never changes that pin; an explicit, idle-only,
   audited reseed advances the generation and starts a new thread.
+- Progress checkpoint: appends project/work/role-instance-scoped goal, step,
+  action, activity, blocker, next action, and safe summary fields under an
+  idempotency id and expected sequence. Sensitive content fails before
+  persistence; live views consume the structured record without model parsing.
 - Message queue: provides durable inbox/outbox delivery. The active V4 runtime
   uses Postgres-backed queues; other queue backends remain future adapter
   options.

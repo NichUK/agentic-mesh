@@ -115,6 +115,13 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   reseeding records actor, reason, old thread, old/new digest, and generation in
   append-only Postgres history, then requires the next real operation to create
   a new thread. Upgraded legacy affinities remain `unpinned` until reseeded.
+- V5 progress checkpoints append caller-supplied structured goal, step,
+  completed action, activity, blocker, next action, and safe summary fields.
+  A project-unique checkpoint id makes exact retries idempotent; an expected
+  previous sequence plus a work-item lock rejects stale/concurrent writers.
+  Common credentials, private keys, credential-bearing database URLs, and
+  explicit private-reasoning tags are rejected before persistence. Live views
+  use the stored fields directly without a parser or summarizer model.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

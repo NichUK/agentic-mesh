@@ -530,6 +530,21 @@ provider/thread identifiers and both digests, then the affinity enters
 generation's thread. Prompt text, private reasoning, and credentials are never
 copied into the reseed record.
 
+Role progress uses the existing durable `progress` and live-read boundaries.
+Each write is an explicit checkpoint with a project-unique idempotency id and
+an expected previous sequence. The store locks the work item, verifies that the
+concrete role instance belongs to the same project, and appends the next
+sequence in the same transaction that emits its live-read event. Replaying the
+same id and payload returns the original record; stale or conflicting writers
+fail without a partial row or sequence gap.
+
+Goal, step, completed action, current activity, blocker, next action, and safe
+summary remain separate fields. The safe summary is supplied by the role and
+stored directly. Bounded validation rejects common credential material,
+private keys, credential-bearing connection strings, and explicit private
+reasoning tags before database access. V5 does not parse model prose or invoke
+another model to construct operational progress.
+
 Planned and possible providers remain adapter choices rather than product
 semantics:
 

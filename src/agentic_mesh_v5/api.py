@@ -29,6 +29,10 @@ from agentic_mesh_v5.lifecycle import LifecycleAuthorizationError
 from agentic_mesh_v5.lifecycle import LifecycleConflict
 from agentic_mesh_v5.lifecycle import LifecycleNotFound
 from agentic_mesh_v5.lifecycle import LifecycleStore
+from agentic_mesh_v5.progress import ProgressConflict
+from agentic_mesh_v5.progress import ProgressDraft
+from agentic_mesh_v5.progress import ProgressNotFound
+from agentic_mesh_v5.progress import ProgressStore
 from agentic_mesh_v5.queues import LeaseExpired
 from agentic_mesh_v5.queues import QueueAuthorizationError
 from agentic_mesh_v5.queues import QueueConflict
@@ -218,6 +222,38 @@ class QueueMetricsResponse(ApiModel):
     total_attempts: int
 
 
+class ProgressCreate(ApiModel):
+    checkpoint_id: str = Field(min_length=1, max_length=128)
+    role_instance_id: str = Field(min_length=1, max_length=128)
+    expected_previous_sequence: int = Field(ge=0)
+    status: str = Field(min_length=1, max_length=32)
+    goal: str = Field(min_length=1, max_length=2000)
+    step: str = Field(min_length=1, max_length=2000)
+    completed_action: str | None = Field(default=None, max_length=2000)
+    activity: str | None = Field(default=None, max_length=2000)
+    blocker: str | None = Field(default=None, max_length=2000)
+    next_action: str = Field(min_length=1, max_length=2000)
+    safe_summary: str = Field(min_length=1, max_length=1000)
+
+
+class ProgressResponse(ApiModel):
+    project_id: str
+    progress_id: int
+    checkpoint_id: str
+    work_item_id: str
+    role_instance_id: str
+    sequence: int
+    status: str
+    goal: str
+    step: str
+    completed_action: str | None
+    activity: str | None
+    blocker: str | None
+    next_action: str
+    safe_summary: str
+    recorded_at: str
+
+
 class RecordsResponse(ApiModel):
     records: list[dict[str, Any]]
 
@@ -337,9 +373,9 @@ class ControlQueries:
                 WHERE project_id = %s ORDER BY offered_at, handoff_id
             """,
             "progress": f"""
-                SELECT progress_id, work_item_id, role_instance_id, sequence, status,
-                       goal, step, completed_action, activity, blocker, next_action,
-                       safe_summary, recorded_at
+                SELECT progress_id, checkpoint_id, work_item_id, role_instance_id,
+                       sequence, status, goal, step, completed_action, activity,
+                       blocker, next_action, safe_summary, recorded_at
                 FROM {SCHEMA}.progress
                 WHERE project_id = %s ORDER BY progress_id
             """,
@@ -380,6 +416,7 @@ def create_app(
     selected_authorizer = authorizer or TokenAuthorizer.from_environment()
     selected_telemetry = telemetry or Telemetry()
     lifecycle = LifecycleStore(database_url)
+    progress_store = ProgressStore(database_url)
     queues = RoleQueueStore(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
@@ -501,12 +538,14 @@ def create_app(
     @app.exception_handler(LifecycleNotFound)
     @app.exception_handler(QueueNotFound)
     @app.exception_handler(ReadModelNotFound)
+    @app.exception_handler(ProgressNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
     @app.exception_handler(LifecycleConflict)
     @app.exception_handler(QueueConflict)
     @app.exception_handler(LeaseExpired)
+    @app.exception_handler(ProgressConflict)
     async def conflict(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 409, "conflict", str(exc))
 
@@ -910,6 +949,44 @@ def create_app(
     @app.get(f"{API_PREFIX}/projects/{{project_id}}/progress", response_model=RecordsResponse, tags=["progress"])
     def progress(project_id: str, identity: Principal = Depends(principal)):
         return records("progress", project_id, identity)
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/"
+        "{work_item_id}/progress",
+        response_model=ProgressResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["progress"],
+    )
+    def record_progress(
+        project_id: str,
+        work_item_id: str,
+        payload: ProgressCreate,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        selected_telemetry.annotate(
+            project_id=project_id,
+            work_item_id=work_item_id,
+        )
+        return asdict(
+            progress_store.record(
+                ProgressDraft(
+                    project_id=project_id,
+                    work_item_id=work_item_id,
+                    role_instance_id=payload.role_instance_id,
+                    checkpoint_id=payload.checkpoint_id,
+                    expected_previous_sequence=payload.expected_previous_sequence,
+                    status=payload.status,
+                    goal=payload.goal,
+                    step=payload.step,
+                    completed_action=payload.completed_action,
+                    activity=payload.activity,
+                    blocker=payload.blocker,
+                    next_action=payload.next_action,
+                    safe_summary=payload.safe_summary,
+                )
+            )
+        )
 
     @app.get(f"{API_PREFIX}/projects/{{project_id}}/configuration", response_model=RecordsResponse, tags=["configuration"])
     def configuration(project_id: str, identity: Principal = Depends(principal)):
