@@ -1,37 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "additionalProperties": false,
+  "type": "object", "additionalProperties": false,
   "required": ["schema_version", "project_id", "display_name", "packages", "repositories", "documents", "teams", "ado", "credentials", "roles", "limits"],
   "properties": {
     "schema_version": {"const": 1},
     "project_id": {"$ref": "#/$defs/id"},
     "display_name": {"type": "string", "minLength": 1, "maxLength": 200},
-    "packages": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["organization_release_digest", "overrides"],
-      "properties": {
+    "packages": {"type": "object", "additionalProperties": false,
+      "required": ["organization_release_digest", "overrides"], "properties": {
         "organization_release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "overrides": {"type": "array", "uniqueItems": true,
-          "items": {"type": "string", "pattern": "^project-override/[a-z][a-z0-9-]*@[0-9]+\\.[0-9]+\\.[0-9]+$"}}
-      }
-    },
-    "repositories": {"type": "object", "minProperties": 1,
-      "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"$ref": "#/$defs/repository"}},
-    "documents": {"type": "object", "propertyNames": {"$ref": "#/$defs/id"},
-      "additionalProperties": {"$ref": "#/$defs/document"}},
+        "overrides": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^project-override/[a-z][a-z0-9-]*@[0-9]+\\.[0-9]+\\.[0-9]+$"}}
+      }},
+    "repositories": {"type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"$ref": "#/$defs/repository"}},
+    "documents": {"type": "object", "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"$ref": "#/$defs/document"}},
     "teams": {"$ref": "#/$defs/teams"},
     "ado": {"$ref": "#/$defs/ado"},
-    "credentials": {"type": "object", "minProperties": 1,
-      "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"$ref": "#/$defs/credential"}},
-    "roles": {"type": "object", "minProperties": 1,
-      "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"$ref": "#/$defs/role"}},
-    "limits": {
-      "type": "object", "additionalProperties": false,
-      "required": ["max_total_instances"],
-      "properties": {"max_total_instances": {"type": "integer", "minimum": 1, "maximum": 256}}
-    }
+    "credentials": {"type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"$ref": "#/$defs/credential"}},
+    "roles": {"type": "object", "minProperties": 1, "propertyNames": {"$ref": "#/$defs/id"}, "additionalProperties": {"$ref": "#/$defs/role"}},
+    "limits": {"type": "object", "additionalProperties": false,
+      "required": ["max_total_instances"], "properties": {"max_total_instances": {"type": "integer", "minimum": 1, "maximum": 256}}}
   },
   "$defs": {
     "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"},
