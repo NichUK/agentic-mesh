@@ -16,6 +16,8 @@ from agentic_mesh_v5.config_activation import ConfigActivationStore
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import database_url_from_environment
+from agentic_mesh_v5.database_operations import DatabaseBackupService
+from agentic_mesh_v5.database_operations import MaintenanceStore
 from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.package_resolver import resolve_packages
 
@@ -71,6 +73,29 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "database-status", help="show V5 Postgres migration status"
     )
+    subparsers.add_parser(
+        "database-maintenance-status", help="show the durable V5 write-pause state"
+    )
+    database_pause = subparsers.add_parser(
+        "database-pause", help="wait for active writers and pause V5 mutations"
+    )
+    database_pause.add_argument("--actor", required=True)
+    database_pause.add_argument("--reason", required=True)
+    database_resume = subparsers.add_parser(
+        "database-resume", help="resume V5 mutations after maintenance"
+    )
+    database_resume.add_argument("--actor", required=True)
+    database_resume.add_argument("--reason", required=True)
+    database_backup = subparsers.add_parser(
+        "database-backup", help="create an atomic verified V5 Postgres archive"
+    )
+    database_backup.add_argument("--output", type=Path, required=True)
+    database_backup.add_argument("--actor", required=True)
+    database_backup.add_argument("--reason", required=True)
+    database_restore = subparsers.add_parser(
+        "database-restore", help="restore a verified archive into an empty database"
+    )
+    database_restore.add_argument("--archive", type=Path, required=True)
     api_serve = subparsers.add_parser(
         "api-serve", help="serve the versioned V5 control API"
     )
@@ -166,6 +191,74 @@ def main(argv: Sequence[str] | None = None) -> int:
                     else "database-current"
                 ),
                 **result.to_dict(),
+            },
+            as_json=args.json,
+        )
+        return 0
+
+    if args.command in {
+        "database-maintenance-status",
+        "database-pause",
+        "database-resume",
+        "database-backup",
+        "database-restore",
+    }:
+        try:
+            database_url = database_url_from_environment()
+            if args.command == "database-maintenance-status":
+                maintenance = MaintenanceStore(database_url).status().to_dict()
+                operation_status = (
+                    "database-active"
+                    if maintenance["status"] == "active"
+                    else "database-paused"
+                )
+                result = {
+                    "maintenance_status": maintenance.pop("status"),
+                    **maintenance,
+                }
+            elif args.command == "database-pause":
+                maintenance = MaintenanceStore(database_url).pause(
+                    actor=args.actor, reason=args.reason
+                ).to_dict()
+                operation_status = "database-paused"
+                result = {
+                    "maintenance_status": maintenance.pop("status"),
+                    **maintenance,
+                }
+            elif args.command == "database-resume":
+                maintenance = MaintenanceStore(database_url).resume(
+                    actor=args.actor, reason=args.reason
+                ).to_dict()
+                operation_status = "database-active"
+                result = {
+                    "maintenance_status": maintenance.pop("status"),
+                    **maintenance,
+                }
+            elif args.command == "database-backup":
+                result = DatabaseBackupService(database_url).backup(
+                    args.output, actor=args.actor, reason=args.reason
+                ).to_dict()
+                operation_status = "database-backup-created"
+            else:
+                result = DatabaseBackupService(database_url).restore(
+                    args.archive
+                ).to_dict()
+                operation_status = "database-restored-paused"
+        except (DatabaseError, ValueError) as exc:
+            _write(
+                {
+                    "runtime": "agentic-mesh-v5",
+                    "status": "rejected",
+                    "error": str(exc),
+                },
+                as_json=args.json,
+            )
+            return 2
+        _write(
+            {
+                "runtime": "agentic-mesh-v5",
+                "status": operation_status,
+                **result,
             },
             as_json=args.json,
         )

@@ -7,6 +7,7 @@ from typing import Literal
 
 from agentic_mesh_v5 import __version__
 from agentic_mesh_v5.database import DatabaseError, MigrationError, MigrationRunner
+from agentic_mesh_v5.database_operations import MaintenanceStore
 from agentic_mesh_v5.telemetry import Telemetry
 
 
@@ -41,6 +42,7 @@ class HealthReport:
 class HealthReporter:
     def __init__(self, database_url: str, telemetry: Telemetry) -> None:
         self._runner = MigrationRunner(database_url)
+        self._maintenance = MaintenanceStore(database_url)
         self._telemetry = telemetry
 
     def liveness(self) -> HealthReport:
@@ -89,16 +91,49 @@ class HealthReporter:
             )
         else:
             pending = bool(migration.pending_versions)
+            maintenance_paused = False
+            if not pending:
+                try:
+                    maintenance_paused = self._maintenance.status().status == "paused"
+                except DatabaseError:
+                    dependency = DependencyHealth(
+                        name="postgres",
+                        status="unavailable",
+                        reason="maintenance_state_unavailable",
+                    )
+                    report = HealthReport(
+                        runtime="agentic-mesh-v5",
+                        version=__version__,
+                        kind="readiness",
+                        status="degraded",
+                        checked_at=_now(),
+                        schema_version=migration.current_version,
+                        available_schema_version=migration.available_version,
+                        dependencies=(dependency,),
+                    )
+                    self._telemetry.record_health(
+                        dependency="postgres",
+                        status=dependency.status,
+                        duration=monotonic() - started_at,
+                    )
+                    return report
+            reason = (
+                "pending_migrations"
+                if pending
+                else "maintenance_paused"
+                if maintenance_paused
+                else "schema_current"
+            )
             dependency = DependencyHealth(
                 name="postgres",
-                status="degraded" if pending else "ok",
-                reason="pending_migrations" if pending else "schema_current",
+                status="degraded" if pending or maintenance_paused else "ok",
+                reason=reason,
             )
             report = HealthReport(
                 runtime="agentic-mesh-v5",
                 version=__version__,
                 kind="readiness",
-                status="degraded" if pending else "ok",
+                status="degraded" if pending or maintenance_paused else "ok",
                 checked_at=_now(),
                 schema_version=migration.current_version,
                 available_schema_version=migration.available_version,
