@@ -19,7 +19,6 @@ from agentic_mesh_v5.api import create_app
 from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
-from agentic_mesh_v5.lifecycle import LifecycleStore
 import agentic_mesh_v5.read_models as read_model_module
 from agentic_mesh_v5.read_models import DOMAINS
 from agentic_mesh_v5.read_models import ReadModelStore

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import asdict
 from datetime import datetime
 from functools import partial
@@ -930,7 +929,7 @@ def create_app(
                 if idle_polls >= 15:
                     yield ": keep-alive\n\n"
                     idle_polls = 0
-                await asyncio.sleep(1)
+                await anyio.sleep(1)
 
         return StreamingResponse(
             generate(),

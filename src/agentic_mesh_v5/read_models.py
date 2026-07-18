@@ -208,9 +208,14 @@ class ReadModelStore:
         if not isinstance(after_event_id, int) or after_event_id < 0:
             raise ValueError("after_event_id must be a non-negative integer")
         _limit(limit)
-        self.require_project(project_id)
         try:
             with psycopg.connect(self._database_url, autocommit=True) as connection:
+                exists = connection.execute(
+                    f"SELECT 1 FROM {SCHEMA}.projects WHERE project_id = %s",
+                    (project_id,),
+                ).fetchone()
+                if exists is None:
+                    raise ReadModelNotFound("project not found")
                 rows = connection.execute(
                     f"""
                     SELECT event_id, project_id, domain, entity_id, operation,
@@ -222,6 +227,8 @@ class ReadModelStore:
                     """,
                     (project_id, after_event_id, limit),
                 ).fetchall()
+        except ReadModelError:
+            raise
         except Exception as exc:
             raise ReadModelError("read-model event read failed") from exc
         return tuple(ProjectionEvent(*row) for row in rows)
