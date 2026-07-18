@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -307,6 +308,22 @@ def test_failed_rollback_is_visible_and_never_reports_success(tmp_path: Path):
     ]
 
 
+def test_existing_recovery_branch_is_rejected_without_deleting_it(tmp_path: Path):
+    plan_path, _, job, source, _, _, evidence_root = _fixture(tmp_path)
+    branch = f"codex/recovery-{hashlib.sha256(b'run-1').hexdigest()[:12]}"
+    original = _run("git", "rev-parse", "HEAD", cwd=source)
+    _run("git", "branch", branch, original, cwd=source)
+
+    result = control.RecoveryController(
+        control.load_plan(plan_path), pull_requests=RecordingPullRequests()
+    ).execute(job)
+
+    assert result["outcome"] == "failed"
+    assert _run("git", "rev-parse", branch, cwd=source) == original
+    evidence = _evidence(result, evidence_root)
+    assert evidence["candidate_commit"] is None
+
+
 @pytest.mark.parametrize(
     "unsafe",
     [
@@ -314,6 +331,9 @@ def test_failed_rollback_is_visible_and_never_reports_success(tmp_path: Path):
         ["git", "push", "origin", "main"],
         ["git", "status", "--short"],
         ["sh", "-c", "gh pr merge 17"],
+        ["bash", "-lc", "gh pr merge 17"],
+        ["pwsh", "-c", "gh pr merge 17"],
+        ["cmd.exe", "/c", "gh pr merge 17"],
     ],
 )
 def test_plan_rejects_governance_and_shell_commands(tmp_path: Path, unsafe: list[str]):

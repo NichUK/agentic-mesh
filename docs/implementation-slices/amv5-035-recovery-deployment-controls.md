@@ -28,7 +28,7 @@ request. The recovery identity cannot approve or merge that pull request.
   restart, verification, rollback, and running-revision checks are fixed
   stages; the runner is not a general workflow engine. Project-supplied stages
   cannot invoke Git or GitHub CLI; all source-control work uses the runner's
-  fixed adapter.
+  fixed adapter. Shell interpreters are not valid stage executables.
 - Commit before building and deploy that immutable commit. After restart, the
   running-revision command must return exactly the candidate commit.
 - If deployment, restart, or verification fails, run the configured rollback,

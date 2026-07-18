@@ -273,6 +273,7 @@ class RecoveryController:
         deploy_started = False
         success = False
         worktree_added = False
+        branch_created = False
         try:
             self._validate_source()
             base_commit = self._git(
@@ -293,6 +294,7 @@ class RecoveryController:
             )
             worktree_added = True
             self._git(workspace, "switch", "--create", branch)
+            branch_created = True
 
             repair_results = self._stage_commands(
                 "repair", workspace, job, deadline, extra_environment={}
@@ -418,7 +420,7 @@ class RecoveryController:
                         "worktree", "remove", "--force", str(workspace),
                         check=False,
                     )
-                if not success:
+                if branch_created and not success:
                     self._git(
                         self.plan.repository.source,
                         "branch", "--delete", "--force", branch,
@@ -774,9 +776,7 @@ def _reject_unsafe_command(argv: Sequence[str], stage: str) -> None:
     if executable in {"gh", "gh.exe"}:
         raise PlanError(f"commands.{stage} cannot invoke GitHub CLI")
     if executable in {"sh", "bash", "cmd", "cmd.exe", "powershell", "pwsh"}:
-        lowered = {item.lower() for item in argv[1:]}
-        if lowered.intersection({"-c", "/c", "-command", "-encodedcommand"}):
-            raise PlanError(f"commands.{stage} cannot execute a shell command string")
+        raise PlanError(f"commands.{stage} cannot invoke a shell interpreter")
     if executable in {"git", "git.exe"}:
         raise PlanError(
             f"commands.{stage} cannot invoke the runner's source-control boundary"
