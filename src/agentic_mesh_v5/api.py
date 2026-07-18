@@ -1206,6 +1206,7 @@ def create_app(
     @app.post(
         f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/reliability/incidents/{{incident_id}}/attempts",
         response_model=ReliabilityStatusResponse,
+        status_code=status.HTTP_201_CREATED,
         tags=["reliability"],
     )
     def record_failure_attempt(

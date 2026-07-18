@@ -707,6 +707,18 @@ def test_reliability_api_is_project_scoped_and_guards_early_terminal_error(
     )
     assert early.status_code == 409
     assert "exhausted retry" in early.json()["detail"]
+    recorded = client.post(
+        f"{path}/{incident_id}/attempts",
+        headers=headers,
+        json={
+            "attempt_id": "technical-result-1",
+            "stage": "technical",
+            "attempt_number": 1,
+            "outcome": "failed",
+        },
+    )
+    assert recorded.status_code == 201
+    assert recorded.json()["incident"]["next_attempt_number"] == 2
 
 
 def test_queue_claim_is_concurrent_and_lease_token_controls_completion(

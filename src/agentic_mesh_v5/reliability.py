@@ -291,18 +291,22 @@ class ReliabilityStore:
         try:
             with psycopg.connect(self._database_url, autocommit=True) as connection:
                 with connection.transaction():
+                    work = connection.execute(
+                        f"""
+                        SELECT status FROM {SCHEMA}.work_items
+                        WHERE project_id = %s AND work_item_id = %s
+                        FOR UPDATE
+                        """,
+                        (project_id, work_item_id),
+                    ).fetchone()
+                    if work is None:
+                        raise ReliabilityNotFound("work item not found")
                     incident = connection.execute(
                         f"""
-                        SELECT incident.work_item_id, incident.owner_role_id,
-                               incident.status, incident.next_stage,
-                               incident.next_attempt_number,
-                               incident.safe_summary, incident.source_ref,
-                               work.status
-                        FROM {SCHEMA}.failure_incidents AS incident
-                        JOIN {SCHEMA}.work_items AS work
-                          ON work.project_id = incident.project_id
-                         AND work.work_item_id = incident.work_item_id
-                        WHERE incident.project_id = %s AND incident.incident_id = %s
+                        SELECT work_item_id, owner_role_id, status, next_stage,
+                               next_attempt_number, safe_summary, source_ref
+                        FROM {SCHEMA}.failure_incidents
+                        WHERE project_id = %s AND incident_id = %s
                         FOR UPDATE
                         """,
                         (project_id, incident_id),
@@ -324,7 +328,7 @@ class ReliabilityStore:
                         return self._status(connection, project_id, incident_id)
                     if incident[2] != "active":
                         raise ReliabilityConflict("failure incident is not accepting attempts")
-                    if incident[7] != "active":
+                    if work[0] != "active":
                         raise ReliabilityConflict("work item is not active for retry")
                     if (incident[3], incident[4]) != (stage, attempt_number):
                         raise ReliabilityConflict(

@@ -235,6 +235,15 @@ def test_complete_failure_chain_is_required_before_terminal_error(
         "failure_incident_id": incident_id,
     }
     assert store.status("alpha", "terminal-work", incident_id).incident.status == "terminal"
+    with pytest.raises(LifecycleConflict, match="invalid work item transition"):
+        lifecycle.transition_work_item(
+            project_id="alpha",
+            work_item_id="terminal-work",
+            target_status="active",
+            actor_id="project-manager",
+            correlation_id="terminal-cannot-resume",
+            expected_version=3,
+        )
     with psycopg.connect(database_url) as connection:
         assert connection.execute(
             """
