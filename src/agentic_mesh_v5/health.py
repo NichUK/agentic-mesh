@@ -6,7 +6,7 @@ from time import monotonic
 from typing import Literal
 
 from agentic_mesh_v5 import __version__
-from agentic_mesh_v5.database import DatabaseError, MigrationRunner
+from agentic_mesh_v5.database import DatabaseError, MigrationError, MigrationRunner
 from agentic_mesh_v5.telemetry import Telemetry
 
 
@@ -59,6 +59,20 @@ class HealthReporter:
         started_at = monotonic()
         try:
             migration = self._runner.status()
+        except MigrationError:
+            dependency = DependencyHealth(
+                name="postgres", status="degraded", reason="schema_invalid"
+            )
+            report = HealthReport(
+                runtime="agentic-mesh-v5",
+                version=__version__,
+                kind="readiness",
+                status="degraded",
+                checked_at=_now(),
+                schema_version=None,
+                available_schema_version=None,
+                dependencies=(dependency,),
+            )
         except DatabaseError:
             dependency = DependencyHealth(
                 name="postgres", status="unavailable", reason="connection_failed"

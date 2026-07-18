@@ -18,7 +18,7 @@ import pytest
 
 from agentic_mesh_v5.api import API_PREFIX, create_app
 from agentic_mesh_v5.api_auth import TokenAuthorizer
-from agentic_mesh_v5.database import MigrationRunner, load_migrations
+from agentic_mesh_v5.database import MigrationError, MigrationRunner, load_migrations
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.telemetry import Telemetry, telemetry_from_environment
 
@@ -268,6 +268,34 @@ def test_pending_and_current_migrations_control_readiness(
     assert work_span.attributes["mesh.project.id"] == "alpha"
     assert work_span.attributes["mesh.work_item.id"] == "work-traced"
     assert work_span.attributes["mesh.correlation.id"] == "corr-traced"
+
+
+def test_invalid_migration_history_has_a_distinct_redacted_state(monkeypatch) -> None:
+    def invalid_history(_runner):
+        raise MigrationError("sensitive internal schema detail")
+
+    monkeypatch.setattr(MigrationRunner, "status", invalid_history)
+    telemetry, _exporter, _metric_reader = _telemetry()
+    client = TestClient(
+        create_app(
+            "postgresql://db-user:db-password@unused/mesh",
+            authorizer=_authorizer(),
+            telemetry=telemetry,
+        )
+    )
+
+    ready = client.get(f"{API_PREFIX}/health/ready")
+
+    assert ready.status_code == 503
+    assert ready.json()["dependencies"] == [
+        {
+            "name": "postgres",
+            "status": "degraded",
+            "reason": "schema_invalid",
+        }
+    ]
+    assert "sensitive internal schema detail" not in ready.text
+    assert "db-password" not in ready.text
 
 
 def test_environment_telemetry_does_not_require_a_collector(monkeypatch) -> None:
