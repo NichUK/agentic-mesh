@@ -86,7 +86,7 @@ CREATE TABLE agentic_mesh_v5.flow_transition_journal (
     project_id text NOT NULL,
     work_item_id text NOT NULL,
     sequence integer NOT NULL CHECK (sequence > 0),
-    operation_id text NOT NULL,
+    operation_id text NOT NULL CHECK (btrim(operation_id) <> ''),
     request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
     action text NOT NULL CHECK (action IN ('start', 'prepare', 'pickup', 'complete')),
     from_state text,

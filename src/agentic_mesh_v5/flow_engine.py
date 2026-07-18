@@ -247,46 +247,63 @@ class FlowEngine:
         )
         if kind not in {"consult", "inform"}:
             raise FlowEngineConflict("only consult and inform obligations are dispatched")
-        obligation = self._current_obligation(
-            project_id, work_item_id, kind, obligation_id
-        )
-        self._router.route(
-            RouteDraft(
-                project_id=project_id,
-                work_item_id=work_item_id,
-                target_role_id=obligation.accountable_role_id,
-                idempotency_key=(
-                    f"flow-{kind}-{work_item_id}-{obligation.entry_version}-{obligation_id}"
-                ),
-                payload={
-                    "flow_action": dict(obligation.payload),
-                    "state": obligation.state,
-                    "requested_by": actor_id,
-                },
-            )
-        )
         try:
             with psycopg.connect(self._database_url, autocommit=True) as connection:
-                row = connection.execute(
-                    f"""
-                    UPDATE {SCHEMA}.flow_obligations
-                    SET status = 'dispatched', updated_by = %s,
-                        updated_at = clock_timestamp()
-                    WHERE project_id = %s AND work_item_id = %s AND state = %s
-                      AND entry_version = %s AND obligation_kind = %s
-                      AND obligation_id = %s AND status IN ('pending', 'dispatched')
-                    RETURNING accountable_role_id, payload, status, evidence
-                    """,
-                    (
-                        actor_id, project_id, work_item_id, obligation.state,
-                        obligation.entry_version, kind, obligation_id,
-                    ),
-                ).fetchone()
-                if row is None:
-                    raise FlowEngineConflict("obligation is no longer current")
+                with connection.transaction():
+                    run = self._lock(connection, project_id, work_item_id)
+                    if run.status != "active":
+                        raise FlowEngineConflict("flow run is not active")
+                    row = connection.execute(
+                        f"""
+                        SELECT accountable_role_id, payload, status, evidence
+                        FROM {SCHEMA}.flow_obligations
+                        WHERE project_id = %s AND work_item_id = %s AND state = %s
+                          AND entry_version = %s AND obligation_kind = %s
+                          AND obligation_id = %s
+                          AND status IN ('pending', 'dispatched')
+                        FOR UPDATE
+                        """,
+                        (
+                            project_id, work_item_id, run.current_state, run.version,
+                            kind, obligation_id,
+                        ),
+                    ).fetchone()
+                    if row is None:
+                        raise FlowEngineConflict("obligation is no longer current")
+                    self._router.route_in_transaction(
+                        connection,
+                        RouteDraft(
+                            project_id=project_id,
+                            work_item_id=work_item_id,
+                            target_role_id=row[0],
+                            idempotency_key=(
+                                f"flow-{kind}-{work_item_id}-{run.version}-"
+                                f"{obligation_id}"
+                            ),
+                            payload={
+                                "flow_action": dict(row[1]),
+                                "state": run.current_state,
+                                "requested_by": actor_id,
+                            },
+                        ),
+                    )
+                    connection.execute(
+                        f"""
+                        UPDATE {SCHEMA}.flow_obligations
+                        SET status = 'dispatched', updated_by = %s,
+                            updated_at = clock_timestamp()
+                        WHERE project_id = %s AND work_item_id = %s AND state = %s
+                          AND entry_version = %s AND obligation_kind = %s
+                          AND obligation_id = %s
+                        """,
+                        (
+                            actor_id, project_id, work_item_id, run.current_state,
+                            run.version, kind, obligation_id,
+                        ),
+                    )
             return FlowObligation(
-                project_id, work_item_id, obligation.state, obligation.entry_version,
-                kind, obligation_id, row[0], row[1], row[2], row[3]
+                project_id, work_item_id, run.current_state, run.version,
+                kind, obligation_id, row[0], row[1], "dispatched", row[3]
             )
         except FlowEngineError:
             raise
@@ -652,17 +669,6 @@ class FlowEngine:
         return tuple(
             FlowObligation(project_id, work_item_id, *row) for row in rows
         )
-
-    def _current_obligation(
-        self, project_id: str, work_item_id: str, kind: str, obligation_id: str
-    ) -> FlowObligation:
-        matches = [
-            item for item in self.obligations(project_id, work_item_id)
-            if item.kind == kind and item.obligation_id == obligation_id
-        ]
-        if len(matches) != 1:
-            raise FlowEngineNotFound("current obligation was not found")
-        return matches[0]
 
     @staticmethod
     def _insert_obligations(

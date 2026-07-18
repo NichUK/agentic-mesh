@@ -14,10 +14,12 @@ from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.flow_definition import validate_flow
 from agentic_mesh_v5.flow_engine import FlowEngine
 from agentic_mesh_v5.flow_engine import FlowEngineConflict
+from agentic_mesh_v5.flow_engine import FlowEngineError
 from agentic_mesh_v5.flow_engine import TransitionSource
 from agentic_mesh_v5.handoffs import HandoffStore
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.queues import RoleQueueStore
+from agentic_mesh_v5.routing import Router
 
 
 @pytest.fixture
@@ -390,6 +392,50 @@ def test_flow_start_rejects_wrong_owner_and_operation_conflict(flow_database) ->
             actor_id="project-manager",
             operation_id="start-flow",
         )
+
+
+def test_dispatch_rolls_back_route_and_obligation_together(
+    flow_database, monkeypatch
+) -> None:
+    database_url, _lifecycle, _queues, _source = flow_database
+    engine = FlowEngine(database_url)
+    engine.start(
+        project_id="alpha",
+        work_item_id="work-1",
+        flow=validate_flow(_flow_value(), digest="a" * 64),
+        fields={},
+        actor_id="project-manager",
+        operation_id="start-flow",
+    )
+    original = Router.route_in_transaction
+
+    def route_then_fail(router, connection, draft):
+        original(router, connection, draft)
+        raise RuntimeError("injected dispatch failure")
+
+    monkeypatch.setattr(Router, "route_in_transaction", route_then_fail)
+    with pytest.raises(FlowEngineError, match="dispatch failed"):
+        engine.dispatch(
+            project_id="alpha",
+            work_item_id="work-1",
+            kind="consult",
+            obligation_id="review",
+            actor_id="business-analyst",
+        )
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            """
+            SELECT count(*) FROM agentic_mesh_v5.queue_items
+            WHERE project_id = 'alpha' AND queue_id = 'reviewer'
+            """
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            """
+            SELECT status FROM agentic_mesh_v5.flow_obligations
+            WHERE project_id = 'alpha' AND work_item_id = 'work-1'
+              AND obligation_kind = 'consult' AND obligation_id = 'review'
+            """
+        ).fetchone() == ("pending",)
 
 
 def test_prepare_recovers_from_crash_after_reservation(
