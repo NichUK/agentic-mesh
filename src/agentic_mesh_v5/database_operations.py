@@ -131,15 +131,15 @@ class MaintenanceStore:
         reason = _required(reason, "reason")
         try:
             with psycopg.connect(self._database_url) as connection:
-                table_names = _protected_tables(connection)
-                if table_names:
-                    connection.execute(
-                        sql.SQL("LOCK TABLE {} IN SHARE MODE").format(
-                            sql.SQL(", ").join(
-                                sql.Identifier(SCHEMA, name) for name in table_names
-                            )
-                        )
-                    )
+                # Every guarded mutation reads this row from a trigger and keeps
+                # its ACCESS SHARE table lock until transaction end. Taking one
+                # ACCESS EXCLUSIVE lock therefore waits for existing writers
+                # without deadlocking on their target-table lock order. New
+                # writers wait here, observe `paused` after commit, and fail.
+                connection.execute(
+                    f"LOCK TABLE {SCHEMA}.database_maintenance "
+                    "IN ACCESS EXCLUSIVE MODE"
+                )
                 row = connection.execute(
                     f"""
                     SELECT status, reason, changed_by, changed_at::text

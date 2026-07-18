@@ -254,6 +254,12 @@ def test_pause_waits_for_active_writer_and_guards_all_mutations(database_factory
         )
         time.sleep(0.25)
         assert not future.done()
+        writer.execute(
+            """
+            INSERT INTO agentic_mesh_v5.project_sponsors(project_id, sponsor_id)
+            VALUES ('acknowledged', 'sponsor-after-pause-request')
+            """
+        )
         writer.commit()
         paused = future.result(timeout=10)
     writer.close()
@@ -267,6 +273,12 @@ def test_pause_waits_for_active_writer_and_guards_all_mutations(database_factory
         assert connection.execute(
             "SELECT display_name FROM agentic_mesh_v5.projects WHERE project_id = 'acknowledged'"
         ).fetchone()[0] == "Acknowledged"
+        assert connection.execute(
+            """
+            SELECT sponsor_id FROM agentic_mesh_v5.project_sponsors
+            WHERE project_id = 'acknowledged'
+            """
+        ).fetchone()[0] == "sponsor-after-pause-request"
         with pytest.raises(
             psycopg.errors.ObjectNotInPrerequisiteState,
             match="maintenance pause",
