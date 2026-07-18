@@ -18,6 +18,7 @@ from agentic_mesh_v4.auto_dispatch import resolve_auto_dispatch
 from agentic_mesh_v4.auto_dispatch import without_self_dispatch_targets
 from agentic_mesh_v4.auto_handoff import create_auto_dispatch_handoffs
 from agentic_mesh_v4.artifact_preflight import RoleArtifactPreflight
+from agentic_mesh_v4.codex_protocol import AppServerPollTimeout
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
 from agentic_mesh_v4.codex_protocol import CodexProtocolError
 from agentic_mesh_v4.completion_gate import evaluate_completion_contract
@@ -1604,11 +1605,58 @@ class V4Runtime:
         message_id: str,
     ) -> str:
         reply_parts: list[str] = []
-        next_control_check = monotonic() + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
+        current_time = monotonic()
+        next_control_check = current_time + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
+        read_timeout_seconds = client.read_timeout_seconds
+        read_deadline = (
+            current_time + read_timeout_seconds
+            if read_timeout_seconds is not None
+            else None
+        )
         last_cadence_rejection: tuple[str, str | None, str | None] | None = None
         while True:
             try:
-                event = client.receive_event()
+                event = client.receive_event(
+                    timeout_seconds=(
+                        min(
+                            DETACHED_CONTROL_CHECK_INTERVAL_SECONDS,
+                            max(0.0, read_deadline - current_time),
+                        )
+                        if read_deadline is not None
+                        else None
+                    )
+                )
+            except AppServerPollTimeout as exc:
+                current_time = monotonic()
+                resolved_turn_id = turn_id or self._active_turn_id(role_instance_id)
+                if read_deadline is not None and current_time >= read_deadline:
+                    event_type = "turn/readTimeoutAfterOutput" if reply_parts else "turn/readTimeoutStillRunning"
+                    self.db.record_agent_event(
+                        role_instance_id=role_instance_id,
+                        event_type=event_type,
+                        content=str(exc),
+                        payload={"error": str(exc)},
+                        thread_id=thread_id,
+                        turn_id=resolved_turn_id,
+                        message_id=message_id,
+                    )
+                released, last_cadence_rejection = self._release_detached_turn_if_authorized(
+                    client=client,
+                    role_instance_id=role_instance_id,
+                    thread_id=thread_id,
+                    turn_id=resolved_turn_id,
+                    message_id=message_id,
+                    _last_rejection_key=last_cadence_rejection,
+                )
+                if released:
+                    return "".join(reply_parts)
+                if read_deadline is not None and current_time >= read_deadline:
+                    raise AgentTurnStillRunning(
+                        "no app-server event before read timeout; "
+                        f"leaving turn {resolved_turn_id or '<unknown>'} active"
+                    ) from exc
+                next_control_check = current_time + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
+                continue
             except Exception as exc:
                 if _looks_like_receive_timeout(exc):
                     event_type = "turn/readTimeoutAfterOutput" if reply_parts else "turn/readTimeoutStillRunning"
@@ -1673,6 +1721,8 @@ class V4Runtime:
             if method in {"turn/failed", "turn/cancelled", "turn/canceled", "thread/closed"}:
                 raise AgentTerminalInterruption(method)
             current_time = monotonic()
+            if read_timeout_seconds is not None:
+                read_deadline = current_time + read_timeout_seconds
             if current_time >= next_control_check:
                 next_control_check = current_time + DETACHED_CONTROL_CHECK_INTERVAL_SECONDS
                 resolved_turn_id = turn_id or self._active_turn_id(role_instance_id)

@@ -14,8 +14,10 @@ import pytest
 
 import agentic_mesh_v4.detached_turn_control as detached_turn_control
 import agentic_mesh_v4.runtime as v4_runtime
+from agentic_mesh_v4.codex_protocol import AppServerPollTimeout
 from agentic_mesh_v4.codex_protocol import CodexAppServerClient
 from agentic_mesh_v4.codex_protocol import InMemoryTransport
+from agentic_mesh_v4.codex_protocol import WebSocketTransport
 from agentic_mesh_v4.config import load_project_config
 from agentic_mesh_v4.detached_turn_control import CONTROL_SCHEMA
 from agentic_mesh_v4.detached_turn_control import evaluate_detached_turn_control
@@ -149,6 +151,36 @@ class _EventsThenTimeoutTransport(InMemoryTransport):
         if self.events:
             return self.events.pop(0)
         raise TimeoutError("Connection timed out")
+
+
+_POLL_TIMEOUT = object()
+
+
+class _SilentPollingTransport(InMemoryTransport):
+    read_timeout_seconds = 5.0
+
+    def __init__(self, results, *, read_timeout_seconds: float = 5.0) -> None:
+        super().__init__()
+        self.results = list(results)
+        self.read_timeout_seconds = read_timeout_seconds
+        self.poll_timeouts: list[float] = []
+
+    def receive(self):
+        raise AssertionError("silent transport must use bounded polling")
+
+    def receive_with_timeout(self, timeout_seconds):
+        self.poll_timeouts.append(timeout_seconds)
+        result = self.results.pop(0)
+        if result is _POLL_TIMEOUT:
+            raise AppServerPollTimeout("bounded poll timed out")
+        return result
+
+
+class _SilentFailedInterruptTransport(_SilentPollingTransport):
+    def send(self, message):
+        if message.get("method") == "turn/interrupt":
+            raise ConnectionError("app-server interrupt unavailable")
+        return super().send(message)
 
 
 class _BecomesAuthorizedDatabase(_Database):
@@ -298,6 +330,145 @@ def test_continuous_events_release_when_detached_control_becomes_authorized(cont
         "item/agentMessage/delta",
         "turn/detachedControlReleased",
     ]
+
+
+def test_silent_receive_rechecks_and_releases_when_control_becomes_authorized(control_db, monkeypatch) -> None:
+    db = _BecomesAuthorizedDatabase(call=control_db.calls[0], lease_handle=control_db.lease_handle)
+    transport = _SilentPollingTransport([_POLL_TIMEOUT, _POLL_TIMEOUT])
+    client = CodexAppServerClient(transport)
+    client.initialized = True
+    clock = iter((0.0, 1.0, 2.0))
+    monkeypatch.setattr(v4_runtime, "monotonic", lambda: next(clock))
+    runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
+
+    reply = runtime._drain_available_events(
+        client=client,
+        role_instance_id=ROLE_INSTANCE_ID,
+        approval_policy="never",
+        thread_id="thread-platform-control",
+        turn_id=TURN_ID,
+        message_id=SOURCE_MESSAGE_ID,
+    )
+
+    assert reply == ""
+    assert transport.poll_timeouts == [1.0, 1.0]
+    assert transport.sent[-1]["method"] == "turn/interrupt"
+    assert db.events[-1]["event_type"] == "turn/detachedControlReleased"
+
+
+def test_silent_non_control_turn_continues_to_later_output_and_completion(monkeypatch) -> None:
+    db = _Database(call={}, lease_handle=None)
+    db.calls = []
+    transport = _SilentPollingTransport(
+        [
+            _POLL_TIMEOUT,
+            {"method": "item/agentMessage/delta", "params": {"delta": "ordinary-output"}},
+            _POLL_TIMEOUT,
+            {"method": "turn/completed", "params": {}},
+        ]
+    )
+    clock = iter((0.0, 1.0, 4.5, 5.5))
+    monkeypatch.setattr(v4_runtime, "monotonic", lambda: next(clock))
+    runtime = V4Runtime(db=db, project_config=load_project_config(PROJECT_CONFIG))
+
+    reply = runtime._drain_available_events(
+        client=CodexAppServerClient(transport),
+        role_instance_id="agentic-mesh-dev.engineering.1",
+        approval_policy="never",
+        thread_id="thread-engineering",
+        turn_id="turn-engineering",
+        message_id="msg-engineering",
+    )
+
+    assert reply == "ordinary-output"
+    assert transport.poll_timeouts == [1.0, 1.0, 1.0, 1.0]
+    assert [event["event_type"] for event in db.events] == ["item/agentMessage/delta", "turn/completed"]
+    assert not any(item.get("method") == "turn/interrupt" for item in transport.sent)
+
+
+def test_silent_authorized_control_keeps_turn_active_when_interrupt_fails(control_db, monkeypatch) -> None:
+    transport = _SilentFailedInterruptTransport([_POLL_TIMEOUT])
+    client = CodexAppServerClient(transport)
+    client.initialized = True
+    clock = iter((0.0, 1.0))
+    monkeypatch.setattr(v4_runtime, "monotonic", lambda: next(clock))
+    runtime = V4Runtime(db=control_db, project_config=load_project_config(PROJECT_CONFIG))
+
+    with pytest.raises(AgentTurnStillRunning, match="could not interrupt"):
+        runtime._drain_available_events(
+            client=client,
+            role_instance_id=ROLE_INSTANCE_ID,
+            approval_policy="never",
+            thread_id="thread-platform-control",
+            turn_id=TURN_ID,
+            message_id=SOURCE_MESSAGE_ID,
+        )
+
+    assert control_db.events[-1]["event_type"] == "turn/detachedControlRejected"
+    assert control_db.events[-1]["content"] == "interrupt_failed"
+    assert not any(event["event_type"] == "turn/detachedControlReleased" for event in control_db.events)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        (_expire_control, "expired_control"),
+        (_drift_dispatcher, "dispatcher_or_process_mismatch"),
+        (
+            lambda db: db.messages.append({"message_id": "msg-extra", "state": "queued"}),
+            "additional_nonterminal_traffic",
+        ),
+    ],
+)
+def test_silent_polling_keeps_unsafe_control_fail_closed_and_deduplicated(
+    control_db, monkeypatch, mutation, reason
+) -> None:
+    mutation(control_db)
+    transport = _SilentPollingTransport(
+        [_POLL_TIMEOUT, _POLL_TIMEOUT, _POLL_TIMEOUT],
+        read_timeout_seconds=3.0,
+    )
+    clock = iter((0.0, 1.0, 2.0, 3.0))
+    monkeypatch.setattr(v4_runtime, "monotonic", lambda: next(clock))
+    runtime = V4Runtime(db=control_db, project_config=load_project_config(PROJECT_CONFIG))
+
+    with pytest.raises(AgentTurnStillRunning, match="before read timeout"):
+        runtime._drain_available_events(
+            client=CodexAppServerClient(transport),
+            role_instance_id=ROLE_INSTANCE_ID,
+            approval_policy="never",
+            thread_id="thread-platform-control",
+            turn_id=TURN_ID,
+            message_id=SOURCE_MESSAGE_ID,
+        )
+
+    assert not any(item.get("method") == "turn/interrupt" for item in transport.sent)
+    rejected = [event for event in control_db.events if event["event_type"] == "turn/detachedControlRejected"]
+    assert len(rejected) == 1
+    assert rejected[0]["content"] == reason
+    assert control_db.events[-1]["event_type"] == "turn/readTimeoutStillRunning"
+
+
+def test_websocket_bounded_poll_restores_overall_read_timeout() -> None:
+    class _Socket:
+        def __init__(self) -> None:
+            self.timeouts = []
+
+        def settimeout(self, timeout) -> None:
+            self.timeouts.append(timeout)
+
+        def recv(self):
+            raise TimeoutError("socket timed out")
+
+    transport = WebSocketTransport.__new__(WebSocketTransport)
+    transport._socket = _Socket()
+    transport._poll_timeout_error = TimeoutError
+    transport.read_timeout_seconds = 30.0
+
+    with pytest.raises(AppServerPollTimeout):
+        transport.receive_with_timeout(1.0)
+
+    assert transport._socket.timeouts == [1.0, 30.0]
 
 
 def test_continuous_events_keep_turn_active_when_interrupt_fails(control_db, monkeypatch) -> None:

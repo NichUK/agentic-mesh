@@ -51,12 +51,21 @@ class CodexProtocolError(RuntimeError):
     pass
 
 
+class AppServerPollTimeout(TimeoutError):
+    """A bounded event poll elapsed without an app-server frame."""
+
+
 class AppServerTransport:
+    read_timeout_seconds: float | None = None
+
     def send(self, message: dict[str, Any]) -> dict[str, Any] | None:
         raise NotImplementedError
 
     def receive(self) -> dict[str, Any] | None:
         raise NotImplementedError
+
+    def receive_with_timeout(self, timeout_seconds: float) -> dict[str, Any] | None:
+        return self.receive()
 
     def send_response(self, request_id: int | str, result: dict[str, Any]) -> None:
         raise NotImplementedError
@@ -132,6 +141,8 @@ class WebSocketTransport(AppServerTransport):
             timeout=timeout_seconds,
             suppress_origin=True,
         )
+        self.read_timeout_seconds = float(read_timeout_seconds)
+        self._poll_timeout_error = websocket.WebSocketTimeoutException
         self._socket.settimeout(read_timeout_seconds)
 
     def send(self, message: dict[str, Any]) -> dict[str, Any] | None:
@@ -151,6 +162,15 @@ class WebSocketTransport(AppServerTransport):
         if not isinstance(value, dict):
             raise CodexProtocolError("Codex app-server sent a non-object JSON-RPC frame")
         return value
+
+    def receive_with_timeout(self, timeout_seconds: float) -> dict[str, Any] | None:
+        self._socket.settimeout(timeout_seconds)
+        try:
+            return self.receive()
+        except (TimeoutError, self._poll_timeout_error) as exc:
+            raise AppServerPollTimeout(f"no app-server event within {timeout_seconds:g} seconds") from exc
+        finally:
+            self._socket.settimeout(self.read_timeout_seconds)
 
 
 class CodexAppServerClient:
@@ -241,9 +261,15 @@ class CodexAppServerClient:
             params["cursor"] = cursor
         return self._request("thread/turns/items/list", params)
 
-    def receive_event(self) -> dict[str, Any] | None:
+    @property
+    def read_timeout_seconds(self) -> float | None:
+        return self.transport.read_timeout_seconds
+
+    def receive_event(self, *, timeout_seconds: float | None = None) -> dict[str, Any] | None:
         if self._pending_events:
             return self._pending_events.pop(0)
+        if timeout_seconds is not None:
+            return self.transport.receive_with_timeout(timeout_seconds)
         return self.transport.receive()
 
     def respond_to_server_request(self, *, request_id: int | str, result: dict[str, Any]) -> None:
