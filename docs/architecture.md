@@ -84,6 +84,10 @@ operational support.
   action, activity, blocker, next action, and safe summary fields under an
   idempotency id and expected sequence. Sensitive content fails before
   persistence; live views consume the structured record without model parsing.
+- Failure policy: advances one durable work-item incident through three
+  technical retries, three distinct Project Manager corrections, and one
+  independent recovery request. Attempt/event history is append-only, and the
+  lifecycle rejects terminal error until a failed recovery makes it eligible.
 - Message queue: provides durable inbox/outbox delivery. The active V4 runtime
   uses Postgres-backed queues; other queue backends remain future adapter
   options.

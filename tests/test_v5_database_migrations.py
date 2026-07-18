@@ -135,6 +135,9 @@ def test_clean_database_migrates_and_repeat_is_noop(postgres_database: str) -> N
         "thread_affinities",
         "thread_reseeds",
         "role_scaling_policies",
+        "failure_incidents",
+        "failure_attempts",
+        "recovery_requests",
         "schema_migrations",
     }.issubset(tables)
     assert "(project_id, available_at, outbox_id)" in outbox_index

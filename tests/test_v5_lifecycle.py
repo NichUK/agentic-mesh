@@ -216,10 +216,7 @@ def test_invalid_and_stale_transitions_mutate_nothing(lifecycle_database) -> Non
     assert len(EventStore(database_url).read("alpha")) == 2
 
 
-@pytest.mark.parametrize("terminal", ["completed", "error"])
-def test_terminal_outcomes_are_distinct_and_immutable(
-    lifecycle_database, terminal: str
-) -> None:
+def test_completed_outcome_is_terminal_and_immutable(lifecycle_database) -> None:
     _database_url, store = lifecycle_database
     _create_work(store)
     _activate(store)
@@ -227,16 +224,16 @@ def test_terminal_outcomes_are_distinct_and_immutable(
     terminal_item = store.transition_work_item(
         project_id="alpha",
         work_item_id="work-1",
-        target_status=terminal,
+        target_status="completed",
         actor_id="project-manager",
         correlation_id="corr-work-1",
         expected_version=2,
-        reason=f"terminal {terminal}",
+        reason="terminal completed",
         evidence={"artifact": "doc://acceptance"},
     )
 
-    assert terminal_item.status == terminal
-    assert terminal_item.terminal_reason == f"terminal {terminal}"
+    assert terminal_item.status == "completed"
+    assert terminal_item.terminal_reason == "terminal completed"
     assert terminal_item.terminal_evidence == {"artifact": "doc://acceptance"}
     with pytest.raises(LifecycleConflict, match="invalid work item transition"):
         store.transition_work_item(

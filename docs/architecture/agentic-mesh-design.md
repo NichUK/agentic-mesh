@@ -776,6 +776,27 @@ without a ready, delayed, or validly leased continuation is routed once to its
 project's Project Manager queue. An unavailable PM route is persisted as an
 operator-visible blocker rather than being treated as a successful sweep.
 
+### Bounded Retry And Terminal Error
+
+An initial verified execution failure opens one durable incident and routes
+technical retry 1 to the work item's configured owner. The incident then
+advances through exactly three technical retries and three Project Manager
+corrective attempts. PM correction instructions are stored with unique digests
+so repeating the same correction cannot consume another attempt.
+
+After the third failed PM correction, the control plane creates one durable
+independent-recovery request with an exact goal. That request is a valid
+continuation even though it deliberately sits outside normal role queues. A
+failed recovery makes terminal error eligible; the work-item error transition
+locks and consumes that eligibility in the same transaction. Early terminal
+error therefore cannot race or bypass the 3/3/1 chain.
+
+Attempt records and event-journal entries are append-only. Exact caller retries
+are idempotent, route creation is atomic with policy advancement, and missing
+routes roll back the attempted advancement. A successful recovery routes the
+same work item back to its original role; it does not create a replacement work
+item, role, or workflow.
+
 ## Service Bus Position
 
 Azure Service Bus is a strong enterprise delivery backend, but it should not be
