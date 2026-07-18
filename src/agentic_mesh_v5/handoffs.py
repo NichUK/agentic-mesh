@@ -205,6 +205,11 @@ class HandoffStore:
                         """,
                         (draft.project_id, routed.queue_item_id),
                     ).fetchone()[0]
+                    if queued_at < offered_at:
+                        raise HandoffConflict(
+                            "idempotency key is already used by routed work "
+                            "without a handoff"
+                        )
                     connection.execute(
                         f"""
                         INSERT INTO {SCHEMA}.handoffs

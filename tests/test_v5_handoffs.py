@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import os
 import uuid
 from urllib.parse import urlsplit, urlunsplit
@@ -18,6 +19,7 @@ from agentic_mesh_v5.handoffs import HandoffStore
 from agentic_mesh_v5.queues import QueueConflict
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.routing import Router
+from agentic_mesh_v5.routing import RouteDraft
 
 
 @pytest.fixture
@@ -177,6 +179,38 @@ def test_offer_rolls_back_route_when_handoff_cannot_commit(
             WHERE queue_id = 'qa'
             """
         ).fetchone()[0] == 0
+
+
+def test_offer_rejects_matching_route_created_without_handoff(
+    handoff_database,
+) -> None:
+    _database_url, _queues, source, store = handoff_database
+    handoff_id = "handoff-" + hashlib.sha256(
+        b"alpha\x00handoff-1"
+    ).hexdigest()[:32]
+    Router(_database_url).route(
+        RouteDraft(
+            project_id="alpha",
+            work_item_id="work-1",
+            target_role_id="qa",
+            idempotency_key="handoff-1",
+            payload={
+                "handoff": {
+                    "handoff_id": handoff_id,
+                    "source_role_id": "engineering",
+                    "source_instance_id": "eng-1",
+                    "summary": "Verify the implementation evidence.",
+                },
+                "payload": {"evidence": ["test://focused"]},
+            },
+            priority=10,
+        )
+    )
+
+    with pytest.raises(HandoffConflict, match="without a handoff"):
+        store.offer(_offer(source))
+    with pytest.raises(HandoffError):
+        store.get("alpha", handoff_id)
 
 
 def test_claim_accept_and_source_completion_gate(handoff_database) -> None:

@@ -174,7 +174,15 @@ def test_handoff_acceptance_migration_preserves_legacy_offer(
     postgres_database: str,
 ) -> None:
     packaged = load_migrations()
-    MigrationRunner(postgres_database, migrations=packaged[:-1]).migrate()
+    acceptance = next(
+        item for item in packaged if item.name == "handoff_acceptance"
+    )
+    before_acceptance = tuple(
+        item for item in packaged if item.version < acceptance.version
+    )
+    MigrationRunner(
+        postgres_database, migrations=before_acceptance
+    ).migrate()
     with psycopg.connect(postgres_database) as connection:
         connection.execute(
             """
