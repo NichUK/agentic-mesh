@@ -1,0 +1,556 @@
+from __future__ import annotations
+
+from collections.abc import Mapping as RuntimeMapping
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, Iterator, Mapping
+
+from openai_codex import ApprovalMode as CodexApprovalMode
+from openai_codex import Codex
+from openai_codex import CodexConfig
+from openai_codex import Sandbox as CodexSandbox
+from openai_codex import CodexError
+from openai_codex import InternalRpcError
+from openai_codex import InvalidParamsError
+from openai_codex import InvalidRequestError
+from openai_codex import JsonRpcError
+from openai_codex import MethodNotFoundError
+from openai_codex import ParseError
+from openai_codex import RetryLimitExceededError
+from openai_codex import ServerBusyError
+from openai_codex import TransportClosedError
+
+from agentic_mesh_v5.worker_provider import ApprovalPolicy
+from agentic_mesh_v5.worker_provider import EngineMetadata
+from agentic_mesh_v5.worker_provider import PlanStepStatus
+from agentic_mesh_v5.worker_provider import ProviderErrorInfo
+from agentic_mesh_v5.worker_provider import ProviderErrorKind
+from agentic_mesh_v5.worker_provider import ProviderEvent
+from agentic_mesh_v5.worker_provider import ProviderEventKind
+from agentic_mesh_v5.worker_provider import ProviderPlanStep
+from agentic_mesh_v5.worker_provider import ProviderUsage
+from agentic_mesh_v5.worker_provider import SandboxPolicy
+from agentic_mesh_v5.worker_provider import ThreadRequest
+from agentic_mesh_v5.worker_provider import TurnCompletionStatus
+from agentic_mesh_v5.worker_provider import TurnRequest
+from agentic_mesh_v5.worker_provider import WorkerProviderError
+
+
+_SANDBOXES = {
+    SandboxPolicy.READ_ONLY: CodexSandbox.read_only,
+    SandboxPolicy.WORKSPACE_WRITE: CodexSandbox.workspace_write,
+    SandboxPolicy.FULL_ACCESS: CodexSandbox.full_access,
+}
+_APPROVALS = {
+    ApprovalPolicy.DENY_ALL: CodexApprovalMode.deny_all,
+    ApprovalPolicy.AUTO_REVIEW: CodexApprovalMode.auto_review,
+}
+_SAFE_MESSAGES = {
+    ProviderErrorKind.AUTHENTICATION: "provider authentication is unavailable",
+    ProviderErrorKind.CAPACITY: "provider capacity is unavailable",
+    ProviderErrorKind.OVERLOADED: "provider is temporarily overloaded",
+    ProviderErrorKind.TRANSPORT: "provider transport is unavailable",
+    ProviderErrorKind.INVALID_REQUEST: "provider rejected the request",
+    ProviderErrorKind.EXECUTION: "provider execution failed",
+    ProviderErrorKind.PROTOCOL: "provider protocol response was invalid",
+    ProviderErrorKind.INTERNAL: "provider operation failed",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CodexProviderConfig:
+    codex_bin: Path | None = None
+    cwd: Path | None = None
+    environment: Mapping[str, str] = field(default_factory=dict, repr=False)
+
+
+class CodexWorkerProvider:
+    provider_id = "codex-local"
+
+    def __init__(
+        self,
+        config: CodexProviderConfig | None = None,
+        *,
+        sdk_factory: Callable[[CodexConfig], Any] = Codex,
+    ) -> None:
+        self._config = config or CodexProviderConfig()
+        self._sdk_factory = sdk_factory
+
+    def open(self) -> CodexWorkerEngine:
+        config = _sdk_config(self._config)
+        sdk: Any | None = None
+        try:
+            sdk = self._sdk_factory(config)
+            return CodexWorkerEngine(self.provider_id, sdk)
+        except Exception as exc:
+            if sdk is not None:
+                try:
+                    sdk.close()
+                except Exception:
+                    pass
+            raise _exception(exc) from None
+
+
+class CodexWorkerEngine:
+    def __init__(self, provider_id: str, sdk: Any) -> None:
+        self._provider_id = provider_id
+        self._sdk = sdk
+        self._closed = False
+        self._metadata = _metadata(provider_id, getattr(sdk, "metadata", None))
+
+    @property
+    def metadata(self) -> EngineMetadata:
+        return self._metadata
+
+    def start_thread(self, request: ThreadRequest) -> CodexWorkerThread:
+        self._ensure_open()
+        _validate_thread_request(request)
+        try:
+            thread = self._sdk.thread_start(
+                approval_mode=_APPROVALS[request.approval],
+                base_instructions=request.base_instructions,
+                cwd=str(request.cwd.resolve()),
+                developer_instructions=request.developer_instructions,
+                ephemeral=request.ephemeral,
+                model=request.model,
+                sandbox=_SANDBOXES[request.sandbox],
+                service_name="agentic_mesh_v5",
+            )
+        except Exception as exc:
+            raise _exception(exc) from None
+        return CodexWorkerThread(thread)
+
+    def resume_thread(
+        self, thread_id: str, request: ThreadRequest
+    ) -> CodexWorkerThread:
+        self._ensure_open()
+        thread_id = _required_text(thread_id, "thread_id")
+        _validate_thread_request(request)
+        if request.ephemeral:
+            raise _invalid("ephemeral cannot be changed while resuming a thread")
+        try:
+            thread = self._sdk.thread_resume(
+                thread_id,
+                approval_mode=_APPROVALS[request.approval],
+                base_instructions=request.base_instructions,
+                cwd=str(request.cwd.resolve()),
+                developer_instructions=request.developer_instructions,
+                model=request.model,
+                sandbox=_SANDBOXES[request.sandbox],
+            )
+        except Exception as exc:
+            raise _exception(exc) from None
+        return CodexWorkerThread(thread)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            self._sdk.close()
+        except Exception as exc:
+            raise _exception(exc) from None
+        self._closed = True
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise _invalid("worker engine is closed")
+
+
+class CodexWorkerThread:
+    def __init__(self, thread: Any) -> None:
+        self._thread = thread
+        self.thread_id = _required_text(getattr(thread, "id", None), "thread_id")
+
+    def start_turn(self, request: TurnRequest) -> CodexWorkerTurn:
+        _validate_turn_request(request)
+        try:
+            handle = self._thread.turn(
+                request.prompt,
+                approval_mode=(
+                    None if request.approval is None else _APPROVALS[request.approval]
+                ),
+                cwd=None if request.cwd is None else str(request.cwd.resolve()),
+                model=request.model,
+                sandbox=(
+                    None if request.sandbox is None else _SANDBOXES[request.sandbox]
+                ),
+            )
+        except Exception as exc:
+            raise _exception(exc) from None
+        return CodexWorkerTurn(self.thread_id, handle)
+
+
+class CodexWorkerTurn:
+    def __init__(self, thread_id: str, handle: Any) -> None:
+        self.thread_id = thread_id
+        self.turn_id = _required_text(getattr(handle, "id", None), "turn_id")
+        self._handle = handle
+        self._interrupt_requested = False
+
+    def events(self) -> Iterator[ProviderEvent]:
+        completed = False
+        try:
+            for notification in self._handle.stream():
+                event = _event(notification, self.thread_id, self.turn_id)
+                if event is None:
+                    continue
+                if event.kind is ProviderEventKind.TURN_COMPLETED:
+                    completed = True
+                yield event
+        except WorkerProviderError:
+            raise
+        except Exception as exc:
+            raise _exception(exc) from None
+        if not completed:
+            raise _protocol_error()
+
+    def interrupt(self) -> None:
+        if self._interrupt_requested:
+            return
+        try:
+            self._handle.interrupt()
+        except Exception as exc:
+            raise _exception(exc) from None
+        self._interrupt_requested = True
+
+
+def _sdk_config(config: CodexProviderConfig) -> CodexConfig:
+    if not isinstance(config, CodexProviderConfig):
+        raise _invalid("provider configuration is invalid")
+    codex_bin: str | None = None
+    if config.codex_bin is not None:
+        if (
+            not isinstance(config.codex_bin, Path)
+            or not config.codex_bin.is_absolute()
+            or not config.codex_bin.is_file()
+        ):
+            raise _invalid("codex_bin must be an existing absolute file")
+        codex_bin = str(config.codex_bin)
+    cwd: str | None = None
+    if config.cwd is not None:
+        cwd = str(_directory(config.cwd, "cwd"))
+    environment: dict[str, str] = {}
+    if not isinstance(config.environment, RuntimeMapping):
+        raise _invalid("provider environment is invalid")
+    for key, value in config.environment.items():
+        if (
+            not isinstance(key, str)
+            or not key
+            or "=" in key
+            or "\0" in key
+            or not isinstance(value, str)
+            or "\0" in value
+        ):
+            raise _invalid("provider environment must contain string names and values")
+        environment[key] = value
+    return CodexConfig(
+        codex_bin=codex_bin,
+        cwd=cwd,
+        env=environment or None,
+        client_name="agentic_mesh_v5",
+        client_title="Agentic Mesh V5",
+        client_version="0.1.0",
+        experimental_api=False,
+    )
+
+
+def _metadata(provider_id: str, metadata: object) -> EngineMetadata:
+    server = getattr(metadata, "serverInfo", None)
+    return EngineMetadata(
+        provider_id=provider_id,
+        runtime_name=_optional_text(getattr(server, "name", None)),
+        runtime_version=_optional_text(getattr(server, "version", None)),
+        platform_family=_optional_text(getattr(metadata, "platformFamily", None)),
+        platform_os=_optional_text(getattr(metadata, "platformOs", None)),
+    )
+
+
+def _event(
+    notification: object, thread_id: str, turn_id: str
+) -> ProviderEvent | None:
+    method = getattr(notification, "method", None)
+    payload = getattr(notification, "payload", None)
+    if method == "turn/started":
+        _event_scope(payload, thread_id, turn_id, nested_turn=True)
+        return ProviderEvent(ProviderEventKind.TURN_STARTED, thread_id, turn_id)
+    if method == "item/agentMessage/delta":
+        _event_scope(payload, thread_id, turn_id)
+        text = getattr(payload, "delta", None)
+        if not isinstance(text, str):
+            raise _protocol_error()
+        return ProviderEvent(
+            ProviderEventKind.OUTPUT_DELTA,
+            thread_id,
+            turn_id,
+            item_id=_optional_text(getattr(payload, "item_id", None)),
+            text=text,
+        )
+    if method in {"item/started", "item/completed"}:
+        _event_scope(payload, thread_id, turn_id)
+        kind = (
+            ProviderEventKind.ITEM_STARTED
+            if method == "item/started"
+            else ProviderEventKind.ITEM_COMPLETED
+        )
+        return ProviderEvent(
+            kind,
+            thread_id,
+            turn_id,
+            item_id=_item_id(getattr(payload, "item", None)),
+        )
+    if method == "turn/plan/updated":
+        _event_scope(payload, thread_id, turn_id)
+        raw_plan = getattr(payload, "plan", None)
+        if not isinstance(raw_plan, list):
+            raise _protocol_error()
+        plan = tuple(
+            ProviderPlanStep(
+                step=_provider_text(getattr(item, "step", None)),
+                status=_plan_status(getattr(item, "status", None)),
+            )
+            for item in raw_plan
+        )
+        return ProviderEvent(
+            ProviderEventKind.PLAN_UPDATED,
+            thread_id,
+            turn_id,
+            plan=plan,
+        )
+    if method == "thread/tokenUsage/updated":
+        _event_scope(payload, thread_id, turn_id)
+        usage = _usage(getattr(getattr(payload, "token_usage", None), "last", None))
+        return ProviderEvent(
+            ProviderEventKind.USAGE_UPDATED,
+            thread_id,
+            turn_id,
+            usage=usage,
+        )
+    if method == "error":
+        _event_scope(payload, thread_id, turn_id)
+        will_retry = getattr(payload, "will_retry", None)
+        if type(will_retry) is not bool:
+            raise _protocol_error()
+        info = _turn_error(
+            getattr(payload, "error", None),
+            retryable=will_retry,
+        )
+        return ProviderEvent(
+            ProviderEventKind.ERROR,
+            thread_id,
+            turn_id,
+            error=info,
+        )
+    if method == "turn/completed":
+        _event_scope(payload, thread_id, turn_id, nested_turn=True)
+        turn = getattr(payload, "turn", None)
+        completion = _completion(getattr(turn, "status", None))
+        info = (
+            _turn_error(getattr(turn, "error", None), retryable=False)
+            if completion is TurnCompletionStatus.FAILED
+            else None
+        )
+        return ProviderEvent(
+            ProviderEventKind.TURN_COMPLETED,
+            thread_id,
+            turn_id,
+            completion=completion,
+            error=info,
+        )
+    return None
+
+
+def _event_scope(
+    payload: object,
+    thread_id: str,
+    turn_id: str,
+    *,
+    nested_turn: bool = False,
+) -> None:
+    event_thread = getattr(payload, "thread_id", None)
+    event_turn = (
+        getattr(getattr(payload, "turn", None), "id", None)
+        if nested_turn
+        else getattr(payload, "turn_id", None)
+    )
+    if event_thread != thread_id or event_turn != turn_id:
+        raise _protocol_error()
+
+
+def _usage(value: object) -> ProviderUsage:
+    names = (
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    )
+    counts = []
+    for name in names:
+        count = getattr(value, name, None)
+        if type(count) is not int or count < 0:
+            raise _protocol_error()
+        counts.append(count)
+    return ProviderUsage(*counts)
+
+
+def _turn_error(error: object, *, retryable: bool) -> ProviderErrorInfo:
+    root = getattr(getattr(error, "codex_error_info", None), "root", None)
+    value = _optional_enum_value(root)
+    class_name = type(root).__name__.lower()
+    if value == "unauthorized":
+        kind = ProviderErrorKind.AUTHENTICATION
+    elif value in {"usageLimitExceeded", "sessionBudgetExceeded"}:
+        kind = ProviderErrorKind.CAPACITY
+    elif value == "serverOverloaded" or "toomanyfailedattempts" in class_name:
+        kind = ProviderErrorKind.OVERLOADED
+    elif (
+        value == "internalServerError"
+        or "connectionfailed" in class_name
+        or "streamdisconnected" in class_name
+    ):
+        kind = ProviderErrorKind.TRANSPORT
+    elif value in {"badRequest", "contextWindowExceeded", "cyberPolicy"}:
+        kind = ProviderErrorKind.INVALID_REQUEST
+    elif value in {"sandboxError", "threadRollbackFailed"}:
+        kind = ProviderErrorKind.EXECUTION
+    else:
+        kind = ProviderErrorKind.INTERNAL
+    return _error_info(
+        kind,
+        retryable=retryable
+        or kind in {ProviderErrorKind.OVERLOADED, ProviderErrorKind.TRANSPORT},
+    )
+
+
+def _exception(exc: Exception) -> WorkerProviderError:
+    if isinstance(exc, WorkerProviderError):
+        return exc
+    if isinstance(exc, (ServerBusyError, RetryLimitExceededError)):
+        return WorkerProviderError(_error_info(ProviderErrorKind.OVERLOADED, True))
+    if isinstance(exc, (TransportClosedError, TimeoutError, ConnectionError, OSError)):
+        return WorkerProviderError(_error_info(ProviderErrorKind.TRANSPORT, True))
+    if isinstance(exc, (InvalidParamsError, InvalidRequestError, MethodNotFoundError)):
+        return WorkerProviderError(_error_info(ProviderErrorKind.INVALID_REQUEST, False))
+    if isinstance(exc, ParseError):
+        return _protocol_error()
+    if isinstance(exc, InternalRpcError):
+        return WorkerProviderError(_error_info(ProviderErrorKind.INTERNAL, True))
+    if isinstance(exc, JsonRpcError):
+        return WorkerProviderError(_error_info(ProviderErrorKind.INTERNAL, False))
+    if isinstance(exc, (ValueError, TypeError)):
+        return WorkerProviderError(_error_info(ProviderErrorKind.INVALID_REQUEST, False))
+    if isinstance(exc, CodexError):
+        return WorkerProviderError(_error_info(ProviderErrorKind.INTERNAL, False))
+    return WorkerProviderError(_error_info(ProviderErrorKind.INTERNAL, False))
+
+
+def _completion(value: object) -> TurnCompletionStatus:
+    selected = _enum_value(value)
+    try:
+        return TurnCompletionStatus(selected)
+    except ValueError:
+        raise _protocol_error() from None
+
+
+def _plan_status(value: object) -> PlanStepStatus:
+    selected = _enum_value(value)
+    mapping = {
+        "pending": PlanStepStatus.PENDING,
+        "inProgress": PlanStepStatus.IN_PROGRESS,
+        "completed": PlanStepStatus.COMPLETED,
+    }
+    if selected not in mapping:
+        raise _protocol_error()
+    return mapping[selected]
+
+
+def _item_id(item: object) -> str | None:
+    root = getattr(item, "root", item)
+    return _optional_text(getattr(root, "id", None))
+
+
+def _enum_value(value: object) -> str:
+    if isinstance(value, Enum):
+        return str(value.value)
+    if isinstance(value, str):
+        return value
+    raise _protocol_error()
+
+
+def _optional_enum_value(value: object) -> str | None:
+    if isinstance(value, Enum):
+        return str(value.value)
+    return value if isinstance(value, str) else None
+
+
+def _provider_text(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise _protocol_error()
+    return value.strip()
+
+
+def _validate_thread_request(request: ThreadRequest) -> None:
+    if not isinstance(request, ThreadRequest):
+        raise _invalid("thread request is invalid")
+    _directory(request.cwd, "thread cwd")
+    if not isinstance(request.sandbox, SandboxPolicy):
+        raise _invalid("thread sandbox is invalid")
+    if not isinstance(request.approval, ApprovalPolicy):
+        raise _invalid("thread approval is invalid")
+    _optional_nonempty(request.model, "thread model")
+    _optional_string(request.base_instructions, "base instructions")
+    _optional_string(request.developer_instructions, "developer instructions")
+    if type(request.ephemeral) is not bool:
+        raise _invalid("thread ephemeral flag is invalid")
+
+
+def _validate_turn_request(request: TurnRequest) -> None:
+    if not isinstance(request, TurnRequest):
+        raise _invalid("turn request is invalid")
+    _required_text(request.prompt, "turn prompt")
+    if request.cwd is not None:
+        _directory(request.cwd, "turn cwd")
+    _optional_nonempty(request.model, "turn model")
+    if request.sandbox is not None and not isinstance(request.sandbox, SandboxPolicy):
+        raise _invalid("turn sandbox is invalid")
+    if request.approval is not None and not isinstance(request.approval, ApprovalPolicy):
+        raise _invalid("turn approval is invalid")
+
+
+def _directory(value: object, field_name: str) -> Path:
+    if not isinstance(value, Path) or not value.is_absolute() or not value.is_dir():
+        raise _invalid(f"{field_name} must be an existing absolute directory")
+    return value.resolve()
+
+
+def _optional_nonempty(value: object, field_name: str) -> None:
+    if value is not None:
+        _required_text(value, field_name)
+
+
+def _optional_string(value: object, field_name: str) -> None:
+    if value is not None and not isinstance(value, str):
+        raise _invalid(f"{field_name} must be text")
+
+
+def _required_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise _invalid(f"{field_name} is required")
+    return value.strip()
+
+
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _error_info(kind: ProviderErrorKind, retryable: bool) -> ProviderErrorInfo:
+    return ProviderErrorInfo(kind, retryable, _SAFE_MESSAGES[kind])
+
+
+def _invalid(_detail: str) -> WorkerProviderError:
+    return WorkerProviderError(_error_info(ProviderErrorKind.INVALID_REQUEST, False))
+
+
+def _protocol_error() -> WorkerProviderError:
+    return WorkerProviderError(_error_info(ProviderErrorKind.PROTOCOL, False))

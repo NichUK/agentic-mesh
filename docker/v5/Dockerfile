@@ -3,7 +3,7 @@ ARG SOURCE_DATE_EPOCH=1751328000
 
 FROM ${PYTHON_BASE_IMAGE} AS v5-worker-base
 
-ARG CODEX_VERSION=0.144.3
+ARG CODEX_VERSION=0.144.4
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

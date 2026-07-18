@@ -98,7 +98,7 @@ def test_every_worker_image_has_one_shared_base_and_exact_build_inputs() -> None
 
     assert dockerfile.count("FROM v5-worker-base AS v5-") == 6
     assert "python:3.12.11-slim-bookworm@sha256:" in dockerfile
-    assert "ARG CODEX_VERSION=0.144.3" in dockerfile
+    assert "ARG CODEX_VERSION=0.144.4" in dockerfile
     assert "ARG SOURCE_DATE_EPOCH=1751328000" in dockerfile
     assert "latest" not in dockerfile.casefold()
 

@@ -42,6 +42,12 @@ python -m agentic_mesh_v5 --json database-restore --archive C:\Backups\mesh.dump
 python -m agentic_mesh_v5 --json database-resume --actor operator --reason "restore verified"
 ```
 
+V5 worker execution uses provider-neutral engine, thread, turn, event, usage,
+completion, and safe-error contracts. The first adapter wraps the official
+`openai-codex` SDK and its local stdio app-server; Codex JSON-RPC methods and
+generated models remain inside that adapter. The SDK and V5 worker image share
+one pinned Codex version, while credentials and `CODEX_HOME` remain external.
+
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
 infrastructure: Teams/API ingress, Postgres-backed message queues, Codex
 app-server WebSocket routing, safe-output tools for durable workflow effects,
