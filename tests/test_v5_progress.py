@@ -10,6 +10,7 @@ import psycopg
 from psycopg import sql
 import pytest
 
+import agentic_mesh_v5.progress as progress_module
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.database_operations import MaintenanceStore
@@ -22,7 +23,7 @@ from agentic_mesh_v5.progress import ProgressStore
 from agentic_mesh_v5.read_models import ReadModelStore
 
 
-SYNTHETIC_KEY = "sk-" + "a" * 32
+SYNTHETIC_KEY = "sk-" + "a" * 20
 
 
 @pytest.fixture
@@ -289,6 +290,22 @@ def test_restricted_content_categories_are_rejected(value: str) -> None:
 def test_invalid_structure_is_rejected_before_store(changes: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         _draft(**changes)
+
+
+def test_oversized_input_is_rejected_before_sensitive_pattern_scanning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnexpectedScanner:
+        def search(self, value: str):
+            if len(value) > 2000:
+                raise AssertionError("oversized content must not be scanned")
+            return None
+
+    monkeypatch.setattr(
+        progress_module, "_SENSITIVE_PATTERNS", (UnexpectedScanner(),)
+    )
+    with pytest.raises(ValueError, match="goal is invalid"):
+        _draft(goal="x" * 2001)
 
 
 def test_maintenance_and_store_failures_are_redacted(

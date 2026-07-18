@@ -284,11 +284,9 @@ def _required_text(value: object, field_name: str, maximum: int) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{field_name} is invalid")
     value = value.strip()
-    if not value:
+    if not value or len(value) > maximum:
         raise ValueError(f"{field_name} is invalid")
     _reject_sensitive(value, field_name)
-    if len(value) > maximum:
-        raise ValueError(f"{field_name} is invalid")
     return value
 
 
