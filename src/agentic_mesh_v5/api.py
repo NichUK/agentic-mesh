@@ -42,6 +42,8 @@ from agentic_mesh_v5.read_models import ReadModelNotFound
 from agentic_mesh_v5.read_models import ReadModelStore
 from agentic_mesh_v5.telemetry import Telemetry
 from agentic_mesh_v5.telemetry import telemetry_from_environment
+from agentic_mesh_v5.usage import UsageNotFound
+from agentic_mesh_v5.usage import UsageStore
 
 
 API_PREFIX = "/api/v1"
@@ -254,6 +256,56 @@ class ProgressResponse(ApiModel):
     recorded_at: str
 
 
+class UsageWindowResponse(ApiModel):
+    used_percent: int
+    remaining_percent: int
+    resets_at: str | None
+    window_minutes: int | None
+
+
+class UsageCreditsResponse(ApiModel):
+    balance: str | None
+    has_credits: bool
+    unlimited: bool
+
+
+class UsageSpendControlResponse(ApiModel):
+    limit: str
+    used: str
+    remaining_percent: int
+    resets_at: str
+
+
+class UsageCapacityResponse(ApiModel):
+    status: Literal["known", "unknown"]
+    observed_at: str | None
+    limit_id: str | None = None
+    limit_name: str | None = None
+    plan_type: str | None = None
+    primary: UsageWindowResponse | None = None
+    secondary: UsageWindowResponse | None = None
+    credits: UsageCreditsResponse | None = None
+    individual_limit: UsageSpendControlResponse | None = None
+    reset_credits_available: int | None = None
+    reset_credits_earliest_expiry: str | None = None
+
+
+class UsageSummaryResponse(ApiModel):
+    project_id: str
+    provider_id: str
+    account_scope: str
+    account_scope_shared: bool
+    turn_count: int
+    input_tokens: int
+    cached_input_tokens: int
+    output_tokens: int
+    reasoning_output_tokens: int
+    total_tokens: int
+    average_tokens_per_turn: float | None
+    usage_updated_at: str | None
+    capacity: UsageCapacityResponse
+
+
 class RecordsResponse(ApiModel):
     records: list[dict[str, Any]]
 
@@ -417,6 +469,7 @@ def create_app(
     selected_telemetry = telemetry or Telemetry()
     lifecycle = LifecycleStore(database_url)
     progress_store = ProgressStore(database_url)
+    usage_store = UsageStore(database_url)
     queues = RoleQueueStore(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
@@ -539,6 +592,7 @@ def create_app(
     @app.exception_handler(QueueNotFound)
     @app.exception_handler(ReadModelNotFound)
     @app.exception_handler(ProgressNotFound)
+    @app.exception_handler(UsageNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
@@ -1008,9 +1062,25 @@ def create_app(
             "available_operations": [],
         }
 
-    @app.get(f"{API_PREFIX}/projects/{{project_id}}/usage", response_model=DomainAvailability, tags=["usage"])
-    def usage(project_id: str, identity: Principal = Depends(principal)):
-        return planned_domain("usage", "AMV5-028", project_id, identity)
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/usage",
+        response_model=UsageSummaryResponse,
+        tags=["usage"],
+    )
+    def usage(
+        project_id: str,
+        provider_id: str = Query(
+            default="codex-local", min_length=1, max_length=128
+        ),
+        account_scope: str = Query(default="default", min_length=1, max_length=128),
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return usage_store.summary(
+            project_id,
+            provider_id=provider_id,
+            account_scope=account_scope,
+        )
 
     @app.get(f"{API_PREFIX}/projects/{{project_id}}/recovery", response_model=DomainAvailability, tags=["recovery"])
     def recovery(project_id: str, identity: Principal = Depends(principal)):

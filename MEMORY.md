@@ -57,8 +57,8 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   queryable from durable state.
 - The V5 FastAPI control boundary exposes implemented project, work, gate,
   approval, and queue operations under `/api/v1`, plus authorized reads for
-  existing agent, handoff, progress, package, and audit records. Usage and
-  recovery remain explicitly planned rather than simulated. Bootstrap bearer
+  existing agent, handoff, progress, package, and audit records. Recovery
+  remains explicitly planned rather than simulated. Bootstrap bearer
   identities come from an external hash-only principals file, every project
   route checks project and scope, and failures use structured problem details.
 - The bootstrap CLI stays a thin HTTP client: `control-status` and
@@ -122,6 +122,14 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   Common credentials, private keys, credential-bearing database URLs, and
   explicit private-reasoning tags are rejected before persistence. Live views
   use the stored fields directly without a parser or summarizer model.
+- V5 usage accounting stores one monotonic cumulative record for each
+  project/provider-account/turn, so duplicate and concurrent notifications do
+  not double-count work. The Codex adapter reads its authoritative account
+  rate-limit endpoint into provider-neutral primary/secondary windows, credit,
+  spend-control, and reset-credit facts. The project usage API reports token
+  totals and average use plus remaining percentages and reset times; absent
+  provider data is explicitly `unknown`. Prompts, responses, reasoning,
+  account identity, credentials, and raw provider payloads are never stored.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -20,6 +21,15 @@ from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.lifecycle import LifecycleStore
+from agentic_mesh_v5.usage import CapacityDraft
+from agentic_mesh_v5.usage import TurnUsageDraft
+from agentic_mesh_v5.usage import UsageConflict
+from agentic_mesh_v5.usage import UsageStore
+from agentic_mesh_v5.worker_provider import ProviderCapacity
+from agentic_mesh_v5.worker_provider import ProviderCredits
+from agentic_mesh_v5.worker_provider import ProviderRateLimitWindow
+from agentic_mesh_v5.worker_provider import ProviderSpendControl
+from agentic_mesh_v5.worker_provider import ProviderUsage
 
 
 TOKENS = {
@@ -288,13 +298,124 @@ def test_project_authorization_and_read_views_are_isolated(api_database) -> None
         "eng-1",
         "eng-2",
     ]
-    assert usage.json() == {
-        "domain": "usage",
-        "status": "planned",
-        "planned_story": "AMV5-028",
-        "available_operations": [],
-    }
+    assert usage.json()["turn_count"] == 0
+    assert usage.json()["total_tokens"] == 0
+    assert usage.json()["average_tokens_per_turn"] is None
+    assert usage.json()["capacity"]["status"] == "unknown"
+    assert usage.json()["capacity"]["observed_at"] is None
     assert forbidden_create.status_code == 403
+
+
+def test_usage_is_idempotent_concurrent_and_exposes_typed_capacity(
+    api_database,
+) -> None:
+    database_url, client = api_database
+    created = client.post(
+        f"{API_PREFIX}/projects/alpha/work-items",
+        headers=_headers("alpha"),
+        json={
+            "work_item_id": "usage-work",
+            "title": "Usage work",
+            "owner_role_id": "engineering",
+            "correlation_id": "usage-correlation",
+        },
+    )
+    assert created.status_code == 201
+    store = UsageStore(database_url)
+    draft = TurnUsageDraft(
+        project_id="alpha",
+        work_item_id="usage-work",
+        role_instance_id="eng-1",
+        provider_id="codex-local",
+        account_scope="default",
+        turn_id="provider-turn-1",
+        usage=ProviderUsage(100, 20, 40, 10, 150),
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        records = list(pool.map(lambda _index: store.record_turn(draft), range(16)))
+
+    assert {record.turn_id for record in records} == {"provider-turn-1"}
+    updated = store.record_turn(
+        TurnUsageDraft(
+            project_id="alpha",
+            work_item_id="usage-work",
+            role_instance_id="eng-1",
+            provider_id="codex-local",
+            account_scope="default",
+            turn_id="provider-turn-1",
+            usage=ProviderUsage(120, 25, 50, 12, 182),
+        )
+    )
+    assert updated.usage.total_tokens == 182
+    with pytest.raises(UsageConflict, match="cannot decrease"):
+        store.record_turn(draft)
+
+    observed_at = datetime.now(timezone.utc)
+    store.record_capacity(
+        CapacityDraft(
+            project_id="alpha",
+            provider_id="codex-local",
+            account_scope="default",
+            observation_id="capacity-1",
+            observed_at=observed_at,
+            capacity=ProviderCapacity(
+                available=True,
+                limit_id="codex",
+                limit_name="Codex weekly",
+                plan_type="plus",
+                primary=ProviderRateLimitWindow(
+                    25, observed_at + timedelta(hours=4), 300
+                ),
+                secondary=ProviderRateLimitWindow(
+                    80, observed_at + timedelta(days=4), 10_080
+                ),
+                credits=ProviderCredits("12.50", True, False),
+                individual_limit=ProviderSpendControl(
+                    "50", "7.5", 85, observed_at + timedelta(days=4)
+                ),
+                reset_credits_available=2,
+                reset_credits_earliest_expiry=observed_at + timedelta(days=1),
+            ),
+        )
+    )
+
+    response = client.get(
+        f"{API_PREFIX}/projects/alpha/usage", headers=_headers("viewer")
+    )
+    store.record_capacity(
+        CapacityDraft(
+            project_id="bravo",
+            provider_id="codex-local",
+            account_scope="default",
+            observation_id="capacity-missing",
+            observed_at=observed_at,
+            capacity=ProviderCapacity.unknown(),
+        )
+    )
+    foreign = client.get(
+        f"{API_PREFIX}/projects/bravo/usage", headers=_headers("bravo")
+    )
+    forbidden = client.get(
+        f"{API_PREFIX}/projects/alpha/usage", headers=_headers("bravo")
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["turn_count"] == 1
+    assert payload["total_tokens"] == 182
+    assert payload["average_tokens_per_turn"] == 182.0
+    assert payload["account_scope_shared"] is True
+    assert payload["capacity"]["primary"]["remaining_percent"] == 75
+    assert payload["capacity"]["secondary"]["remaining_percent"] == 20
+    assert payload["capacity"]["credits"]["balance"] == "12.50"
+    assert payload["capacity"]["individual_limit"]["remaining_percent"] == 85
+    assert payload["capacity"]["reset_credits_available"] == 2
+    assert "prompt" not in response.text.lower()
+    assert foreign.json()["capacity"]["status"] == "unknown"
+    assert foreign.json()["capacity"]["observed_at"] is not None
+    assert foreign.json()["turn_count"] == 0
+    assert forbidden.status_code == 403
 
 
 def test_lifecycle_operations_use_authenticated_actor_and_structured_conflicts(

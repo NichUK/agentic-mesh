@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping as RuntimeMapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
@@ -20,6 +21,7 @@ from openai_codex import ParseError
 from openai_codex import RetryLimitExceededError
 from openai_codex import ServerBusyError
 from openai_codex import TransportClosedError
+from openai_codex.generated.v2_all import GetAccountRateLimitsResponse
 
 from agentic_mesh_v5.worker_provider import ApprovalPolicy
 from agentic_mesh_v5.worker_provider import EngineMetadata
@@ -28,7 +30,11 @@ from agentic_mesh_v5.worker_provider import ProviderErrorInfo
 from agentic_mesh_v5.worker_provider import ProviderErrorKind
 from agentic_mesh_v5.worker_provider import ProviderEvent
 from agentic_mesh_v5.worker_provider import ProviderEventKind
+from agentic_mesh_v5.worker_provider import ProviderCapacity
+from agentic_mesh_v5.worker_provider import ProviderCredits
 from agentic_mesh_v5.worker_provider import ProviderPlanStep
+from agentic_mesh_v5.worker_provider import ProviderRateLimitWindow
+from agentic_mesh_v5.worker_provider import ProviderSpendControl
 from agentic_mesh_v5.worker_provider import ProviderUsage
 from agentic_mesh_v5.worker_provider import SandboxPolicy
 from agentic_mesh_v5.worker_provider import ThreadRequest
@@ -142,6 +148,22 @@ class CodexWorkerEngine:
         except Exception as exc:
             raise _exception(exc) from None
         return CodexWorkerThread(thread)
+
+    def read_capacity(self) -> ProviderCapacity:
+        self._ensure_open()
+        try:
+            client = getattr(self._sdk, "_client", self._sdk)
+            request = getattr(client, "request", None)
+            if not callable(request):
+                raise _protocol_error()
+            response = request(
+                "account/rateLimits/read",
+                None,
+                response_model=GetAccountRateLimitsResponse,
+            )
+            return _capacity(response)
+        except Exception as exc:
+            raise _exception(exc) from None
 
     def close(self) -> None:
         if self._closed:
@@ -392,6 +414,112 @@ def _usage(value: object) -> ProviderUsage:
             raise _protocol_error()
         counts.append(count)
     return ProviderUsage(*counts)
+
+
+def _capacity(response: object) -> ProviderCapacity:
+    rate_limits = getattr(response, "rate_limits", None)
+    if rate_limits is None:
+        raise _protocol_error()
+    reset_summary = getattr(response, "rate_limit_reset_credits", None)
+    reset_count = None
+    earliest_expiry = None
+    if reset_summary is not None:
+        reset_count = _nonnegative_int(
+            getattr(reset_summary, "available_count", None)
+        )
+        credits = getattr(reset_summary, "credits", None)
+        if credits is not None:
+            if not isinstance(credits, list):
+                raise _protocol_error()
+            expiries = [
+                _timestamp(getattr(credit, "expires_at", None))
+                for credit in credits
+                if getattr(credit, "expires_at", None) is not None
+            ]
+            earliest_expiry = min(expiries, default=None)
+    return ProviderCapacity(
+        available=True,
+        limit_id=_capacity_text(getattr(rate_limits, "limit_id", None)),
+        limit_name=_capacity_text(getattr(rate_limits, "limit_name", None)),
+        plan_type=_optional_enum_value(getattr(rate_limits, "plan_type", None)),
+        primary=_capacity_window(getattr(rate_limits, "primary", None)),
+        secondary=_capacity_window(getattr(rate_limits, "secondary", None)),
+        credits=_credits(getattr(rate_limits, "credits", None)),
+        individual_limit=_spend_control(
+            getattr(rate_limits, "individual_limit", None)
+        ),
+        reset_credits_available=reset_count,
+        reset_credits_earliest_expiry=earliest_expiry,
+    )
+
+
+def _capacity_window(value: object) -> ProviderRateLimitWindow | None:
+    if value is None:
+        return None
+    used = _percent(getattr(value, "used_percent", None))
+    resets = getattr(value, "resets_at", None)
+    duration = getattr(value, "window_duration_mins", None)
+    if duration is not None and (type(duration) is not int or duration <= 0):
+        raise _protocol_error()
+    return ProviderRateLimitWindow(
+        used_percent=used,
+        resets_at=None if resets is None else _timestamp(resets),
+        window_minutes=duration,
+    )
+
+
+def _credits(value: object) -> ProviderCredits | None:
+    if value is None:
+        return None
+    has_credits = getattr(value, "has_credits", None)
+    unlimited = getattr(value, "unlimited", None)
+    if type(has_credits) is not bool or type(unlimited) is not bool:
+        raise _protocol_error()
+    return ProviderCredits(
+        balance=_capacity_text(getattr(value, "balance", None)),
+        has_credits=has_credits,
+        unlimited=unlimited,
+    )
+
+
+def _spend_control(value: object) -> ProviderSpendControl | None:
+    if value is None:
+        return None
+    return ProviderSpendControl(
+        limit=_provider_text(getattr(value, "limit", None)),
+        used=_provider_text(getattr(value, "used", None)),
+        remaining_percent=_percent(getattr(value, "remaining_percent", None)),
+        resets_at=_timestamp(getattr(value, "resets_at", None)),
+    )
+
+
+def _capacity_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > 128:
+        raise _protocol_error()
+    return value.strip()
+
+
+def _percent(value: object) -> int:
+    if type(value) is not int or not 0 <= value <= 100:
+        raise _protocol_error()
+    return value
+
+
+def _nonnegative_int(value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise _protocol_error()
+    return value
+
+
+def _timestamp(value: object) -> datetime:
+    if type(value) is not int or value < 0:
+        raise _protocol_error()
+    try:
+        return datetime.fromtimestamp(value, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        raise _protocol_error() from None
 
 
 def _turn_error(error: object, *, retryable: bool) -> ProviderErrorInfo:
