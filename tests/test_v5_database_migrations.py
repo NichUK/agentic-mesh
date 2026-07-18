@@ -17,6 +17,7 @@ from agentic_mesh_v5.database import Migration
 from agentic_mesh_v5.database import MigrationError
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
+from agentic_mesh_v5.database_operations import MaintenanceStore
 
 
 @pytest.fixture
@@ -202,6 +203,33 @@ def test_concurrent_runners_apply_once(postgres_database: str) -> None:
             "SELECT count(*) FROM agentic_mesh_v5.schema_migrations"
         ).fetchone()[0]
     assert count == available_version
+
+
+def test_later_migration_tables_receive_maintenance_guards(
+    postgres_database: str,
+) -> None:
+    packaged = load_migrations()
+    future = _migration(
+        packaged[-1].version + 1,
+        "future_guard_probe",
+        """
+        CREATE TABLE agentic_mesh_v5.future_guard_probe (
+            id integer PRIMARY KEY
+        );
+        """,
+    )
+    MigrationRunner(postgres_database, migrations=(*packaged, future)).migrate()
+    MaintenanceStore(postgres_database).pause(
+        actor="operator", reason="future table guard test"
+    )
+
+    with psycopg.connect(postgres_database, autocommit=True) as connection:
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            connection.execute(
+                "INSERT INTO agentic_mesh_v5.future_guard_probe(id) VALUES (1)"
+            )
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            connection.execute("TRUNCATE agentic_mesh_v5.future_guard_probe")
 
 
 def test_project_foreign_keys_and_scoped_ownership_fail_closed(

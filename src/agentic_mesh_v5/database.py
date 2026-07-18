@@ -172,6 +172,7 @@ class MigrationRunner:
                             """,
                             (active.version, active.name, active.checksum),
                         )
+                    self._ensure_maintenance_write_guards(connection)
         except MigrationError:
             raise
         except Exception as exc:
@@ -218,6 +219,19 @@ class MigrationRunner:
             )
             """
         )
+
+    @staticmethod
+    def _ensure_maintenance_write_guards(
+        connection: psycopg.Connection[object],
+    ) -> None:
+        guard_function = (
+            connection.execute(
+                "SELECT to_regprocedure(%s)",
+                (f"{SCHEMA}.ensure_maintenance_write_guards()",),
+            ).fetchone()[0]
+        )
+        if guard_function is not None:
+            connection.execute(f"SELECT {SCHEMA}.ensure_maintenance_write_guards()")
 
     @staticmethod
     def _read_applied(

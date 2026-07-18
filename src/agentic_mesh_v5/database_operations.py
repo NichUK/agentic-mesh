@@ -280,7 +280,7 @@ class PostgresNativeTools:
         )
 
     def restore(self, database_url: str, archive: Path) -> None:
-        _environment, dbname = _postgres_environment(database_url)
+        _, dbname = _postgres_environment(database_url)
         self._restore_command(
             archive,
             arguments=(
@@ -488,16 +488,53 @@ def _validated_snapshot(database_url: str) -> tuple[int, dict[str, int]]:
 def _ensure_empty_database(database_url: str) -> None:
     try:
         with psycopg.connect(database_url, autocommit=True) as connection:
-            count = connection.execute(
+            contains_user_objects = connection.execute(
                 """
-                SELECT count(*)
-                FROM information_schema.tables
-                WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_namespace
+                    WHERE nspname NOT IN ('public', 'information_schema')
+                      AND nspname !~ '^pg_'
+                    UNION ALL
+                    SELECT 1
+                    FROM pg_class AS class
+                    JOIN pg_namespace AS namespace
+                      ON namespace.oid = class.relnamespace
+                    WHERE namespace.nspname = 'public'
+                       OR (
+                           namespace.nspname <> 'information_schema'
+                           AND namespace.nspname !~ '^pg_'
+                       )
+                    UNION ALL
+                    SELECT 1
+                    FROM pg_proc AS procedure
+                    JOIN pg_namespace AS namespace
+                      ON namespace.oid = procedure.pronamespace
+                    WHERE namespace.nspname = 'public'
+                       OR (
+                           namespace.nspname <> 'information_schema'
+                           AND namespace.nspname !~ '^pg_'
+                       )
+                    UNION ALL
+                    SELECT 1
+                    FROM pg_type AS type
+                    JOIN pg_namespace AS namespace
+                      ON namespace.oid = type.typnamespace
+                    WHERE namespace.nspname = 'public'
+                       OR (
+                           namespace.nspname <> 'information_schema'
+                           AND namespace.nspname !~ '^pg_'
+                       )
+                    UNION ALL
+                    SELECT 1
+                    FROM pg_extension
+                    WHERE extname <> 'plpgsql'
+                )
                 """
             ).fetchone()[0]
     except Exception as exc:
         raise DatabaseOperationsError("restore target inspection failed") from exc
-    if count:
+    if contains_user_objects:
         raise DatabaseOperationsError("restore target database is not empty")
 
 

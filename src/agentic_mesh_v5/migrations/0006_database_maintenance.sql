@@ -42,24 +42,52 @@ BEGIN
 END;
 $$;
 
-DO $$
+CREATE FUNCTION agentic_mesh_v5.ensure_maintenance_write_guards()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
 DECLARE
     target record;
 BEGIN
     FOR target IN
-        SELECT tablename
-        FROM pg_tables
-        WHERE schemaname = 'agentic_mesh_v5'
-          AND tablename <> 'database_maintenance'
-        ORDER BY tablename
+        SELECT class.relname AS table_name, class.oid AS table_oid
+        FROM pg_class AS class
+        JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace
+        WHERE namespace.nspname = 'agentic_mesh_v5'
+          AND class.relkind IN ('r', 'p')
+          AND class.relname <> 'database_maintenance'
+        ORDER BY class.relname
     LOOP
-        EXECUTE format(
-            'CREATE TRIGGER maintenance_write_guard '
-            'BEFORE INSERT OR UPDATE OR DELETE ON agentic_mesh_v5.%I '
-            'FOR EACH ROW EXECUTE FUNCTION '
-            'agentic_mesh_v5.reject_writes_during_maintenance()',
-            target.tablename
-        );
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgrelid = target.table_oid
+              AND tgname = 'maintenance_write_guard'
+              AND NOT tgisinternal
+        ) THEN
+            EXECUTE format(
+                'CREATE TRIGGER maintenance_write_guard '
+                'BEFORE INSERT OR UPDATE OR DELETE ON agentic_mesh_v5.%I '
+                'FOR EACH ROW EXECUTE FUNCTION '
+                'agentic_mesh_v5.reject_writes_during_maintenance()',
+                target.table_name
+            );
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgrelid = target.table_oid
+              AND tgname = 'maintenance_truncate_guard'
+              AND NOT tgisinternal
+        ) THEN
+            EXECUTE format(
+                'CREATE TRIGGER maintenance_truncate_guard '
+                'BEFORE TRUNCATE ON agentic_mesh_v5.%I '
+                'FOR EACH STATEMENT EXECUTE FUNCTION '
+                'agentic_mesh_v5.reject_writes_during_maintenance()',
+                target.table_name
+            );
+        END IF;
     END LOOP;
 END;
 $$;
+
+SELECT agentic_mesh_v5.ensure_maintenance_write_guards();

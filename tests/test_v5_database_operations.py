@@ -277,6 +277,13 @@ def test_pause_waits_for_active_writer_and_guards_all_mutations(database_factory
                 VALUES ('rejected', 'Rejected')
                 """
             )
+        with pytest.raises(
+            psycopg.errors.ObjectNotInPrerequisiteState,
+            match="maintenance pause",
+        ):
+            connection.execute(
+                "TRUNCATE agentic_mesh_v5.database_maintenance_history"
+            )
 
     resumed = maintenance.resume(actor="operator", reason="backup complete")
     assert resumed.status == "active"
@@ -373,6 +380,12 @@ def test_tamper_nonempty_target_and_failed_backup_fail_closed(
         connection.execute("CREATE TABLE public.existing(value integer)")
     with pytest.raises(DatabaseOperationsError, match="not empty"):
         DatabaseBackupService(nonempty_target, tools=tools).restore(clean_archive)
+
+    object_target = database_factory()
+    with psycopg.connect(object_target) as connection:
+        connection.execute("CREATE SEQUENCE public.existing_sequence")
+    with pytest.raises(DatabaseOperationsError, match="not empty"):
+        DatabaseBackupService(object_target, tools=tools).restore(clean_archive)
 
     class FailingTools:
         def validate(self, _server_major):
