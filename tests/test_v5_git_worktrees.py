@@ -18,6 +18,7 @@ from agentic_mesh_v5.git_worktrees import GitWorkspaceConflict
 from agentic_mesh_v5.git_worktrees import GitWorkspaceDirty
 from agentic_mesh_v5.git_worktrees import GitWorkspaceError
 from agentic_mesh_v5.git_worktrees import GitWorktreeCoordinator
+from agentic_mesh_v5.git_worktrees import _branch_name
 from agentic_mesh_v5.project_manifest import ProjectManifestStore
 from agentic_mesh_v5.project_manifest import load_project_manifest
 
@@ -266,11 +267,11 @@ def test_partial_prepare_resumes_pinned_plan_and_rejects_unowned_path(
         nonlocal calls
         calls += 1
         if calls == 2:
-            raise GitWorkspaceError("simulated process crash")
+            raise KeyboardInterrupt("simulated process crash")
         return original_prepare(*args, **kwargs)
 
     monkeypatch.setattr(coordinator, "_prepare_repository", interrupted)
-    with pytest.raises(GitWorkspaceError, match="simulated process crash"):
+    with pytest.raises(KeyboardInterrupt, match="simulated process crash"):
         coordinator.prepare(
             project_id="alpha",
             work_item_id="crash-work",
@@ -339,7 +340,7 @@ def test_partial_prepare_resumes_pinned_plan_and_rejects_unowned_path(
 
 
 def test_repository_substitution_and_live_source_root_fail_closed(
-    tmp_path: Path, postgres_database: str
+    tmp_path: Path, postgres_database: str, monkeypatch: pytest.MonkeyPatch
 ):
     urls = {
         "primary": "https://github.com/example/alpha.git",
@@ -349,7 +350,7 @@ def test_repository_substitution_and_live_source_root_fail_closed(
         name: _repository(tmp_path / "sources", name, url)
         for name, url in urls.items()
     }
-    _seed(postgres_database, tmp_path, urls, ("boundary-work",))
+    _seed(postgres_database, tmp_path, urls, ("boundary-work", "failure-work"))
     with pytest.raises(ValueError, match="must be separate"):
         GitWorktreeCoordinator(
             postgres_database, workspace_root=sources["primary"] / "workspaces"
@@ -370,3 +371,47 @@ def test_repository_substitution_and_live_source_root_fail_closed(
             source_repositories=swapped,
         )
     assert not (tmp_path / "safe-workspaces").exists()
+
+    coordinator = GitWorktreeCoordinator(
+        postgres_database, workspace_root=(tmp_path / "failure-workspaces").resolve()
+    )
+    original_git = coordinator._git
+
+    def denied(path: Path, *arguments: str) -> str:
+        if arguments[:2] == ("worktree", "add"):
+            raise GitWorkspaceError("Git command failed: worktree (exit 7): denied")
+        return original_git(path, *arguments)
+
+    monkeypatch.setattr(coordinator, "_git", denied)
+    with pytest.raises(GitWorkspaceError, match="exit 7"):
+        coordinator.prepare(
+            project_id="alpha",
+            work_item_id="failure-work",
+            actor_id="engineering",
+            source_repositories=sources,
+        )
+    failed = coordinator.get("alpha", "failure-work")
+    assert failed is not None and failed.status == "error"
+    repository = next(item for item in failed.repositories if item.repository_id == "primary")
+    assert repository.status == "error"
+    assert repository.last_error == "Git command failed: worktree (exit 7): denied"
+
+
+def test_branch_limit_and_git_failure_are_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    with pytest.raises(GitWorkspaceConflict, match="branch length limit"):
+        _branch_name("a" * 128, "b" * 128)
+    assert _branch_name("alpha", "work-one") == "codex/alpha-work-one"
+
+    def failed(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args, returncode=7, stdout="", stderr="permission denied\ntry later"
+        )
+
+    monkeypatch.setattr("agentic_mesh_v5.git_worktrees.subprocess.run", failed)
+    with pytest.raises(
+        GitWorkspaceError,
+        match=r"Git command failed: status \(exit 7\): permission denied try later",
+    ):
+        GitWorktreeCoordinator._git(tmp_path, "status")

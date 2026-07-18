@@ -174,6 +174,23 @@ class GitWorktreeCoordinator:
                                 f"repository {repository.repository_id} conflicts with its plan",
                             )
                             raise
+                        except GitWorkspaceError as exc:
+                            detail = str(exc)
+                            self._repository_error(
+                                connection,
+                                project_id,
+                                work_item_id,
+                                repository.repository_id,
+                                detail,
+                            )
+                            self._set_workspace(
+                                connection,
+                                project_id,
+                                work_item_id,
+                                "error",
+                                f"repository {repository.repository_id}: {detail}",
+                            )
+                            raise
                     self._set_workspace(connection, project_id, work_item_id, "ready", None)
                     return self._required_read(connection, project_id, work_item_id)
                 finally:
@@ -211,20 +228,21 @@ class GitWorktreeCoordinator:
                             )
                         except GitWorkspaceDirty:
                             blocked.append(item.repository_id)
-                        except GitWorkspaceError:
+                        except GitWorkspaceError as exc:
+                            detail = str(exc)
                             self._repository_error(
                                 connection,
                                 project_id,
                                 work_item_id,
                                 item.repository_id,
-                                "cleanup verification failed",
+                                detail,
                             )
                             self._set_workspace(
                                 connection,
                                 project_id,
                                 work_item_id,
                                 "error",
-                                f"repository {item.repository_id} failed cleanup verification",
+                                f"repository {item.repository_id}: {detail}",
                             )
                             raise
                     if blocked:
@@ -292,7 +310,7 @@ class GitWorktreeCoordinator:
         repositories = manifest_row[1].get("repositories", {})
         if not isinstance(repositories, dict):
             raise GitWorkspaceConflict("active manifest repositories are invalid")
-        branch = f"codex/{project_id}-{work_item_id}"
+        branch = _branch_name(project_id, work_item_id)
         root = self._workspace_root / project_id / work_item_id
         existing = (
             {}
@@ -563,7 +581,14 @@ class GitWorktreeCoordinator:
             text=True,
         )
         if completed.returncode != 0:
-            raise GitWorkspaceError(f"Git command failed: {arguments[0]}")
+            detail = " ".join(completed.stderr.strip().splitlines())
+            if len(detail) > 500:
+                detail = detail[:497] + "..."
+            suffix = f": {detail}" if detail else ""
+            raise GitWorkspaceError(
+                f"Git command failed: {arguments[0]} "
+                f"(exit {completed.returncode}){suffix}"
+            )
         return completed.stdout.strip()
 
     def _validate_root_boundaries(self, sources: Sequence[Path]) -> None:
@@ -675,6 +700,13 @@ def _identifier(value: object, field: str) -> str:
     if not isinstance(value, str) or _ID.fullmatch(value) is None:
         raise ValueError(f"{field} is invalid")
     return value
+
+
+def _branch_name(project_id: str, work_item_id: str) -> str:
+    component = f"{project_id}-{work_item_id}"
+    if len(component.encode("ascii")) > 255:
+        raise GitWorkspaceConflict("project and work item exceed Git branch length limit")
+    return f"codex/{component}"
 
 
 def _text(value: object, field: str) -> str:
