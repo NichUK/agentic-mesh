@@ -805,6 +805,24 @@ so interruption at that boundary replays one idempotent recovery attempt. A
 successful application resumes the original owner once, while only a verified
 failed application makes terminal error eligible.
 
+The recovery image contains one fixed repair runner rather than a second
+workflow engine. An external project plan pins the source repository, base
+revision, allowed paths, deployment commands, credential-reference names, and
+evidence root. The runner creates a disposable worktree, passes the exact goal
+to the repair command, tests and commits the scoped change, builds and deploys
+that immutable commit, restarts the runtime, and compares the reported running
+revision with the candidate. The repair adapter must report provider usage and
+an over-cap result stops before deployment. Post-deployment failure invokes and
+verifies the configured rollback to the previously observed commit.
+
+Source-control credentials are isolated from repair and deployment commands.
+The GitHub boundary can push only the generated recovery branch and exposes
+pull-request creation, not approval or merge. Each terminal runner result points
+to a content-addressed external evidence manifest containing bounded stage
+hashes and the exact base, candidate, previous, and deployed revisions. A
+completed stable run identifier replays that result without another deployment
+or pull request. Normal release governance remains responsible for integration.
+
 Attempt records and event-journal entries are append-only. Exact caller retries
 are idempotent, route creation is atomic with policy advancement, and missing
 routes roll back the attempted advancement. A successful recovery routes the

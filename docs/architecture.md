@@ -92,7 +92,10 @@ operational support.
   exact recorded goal outside FastAPI and the normal fleet. It authorizes only
   external `recovery:execute` identities, pins the restricted tool profile,
   defaults to a 120-minute deadline, enforces a usage cap, and durably captures
-  verified results before idempotently applying them to the failure policy.
+  verified results before idempotently applying them to the failure policy. A
+  bounded image runner creates one isolated repair branch, rejects unrelated
+  changes, deploys and verifies the exact committed candidate, rolls back a
+  failed deployment, and may create—but never approve or merge—a pull request.
 - Message queue: provides durable inbox/outbox delivery. The active V4 runtime
   uses Postgres-backed queues; other queue backends remain future adapter
   options.

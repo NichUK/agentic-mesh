@@ -889,3 +889,17 @@ or `release_review`.
 - Results are persisted before application to the 3/3/1 reliability policy.
   Crash replay is idempotent: success resumes the original owner once and only
   a verified failure makes terminal error eligible.
+
+## 2026-07-18 V5 Recovery Deployment Controls
+
+- The independent recovery image uses one externally planned runner: isolated
+  worktree and generated branch, exact-goal repair, allowed-path enforcement,
+  test, commit, build, deploy, restart, and exact running-revision verification.
+- Failed deployment verification invokes and verifies rollback to the commit
+  observed before deployment. Content-addressed external evidence records only
+  bounded facts and hashes; completed stable run IDs replay without new side
+  effects.
+- Source-control credential references cannot be shared with agent or
+  deployment stages. The source-control boundary pushes only the generated
+  branch and can create a pull request, but exposes no approval or merge path;
+  normal release governance owns integration.

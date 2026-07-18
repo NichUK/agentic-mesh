@@ -3,5 +3,6 @@
 !worker-healthcheck.py
 !ux-smoke-test.mjs
 !recovery-drill.py
+!recovery-control.py
 !manifests/
 !manifests/*.json
