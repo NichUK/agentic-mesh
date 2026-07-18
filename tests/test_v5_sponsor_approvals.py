@@ -106,7 +106,7 @@ def postgres_database() -> str:
             )
 
 
-def _flow_value():
+def _flow_value(gate_type: str = "sponsor_approval"):
     return {
         "schema_version": 1,
         "flow_id": "sponsor-flow",
@@ -122,7 +122,7 @@ def _flow_value():
                 "gates": [
                     {
                         "id": "product-signoff",
-                        "type": "sponsor_approval",
+                        "type": gate_type,
                         "requested_from": "sponsor",
                     }
                 ],
@@ -188,7 +188,12 @@ def test_migration_backfills_resolved_legacy_gate(postgres_database: str) -> Non
     assert row == ("legacy-resolution:legacy-gate", 64)
 
 
-def _bootstrap(database_url: str, *, open_gate: bool = True):
+def _bootstrap(
+    database_url: str,
+    *,
+    open_gate: bool = True,
+    gate_type: str = "sponsor_approval",
+):
     assert MigrationRunner(database_url).migrate().current_version == 24
     lifecycle = LifecycleStore(database_url)
     lifecycle.create_project(
@@ -256,7 +261,7 @@ def _bootstrap(database_url: str, *, open_gate: bool = True):
     engine.start(
         project_id="alpha",
         work_item_id="work-1",
-        flow=validate_flow(_flow_value(), digest="a" * 64),
+        flow=validate_flow(_flow_value(gate_type), digest="a" * 64),
         fields={},
         actor_id="project-manager",
         operation_id="start-flow",
@@ -482,6 +487,12 @@ def test_concurrent_sponsor_decisions_commit_one_outcome(postgres_database: str)
             WHERE idempotency_key LIKE 'sponsor-gate:product-signoff:%'
             """
         ).fetchone()[0] == 1
+        assert connection.execute(
+            """
+            SELECT count(*) FROM agentic_mesh_v5.events
+            WHERE project_id = 'alpha' AND event_type = 'sponsor_gate.opened'
+            """
+        ).fetchone()[0] == 1
 
 
 def test_concurrent_exact_gate_open_replays_one_request(postgres_database: str) -> None:
@@ -520,11 +531,31 @@ def test_concurrent_exact_gate_open_replays_one_request(postgres_database: str) 
         ).fetchone()[0] == 1
 
 
+def test_non_finite_evidence_fails_before_open(postgres_database: str) -> None:
+    lifecycle, _queues, _engine, _source, coordinator, _gate = _bootstrap(
+        postgres_database, open_gate=False
+    )
+    with pytest.raises(ValueError, match="JSON values"):
+        coordinator.open(
+            project_id="alpha",
+            work_item_id="work-1",
+            gate_id="product-signoff",
+            obligation_id="product-signoff",
+            requested_by="product-manager",
+            sponsor_ids=("sponsor-1",),
+            correlation_id="invalid-evidence",
+            expected_version=2,
+            evidence={"score": float("nan")},
+        )
+    assert lifecycle.get_work_item("alpha", "work-1").status == "active"
+
+
+@pytest.mark.parametrize("gate_type", ["sponsor_approval", "human_response"])
 def test_authenticated_api_and_cli_complete_sponsor_gate(
-    postgres_database: str, tmp_path: Path, monkeypatch, capsys
+    postgres_database: str, tmp_path: Path, monkeypatch, capsys, gate_type: str
 ) -> None:
     _lifecycle, _queues, _engine, _source, _coordinator, _gate = _bootstrap(
-        postgres_database, open_gate=False
+        postgres_database, open_gate=False, gate_type=gate_type
     )
     tokens = {
         "operator": "operator-token",
@@ -553,7 +584,7 @@ def test_authenticated_api_and_cli_complete_sponsor_gate(
         headers={"Authorization": f"Bearer {tokens['outsider']}"},
         json={
             "gate_id": "product-signoff",
-            "gate_type": "sponsor_approval",
+            "gate_type": gate_type,
             "flow_obligation_id": "product-signoff",
             "sponsor_ids": ["sponsor-1"],
             "correlation_id": "unauthorized-open",
@@ -566,7 +597,7 @@ def test_authenticated_api_and_cli_complete_sponsor_gate(
         headers={"Authorization": f"Bearer {tokens['operator']}"},
         json={
             "gate_id": "product-signoff",
-            "gate_type": "sponsor_approval",
+            "gate_type": gate_type,
             "flow_obligation_id": "product-signoff",
             "sponsor_ids": ["sponsor-1"],
             "correlation_id": "api-open-product",

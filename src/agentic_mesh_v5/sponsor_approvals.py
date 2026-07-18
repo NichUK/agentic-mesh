@@ -689,7 +689,9 @@ def _evidence(value: Mapping[str, object] | None) -> dict[str, object]:
         raise ValueError("evidence must be an object")
     result = dict(value)
     try:
-        encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        encoded = json.dumps(
+            result, allow_nan=False, sort_keys=True, separators=(",", ":")
+        )
     except (TypeError, ValueError) as exc:
         raise ValueError("evidence must contain JSON values") from exc
     if len(encoded.encode("utf-8")) > 1_000_000:
@@ -698,5 +700,7 @@ def _evidence(value: Mapping[str, object] | None) -> dict[str, object]:
 
 
 def _digest(*values: object) -> str:
-    encoded = json.dumps(values, sort_keys=True, separators=(",", ":"))
+    encoded = json.dumps(
+        values, allow_nan=False, sort_keys=True, separators=(",", ":")
+    )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

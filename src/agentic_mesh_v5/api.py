@@ -1289,7 +1289,7 @@ def create_app(
             work_item_id=work_item_id,
             correlation_id=payload.correlation_id,
         )
-        if payload.gate_type == "sponsor_approval":
+        if payload.gate_type in {"sponsor_approval", "human_response"}:
             return asdict(
                 sponsor_approvals.open(
                     project_id=project_id,
@@ -1306,7 +1306,7 @@ def create_app(
             )
         if payload.flow_obligation_id is not None:
             raise ValueError(
-                "flow_obligation_id is valid only for sponsor_approval gates"
+                "flow_obligation_id is valid only for sponsor approval gates"
             )
         return asdict(
             lifecycle.open_gate(
