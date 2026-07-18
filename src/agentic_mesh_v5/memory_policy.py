@@ -113,8 +113,8 @@ class ConservativeMemoryPolicy:
     ) -> MemoryPolicyDecision:
         if requested_scope not in {"project_role", "project", "organization_role"}:
             raise MemoryPolicyError("requested memory scope is invalid")
-        structured = (subject, *tags, source.reference)
-        self._reject_secrets((*structured, source.observed_version, summary))
+        structured = (subject, *tags, source.reference, source.observed_version)
+        self._reject_secrets((*structured, summary))
         if any(_EMAIL.search(item) or _TELEPHONE.search(item) for item in structured):
             raise MemorySensitiveContentError(
                 "personal data in structured memory fields cannot be redacted safely"

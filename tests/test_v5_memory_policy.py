@@ -24,6 +24,7 @@ class SourceVerifier:
         "document://alpha/architecture": "doc-1",
         "policy://seerstone/engineering": "policy-1",
         "event://shared/100": "event-1",
+        "policy://seerstone/versioned": "alpha-v1",
     }
 
     def verify(self, source: MemorySource) -> SourceCheck:
@@ -266,6 +267,8 @@ def test_personal_data_is_redacted_without_retaining_originals(
         MemorySource(
             "policy", "policy://seerstone/engineering", "client_secret=plain-value"
         ),
+        MemorySource("policy", "policy://seerstone/engineering", "owner@example.com"),
+        MemorySource("policy", "policy://seerstone/engineering", "+447700900123"),
     ],
 )
 def test_secret_like_source_fields_are_rejected(governed, source):
@@ -291,6 +294,18 @@ def test_project_ids_and_aliases_prevent_promotion(
         tags=tags,
         summary=summary,
         operation_id=f"identifier-{uuid.uuid4().hex}",
+    )
+    assert (entry.scope, entry.classification) == (
+        "project_role",
+        "project_specific",
+    )
+
+
+def test_project_identifier_in_source_version_prevents_promotion(governed):
+    entry = _remember(
+        governed,
+        source=MemorySource("policy", "policy://seerstone/versioned", "alpha-v1"),
+        operation_id="project-version",
     )
     assert (entry.scope, entry.classification) == (
         "project_role",
