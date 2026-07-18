@@ -17,7 +17,9 @@ CREATE TABLE agentic_mesh_v5.flow_runs (
     pending_target_state text,
     pending_target_role_id text,
     pending_handoff_id text,
-    pending_operation_id text,
+    pending_operation_id text CHECK (
+        pending_operation_id IS NULL OR btrim(pending_operation_id) <> ''
+    ),
     pending_request_digest text CHECK (
         pending_request_digest IS NULL OR pending_request_digest ~ '^[0-9a-f]{64}$'
     ),

@@ -206,6 +206,8 @@ class FlowEngine:
             with psycopg.connect(self._database_url, autocommit=True) as connection:
                 with connection.transaction():
                     run = self._lock(connection, project_id, work_item_id)
+                    if run.status != "active":
+                        raise FlowEngineConflict("flow run is not active")
                     row = connection.execute(
                         f"""
                         UPDATE {SCHEMA}.flow_obligations
@@ -214,16 +216,20 @@ class FlowEngine:
                         WHERE project_id = %s AND work_item_id = %s
                           AND state = %s AND entry_version = %s
                           AND obligation_kind = %s AND obligation_id = %s
+                          AND (status = 'pending' OR evidence = %s)
                         RETURNING state, entry_version, accountable_role_id,
                                   payload, status, evidence
                         """,
                         (
                             Jsonb(evidence), actor_id, project_id, work_item_id,
                             run.current_state, run.version, kind, obligation_id,
+                            Jsonb(evidence),
                         ),
                     ).fetchone()
                     if row is None:
-                        raise FlowEngineNotFound("current obligation was not found")
+                        raise FlowEngineConflict(
+                            "obligation is not pending or evidence differs"
+                        )
             return FlowObligation(
                 project_id, work_item_id, row[0], row[1], kind, obligation_id,
                 row[2], row[3], row[4], row[5]

@@ -183,6 +183,16 @@ def _ready_flow(flow_database):
         )
     _satisfy(engine, "artifact", "artifact")
     _satisfy(engine, "gate", "owner-gate")
+    _satisfy(engine, "gate", "owner-gate")
+    with pytest.raises(FlowEngineConflict, match="evidence differs"):
+        engine.satisfy(
+            project_id="alpha",
+            work_item_id="work-1",
+            kind="gate",
+            obligation_id="owner-gate",
+            evidence={"uri": "evidence://changed"},
+            actor_id="business-analyst",
+        )
     return database_url, engine, source
 
 
