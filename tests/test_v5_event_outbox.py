@@ -332,8 +332,16 @@ def test_delivery_failure_records_redacted_error_then_retries(event_database: st
     assert failed.status == "failed"
     assert failed.error == "delivery failed: RuntimeError"
     assert "do-not-store" not in failed.error
-    assert dispatcher.dispatch_one(delivered.append).status == "empty"
     with psycopg.connect(event_database) as connection:
+        failed_state = connection.execute(
+            """
+            SELECT attempt_count, dispatched_at IS NULL, last_error,
+                   available_at > clock_timestamp()
+            FROM agentic_mesh_v5.outbox
+            WHERE idempotency_key = %s
+            """,
+            (expected_key,),
+        ).fetchone()
         connection.execute(
             """
             UPDATE agentic_mesh_v5.outbox
@@ -342,6 +350,7 @@ def test_delivery_failure_records_redacted_error_then_retries(event_database: st
             """,
             (expected_key,),
         )
+    assert failed_state == (1, True, "delivery failed: RuntimeError", True)
     retried = dispatcher.dispatch_one(delivered.append)
     assert retried.status == "delivered"
     assert retried.idempotency_key == expected_key
