@@ -145,7 +145,14 @@ def test_migration_backfill_rebuilds_without_changing_authoritative_rows(
             for table in before
         }
     for table in before:
-        if table != "progress":
+        if table == "queue_items":
+            normalized = []
+            for row in after[table]:
+                item = dict(row[0])
+                assert item.pop("route_fingerprint") is None
+                normalized.append((item,))
+            assert normalized == before[table]
+        elif table != "progress":
             assert after[table] == before[table]
     migrated_progress = dict(after["progress"][0][0])
     assert migrated_progress.pop("checkpoint_id") == "legacy-1"

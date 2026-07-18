@@ -16,6 +16,10 @@ from agentic_mesh_v5.queues import QueueAuthorizationError
 from agentic_mesh_v5.queues import QueueConflict
 from agentic_mesh_v5.queues import QueueNotFound
 from agentic_mesh_v5.queues import RoleQueueStore
+from agentic_mesh_v5.routing import RouteDraft
+from agentic_mesh_v5.routing import Router
+from agentic_mesh_v5.routing import RoutingConflict
+from agentic_mesh_v5.routing import RoutingNotFound
 
 
 @pytest.fixture
@@ -368,3 +372,103 @@ def test_duplicate_enqueue_is_conflict(queue_database) -> None:
             idempotency_key="idem-item-1",
             payload={},
         )
+
+
+def test_router_resolves_role_capability_and_preserves_priority(queue_database) -> None:
+    database_url, store = queue_database
+    store.create_queue(
+        project_id="alpha",
+        queue_id="engineering-browser",
+        role_id="engineering",
+        capability="browser",
+    )
+    router = Router(database_url)
+    low = router.route(
+        RouteDraft(
+            "alpha", "work-1", "engineering", "route-low", {"kind": "general"},
+            priority=1,
+        )
+    )
+    high = router.route(
+        RouteDraft(
+            "alpha", "work-2", "engineering", "route-high", {"kind": "general"},
+            priority=10,
+        )
+    )
+    browser = router.route(
+        RouteDraft(
+            "alpha", "work-3", "engineering", "route-browser", {},
+            capability="browser", priority=100,
+        )
+    )
+
+    claim = store.claim(
+        project_id="alpha", queue_id="engineering", owner_instance_id="eng-1",
+        lease_seconds=60,
+    )
+
+    assert (low.queue_id, high.queue_id) == ("engineering", "engineering")
+    assert browser.queue_id == "engineering-browser"
+    assert claim.queue_item.queue_item_id == high.queue_item_id
+
+
+def test_concurrent_duplicate_routes_return_one_item_and_conflicts_fail(
+    queue_database,
+) -> None:
+    database_url, _store = queue_database
+    router = Router(database_url)
+    draft = RouteDraft(
+        "alpha", "work-1", "engineering", "same-route", {"kind": "build"},
+        priority=7,
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        records = list(pool.map(lambda _index: router.route(draft), range(16)))
+
+    assert len({record.queue_item_id for record in records}) == 1
+    with psycopg.connect(database_url) as connection:
+        count = connection.execute(
+            """
+            SELECT count(*) FROM agentic_mesh_v5.queue_items
+            WHERE project_id = 'alpha' AND idempotency_key = 'same-route'
+            """
+        ).fetchone()[0]
+    assert count == 1
+    with pytest.raises(RoutingConflict, match="already used"):
+        router.route(
+            RouteDraft(
+                "alpha", "work-1", "engineering", "same-route",
+                {"kind": "different"}, priority=7,
+            )
+        )
+
+
+def test_router_rejects_invalid_paused_and_foreign_targets(queue_database) -> None:
+    database_url, store = queue_database
+    router = Router(database_url)
+    store.create_queue(
+        project_id="alpha", queue_id="qa", role_id="qa"
+    )
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            "UPDATE agentic_mesh_v5.role_queues SET paused = true "
+            "WHERE project_id = 'alpha' AND queue_id = 'qa'"
+        )
+
+    invalid = (
+        RouteDraft("alpha", "work-1", "engineering", "missing-cap", {}, capability="gpu"),
+        RouteDraft("alpha", "work-1", "finance", "foreign-role", {}),
+        RouteDraft("alpha", "work-1", "qa", "paused", {}),
+    )
+    for draft in invalid:
+        with pytest.raises(RoutingNotFound, match="target not found"):
+            router.route(draft)
+
+    with psycopg.connect(database_url) as connection:
+        routed = connection.execute(
+            """
+            SELECT count(*) FROM agentic_mesh_v5.queue_items
+            WHERE project_id = 'alpha'
+            """
+        ).fetchone()[0]
+    assert routed == 0

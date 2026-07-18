@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -88,6 +88,23 @@ class OutboxMessage:
     payload: Mapping[str, Any]
     idempotency_key: str
     attempt: int
+
+
+@dataclass(frozen=True)
+class DeliveryReceipt:
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "idempotency_key",
+            _required(self.idempotency_key, "idempotency_key"),
+        )
+
+
+@runtime_checkable
+class IdempotentDeliveryAdapter(Protocol):
+    def deliver(self, message: OutboxMessage) -> DeliveryReceipt: ...
 
 
 @dataclass(frozen=True)
@@ -220,10 +237,12 @@ class OutboxDispatcher:
 
     def dispatch_one(
         self,
-        deliver: Callable[[OutboxMessage], object],
+        adapter: IdempotentDeliveryAdapter,
         *,
         project_id: str | None = None,
     ) -> DispatchResult:
+        if not isinstance(adapter, IdempotentDeliveryAdapter):
+            raise ValueError("an idempotent delivery adapter is required")
         if project_id is not None:
             project_id = _required(project_id, "project_id")
         project_filter = "" if project_id is None else "AND o.project_id = %s"
@@ -262,7 +281,12 @@ class OutboxDispatcher:
                         (message.project_id, message.outbox_id),
                     )
                     try:
-                        deliver(message)
+                        receipt = adapter.deliver(message)
+                        if (
+                            not isinstance(receipt, DeliveryReceipt)
+                            or receipt.idempotency_key != message.idempotency_key
+                        ):
+                            raise ValueError("delivery receipt is invalid")
                     except Exception as exc:
                         error = f"delivery failed: {type(exc).__name__}"
                         connection.execute(
