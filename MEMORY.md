@@ -69,6 +69,12 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   project/domain/entity models. Safe project, work, queue metrics, role,
   instance, and structured-progress updates stream through project-authorized
   SSE with global IDs and `Last-Event-ID`; slow clients hold no database lease.
+- V5 control requests preserve W3C trace context and record route-template,
+  request, project, work-item, queue, correlation, outcome, and bounded metric
+  attributes through one OpenTelemetry wrapper. Liveness is database
+  independent; readiness reports current/pending/unavailable Postgres state
+  with stable redacted reason codes. OTLP export is enabled only through
+  external standard endpoint settings and startup does not require a collector.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

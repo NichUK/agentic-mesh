@@ -19,7 +19,16 @@ python -m agentic_mesh_v5 --json status
 python -m agentic_mesh_v5 --json resolve-config --config-root C:\Dev\agentic-mesh-config --package project-override/example-project@0.1.0
 python -m agentic_mesh_v5 --json release-create --config-root C:\Dev\agentic-mesh-config --package project-override/example-project@0.1.0 --actor sponsor
 python -m agentic_mesh_v5 --json release-status --config-root C:\Dev\agentic-mesh-config
+$env:AGENTIC_MESH_V5_DATABASE_URL="postgresql://mesh:$env:DB_PASSWORD@localhost:5432/mesh"
+python -m agentic_mesh_v5 --json database-migrate
+python -m agentic_mesh_v5 api-serve
 ```
+
+The V5 API exposes database-independent liveness at `/api/v1/health/live` and
+schema-aware readiness at `/api/v1/health/ready`. It creates local
+OpenTelemetry spans and metrics without requiring a collector. Set the standard
+`OTEL_EXPORTER_OTLP_ENDPOINT`, or its traces/metrics-specific endpoint, to
+enable OTLP/gRPC export; credentials and collector settings remain external.
 
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
 infrastructure: Teams/API ingress, Postgres-backed message queues, Codex
