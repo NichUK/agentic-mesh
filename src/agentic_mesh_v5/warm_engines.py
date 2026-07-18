@@ -70,6 +70,7 @@ class WarmEnginePool:
         self._provider_factory = provider_factory
         self._clock = clock
         self._entries: dict[RoleInstanceKey, _Entry] = {}
+        self._opening: dict[RoleInstanceKey, Lock] = {}
         self._lock = RLock()
         self._closed = False
 
@@ -100,11 +101,13 @@ class WarmEnginePool:
                     entry.completed_uses += 1
             return result
         finally:
-            with self._lock:
-                if self._entries.get(key) is entry:
-                    entry.last_used_at = self._now()
-                entry.active = False
-            entry.operation_lock.release()
+            try:
+                with self._lock:
+                    if self._entries.get(key) is entry:
+                        entry.last_used_at = self._now()
+                    entry.active = False
+            finally:
+                entry.operation_lock.release()
 
     def discard(self, key: RoleInstanceKey, engine: WorkerEngine) -> bool:
         key = _key(key)
@@ -193,18 +196,39 @@ class WarmEnginePool:
 
     def _lock_current_entry(self, key: RoleInstanceKey) -> _Entry:
         while True:
-            with self._lock:
-                if self._closed:
-                    raise WarmEngineLifecycleError("warm engine pool is closed")
-                entry = self._entries.get(key)
-                if entry is None:
-                    entry = self._open_entry(key)
-                    self._entries[key] = entry
+            entry = self._get_or_open(key)
             entry.operation_lock.acquire()
             with self._lock:
                 if self._entries.get(key) is entry:
                     return entry
             entry.operation_lock.release()
+
+    def _get_or_open(self, key: RoleInstanceKey) -> _Entry:
+        with self._lock:
+            if self._closed:
+                raise WarmEngineLifecycleError("warm engine pool is closed")
+            existing = self._entries.get(key)
+            if existing is not None:
+                return existing
+            opening = self._opening.setdefault(key, Lock())
+        with opening:
+            with self._lock:
+                if self._closed:
+                    raise WarmEngineLifecycleError("warm engine pool is closed")
+                existing = self._entries.get(key)
+                if existing is not None:
+                    return existing
+            opened = self._open_entry(key)
+            with self._lock:
+                if self._closed:
+                    _close_twice(opened.engine)
+                    raise WarmEngineLifecycleError("warm engine pool is closed")
+                existing = self._entries.get(key)
+                if existing is None:
+                    self._entries[key] = opened
+                    return opened
+            _close_twice(opened.engine)
+            return existing
 
     def _open_entry(self, key: RoleInstanceKey) -> _Entry:
         provider_failed = False

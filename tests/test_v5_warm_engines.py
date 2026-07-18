@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from threading import Barrier, Event, Lock
 
 import pytest
@@ -160,6 +159,30 @@ def test_different_role_instances_can_run_concurrently() -> None:
             pool.run,
             RoleInstanceKey("project-one", "qa-1"),
             operation,
+        )
+        assert {first.result(timeout=5), second.result(timeout=5)} == {1, 2}
+    pool.shutdown()
+
+
+def test_different_role_instances_can_open_concurrently() -> None:
+    rendezvous = Barrier(2)
+    created: list[FakeProvider] = []
+    created_lock = Lock()
+
+    def factory(_key: RoleInstanceKey) -> FakeProvider:
+        rendezvous.wait(timeout=5)
+        with created_lock:
+            provider = FakeProvider(FakeEngine(len(created) + 1))
+            created.append(provider)
+            return provider
+
+    pool = WarmEnginePool(factory)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(pool.run, KEY, lambda engine: engine.number)
+        second = executor.submit(
+            pool.run,
+            RoleInstanceKey("project-one", "qa-1"),
+            lambda engine: engine.number,
         )
         assert {first.result(timeout=5), second.result(timeout=5)} == {1, 2}
     pool.shutdown()
@@ -368,4 +391,17 @@ def test_invalid_idle_threshold_is_rejected(threshold: object) -> None:
     pool = WarmEnginePool(ProviderFactory())
     with pytest.raises(WarmEngineConfigurationError):
         pool.is_idle(KEY, threshold)  # type: ignore[arg-type]
+    pool.shutdown()
+
+
+def test_invalid_clock_cannot_leave_operation_lock_held() -> None:
+    clock = Clock()
+    pool = WarmEnginePool(ProviderFactory(), clock=clock)
+    assert pool.run(KEY, lambda engine: engine.number) == 1
+    clock.value = float("nan")
+    with pytest.raises(WarmEngineLifecycleError, match="clock is invalid"):
+        pool.run(KEY, lambda engine: engine.number)
+
+    clock.value = 20
+    assert pool.run(KEY, lambda engine: engine.number) == 1
     pool.shutdown()
