@@ -176,6 +176,7 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
         "{handoff_id}/accept"
     ) in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/usage" in paths
+    assert f"{API_PREFIX}/pm-monitor/sweep" in paths
     assert f"{API_PREFIX}/projects/{{project_id}}/recovery" in paths
     assert (
         f"{API_PREFIX}/projects/{{project_id}}/work-items/"
@@ -192,6 +193,43 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     assert response.headers["x-request-id"] == response.json()["request_id"]
     assert response.json()["type"].endswith(":authentication_required")
     assert TOKENS["alpha"] not in response.text
+
+
+def test_global_pm_monitor_api_is_operator_only_and_hides_token_from_status(
+    api_database: tuple[str, TestClient],
+) -> None:
+    _database_url, client = api_database
+    claim = client.post(
+        f"{API_PREFIX}/pm-monitor/claim",
+        headers=_headers("operator"),
+        json={"owner_id": "pm-process-1", "lease_seconds": 60},
+    )
+    token = claim.json()["lease_token"]
+    status_response = client.get(
+        f"{API_PREFIX}/pm-monitor", headers=_headers("operator")
+    )
+    heartbeat = client.post(
+        f"{API_PREFIX}/pm-monitor/heartbeat",
+        headers=_headers("operator"),
+        json={"owner_id": "pm-process-1", "lease_token": token},
+    )
+    sweep = client.post(
+        f"{API_PREFIX}/pm-monitor/sweep",
+        headers=_headers("operator"),
+        json={"owner_id": "pm-process-1", "lease_token": token},
+    )
+    forbidden = client.post(
+        f"{API_PREFIX}/pm-monitor/claim",
+        headers=_headers("alpha"),
+        json={"owner_id": "foreign-process", "lease_seconds": 60},
+    )
+
+    assert claim.status_code == 201
+    assert status_response.status_code == heartbeat.status_code == 200
+    assert "lease_token" not in status_response.json()
+    assert sweep.json()["observations"] == []
+    assert sweep.json()["sweep_count"] == 1
+    assert forbidden.status_code == 403
 
 
 def test_progress_write_is_structured_project_scoped_and_stale_safe(

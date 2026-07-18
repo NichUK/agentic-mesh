@@ -24,6 +24,9 @@ from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.database import database_url_from_environment
+from agentic_mesh_v5.continuation import ContinuationAuthorizationError
+from agentic_mesh_v5.continuation import ContinuationConflict
+from agentic_mesh_v5.continuation import ContinuationMonitor
 from agentic_mesh_v5.health import HealthReporter
 from agentic_mesh_v5.handoffs import HandoffAuthorizationError
 from agentic_mesh_v5.handoffs import HandoffConflict
@@ -277,6 +280,52 @@ class HandoffResponse(ApiModel):
     acceptance_target_met: bool | None
     claim_overdue: bool
     acceptance_overdue: bool
+
+
+class PmMonitorClaimCreate(ApiModel):
+    owner_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    lease_seconds: int = Field(ge=1, le=300)
+
+
+class PmMonitorAction(ApiModel):
+    owner_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    lease_token: str = Field(min_length=1, max_length=512)
+
+
+class PmMonitorClaimResponse(ApiModel):
+    logical_pm_id: str
+    owner_id: str
+    lease_token: str
+    acquired_at: str
+    heartbeat_at: str
+    expires_at: str
+
+
+class PmMonitorStatusResponse(ApiModel):
+    logical_pm_id: str
+    owner_id: str
+    heartbeat_at: str
+    expires_at: str
+    active: bool
+    sweep_count: int
+    last_sweep_at: str | None
+
+
+class ContinuationObservationResponse(ApiModel):
+    project_id: str
+    work_item_id: str
+    work_version: int
+    disposition: str
+    action_id: str | None
+    detail: str
+    observed_at: str
+
+
+class PmMonitorSweepResponse(ApiModel):
+    logical_pm_id: str
+    owner_id: str
+    sweep_count: int
+    observations: list[ContinuationObservationResponse]
 
 
 class QueueMetricsResponse(ApiModel):
@@ -539,6 +588,7 @@ def create_app(
     queues = RoleQueueStore(database_url)
     router = Router(database_url)
     handoff_store = HandoffStore(database_url)
+    continuation_monitor = ContinuationMonitor(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
@@ -637,6 +687,14 @@ def create_app(
                 403, "scope_denied", f"identity does not have the {scope} scope"
             )
 
+    def organization_access(identity: Principal, scope: str) -> None:
+        scope_access(identity, scope)
+        if "*" not in identity.projects:
+            raise ControlApiError(
+                403, "organization_access_denied",
+                "identity is not authorized for organization-wide operation",
+            )
+
     @app.exception_handler(ControlApiError)
     async def control_error(request: Request, exc: ControlApiError) -> JSONResponse:
         return _problem_response(
@@ -672,12 +730,14 @@ def create_app(
     @app.exception_handler(ProgressConflict)
     @app.exception_handler(RoutingConflict)
     @app.exception_handler(HandoffConflict)
+    @app.exception_handler(ContinuationConflict)
     async def conflict(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 409, "conflict", str(exc))
 
     @app.exception_handler(LifecycleAuthorizationError)
     @app.exception_handler(QueueAuthorizationError)
     @app.exception_handler(HandoffAuthorizationError)
+    @app.exception_handler(ContinuationAuthorizationError)
     async def forbidden(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 403, "operation_forbidden", str(exc))
 
@@ -713,6 +773,64 @@ def create_app(
     @app.get(f"{API_PREFIX}/health", response_model=HealthResponse, tags=["system"])
     def health(response: Response) -> dict[str, object]:
         return readiness(response)
+
+    @app.post(
+        f"{API_PREFIX}/pm-monitor/claim",
+        response_model=PmMonitorClaimResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["pm-monitor"],
+    )
+    def claim_pm_monitor(
+        payload: PmMonitorClaimCreate,
+        identity: Principal = Depends(principal),
+    ):
+        organization_access(identity, "write")
+        return asdict(
+            continuation_monitor.claim(
+                owner_id=payload.owner_id, lease_seconds=payload.lease_seconds
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/pm-monitor/heartbeat",
+        response_model=PmMonitorStatusResponse,
+        tags=["pm-monitor"],
+    )
+    def heartbeat_pm_monitor(
+        payload: PmMonitorAction,
+        identity: Principal = Depends(principal),
+    ):
+        organization_access(identity, "write")
+        return asdict(
+            continuation_monitor.heartbeat(
+                owner_id=payload.owner_id, lease_token=payload.lease_token
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/pm-monitor/sweep",
+        response_model=PmMonitorSweepResponse,
+        tags=["pm-monitor"],
+    )
+    def sweep_pm_monitor(
+        payload: PmMonitorAction,
+        identity: Principal = Depends(principal),
+    ):
+        organization_access(identity, "write")
+        return asdict(
+            continuation_monitor.sweep(
+                owner_id=payload.owner_id, lease_token=payload.lease_token
+            )
+        )
+
+    @app.get(
+        f"{API_PREFIX}/pm-monitor",
+        response_model=PmMonitorStatusResponse,
+        tags=["pm-monitor"],
+    )
+    def get_pm_monitor(identity: Principal = Depends(principal)):
+        organization_access(identity, "read")
+        return asdict(continuation_monitor.status())
 
     @app.get(f"{API_PREFIX}/projects", response_model=list[ProjectResponse], tags=["projects"])
     def list_projects(identity: Principal = Depends(principal)):

@@ -834,3 +834,13 @@ or `release_review`.
 - Handoff records expose the 10-second queue-materialisation, 90-second claim,
   and 120-second post-claim acceptance targets without a second broker or
   summariser.
+
+## 2026-07-18 V5 Global PM Continuation
+
+- One durable `global-project-manager` lease serializes organization-wide
+  continuation sweeps while allowing a new process to take over after expiry.
+- Pending sponsor gates are safe stops. Structured material ambiguity opens a
+  deterministic sponsor-clarification gate with the supplied question.
+- Nonterminal work without ready/delayed queue work or a live lease is routed
+  idempotently to the project's Project Manager. Missing PM routing remains a
+  visible status and audit record rather than disappearing silently.
