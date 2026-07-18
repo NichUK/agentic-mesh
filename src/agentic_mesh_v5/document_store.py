@@ -497,12 +497,17 @@ class OneDriveDocumentStore:
         follow_redirects: bool,
     ) -> HttpResponse:
         try:
-            return self._transport.request(
+            raw = self._transport.request(
                 method,
                 url,
                 headers=headers,
                 content=content,
                 follow_redirects=follow_redirects,
+            )
+            return HttpResponse(
+                raw.status_code,
+                {key.casefold(): value for key, value in raw.headers.items()},
+                raw.content,
             )
         except DocumentTransportError:
             raise DocumentUnavailable("document service transport failed") from None
