@@ -231,7 +231,7 @@ def _load_token(path: Path) -> str:
     if not path.exists() or not path.is_file():
         raise ApiClientConfigurationError("API token path must be an existing file")
     try:
-        token = path.read_text(encoding="utf-8").strip()
+        token = path.read_text(encoding="utf-8").rstrip("\r\n")
     except (OSError, UnicodeError) as exc:
         raise ApiClientConfigurationError("API token file must be readable UTF-8") from exc
     if not token or len(token) > 8192 or any(
