@@ -202,7 +202,7 @@ def test_project_authorization_and_read_views_are_isolated(api_database) -> None
     )
 
     assert health.json()["status"] == "ok"
-    assert health.json()["schema_version"] == 4
+    assert health.json()["schema_version"] == 5
     assert created.status_code == 201
     assert created.json()["project_id"] == "charlie"
     assert [item["project_id"] for item in visible.json()] == ["alpha"]

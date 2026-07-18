@@ -65,6 +65,10 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   `control-call` cover current `/api/v1` contracts using an externally mounted
   bearer-token file. It requires HTTPS except on loopback, confirms each API
   action ID, uses stable exit codes, and redacts secret-shaped response fields.
+- V5 live reads replay same-transaction, append-only projection events into
+  project/domain/entity models. Safe project, work, queue metrics, role,
+  instance, and structured-progress updates stream through project-authorized
+  SSE with global IDs and `Last-Event-ID`; slow clients hold no database lease.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

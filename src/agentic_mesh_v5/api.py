@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from datetime import datetime
+from functools import partial
 import re
 from typing import Any, Literal
 import uuid
 
-from fastapi import Depends, FastAPI, Request, Security, status
+import anyio
+from fastapi import Depends, FastAPI, Header, Query, Request, Security, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 import psycopg
@@ -31,6 +34,8 @@ from agentic_mesh_v5.queues import QueueAuthorizationError
 from agentic_mesh_v5.queues import QueueConflict
 from agentic_mesh_v5.queues import QueueNotFound
 from agentic_mesh_v5.queues import RoleQueueStore
+from agentic_mesh_v5.read_models import ReadModelNotFound
+from agentic_mesh_v5.read_models import ReadModelStore
 
 
 API_PREFIX = "/api/v1"
@@ -211,6 +216,12 @@ class AgentsResponse(ApiModel):
     instances: list[dict[str, Any]]
 
 
+class ReadModelSnapshotResponse(ApiModel):
+    project_id: str
+    last_event_id: int
+    domains: dict[str, list[dict[str, Any]]]
+
+
 class DomainAvailability(ApiModel):
     domain: str
     status: Literal["planned"]
@@ -356,6 +367,7 @@ def create_app(
     lifecycle = LifecycleStore(database_url)
     queues = RoleQueueStore(database_url)
     queries = ControlQueries(database_url)
+    read_models = ReadModelStore(database_url)
     bearer = HTTPBearer(auto_error=False)
     app = FastAPI(
         title="Agentic Mesh V5 Control API",
@@ -441,6 +453,7 @@ def create_app(
 
     @app.exception_handler(LifecycleNotFound)
     @app.exception_handler(QueueNotFound)
+    @app.exception_handler(ReadModelNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
@@ -852,6 +865,77 @@ def create_app(
     def recovery(project_id: str, identity: Principal = Depends(principal)):
         return planned_domain("recovery", "AMV5-034", project_id, identity)
 
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/read-model",
+        response_model=ReadModelSnapshotResponse,
+        tags=["live"],
+    )
+    def read_model_snapshot(
+        project_id: str, identity: Principal = Depends(principal)
+    ):
+        project_access(identity, project_id, "read")
+        return read_models.snapshot(project_id)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/events",
+        tags=["live"],
+        responses={
+            200: {
+                "description": "Ordered project event stream",
+                "content": {"text/event-stream": {}},
+            }
+        },
+    )
+    async def live_events(
+        request: Request,
+        project_id: str,
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+        once: bool = False,
+        limit: int = Query(default=100, ge=1, le=1000),
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        cursor = _event_cursor(last_event_id)
+        await anyio.to_thread.run_sync(read_models.require_project, project_id)
+
+        async def generate():
+            current = cursor
+            idle_polls = 0
+            while True:
+                if await request.is_disconnected():
+                    return
+                batch = await anyio.to_thread.run_sync(
+                    partial(
+                        read_models.events,
+                        project_id,
+                        after_event_id=current,
+                        limit=limit,
+                    )
+                )
+                if batch:
+                    idle_polls = 0
+                    for event in batch:
+                        if await request.is_disconnected():
+                            return
+                        yield event.to_sse()
+                        current = event.event_id
+                    if once:
+                        return
+                    continue
+                if once:
+                    return
+                idle_polls += 1
+                if idle_polls >= 15:
+                    yield ": keep-alive\n\n"
+                    idle_polls = 0
+                await asyncio.sleep(1)
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     return app
 
 
@@ -885,3 +969,11 @@ def _problem_response(
         media_type="application/problem+json",
         headers=headers,
     )
+
+
+def _event_cursor(value: str | None) -> int:
+    if value is None:
+        return 0
+    if re.fullmatch(r"[0-9]+", value) is None:
+        raise ValueError("Last-Event-ID must be a non-negative integer")
+    return int(value)
