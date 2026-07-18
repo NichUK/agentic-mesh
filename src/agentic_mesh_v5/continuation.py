@@ -239,7 +239,9 @@ class ContinuationMonitor:
                         ),
                         pending_gates AS (
                             SELECT DISTINCT ON (gate.project_id, gate.work_item_id)
-                                   gate.project_id, gate.work_item_id, gate.gate_id
+                                   gate.project_id, gate.work_item_id, gate.gate_id,
+                                   gate.gate_type,
+                                   gate.evidence ->> 'question' AS sponsor_question
                             FROM {SCHEMA}.gates AS gate
                             JOIN active_items AS item
                               USING (project_id, work_item_id)
@@ -272,7 +274,7 @@ class ContinuationMonitor:
                         )
                         SELECT item.project_id, item.work_item_id, item.status,
                                item.assigned_role_id, item.version, item.payload,
-                               gate.gate_id,
+                               gate.gate_id, gate.gate_type, gate.sponsor_question,
                                continuation.work_item_id IS NOT NULL,
                                COALESCE(sponsor.sponsor_ids, ARRAY[]::text[])
                         FROM active_items AS item
@@ -308,10 +310,17 @@ class ContinuationMonitor:
     def _observe(self, connection, item, actor_id: str) -> ContinuationObservation:
         (
             project_id, work_item_id, status, owner_role_id, version, payload,
-            pending_gate_id, has_continuation, sponsors,
+            pending_gate_id, pending_gate_type, pending_sponsor_question,
+            has_continuation, sponsors,
         ) = item
         if status == "gated" and pending_gate_id is not None:
-            values = ("waiting_sponsor", pending_gate_id, "pending sponsor gate")
+            question = _sponsor_question(
+                {"sponsor_question": pending_sponsor_question}
+            )
+            if pending_gate_type == "sponsor-clarification" and question is not None:
+                values = ("sponsor_question", pending_gate_id, question)
+            else:
+                values = ("waiting_sponsor", pending_gate_id, "pending sponsor gate")
         elif status == "active" and _material_ambiguity(payload):
             question = _sponsor_question(payload)
             if question is not None:

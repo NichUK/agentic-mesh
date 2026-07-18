@@ -218,6 +218,12 @@ def test_one_global_sweep_routes_orphans_and_respects_gates(
         owner_id=claim.owner_id, lease_token=claim.lease_token
     )
     assert repeated.sweep_count == 2
+    repeated_ambiguous = next(
+        item for item in repeated.observations
+        if item.project_id == "alpha" and item.work_item_id == "ambiguous"
+    )
+    assert repeated_ambiguous.disposition == "sponsor_question"
+    assert "option A or B" in repeated_ambiguous.detail
     with psycopg.connect(database_url) as connection:
         assert connection.execute(
             "SELECT count(*) FROM agentic_mesh_v5.gates"
