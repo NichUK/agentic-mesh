@@ -354,6 +354,9 @@ def test_dispatch_requires_adapter_and_rejects_mismatched_receipt(
     with pytest.raises(ValueError, match="idempotent delivery adapter"):
         dispatcher.dispatch_one(lambda _message: None)  # type: ignore[arg-type]
 
+    with pytest.raises(ValueError, match="idempotent delivery adapter"):
+        dispatcher.dispatch_one(RecordingDelivery)  # type: ignore[arg-type]
+
     class WrongReceipt:
         def deliver(self, _message):
             return DeliveryReceipt("different-key")

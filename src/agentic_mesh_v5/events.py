@@ -241,7 +241,11 @@ class OutboxDispatcher:
         *,
         project_id: str | None = None,
     ) -> DispatchResult:
-        if not isinstance(adapter, IdempotentDeliveryAdapter):
+        if (
+            isinstance(adapter, type)
+            or not isinstance(adapter, IdempotentDeliveryAdapter)
+            or not callable(getattr(adapter, "deliver", None))
+        ):
             raise ValueError("an idempotent delivery adapter is required")
         if project_id is not None:
             project_id = _required(project_id, "project_id")

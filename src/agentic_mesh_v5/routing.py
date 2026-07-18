@@ -181,7 +181,6 @@ class Router:
               ON queue.project_id = item.project_id
              AND queue.queue_id = item.queue_id
             WHERE item.project_id = %s AND item.idempotency_key = %s
-            FOR UPDATE OF item
             """,
             (draft.project_id, draft.idempotency_key),
         ).fetchone()
