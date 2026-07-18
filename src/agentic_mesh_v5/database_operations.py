@@ -247,7 +247,17 @@ class PostgresNativeTools:
     def dump(self, database_url: str, archive: Path) -> None:
         environment, dbname = _postgres_environment(database_url)
         try:
-            with archive.open("xb") as output:
+            descriptor = os.open(
+                archive,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+                0o600,
+            )
+            try:
+                output_handle = os.fdopen(descriptor, "wb")
+            except Exception:
+                os.close(descriptor)
+                raise
+            with output_handle as output:
                 result = subprocess.run(
                     [
                         *self._pg_dump,

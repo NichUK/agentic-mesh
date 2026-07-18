@@ -141,6 +141,14 @@ def test_native_tool_credentials_use_environment_not_arguments(
     tmp_path: Path, monkeypatch
 ) -> None:
     calls = []
+    create_modes = []
+    original_open = os.open
+
+    def secure_open(path, flags, mode=0o777, *, dir_fd=None):
+        create_modes.append(mode)
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
 
     def completed(command, **kwargs):
         calls.append((command, kwargs["env"]))
@@ -150,6 +158,7 @@ def test_native_tool_credentials_use_environment_not_arguments(
         return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(subprocess, "run", completed)
+    monkeypatch.setattr(os, "open", secure_open)
     archive = tmp_path / "safe.dump"
     tools = PostgresNativeTools()
     database_url = (
@@ -161,6 +170,7 @@ def test_native_tool_credentials_use_environment_not_arguments(
     tools.restore(database_url, archive)
 
     assert len(calls) == 2
+    assert create_modes == [0o600]
     for command, environment in calls:
         rendered = " ".join(command)
         assert "super-secret" not in rendered
