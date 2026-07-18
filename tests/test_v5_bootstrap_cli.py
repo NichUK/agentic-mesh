@@ -260,6 +260,13 @@ def test_cli_operates_lifecycle_and_sponsor_gate_through_real_api(
             VALUES ('alpha', 'engineering', 'engineering')
             """
         )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.role_instances
+                (project_id, instance_id, role_id, status)
+            VALUES ('alpha', 'eng-1', 'engineering', 'hibernated')
+            """
+        )
     outputs.extend(
         [
             call(
@@ -300,6 +307,17 @@ def test_cli_operates_lifecycle_and_sponsor_gate_through_real_api(
         ]
     )
     recovery = call("GET", "/api/v1/projects/alpha/recovery")
+    fleet_policy = call(
+        "PUT",
+        "/api/v1/projects/alpha/fleet/policies/engineering",
+        {
+            "min_warm_instances": 0,
+            "max_instances": 1,
+            "scale_after_seconds": 60,
+            "idle_grace_seconds": 300,
+            "hibernation_enabled": True,
+        },
+    )
     configuration = call("GET", "/api/v1/projects/alpha/configuration")
     assert main(["control-status"]) == 0
     human_status = capsys.readouterr().out
@@ -308,6 +326,7 @@ def test_cli_operates_lifecycle_and_sponsor_gate_through_real_api(
     assert len({output["action_id"] for output in outputs}) == len(outputs)
     assert outputs[-1]["result"]["approver_id"] == "sponsor-1"
     assert recovery["status"] == "planned"
+    assert fleet_policy["result"]["max_instances"] == 1
     assert configuration["result"] == {"records": []}
     assert "status: ok" in human_status and "http_status: 200" in human_status
     assert TOKEN not in json.dumps(outputs)

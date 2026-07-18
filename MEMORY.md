@@ -844,3 +844,16 @@ or `release_review`.
 - Nonterminal work without ready/delayed queue work or a live lease is routed
   idempotently to the project's Project Manager. Missing PM routing remains a
   visible status and audit record rather than disappearing silently.
+
+## 2026-07-18 V5 Fleet Scaling And Hibernation
+
+- V5 scales a pre-registered pool of stable role-instance identities; it never
+  invents personas while responding to load.
+- Zero-sized roles wake immediately for ready work. Busy roles add capacity
+  after the configured queue-wait threshold, and safe idle specialists
+  hibernate after the configured grace period down to their warm floor.
+- Supervisor actions are persisted before execution and replay with the same
+  idempotency key after interruption. Unreleased leases, active thread
+  operations, and pending durable output prevent hibernation.
+- The Project Manager retains one warm instance. Queues and prompt-pinned
+  thread affinity remain outside the worker and survive hibernation.
