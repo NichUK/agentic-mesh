@@ -18,6 +18,7 @@
   ],
   "required_commands": [
     "agentic-mesh-recovery-drill",
+    "agentic-mesh-recovery-control",
     "codex",
     "curl",
     "docker",

@@ -179,7 +179,9 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /root/.cache
 COPY recovery-drill.py /usr/local/bin/agentic-mesh-recovery-drill
-RUN chmod 0755 /usr/local/bin/agentic-mesh-recovery-drill
+COPY recovery-control.py /usr/local/bin/agentic-mesh-recovery-control
+RUN chmod 0755 /usr/local/bin/agentic-mesh-recovery-drill \
+    /usr/local/bin/agentic-mesh-recovery-control
 COPY manifests/recovery.json /opt/agentic-mesh/image-manifest.json
 ENV AGENTIC_MESH_TOOL_PROFILE_ID=recovery
 LABEL org.opencontainers.image.title="Agentic Mesh V5 recovery worker" \

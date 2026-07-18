@@ -141,6 +141,7 @@ def validate_worker_images(root: Path, config_root: Path | None = None) -> list[
         "!worker-healthcheck.py",
         "!ux-smoke-test.mjs",
         "!recovery-drill.py",
+        "!recovery-control.py",
         "!manifests/",
         "!manifests/*.json",
     ]
