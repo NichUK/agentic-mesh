@@ -102,6 +102,13 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   snapshots. Transport/protocol failure, explicit discard, hibernation, or
   shutdown evicts and closes an engine; autoscaling and thread affinity remain
   separate later stories.
+- V5 provider thread affinity is durable by project, work item, logical role,
+  and conversation, with provider/thread identity globally unique. The concrete
+  instance is deliberately not part of the key: another instance of the same
+  project role resumes the context after hibernation or engine failure. Initial
+  creation is transactionally serialized, role-instance authorization is also
+  enforced by a composite foreign key, and a missing recorded thread fails
+  instead of silently creating unrelated context.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

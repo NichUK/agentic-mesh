@@ -493,6 +493,17 @@ protocol failure evicts the engine, while explicit hibernation and shutdown
 wait for an active operation before closing it. Queue wait thresholds and
 autoscaling remain control-plane policy rather than provider behavior.
 
+Provider thread affinity is durable and keyed by project, work item, logical
+role, and conversation. It is not keyed by concrete instance, so a replacement
+instance of the same role can resume the logical agent's context. First-thread
+creation is serialized with a Postgres advisory transaction lock, and a
+provider/thread id can belong to only one affinity key globally. The executing
+instance must match the key's project and role through both application checks
+and a composite database foreign key. A missing or rejected recorded thread is
+an error; the runtime must not silently start a context-free replacement. A new
+binding and its first turn run within the same warm-engine checkout because
+Codex does not guarantee an untouched empty thread is resumable after shutdown.
+
 Planned and possible providers remain adapter choices rather than product
 semantics:
 

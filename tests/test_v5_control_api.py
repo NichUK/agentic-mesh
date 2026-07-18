@@ -18,6 +18,7 @@ from agentic_mesh_v5.api import create_app
 from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
 from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.database import MigrationRunner
+from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.lifecycle import LifecycleStore
 
 
@@ -202,7 +203,7 @@ def test_project_authorization_and_read_views_are_isolated(api_database) -> None
     )
 
     assert health.json()["status"] == "ok"
-    assert health.json()["schema_version"] == 6
+    assert health.json()["schema_version"] == load_migrations()[-1].version
     assert created.status_code == 201
     assert created.json()["project_id"] == "charlie"
     assert [item["project_id"] for item in visible.json()] == ["alpha"]

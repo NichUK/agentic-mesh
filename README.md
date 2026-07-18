@@ -54,6 +54,9 @@ The warm-engine pool keys engines by project and role-instance identity, reuses
 one engine across successive turns, and closes it only after a fatal engine
 failure, explicit hibernation, or shutdown. Idle policy and autoscaling remain
 separate control-plane decisions.
+Persistent provider threads are bound by project, work item, logical role, and
+conversation. A replacement or same-role worker instance resumes that recorded
+thread; another project, work item, role, or conversation cannot inherit it.
 
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
 infrastructure: Teams/API ingress, Postgres-backed message queues, Codex

@@ -17,6 +17,7 @@ import pytest
 from agentic_mesh_v5 import cli as v5_cli
 from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import MigrationRunner
+from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.database_operations import DatabaseBackupService
 from agentic_mesh_v5.database_operations import DatabaseOperationsError
 from agentic_mesh_v5.database_operations import MaintenanceStore
@@ -340,11 +341,12 @@ def test_native_backup_restore_reproduces_acknowledged_state(
     assert Path(backup.manifest).is_file()
     assert backup.size_bytes > 0
     assert backup.table_counts["events"] >= 2
+    assert "thread_affinities" in backup.table_counts
     assert MaintenanceStore(source_url).status().status == "active"
 
     restored = DatabaseBackupService(target_url, tools=tools).restore(archive)
 
-    assert restored.database_schema_version == 6
+    assert restored.database_schema_version == load_migrations()[-1].version
     assert restored.table_counts == backup.table_counts
     assert restored.maintenance_status == "paused"
     assert [item.event_type for item in EventStore(target_url).read("alpha")] == [
