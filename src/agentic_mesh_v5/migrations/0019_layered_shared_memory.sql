@@ -55,7 +55,7 @@ CREATE INDEX shared_memory_visibility_idx
 CREATE TABLE agentic_mesh_v5.shared_memory_revisions (
     memory_id text NOT NULL,
     version integer NOT NULL CHECK (version > 0),
-    operation_id text NOT NULL UNIQUE CHECK (btrim(operation_id) <> ''),
+    operation_id text NOT NULL CHECK (btrim(operation_id) <> ''),
     request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),
     action text NOT NULL CHECK (action IN ('create', 'update', 'retire', 'source_status')),
     scope text NOT NULL,
@@ -87,6 +87,7 @@ CREATE TABLE agentic_mesh_v5.shared_memory_revisions (
     actor_id text NOT NULL CHECK (btrim(actor_id) <> ''),
     recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (memory_id, version),
+    UNIQUE (organization_id, operation_id),
     FOREIGN KEY (memory_id) REFERENCES agentic_mesh_v5.shared_memory_entries(memory_id)
         ON DELETE RESTRICT,
     CHECK (

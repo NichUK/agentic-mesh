@@ -12,10 +12,10 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.database import DatabaseConfigurationError, DatabaseError
 
 
-SCHEMA = "agentic_mesh_v5"
 MemoryScope = Literal["project_role", "project", "organization_role"]
 SourceState = Literal["current", "stale", "removed"]
 MemoryStatus = Literal["active", "retired"]
@@ -575,8 +575,11 @@ class SharedMemoryStore:
         digest: str,
     ) -> MemoryRevision | None:
         row = connection.execute(
-            f"SELECT * FROM {SCHEMA}.shared_memory_revisions WHERE operation_id = %s",
-            (operation_id,),
+            f"""
+            SELECT * FROM {SCHEMA}.shared_memory_revisions
+            WHERE organization_id = %s AND operation_id = %s
+            """,
+            (context.organization_id, operation_id),
         ).fetchone()
         if row is None:
             return None

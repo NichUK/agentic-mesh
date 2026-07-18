@@ -95,6 +95,7 @@ def memory(postgres_database: str) -> tuple[SharedMemoryStore, MutableSourceVeri
     verifier = MutableSourceVerifier(
         {
             "document://alpha/architecture": "etag-1",
+            "document://gamma/architecture": "etag-g1",
             "work-item://alpha/39": "rev-1",
             "event://alpha/100": "event-1",
         }
@@ -335,6 +336,26 @@ def test_operations_are_idempotent_but_cannot_be_reused_for_other_requests(memor
     )
     assert update_replay == updated
     assert len(store.history(ALPHA_ENGINEERING, first.memory_id)) == 2
+
+
+def test_operation_ids_are_isolated_between_organizations(memory):
+    store, _verifier = memory
+    alpha = _create(store, operation_id="op-cross-organization")
+    gamma = store.create(
+        GAMMA_ENGINEERING,
+        scope="project_role",
+        subject="architecture-boundary",
+        summary="Gamma has its own authoritative memory.",
+        tags=["architecture"],
+        source=MemorySource(
+            "document", "document://gamma/architecture", "etag-g1"
+        ),
+        actor_id="engineering",
+        operation_id="op-cross-organization",
+    )
+
+    assert alpha.memory_id != gamma.memory_id
+    assert store.list_current(GAMMA_ENGINEERING) == (gamma,)
 
 
 def test_retirement_is_versioned_and_hidden_from_default_inspection(memory):
