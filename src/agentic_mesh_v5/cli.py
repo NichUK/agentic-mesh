@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from agentic_mesh_v5 import __version__
+from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
 from agentic_mesh_v5.boundary import find_runtime_boundary_violations
 from agentic_mesh_v5.config_activation import ConfigActivationError
 from agentic_mesh_v5.config_activation import ConfigActivationStore
@@ -67,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "database-status", help="show V5 Postgres migration status"
     )
+    api_serve = subparsers.add_parser(
+        "api-serve", help="serve the versioned V5 control API"
+    )
+    api_serve.add_argument("--host", default="127.0.0.1")
+    api_serve.add_argument("--port", type=int, default=8080)
     return parser
 
 
@@ -136,6 +142,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             },
             as_json=args.json,
         )
+        return 0
+
+    if args.command == "api-serve":
+        try:
+            from agentic_mesh_v5.api import app_from_environment
+            import uvicorn
+
+            app = app_from_environment()
+        except (AuthenticationConfigurationError, DatabaseError) as exc:
+            _write(
+                {
+                    "runtime": "agentic-mesh-v5",
+                    "status": "rejected",
+                    "error": str(exc),
+                },
+                as_json=args.json,
+            )
+            return 2
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
     if args.command.startswith("release-"):
