@@ -211,7 +211,7 @@ def test_store_keeps_git_snapshot_history_and_enforces_project_claims(
         connection.execute(
             """
             INSERT INTO agentic_mesh_v5.projects(project_id, display_name)
-            VALUES ('alpha', 'Alpha'), ('beta', 'Beta')
+            VALUES ('alpha', 'Alpha'), ('beta', 'Beta'), ('gamma', 'Gamma')
             """
         )
 
@@ -295,7 +295,9 @@ def test_store_keeps_git_snapshot_history_and_enforces_project_claims(
         )
 
     authorization_ref = "grant://projects/alpha/share-primary-repository"
-    beta_value["repositories"]["primary"]["authorization_ref"] = authorization_ref
+    beta_value["repositories"]["primary"].update(
+        {"owner_project_id": "alpha", "authorization_ref": authorization_ref}
+    )
     beta = load_project_manifest(_write(tmp_path, beta_value, "beta-granted.yaml"))
     resource = next(
         item
@@ -318,6 +320,24 @@ def test_store_keeps_git_snapshot_history_and_enforces_project_claims(
     ).activate(beta, source_revision="e" * 40, actor_id="project-admin")
     assert beta_active.manifest_digest == beta.digest
     assert len(ProjectManifestStore(postgres_database).list_history("beta")) == 1
+
+    gamma_value = _manifest("gamma", "Gamma")
+    gamma_reference = "grant://projects/alpha/share-primary-repository-with-gamma"
+    gamma_value["repositories"]["primary"].update(
+        {
+            "url": shared_url,
+            "owner_project_id": "alpha",
+            "authorization_ref": gamma_reference,
+        }
+    )
+    gamma = load_project_manifest(_write(tmp_path, gamma_value, "gamma-granted.yaml"))
+    gamma_grant = ResourceGrant(
+        "gamma", "alpha", "repository", shared_url, gamma_reference
+    )
+    gamma_active = ProjectManifestStore(
+        postgres_database, authorizer=StaticResourceAuthorizer((gamma_grant,))
+    ).activate(gamma, source_revision="f" * 40, actor_id="project-admin")
+    assert gamma_active.manifest_digest == gamma.digest
 
 
 def test_foreign_declared_owner_requires_exact_external_grant(

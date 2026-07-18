@@ -826,7 +826,8 @@ class ProjectManifestStore:
     def _authorize_active_collisions(self, connection, manifest: ProjectManifest) -> None:
         rows = connection.execute(
             f"""
-            SELECT claim.project_id, claim.resource_kind, claim.resource_key
+            SELECT claim.project_id, claim.owner_project_id,
+                   claim.resource_kind, claim.resource_key
             FROM {SCHEMA}.project_manifest_resource_claims AS claim
             JOIN {SCHEMA}.project_manifest_active AS active
               ON active.project_id = claim.project_id
@@ -837,14 +838,22 @@ class ProjectManifestStore:
         ).fetchall()
         resources = {(item.kind, item.key): item for item in manifest.resources}
         collisions = [
-            (owner, resources[(kind, key)])
-            for owner, kind, key in rows
+            (claimant, owner, resources[(kind, key)])
+            for claimant, owner, kind, key in rows
             if (kind, key) in resources
         ]
-        for owner, resource in collisions:
-            if not self._allows(manifest.project_id, owner, resource):
+        for claimant, owner, resource in collisions:
+            if resource.owner_project_id != owner:
                 raise ProjectManifestAuthorizationError(
-                    f"active {resource.kind} resource belongs to project {owner}"
+                    f"active {resource.kind} resource belongs to project {owner}, "
+                    f"not {resource.owner_project_id}"
+                )
+            if owner != manifest.project_id and not self._allows(
+                manifest.project_id, owner, resource
+            ):
+                raise ProjectManifestAuthorizationError(
+                    f"active {resource.kind} resource belongs to project {owner} "
+                    f"and is claimed by {claimant}"
                 )
 
     def _allows(
