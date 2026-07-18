@@ -268,7 +268,12 @@ class OutboxDispatcher:
                         connection.execute(
                             f"""
                             UPDATE {SCHEMA}.outbox
-                            SET last_error = %s
+                            SET last_error = %s,
+                                available_at = clock_timestamp() + make_interval(
+                                    secs => power(
+                                        2, LEAST(attempt_count, 8)
+                                    )::double precision
+                                )
                             WHERE project_id = %s AND outbox_id = %s
                             """,
                             (error, message.project_id, message.outbox_id),

@@ -328,11 +328,21 @@ def test_delivery_failure_records_redacted_error_then_retries(event_database: st
         lambda _: (_ for _ in ()).throw(RuntimeError("password=do-not-store"))
     )
     delivered = []
-    retried = dispatcher.dispatch_one(delivered.append)
 
     assert failed.status == "failed"
     assert failed.error == "delivery failed: RuntimeError"
     assert "do-not-store" not in failed.error
+    assert dispatcher.dispatch_one(delivered.append).status == "empty"
+    with psycopg.connect(event_database) as connection:
+        connection.execute(
+            """
+            UPDATE agentic_mesh_v5.outbox
+            SET available_at = clock_timestamp()
+            WHERE idempotency_key = %s
+            """,
+            (expected_key,),
+        )
+    retried = dispatcher.dispatch_one(delivered.append)
     assert retried.status == "delivered"
     assert retried.idempotency_key == expected_key
     assert delivered[0].attempt == 2
@@ -346,6 +356,27 @@ def test_delivery_failure_records_redacted_error_then_retries(event_database: st
             (expected_key,),
         ).fetchone()
     assert row == (2, True, None)
+
+
+def test_failed_message_backoff_allows_later_work_to_progress(
+    event_database: str,
+) -> None:
+    first_key = _append_outbound(event_database)
+    with EventStore(event_database).transaction() as transaction:
+        transaction.append(
+            _event(event_type="work.progressed", correlation_id="corr-2"),
+            (OutboundDraft(topic="work.progress", payload={"step": 2}),),
+        )
+    dispatcher = OutboxDispatcher(event_database)
+
+    assert dispatcher.dispatch_one(
+        lambda _: (_ for _ in ()).throw(RuntimeError("poison"))
+    ).idempotency_key == first_key
+    delivered = []
+    result = dispatcher.dispatch_one(delivered.append)
+
+    assert result.status == "delivered"
+    assert delivered[0].idempotency_key != first_key
 
 
 def test_crash_after_delivery_reuses_same_idempotency_key(event_database: str) -> None:

@@ -18,7 +18,8 @@ an uncommitted change publishes nothing.
 - reject migration from unsupported, manually populated v1 journals and retain
   projects with journal history rather than cascading event deletion;
 - dispatch one pending outbox message under `FOR UPDATE SKIP LOCKED`, recording
-  success or a bounded failure summary; and
+  success or a bounded failure summary and database-timed exponential backoff;
+  and
 - deliver the same idempotency key again after a crash between the external
   side effect and the database commit, allowing the receiver to deduplicate.
 
@@ -38,7 +39,8 @@ stable idempotency key.
 - A crash after the external call but before commit leaves the row pending and
   the next attempt uses the identical idempotency key.
 - A delivery exception records an attempt and redacted error without marking
-  the row dispatched.
+  the row dispatched; retry backoff is capped at 256 seconds so a poison row
+  cannot monopolize the dispatcher.
 - The v1-to-v2 migration fails explicitly if pre-writer event rows exist, and a
   project with journal history must be retired rather than hard-deleted.
 - Migration upgrade, unit tests, disposable-Postgres integration tests, V5
