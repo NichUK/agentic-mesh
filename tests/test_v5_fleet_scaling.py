@@ -390,6 +390,14 @@ def test_minimum_warm_and_project_manager_guardrails_are_enforced(
         scaler.configure(_policy(max_instances=4))
     scaler.configure(_policy(min_warm_instances=1))
     with psycopg.connect(fleet_database) as connection:
+        assert connection.execute(
+            """
+            SELECT object_type FROM agentic_mesh_v5.audit_records
+            WHERE action = 'fleet.policy_configured'
+              AND object_id = 'project-manager'
+            ORDER BY audit_id DESC LIMIT 1
+            """
+        ).fetchone() == ("role-scaling-policy",)
         connection.execute(
             """
             UPDATE agentic_mesh_v5.role_instances

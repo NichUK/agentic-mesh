@@ -194,7 +194,14 @@ def test_fleet_loop_records_redacted_failure_and_keeps_running() -> None:
         fleet_reconcile_interval_seconds=0.05,
     )
     with TestClient(app):
-        time.sleep(1.1)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if any(
+                span.name == "mesh.fleet.reconcile"
+                for span in exporter.get_finished_spans()
+            ):
+                break
+            time.sleep(0.01)
 
     spans = [
         span for span in exporter.get_finished_spans()

@@ -153,6 +153,7 @@ class FleetScaler:
                         "fleet.policy_configured",
                         selected.role_id,
                         asdict(selected),
+                        object_type="role-scaling-policy",
                     )
             return ScalingPolicy(*row)
         except FleetError:
@@ -588,15 +589,23 @@ class FleetScaler:
         """
 
     @staticmethod
-    def _audit(connection, project_id, action, object_id, details) -> None:
+    def _audit(
+        connection,
+        project_id,
+        action,
+        object_id,
+        details,
+        *,
+        object_type="role-instance",
+    ) -> None:
         connection.execute(
             f"""
             INSERT INTO {SCHEMA}.audit_records
                 (scope, project_id, actor_id, action, object_type,
                  object_id, details)
-            VALUES ('project', %s, %s, %s, 'role-instance', %s, %s)
+            VALUES ('project', %s, %s, %s, %s, %s, %s)
             """,
-            (project_id, _ACTOR, action, object_id, Jsonb(details)),
+            (project_id, _ACTOR, action, object_type, object_id, Jsonb(details)),
         )
 
 
