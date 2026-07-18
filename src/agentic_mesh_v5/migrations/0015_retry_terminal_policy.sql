@@ -126,4 +126,3 @@ CREATE TABLE agentic_mesh_v5.recovery_requests (
 CREATE INDEX recovery_requests_pending_idx
     ON agentic_mesh_v5.recovery_requests(requested_at, project_id, recovery_request_id)
     WHERE status = 'pending';
-

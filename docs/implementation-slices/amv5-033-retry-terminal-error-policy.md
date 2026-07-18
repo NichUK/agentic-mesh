@@ -62,4 +62,3 @@ that eligibility atomically.
 - verify recovery success resumes the owner exactly once;
 - verify API authorization, OpenAPI contracts, migration installation, audit
   records, and redacted public errors.
-
