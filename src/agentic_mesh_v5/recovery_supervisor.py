@@ -816,7 +816,7 @@ class RecoverySupervisor:
         lease_lost: list[RecoverySupervisorError] = []
 
         def keep_alive() -> None:
-            interval = max(1.0, self.lease_seconds / 3)
+            interval = max(0.1, self.lease_seconds / 3)
             current = run
             while not stop.wait(interval):
                 try:

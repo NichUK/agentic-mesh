@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
@@ -219,9 +220,12 @@ def _pending_recovery(database_url: str, work_item_id: str = "broken-work"):
 class _FakeLauncher:
     result: RecoveryResult
     job: RecoveryJob | None = None
+    delay_seconds: float = 0
 
     def launch(self, job: RecoveryJob) -> RecoveryResult:
         self.job = job
+        if self.delay_seconds:
+            time.sleep(self.delay_seconds)
         return self.result
 
 
@@ -268,6 +272,34 @@ def test_supervisor_runs_exact_goal_with_default_limits_and_resumes_owner(
             (f"reliability:{pending.incident.incident_id}:resume",),
         ).fetchone()[0]
     assert resumed == 1
+
+
+def test_supervisor_renews_the_smallest_allowed_lease_during_execution(
+    recovery_database: str, tmp_path: Path
+) -> None:
+    pending = _pending_recovery(recovery_database, "heartbeat-work")
+    root, reference = _profile_repository(tmp_path)
+    launcher = _FakeLauncher(
+        RecoveryResult("succeeded", "Repair verified.", "evidence://heartbeat", 10),
+        delay_seconds=1.2,
+    )
+    supervisor = RecoverySupervisor(
+        database_url=recovery_database,
+        principal=_principal(),
+        owner_id="recovery-1",
+        registry=ToolProfileRegistry(root),
+        tool_profile_reference=reference,
+        launcher=launcher,
+        lease_seconds=1,
+    )
+
+    execution = supervisor.execute_once()
+
+    assert execution.status == "completed"
+    final = ReliabilityStore(recovery_database).status(
+        "alpha", "heartbeat-work", pending.incident.incident_id
+    )
+    assert final.incident.status == "recovered"
 
 
 def test_claim_requires_recovery_scope_and_reclaims_same_run(
