@@ -50,6 +50,10 @@ one pinned Codex version, while credentials and `CODEX_HOME` remain external.
 Named OAuth caches are supplied by the deployment and resolved into an external
 `CODEX_HOME`; V5 never reads or copies `auth.json`. An official-SDK status probe
 refreshes the existing login and reports only safe authentication state.
+The warm-engine pool keys engines by project and role-instance identity, reuses
+one engine across successive turns, and closes it only after a fatal engine
+failure, explicit hibernation, or shutdown. Idle policy and autoscaling remain
+separate control-plane decisions.
 
 V4 keeps lifecycle judgement with role agents and reduces the runtime to
 infrastructure: Teams/API ingress, Postgres-backed message queues, Codex

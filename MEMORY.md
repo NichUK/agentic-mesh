@@ -96,6 +96,12 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   The official SDK account probe requests token refresh and reports only safe
   authenticated, sign-in-required, or wrong-method state without identity,
   cache paths, or raw provider errors.
+- V5 keeps one provider engine warm for each project/role-instance key. The
+  pool serializes operations within one instance, permits different instances
+  to run concurrently, reuses idle engines, and exposes only safe use/idle
+  snapshots. Transport/protocol failure, explicit discard, hibernation, or
+  shutdown evicts and closes an engine; autoscaling and thread affinity remain
+  separate later stories.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
