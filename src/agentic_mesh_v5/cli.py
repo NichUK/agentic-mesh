@@ -7,6 +7,9 @@ from typing import Sequence
 
 from agentic_mesh_v5 import __version__
 from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
+from agentic_mesh_v5.api_client import ApiCallError
+from agentic_mesh_v5.api_client import ApiClientConfigurationError
+from agentic_mesh_v5.api_client import ControlApiClient
 from agentic_mesh_v5.boundary import find_runtime_boundary_violations
 from agentic_mesh_v5.config_activation import ConfigActivationError
 from agentic_mesh_v5.config_activation import ConfigActivationStore
@@ -73,6 +76,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     api_serve.add_argument("--host", default="127.0.0.1")
     api_serve.add_argument("--port", type=int, default=8080)
+    subparsers.add_parser(
+        "control-status", help="read control API health through external authentication"
+    )
+    control_call = subparsers.add_parser(
+        "control-call", help="call a versioned control API operation"
+    )
+    control_call.add_argument("method", choices=("GET", "POST"))
+    control_call.add_argument("path")
+    control_call.add_argument("--body-file", type=Path)
     return parser
 
 
@@ -82,6 +94,21 @@ def _write(payload: dict[str, object], *, as_json: bool) -> None:
         return
     for key, value in payload.items():
         print(f"{key}: {value}")
+
+
+def _write_control(payload: dict[str, object], *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, sort_keys=True))
+        return
+    for key in ("status", "action_id", "http_status", "method", "path"):
+        if key in payload:
+            print(f"{key}: {payload[key]}")
+    if "error" in payload:
+        print("error:")
+        print(json.dumps(payload["error"], indent=2, sort_keys=True))
+    if "result" in payload:
+        print("result:")
+        print(json.dumps(payload["result"], indent=2, sort_keys=True))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -161,6 +188,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         uvicorn.run(app, host=args.host, port=args.port)
+        return 0
+
+    if args.command in {"control-status", "control-call"}:
+        try:
+            client = ControlApiClient.from_environment()
+            result = client.call(
+                method="GET" if args.command == "control-status" else args.method,
+                path="/api/v1/health" if args.command == "control-status" else args.path,
+                body_file=None if args.command == "control-status" else args.body_file,
+            )
+        except ApiClientConfigurationError as exc:
+            _write_control(
+                {
+                    "runtime": "agentic-mesh-v5",
+                    "status": "rejected",
+                    "error": {"code": "client_configuration", "detail": str(exc)},
+                },
+                as_json=args.json,
+            )
+            return 2
+        except ApiCallError as exc:
+            _write_control(exc.to_dict(), as_json=args.json)
+            return exc.exit_code
+        _write_control(result.to_dict(), as_json=args.json)
         return 0
 
     if args.command.startswith("release-"):

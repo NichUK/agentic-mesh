@@ -61,6 +61,10 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   recovery remain explicitly planned rather than simulated. Bootstrap bearer
   identities come from an external hash-only principals file, every project
   route checks project and scope, and failures use structured problem details.
+- The bootstrap CLI stays a thin HTTP client: `control-status` and
+  `control-call` cover current `/api/v1` contracts using an externally mounted
+  bearer-token file. It requires HTTPS except on loopback, confirms each API
+  action ID, uses stable exit codes, and redacts secret-shaped response fields.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 
