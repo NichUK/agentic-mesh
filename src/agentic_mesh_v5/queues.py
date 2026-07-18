@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import re
 from typing import Any
 import uuid
 
@@ -11,6 +12,9 @@ from psycopg.types.json import Jsonb
 from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
+
+
+_CAPABILITY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 class QueueError(DatabaseError):
@@ -46,8 +50,8 @@ def _optional_capability(value: object) -> str | None:
     if value is None:
         return None
     capability = _required(value, "capability")
-    if len(capability) > 128:
-        raise ValueError("capability is too long")
+    if _CAPABILITY.fullmatch(capability) is None:
+        raise ValueError("capability is invalid")
     return capability
 
 

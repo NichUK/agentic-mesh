@@ -127,6 +127,12 @@ def test_enqueue_rejects_naive_ready_time_before_database_access() -> None:
             available_at=datetime.now(),
         )
 
+    with pytest.raises(ValueError, match="capability is invalid"):
+        store.create_queue(
+            project_id="alpha", queue_id="browser", role_id="engineering",
+            capability="browser tools",
+        )
+
 
 def test_priority_and_ready_time_control_claim_order(queue_database) -> None:
     _database_url, store = queue_database

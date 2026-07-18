@@ -52,6 +52,7 @@ from agentic_mesh_v5.usage import UsageStore
 
 API_PREFIX = "/api/v1"
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+IDENTIFIER_PATTERN = r"^[A-Za-z0-9._:-]{1,128}$"
 
 
 class ApiModel(BaseModel):
@@ -164,7 +165,7 @@ class ApprovalResponse(ApiModel):
 class QueueCreate(ApiModel):
     queue_id: str = Field(min_length=1)
     role_id: str = Field(min_length=1)
-    capability: str | None = Field(default=None, min_length=1, max_length=128)
+    capability: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN)
 
 
 class QueueItemCreate(ApiModel):
@@ -177,10 +178,10 @@ class QueueItemCreate(ApiModel):
 
 
 class RouteCreate(ApiModel):
-    work_item_id: str = Field(min_length=1, max_length=128)
-    target_role_id: str = Field(min_length=1, max_length=128)
-    capability: str | None = Field(default=None, min_length=1, max_length=128)
-    idempotency_key: str = Field(min_length=1, max_length=128)
+    work_item_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    target_role_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    capability: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN)
+    idempotency_key: str = Field(pattern=IDENTIFIER_PATTERN)
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = 0
     available_at: datetime | None = None

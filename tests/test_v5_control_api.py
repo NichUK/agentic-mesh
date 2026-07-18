@@ -607,6 +607,11 @@ def test_authenticated_route_is_idempotent_capability_bound_and_isolated(
         headers=_headers("viewer"),
         json={**route, "idempotency_key": "route-forbidden"},
     )
+    invalid = client.post(
+        f"{API_PREFIX}/projects/alpha/routes",
+        headers=headers,
+        json={**route, "idempotency_key": "invalid route"},
+    )
 
     assert queue.status_code == 201
     assert first.status_code == duplicate.status_code == 201
@@ -615,6 +620,8 @@ def test_authenticated_route_is_idempotent_capability_bound_and_isolated(
     assert first.json()["priority"] == 25
     assert missing.status_code == 404
     assert forbidden.status_code == 403
+    assert invalid.status_code == 422
+    assert invalid.json()["errors"][0]["location"][-1] == "idempotency_key"
 
 
 def test_validation_and_store_failures_are_actionable_and_redacted() -> None:
