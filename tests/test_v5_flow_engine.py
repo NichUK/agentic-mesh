@@ -124,7 +124,7 @@ def _flow_value():
 
 @pytest.fixture
 def flow_database(postgres_database: str):
-    assert MigrationRunner(postgres_database).migrate().current_version == 23
+    assert MigrationRunner(postgres_database).migrate().current_version == 24
     lifecycle = LifecycleStore(postgres_database)
     lifecycle.create_project(
         project_id="alpha", display_name="Alpha", sponsor_ids=("sponsor-1",)

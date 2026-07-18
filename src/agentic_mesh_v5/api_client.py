@@ -110,6 +110,7 @@ class ControlApiClient:
         method: str,
         path: str,
         body_file: Path | None = None,
+        body: Mapping[str, Any] | None = None,
     ) -> ControlResult:
         normalized_method = method.upper()
         if normalized_method not in {"GET", "POST", "PUT"}:
@@ -117,9 +118,17 @@ class ControlApiClient:
                 "control method must be GET, POST, or PUT"
             )
         normalized_path = _validated_api_path(path)
-        if normalized_method == "GET" and body_file is not None:
+        if body_file is not None and body is not None:
+            raise ApiClientConfigurationError(
+                "control call accepts either body_file or body, not both"
+            )
+        if normalized_method == "GET" and (body_file is not None or body is not None):
             raise ApiClientConfigurationError("GET control calls cannot include a body")
-        body = None if body_file is None else _load_body(body_file)
+        selected_body = (
+            _validated_body(body) if body is not None
+            else None if body_file is None
+            else _load_body(body_file)
+        )
         action_id = uuid.uuid4().hex
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -137,7 +146,7 @@ class ControlApiClient:
                     normalized_method,
                     normalized_path,
                     headers=headers,
-                    **({"json": body} if body is not None else {}),
+                    **({"json": selected_body} if selected_body is not None else {}),
                 )
         except httpx.RequestError as exc:
             raise ApiCallError(
@@ -250,8 +259,17 @@ def _load_body(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ApiClientConfigurationError("control body file must be valid UTF-8 JSON") from exc
-    if not isinstance(payload, dict):
+    return _validated_body(payload)
+
+
+def _validated_body(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
         raise ApiClientConfigurationError("control body must be a JSON object")
+    payload = dict(value)
+    try:
+        json.dumps(payload, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ApiClientConfigurationError("control body must contain JSON values") from exc
     return payload
 
 

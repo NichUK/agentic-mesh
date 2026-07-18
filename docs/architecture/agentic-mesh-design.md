@@ -755,6 +755,20 @@ or uncertain work from bypassing Enterprise Alignment or later configured
 conformance obligations. Governance records are project scoped and keep actor,
 reason, document path/version, evidence, and an idempotency fingerprint.
 
+Sponsor gates use the existing lifecycle `gates` and `approvals` records rather
+than a separate workflow or approval database. Opening a gate links one request
+round to the current external-flow obligation and verified artifact version.
+The authenticated API and bootstrap CLI resolve it transactionally with its
+approval evidence, work-item state, event/outbox, and one idempotently routed
+continuation. Only a sponsor configured for that project and request can decide.
+
+Approval satisfies the sponsor obligation and resumes its current flow owner.
+Rejection and timeout retain immutable evidence but leave the obligation
+pending, return work to the Project Manager, and permit a new gate round after
+correction. Exact concurrent or repeated requests replay the one committed
+result; conflicting decisions fail without another event or queue item. Teams
+cards and dashboard controls remain adapters over this same API.
+
 ### Artifact Store
 
 Purpose:

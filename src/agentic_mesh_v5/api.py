@@ -63,6 +63,7 @@ from agentic_mesh_v5.routing import RouteDraft
 from agentic_mesh_v5.routing import Router
 from agentic_mesh_v5.routing import RoutingConflict
 from agentic_mesh_v5.routing import RoutingNotFound
+from agentic_mesh_v5.sponsor_approvals import SponsorApprovalCoordinator
 from agentic_mesh_v5.telemetry import Telemetry
 from agentic_mesh_v5.telemetry import telemetry_from_environment
 from agentic_mesh_v5.usage import UsageNotFound
@@ -241,6 +242,8 @@ class GateOpen(ApiModel):
     sponsor_ids: list[str] = Field(min_length=1)
     correlation_id: str = Field(min_length=1)
     expected_version: int = Field(ge=1)
+    flow_obligation_id: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN)
+    expires_in_seconds: int = Field(default=172_800, ge=1, le=604_800)
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -259,6 +262,11 @@ class GateResponse(ApiModel):
     requested_by: str
     correlation_id: str
     evidence: dict[str, Any]
+    flow_state: str | None = None
+    flow_entry_version: int | None = None
+    flow_obligation_id: str | None = None
+    expires_at: str | None = None
+    timed_out_at: str | None = None
 
 
 class ApprovalResponse(ApiModel):
@@ -740,6 +748,7 @@ def create_app(
     selected_authorizer = authorizer or TokenAuthorizer.from_environment()
     selected_telemetry = telemetry or Telemetry()
     lifecycle = LifecycleStore(database_url)
+    sponsor_approvals = SponsorApprovalCoordinator(database_url)
     progress_store = ProgressStore(database_url)
     usage_store = UsageStore(database_url)
     queues = RoleQueueStore(database_url)
@@ -1280,6 +1289,25 @@ def create_app(
             work_item_id=work_item_id,
             correlation_id=payload.correlation_id,
         )
+        if payload.gate_type == "sponsor_approval":
+            return asdict(
+                sponsor_approvals.open(
+                    project_id=project_id,
+                    work_item_id=work_item_id,
+                    gate_id=payload.gate_id,
+                    obligation_id=payload.flow_obligation_id or payload.gate_id,
+                    requested_by=identity.subject,
+                    sponsor_ids=payload.sponsor_ids,
+                    correlation_id=payload.correlation_id,
+                    expected_version=payload.expected_version,
+                    expires_in_seconds=payload.expires_in_seconds,
+                    evidence=payload.evidence,
+                )
+            )
+        if payload.flow_obligation_id is not None:
+            raise ValueError(
+                "flow_obligation_id is valid only for sponsor_approval gates"
+            )
         return asdict(
             lifecycle.open_gate(
                 project_id=project_id,
@@ -1301,6 +1329,8 @@ def create_app(
     )
     def get_gate(project_id: str, gate_id: str, identity: Principal = Depends(principal)):
         project_access(identity, project_id, "read")
+        if sponsor_approvals.is_managed(project_id, gate_id):
+            return asdict(sponsor_approvals.get(project_id, gate_id))
         return asdict(lifecycle.get_gate(project_id, gate_id))
 
     @app.post(
@@ -1312,9 +1342,22 @@ def create_app(
         project_id: str,
         gate_id: str,
         payload: GateDecision,
+        request: Request,
         identity: Principal = Depends(principal),
     ):
         project_access(identity, project_id, "write")
+        if sponsor_approvals.is_managed(project_id, gate_id):
+            return asdict(
+                sponsor_approvals.decide(
+                    project_id=project_id,
+                    gate_id=gate_id,
+                    sponsor_id=identity.subject,
+                    decision=payload.decision,
+                    rationale=payload.rationale,
+                    evidence=payload.evidence,
+                    operation_id=request.state.request_id,
+                )
+            )
         return asdict(
             lifecycle.decide_gate(
                 project_id=project_id,
@@ -1323,6 +1366,27 @@ def create_app(
                 decision=payload.decision,
                 rationale=payload.rationale,
                 evidence=payload.evidence,
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/gates/{{gate_id}}/timeout",
+        response_model=GateResponse,
+        tags=["approvals"],
+    )
+    def timeout_gate(
+        project_id: str,
+        gate_id: str,
+        request: Request,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        return asdict(
+            sponsor_approvals.timeout(
+                project_id=project_id,
+                gate_id=gate_id,
+                actor_id=identity.subject,
+                operation_id=request.state.request_id,
             )
         )
 
