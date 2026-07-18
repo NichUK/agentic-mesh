@@ -61,8 +61,7 @@ def continuation_database(postgres_database: str):
         connection.execute(
             """
             INSERT INTO agentic_mesh_v5.project_sponsors(project_id, sponsor_id)
-            VALUES ('alpha', 'alpha-sponsor'), ('bravo', 'bravo-sponsor'),
-                   ('charlie', 'charlie-sponsor')
+            VALUES ('alpha', 'alpha-sponsor'), ('bravo', 'bravo-sponsor')
             """
         )
         connection.execute(
@@ -93,6 +92,10 @@ def continuation_database(postgres_database: str):
             ("alpha", "gate-alpha", "active", {}),
             ("bravo", "gate-bravo", "active", {}),
             ("charlie", "blocked", "active", {}),
+            ("charlie", "sponsorless-ambiguity", "active", {
+                "material_ambiguity": True,
+                "sponsor_question": "Which option should this project use?",
+            }),
         )
         with connection.cursor() as cursor:
             cursor.executemany(
@@ -191,6 +194,9 @@ def test_one_global_sweep_routes_orphans_and_respects_gates(
     assert observed[("alpha", "ambiguous")].disposition == "sponsor_question"
     assert "option A or B" in observed[("alpha", "ambiguous")].detail
     assert observed[("charlie", "blocked")].disposition == "routing_blocked"
+    sponsorless = observed[("charlie", "sponsorless-ambiguity")]
+    assert sponsorless.disposition == "routing_blocked"
+    assert "no configured sponsor" in sponsorless.detail
     with psycopg.connect(database_url) as connection:
         assert connection.execute(
             "SELECT count(*) FROM agentic_mesh_v5.gates"
@@ -206,7 +212,7 @@ def test_one_global_sweep_routes_orphans_and_respects_gates(
             SELECT count(*) FROM agentic_mesh_v5.audit_records
             WHERE action = 'continuation.routing_blocked'
             """
-        ).fetchone()[0] == 1
+        ).fetchone()[0] == 2
 
     repeated = monitor.sweep(
         owner_id=claim.owner_id, lease_token=claim.lease_token

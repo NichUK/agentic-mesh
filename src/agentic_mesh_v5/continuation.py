@@ -228,13 +228,59 @@ class ContinuationMonitor:
                     )
                     items = connection.execute(
                         f"""
+                        WITH active_items AS MATERIALIZED (
+                            SELECT item.project_id, item.work_item_id, item.status,
+                                   item.assigned_role_id, item.version, item.payload
+                            FROM {SCHEMA}.work_items AS item
+                            JOIN {SCHEMA}.projects AS project
+                              ON project.project_id = item.project_id
+                            WHERE project.status = 'active'
+                              AND item.status IN ('new', 'active', 'gated')
+                        ),
+                        pending_gates AS (
+                            SELECT DISTINCT ON (gate.project_id, gate.work_item_id)
+                                   gate.project_id, gate.work_item_id, gate.gate_id
+                            FROM {SCHEMA}.gates AS gate
+                            JOIN active_items AS item
+                              USING (project_id, work_item_id)
+                            WHERE gate.status = 'pending'
+                            ORDER BY gate.project_id, gate.work_item_id,
+                                     gate.requested_at, gate.gate_id
+                        ),
+                        continuations AS (
+                            SELECT DISTINCT queued.project_id, queued.work_item_id
+                            FROM {SCHEMA}.queue_items AS queued
+                            JOIN active_items AS item
+                              USING (project_id, work_item_id)
+                            LEFT JOIN {SCHEMA}.leases AS lease
+                              ON lease.project_id = queued.project_id
+                             AND lease.queue_item_id = queued.queue_item_id
+                             AND lease.released_at IS NULL
+                             AND lease.expires_at > clock_timestamp()
+                            WHERE queued.status = 'ready'
+                               OR (queued.status = 'leased'
+                                   AND lease.lease_id IS NOT NULL)
+                        ),
+                        sponsors AS (
+                            SELECT sponsor.project_id,
+                                   array_agg(sponsor.sponsor_id
+                                             ORDER BY sponsor.sponsor_id) AS sponsor_ids
+                            FROM {SCHEMA}.project_sponsors AS sponsor
+                            JOIN (SELECT DISTINCT project_id FROM active_items) AS project
+                              USING (project_id)
+                            GROUP BY sponsor.project_id
+                        )
                         SELECT item.project_id, item.work_item_id, item.status,
-                               item.assigned_role_id, item.version, item.payload
-                        FROM {SCHEMA}.work_items AS item
-                        JOIN {SCHEMA}.projects AS project
-                          ON project.project_id = item.project_id
-                        WHERE project.status = 'active'
-                          AND item.status IN ('new', 'active', 'gated')
+                               item.assigned_role_id, item.version, item.payload,
+                               gate.gate_id,
+                               continuation.work_item_id IS NOT NULL,
+                               COALESCE(sponsor.sponsor_ids, ARRAY[]::text[])
+                        FROM active_items AS item
+                        LEFT JOIN pending_gates AS gate
+                          USING (project_id, work_item_id)
+                        LEFT JOIN continuations AS continuation
+                          USING (project_id, work_item_id)
+                        LEFT JOIN sponsors AS sponsor USING (project_id)
                         ORDER BY item.project_id, item.work_item_id
                         """
                     ).fetchall()
@@ -260,48 +306,44 @@ class ContinuationMonitor:
             raise ContinuationError(_STORE_ERROR) from None
 
     def _observe(self, connection, item, actor_id: str) -> ContinuationObservation:
-        project_id, work_item_id, status, owner_role_id, version, payload = item
-        pending_gate = connection.execute(
-            f"""
-            SELECT gate_id FROM {SCHEMA}.gates
-            WHERE project_id = %s AND work_item_id = %s AND status = 'pending'
-            ORDER BY requested_at, gate_id LIMIT 1
-            """,
-            (project_id, work_item_id),
-        ).fetchone()
-        if status == "gated" and pending_gate is not None:
-            values = ("waiting_sponsor", pending_gate[0], "pending sponsor gate")
+        (
+            project_id, work_item_id, status, owner_role_id, version, payload,
+            pending_gate_id, has_continuation, sponsors,
+        ) = item
+        if status == "gated" and pending_gate_id is not None:
+            values = ("waiting_sponsor", pending_gate_id, "pending sponsor gate")
         elif status == "active" and _material_ambiguity(payload):
             question = _sponsor_question(payload)
             if question is not None:
-                sponsors = tuple(
-                    row[0] for row in connection.execute(
-                        f"""
-                        SELECT sponsor_id FROM {SCHEMA}.project_sponsors
-                        WHERE project_id = %s ORDER BY sponsor_id
-                        """,
-                        (project_id,),
-                    ).fetchall()
-                )
-                gate_id = _action_id("ambiguity", project_id, work_item_id, version)
-                self._lifecycle.open_gate(
-                    project_id=project_id,
-                    work_item_id=work_item_id,
-                    gate_id=gate_id,
-                    gate_type="sponsor-clarification",
-                    requested_by=LOGICAL_PM_ID,
-                    sponsor_ids=sponsors,
-                    correlation_id=gate_id,
-                    expected_version=version,
-                    evidence={"question": question, "source": "pm-continuation-monitor"},
-                )
-                values = ("sponsor_question", gate_id, question)
+                if sponsors:
+                    gate_id = _action_id("ambiguity", project_id, work_item_id, version)
+                    self._lifecycle.open_gate(
+                        project_id=project_id,
+                        work_item_id=work_item_id,
+                        gate_id=gate_id,
+                        gate_type="sponsor-clarification",
+                        requested_by=LOGICAL_PM_ID,
+                        sponsor_ids=tuple(sponsors),
+                        correlation_id=gate_id,
+                        expected_version=version,
+                        evidence={
+                            "question": question,
+                            "source": "pm-continuation-monitor",
+                        },
+                    )
+                    values = ("sponsor_question", gate_id, question)
+                else:
+                    values = self._route_pm(
+                        connection, project_id, work_item_id, owner_role_id, version,
+                        "material ambiguity cannot open sponsor question because "
+                        "the project has no configured sponsor",
+                    )
             else:
                 values = self._route_pm(
                     connection, project_id, work_item_id, owner_role_id, version,
                     "material ambiguity needs a concrete sponsor question",
                 )
-        elif self._has_continuation(connection, project_id, work_item_id):
+        elif has_continuation:
             values = ("progressing", None, "durable continuation exists")
         else:
             reason = (
@@ -347,29 +389,6 @@ class ContinuationMonitor:
             return "pm_routed", routed.queue_item_id, reason
         except RoutingNotFound:
             return "routing_blocked", None, f"{reason}; project-manager route unavailable"
-
-    @staticmethod
-    def _has_continuation(connection, project_id: str, work_item_id: str) -> bool:
-        return connection.execute(
-            f"""
-            SELECT 1 FROM {SCHEMA}.queue_items AS item
-            WHERE item.project_id = %s AND item.work_item_id = %s
-              AND (
-                item.status = 'ready'
-                OR (
-                    item.status = 'leased' AND EXISTS (
-                        SELECT 1 FROM {SCHEMA}.leases AS lease
-                        WHERE lease.project_id = item.project_id
-                          AND lease.queue_item_id = item.queue_item_id
-                          AND lease.released_at IS NULL
-                          AND lease.expires_at > clock_timestamp()
-                    )
-                )
-              )
-            LIMIT 1
-            """,
-            (project_id, work_item_id),
-        ).fetchone() is not None
 
     def _record_observation(
         self, connection, project_id, work_item_id, version,
