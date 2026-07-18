@@ -485,6 +485,13 @@ stable interface and reuses the existing external Codex authentication. Codex
 JSON-RPC notification shapes and SDK exceptions remain inside the adapter;
 queues, projects, flow rules, and workers depend only on the neutral contract.
 An engine stays warm across turns and is closed on hibernation or failure.
+The warm-engine pool is keyed by both project and role-instance identity. It
+serializes operations within one instance while allowing other instances to
+run concurrently. Successful and failed operations refresh safe monotonic idle
+activity; only successful operations increment the use count. Transport or
+protocol failure evicts the engine, while explicit hibernation and shutdown
+wait for an active operation before closing it. Queue wait thresholds and
+autoscaling remain control-plane policy rather than provider behavior.
 
 Planned and possible providers remain adapter choices rather than product
 semantics:

@@ -70,6 +70,9 @@ operational support.
   engine, thread, turn, event, completion, usage, and safe-error contracts. Its
   first implementation wraps the official Codex Python SDK's local stdio
   app-server; Codex wire methods and generated SDK types stop at the adapter.
+  A provider-neutral pool keeps one engine warm per project/role-instance,
+  serializes that instance's operations, and leaves idle/scale policy outside
+  the provider lifecycle.
 - Message queue: provides durable inbox/outbox delivery. The active V4 runtime
   uses Postgres-backed queues; other queue backends remain future adapter
   options.
