@@ -577,14 +577,25 @@ class SharedMemoryStore:
         row = connection.execute(
             f"""
             SELECT * FROM {SCHEMA}.shared_memory_revisions
-            WHERE organization_id = %s AND operation_id = %s
+            WHERE organization_id = %s
+              AND operation_id = %s
+              AND request_digest = %s
             """,
-            (context.organization_id, operation_id),
+            (context.organization_id, operation_id, digest),
         ).fetchone()
         if row is None:
+            collision = connection.execute(
+                f"""
+                SELECT 1 FROM {SCHEMA}.shared_memory_revisions
+                WHERE organization_id = %s AND operation_id = %s
+                """,
+                (context.organization_id, operation_id),
+            ).fetchone()
+            if collision is not None:
+                raise SharedMemoryConflict("operation id conflicts with another request")
             return None
         revision = _revision(row)
-        if revision.request_digest != digest or not _visible(context, revision.entry):
+        if not _visible(context, revision.entry):
             raise SharedMemoryConflict("operation id conflicts with another request")
         return revision
 
