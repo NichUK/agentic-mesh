@@ -45,6 +45,12 @@ CREATE TABLE agentic_mesh_v5.governance_records (
 CREATE INDEX governance_records_work_idx
     ON agentic_mesh_v5.governance_records(project_id, work_item_id, recorded_at);
 
+CREATE INDEX governance_records_obligation_idx
+    ON agentic_mesh_v5.governance_records(
+        project_id, work_item_id, state, entry_version,
+        obligation_kind, obligation_id, decision
+    );
+
 CREATE OR REPLACE FUNCTION agentic_mesh_v5.reject_governance_record_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

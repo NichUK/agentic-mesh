@@ -222,16 +222,17 @@ class GovernanceStore:
         evidence = _evidence(evidence)
         if architecture_impact is not None and architecture_impact not in _ARCHITECTURE_IMPACTS:
             raise ValueError("architecture_impact is invalid")
+        reviewed_version = self._reviewed_version_for_replay(project_id, record_id)
+        document_path, document_etag = reviewed_version or self._current_artifact_version(
+            project_id, work_item_id
+        )
         digest = _digest(
             "gate", work_item_id, obligation_id, decision, actor_role_id,
-            reason, evidence, architecture_impact,
+            reason, evidence, architecture_impact, document_path, document_etag,
         )
         replay = self._read_exact(project_id, record_id, digest)
         if replay is not None:
             return replay
-        document_path, document_etag = self._current_artifact_version(
-            project_id, work_item_id
-        )
         record_evidence = {
             **evidence,
             "reviewed_document": {
@@ -455,6 +456,27 @@ class GovernanceStore:
         ):
             raise GovernanceConflict("verified state artifact has changed")
         return row["document_path"], row["document_etag"]
+
+    def _reviewed_version_for_replay(
+        self, project_id: str, record_id: str
+    ) -> tuple[str, str] | None:
+        with psycopg.connect(
+            self._database_url, autocommit=True, row_factory=dict_row
+        ) as connection:
+            row = self._select_record(connection, project_id, record_id)
+        if row is None:
+            return None
+        reviewed = row["evidence"].get("reviewed_document")
+        if not isinstance(reviewed, Mapping):
+            raise GovernanceConflict("governance record id conflicts with another request")
+        path = reviewed.get("path")
+        etag = reviewed.get("etag")
+        if not isinstance(path, str) or not isinstance(etag, str):
+            raise GovernanceConflict("recorded reviewed document is invalid")
+        metadata = self._documents.stat(path)
+        if metadata.is_folder or metadata.path != path or metadata.etag != etag:
+            raise GovernanceConflict("reviewed state artifact has changed")
+        return path, etag
 
     @staticmethod
     def _artifact_is_verified(connection, run, document_path, document_etag) -> bool:

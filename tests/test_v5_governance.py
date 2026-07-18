@@ -480,6 +480,17 @@ def test_missing_documents_and_rejected_reviews_do_not_satisfy_flow(
         actor_role_id="solution-architect",
         record_id="owner-review-approved",
     )
+    documents.etags[path] = '"changed-after-review"'
+    with pytest.raises(GovernanceConflict, match="reviewed state artifact has changed"):
+        governance.decide_gate(
+            project_id="alpha",
+            work_item_id="review-work",
+            obligation_id="owner-review",
+            decision="approved",
+            actor_role_id="solution-architect",
+            record_id="owner-review-approved",
+        )
+    documents.etags[path] = f'"etag:{path}"'
     with pytest.raises(FlowEngineConflict, match="not satisfied"):
         engine.prepare_transition(
             project_id="alpha",
