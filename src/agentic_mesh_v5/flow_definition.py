@@ -90,8 +90,12 @@ class FlowDefinition:
     entry_state: str
     terminal_states: tuple[str, ...]
     states: Mapping[str, FlowState]
-    snapshot: Mapping[str, object]
+    snapshot_json: str
     digest: str
+
+    @property
+    def snapshot(self) -> Mapping[str, object]:
+        return json.loads(self.snapshot_json)
 
     def state(self, state_id: str) -> FlowState:
         try:
@@ -157,7 +161,7 @@ def validate_flow(value: Mapping[str, object], *, digest: str) -> FlowDefinition
         entry,
         terminal_values,
         states,
-        json.loads(json.dumps(value, sort_keys=True)),
+        json.dumps(value, sort_keys=True, separators=(",", ":")),
         _digest(digest),
     )
 
