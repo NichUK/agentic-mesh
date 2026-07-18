@@ -57,6 +57,11 @@ separate control-plane decisions.
 Persistent provider threads are bound by project, work item, logical role, and
 conversation. A replacement or same-role worker instance resumes that recorded
 thread; another project, work item, role, or conversation cannot inherit it.
+Each binding pins the immutable effective configuration digest that created its
+thread. A later activation cannot alter active work: callers must keep using the
+pinned digest or perform an explicit, audited, idle-only reseed. Durable
+operation claims serialize one conversation across same-role instances, and a
+reseed creates a new generation and provider thread without copying old context.
 The V5 worker dispatch loop is intentionally introduced later by AMV5-029; when
 added, it must use `ThreadAffinityCoordinator` rather than call provider thread
 start/resume directly.

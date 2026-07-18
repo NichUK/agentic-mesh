@@ -508,6 +508,22 @@ exists. The later routing/worker loop must invoke the coordinator; automated
 source-boundary checks reject any other product module that starts or resumes a
 provider thread directly.
 
+Every affinity also pins the 64-character digest of the effective immutable
+configuration release used to seed the thread. Global activation or rollback
+does not rewrite existing affinities, and every operation must present the
+recorded digest. A durable active-operation token allows only one same-context
+operation across all role instances. The token is released after both success
+and handled in-process failure; a process crash remains visibly fail-closed for
+later recovery supervision.
+
+Changing an existing conversation requires a controlled reseed with the
+expected current digest, a different target digest, actor, and reason. Reseed is
+rejected while an operation is active. Its append-only record preserves the old
+provider/thread identifiers and both digests, then the affinity enters
+`pending_seed` with no provider thread. The next real operation creates the new
+generation's thread. Prompt text, private reasoning, and credentials are never
+copied into the reseed record.
+
 Planned and possible providers remain adapter choices rather than product
 semantics:
 
