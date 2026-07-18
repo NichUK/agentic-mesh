@@ -46,7 +46,8 @@ version requires an explicit, recorded, idle-only reseed.
 3. One affinity permits one durable active operation across all same-role
    instances. Concurrent use or reseed while active fails closed.
 4. Successful and failed in-process operations release their exact operation
-   token. A stale token cannot release another operation.
+   token. A stale token cannot release another operation. A release failure
+   during error unwinding cannot mask the original operation failure.
 5. Reseed requires actor, reason, expected current digest, and a different valid
    target digest, and is rejected while active or on optimistic mismatch.
 6. Reseed history is immutable and source-linked by affinity key and generation.
@@ -64,8 +65,9 @@ version requires an explicit, recorded, idle-only reseed.
   authorization, maintenance guards, and backup/restore;
 - test first bind, same-digest resume, digest mismatch, configuration activation,
   hibernation, and engine replacement;
-- coordinate concurrent same-affinity operations and active reseed attempts;
-- inject operation exceptions and stale release tokens;
+- coordinate concurrent same-affinity operations, first binding, and reseed
+  attempts under the shared affinity lock;
+- inject operation exceptions, release failures, and stale release tokens;
 - test optimistic reseed, immutable history, pending seed, new-thread activation,
   and legacy unpinned recovery;
 - run a current-auth Codex first-turn/reseed/resume acceptance without storing

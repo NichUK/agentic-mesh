@@ -825,6 +825,104 @@ def test_first_thread_creator_atomically_wins_operation_claim(
     pool.shutdown()
 
 
+def test_reseed_waits_for_bind_claim_lock_and_then_observes_active_operation(
+    affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
+) -> None:
+    database_url, store = affinity_database
+    store.bind_or_read(
+        KEY,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest=DIGEST_A,
+        create_thread=lambda: "thread-one",
+    )
+    claim_entered = Event()
+    allow_claim = Event()
+    operation_entered = Event()
+    finish_operation = Event()
+
+    class PausingClaimStore(ThreadAffinityStore):
+        def _claim_binding(
+            self,
+            connection,
+            key,
+            instance_id,
+            prompt_digest,
+            operation_id,
+        ):
+            claim_entered.set()
+            assert allow_claim.wait(timeout=10)
+            return ThreadAffinityStore._claim_binding(
+                connection, key, instance_id, prompt_digest, operation_id
+            )
+
+    pausing_store = PausingClaimStore(database_url)
+    backend = FakeBackend()
+    backend.threads.add("thread-one")
+    coordinator, pool, _factory, _backend = _coordinator(pausing_store, backend)
+
+    def hold(thread: FakeThread) -> str:
+        operation_entered.set()
+        assert finish_operation.wait(timeout=10)
+        return thread.thread_id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        active = executor.submit(
+            coordinator.run,
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=hold,
+        )
+        assert claim_entered.wait(timeout=10)
+        reseed = executor.submit(
+            pausing_store.reseed,
+            KEY,
+            expected_digest=DIGEST_A,
+            new_digest=DIGEST_B,
+            actor_id="pm",
+            reason="approved prompt upgrade",
+        )
+        time.sleep(0.1)
+        assert not reseed.done()
+        allow_claim.set()
+        assert operation_entered.wait(timeout=10)
+        with pytest.raises(ThreadAffinityBusy, match="active"):
+            reseed.result(timeout=10)
+        finish_operation.set()
+        assert active.result(timeout=10) == "thread-one"
+    pool.shutdown()
+
+
+def test_release_failure_does_not_mask_original_operation_failure(
+    affinity_database: tuple[str, ThreadAffinityStore],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _database_url, store = affinity_database
+    coordinator, pool, _factory, _backend = _coordinator(store)
+
+    def fail_release(_claim) -> None:
+        raise ThreadAffinityError("synthetic release failure")
+
+    monkeypatch.setattr(store, "release_operation", fail_release)
+    with pytest.raises(RuntimeError, match="original operation failure") as captured:
+        coordinator.run(
+            KEY,
+            instance_id="engineering-1",
+            prompt_digest=DIGEST_A,
+            request=_request(tmp_path),
+            operation=lambda _thread: (_ for _ in ()).throw(
+                RuntimeError("original operation failure")
+            ),
+        )
+    assert captured.value.__notes__ == [
+        "durable thread operation claim release also failed"
+    ]
+    pool.shutdown()
+
+
 def test_reseed_preserves_immutable_history_and_creates_new_thread(
     affinity_database: tuple[str, ThreadAffinityStore], tmp_path: Path
 ) -> None:

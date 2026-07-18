@@ -517,6 +517,10 @@ and handled in-process failure; a process crash remains visibly fail-closed for
 later recovery supervision. First binding or post-reseed thread creation and
 the creator's operation claim commit in one transaction, so another instance
 cannot take ownership of an untouched provider thread between those steps.
+Bind/claim and reseed use the same per-affinity advisory lock, making their
+ordering deterministic. If claim release also fails while another operation
+error is unwinding, the original error remains authoritative and receives only
+a safe release-failure note.
 
 Changing an existing conversation requires a controlled reseed with the
 expected current digest, a different target digest, actor, and reason. Reseed is

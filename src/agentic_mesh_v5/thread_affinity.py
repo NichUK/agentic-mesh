@@ -23,6 +23,7 @@ from agentic_mesh_v5.worker_provider import WorkerThread
 T = TypeVar("T")
 _STORE_ERROR = "thread affinity operation failed"
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_AFFINITY_LOCK_SEED = 5025
 UNPINNED_DIGEST = "unpinned"
 _BINDING_COLUMNS = """
     provider_id, thread_id, prompt_digest, generation, affinity_state,
@@ -213,8 +214,8 @@ class ThreadAffinityStore:
             ) as connection:
                 with connection.transaction():
                     connection.execute(
-                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 5025))",
-                        (_lock_key(key),),
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, %s))",
+                        (_lock_key(key), _AFFINITY_LOCK_SEED),
                     )
                     if not self._authorized(connection, key, instance_id):
                         raise ThreadAffinityAuthorizationError(
@@ -464,8 +465,8 @@ class ThreadAffinityStore:
             ) as connection:
                 with connection.transaction():
                     connection.execute(
-                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 5026))",
-                        (_lock_key(key),),
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, %s))",
+                        (_lock_key(key), _AFFINITY_LOCK_SEED),
                     )
                     binding = self._select(connection, key, for_update=True)
                     if binding is None:
@@ -747,9 +748,18 @@ class ThreadAffinityCoordinator:
                         thread_id=thread_id,
                         prompt_digest=prompt_digest,
                     )
-                return operation(thread)
-            finally:
+                result = operation(thread)
+            except BaseException as operation_error:
+                try:
+                    self._store.release_operation(claim)
+                except Exception:
+                    operation_error.add_note(
+                        "durable thread operation claim release also failed"
+                    )
+                raise
+            else:
                 self._store.release_operation(claim)
+                return result
 
         return self._pool.run(instance_key, use_engine)
 
