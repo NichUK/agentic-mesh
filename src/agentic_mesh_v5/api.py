@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime
 from functools import partial
@@ -8,7 +9,7 @@ from typing import Any, Literal
 import uuid
 
 import anyio
-from fastapi import Depends, FastAPI, Header, Query, Request, Security, status
+from fastapi import Depends, FastAPI, Header, Query, Request, Response, Security, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -21,9 +22,9 @@ from agentic_mesh_v5.api_auth import Principal
 from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
-from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.database import database_url_from_environment
+from agentic_mesh_v5.health import HealthReporter
 from agentic_mesh_v5.lifecycle import LifecycleAuthorizationError
 from agentic_mesh_v5.lifecycle import LifecycleConflict
 from agentic_mesh_v5.lifecycle import LifecycleNotFound
@@ -35,6 +36,8 @@ from agentic_mesh_v5.queues import QueueNotFound
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.read_models import ReadModelNotFound
 from agentic_mesh_v5.read_models import ReadModelStore
+from agentic_mesh_v5.telemetry import Telemetry
+from agentic_mesh_v5.telemetry import telemetry_from_environment
 
 
 API_PREFIX = "/api/v1"
@@ -55,12 +58,21 @@ class Problem(ApiModel):
     errors: list[dict[str, Any]] | None = None
 
 
+class DependencyHealthResponse(ApiModel):
+    name: str
+    status: Literal["ok", "degraded", "unavailable"]
+    reason: str
+
+
 class HealthResponse(ApiModel):
     runtime: str
     version: str
+    kind: Literal["liveness", "readiness"]
     status: Literal["ok", "degraded"]
-    schema_version: int
-    available_schema_version: int
+    checked_at: str
+    schema_version: int | None
+    available_schema_version: int | None
+    dependencies: list[DependencyHealthResponse]
 
 
 class ProjectCreate(ApiModel):
@@ -363,13 +375,22 @@ def create_app(
     database_url: str,
     *,
     authorizer: TokenAuthorizer | None = None,
+    telemetry: Telemetry | None = None,
 ) -> FastAPI:
     selected_authorizer = authorizer or TokenAuthorizer.from_environment()
+    selected_telemetry = telemetry or Telemetry()
     lifecycle = LifecycleStore(database_url)
     queues = RoleQueueStore(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
+    health_reporter = HealthReporter(database_url, selected_telemetry)
     bearer = HTTPBearer(auto_error=False)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        selected_telemetry.shutdown()
+
     app = FastAPI(
         title="Agentic Mesh V5 Control API",
         version=__version__,
@@ -379,6 +400,7 @@ def create_app(
         ),
         docs_url="/docs",
         openapi_url="/openapi.json",
+        lifespan=lifespan,
         responses={
             code: {
                 "model": Problem,
@@ -405,7 +427,31 @@ def create_app(
             else uuid.uuid4().hex
         )
         request.state.request_id = request_id
-        response = await call_next(request)
+        method = request.method.upper()
+        with selected_telemetry.request(
+            method=method,
+            request_id=request_id,
+            carrier=dict(request.headers),
+        ) as observation:
+            try:
+                response = await call_next(request)
+            except BaseException:
+                selected_telemetry.finish_request(
+                    observation,
+                    method=method,
+                    route=_request_route(request),
+                    status_code=500,
+                    identifiers=request.path_params,
+                )
+                raise
+            selected_telemetry.finish_request(
+                observation,
+                method=method,
+                route=_request_route(request),
+                status_code=response.status_code,
+                identifiers=request.path_params,
+            )
+            selected_telemetry.inject_response_context(response.headers)
         response.headers["x-request-id"] = request_id
         return response
 
@@ -484,16 +530,23 @@ def create_app(
     async def unexpected_failure(request: Request, _exc: Exception) -> JSONResponse:
         return _problem_response(request, 500, "internal_error", "unexpected control-plane failure")
 
+    def readiness(response: Response) -> dict[str, object]:
+        report = health_reporter.readiness()
+        if report.status == "degraded":
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return report.to_dict()
+
+    @app.get(f"{API_PREFIX}/health/live", response_model=HealthResponse, tags=["system"])
+    def health_live() -> dict[str, object]:
+        return health_reporter.liveness().to_dict()
+
+    @app.get(f"{API_PREFIX}/health/ready", response_model=HealthResponse, tags=["system"])
+    def health_ready(response: Response) -> dict[str, object]:
+        return readiness(response)
+
     @app.get(f"{API_PREFIX}/health", response_model=HealthResponse, tags=["system"])
-    def health() -> dict[str, Any]:
-        migration = MigrationRunner(database_url).status()
-        return {
-            "runtime": "agentic-mesh-v5",
-            "version": __version__,
-            "status": "degraded" if migration.pending_versions else "ok",
-            "schema_version": migration.current_version,
-            "available_schema_version": migration.available_version,
-        }
+    def health(response: Response) -> dict[str, object]:
+        return readiness(response)
 
     @app.get(f"{API_PREFIX}/projects", response_model=list[ProjectResponse], tags=["projects"])
     def list_projects(identity: Principal = Depends(principal)):
@@ -536,6 +589,11 @@ def create_app(
         identity: Principal = Depends(principal),
     ):
         project_access(identity, project_id, "write")
+        selected_telemetry.annotate(
+            project_id=project_id,
+            work_item_id=payload.work_item_id,
+            correlation_id=payload.correlation_id,
+        )
         return asdict(
             lifecycle.create_work_item(
                 project_id=project_id,
@@ -581,6 +639,11 @@ def create_app(
         identity: Principal = Depends(principal),
     ):
         project_access(identity, project_id, "write")
+        selected_telemetry.annotate(
+            project_id=project_id,
+            work_item_id=work_item_id,
+            correlation_id=payload.correlation_id,
+        )
         return asdict(
             lifecycle.transition_work_item(
                 project_id=project_id,
@@ -607,6 +670,11 @@ def create_app(
         identity: Principal = Depends(principal),
     ):
         project_access(identity, project_id, "write")
+        selected_telemetry.annotate(
+            project_id=project_id,
+            work_item_id=work_item_id,
+            correlation_id=payload.correlation_id,
+        )
         return asdict(
             lifecycle.open_gate(
                 project_id=project_id,
@@ -695,6 +763,11 @@ def create_app(
         identity: Principal = Depends(principal),
     ):
         project_access(identity, project_id, "write")
+        selected_telemetry.annotate(
+            project_id=project_id,
+            work_item_id=payload.work_item_id,
+            queue_id=queue_id,
+        )
         return asdict(
             queues.enqueue(
                 project_id=project_id,
@@ -941,7 +1014,15 @@ def create_app(
 
 
 def app_from_environment() -> FastAPI:
-    return create_app(database_url_from_environment())
+    return create_app(
+        database_url_from_environment(), telemetry=telemetry_from_environment()
+    )
+
+
+def _request_route(request: Request) -> str:
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return path if isinstance(path, str) else "unmatched"
 
 
 def _problem_response(
