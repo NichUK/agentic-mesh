@@ -217,6 +217,11 @@ def test_store_keeps_git_snapshot_history_and_enforces_project_claims(
 
     alpha = load_project_manifest(_write(tmp_path, _manifest(), "alpha.yaml"))
     store = ProjectManifestStore(postgres_database)
+    tampered = load_project_manifest(_write(tmp_path, _manifest(), "tampered.yaml"))
+    assert isinstance(tampered.snapshot, dict)
+    tampered.snapshot["display_name"] = "Tampered"
+    with pytest.raises(ProjectManifestError, match="normalized snapshot"):
+        store.activate(tampered, source_revision="a" * 40, actor_id="project-admin")
     active = store.activate(
         alpha,
         source_revision="a" * 40,

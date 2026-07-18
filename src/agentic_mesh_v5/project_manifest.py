@@ -138,6 +138,10 @@ def load_project_manifest(path: Path) -> ProjectManifest:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ProjectManifestError("project manifest must be valid UTF-8 YAML") from exc
+    return _normalize_project_manifest(value)
+
+
+def _normalize_project_manifest(value: object) -> ProjectManifest:
     root = _mapping(
         value,
         "manifest",
@@ -632,6 +636,9 @@ class ProjectManifestStore:
         source_path: str = _SOURCE_PATH,
         expected_active: str | None | object = _UNSET,
     ) -> ProjectManifestActivation:
+        validated = _normalize_project_manifest(manifest.snapshot)
+        if validated != manifest:
+            raise ProjectManifestError("manifest does not match its normalized snapshot")
         source_revision = _source_revision(source_revision)
         actor_id = _external_id(actor_id, "actor_id")
         if source_path != _SOURCE_PATH:
