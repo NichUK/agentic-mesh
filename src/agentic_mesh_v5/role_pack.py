@@ -263,6 +263,29 @@ class RolePackActivator:
                     if active != (manifest.digest,):
                         raise RolePackConflict("project manifest is not active")
                     selected = [item.binding.role_id for item in prepared]
+                    existing_pm = connection.execute(
+                        f"SELECT 1 FROM {SCHEMA}.roles "
+                        "WHERE project_id = %s AND role_id = 'project-manager'",
+                        (manifest.project_id,),
+                    ).fetchone()
+                    if existing_pm is not None and "project-manager" not in selected:
+                        raise RolePackConflict(
+                            "an established project-manager cannot be removed"
+                        )
+                    connection.execute(
+                        f"DELETE FROM {SCHEMA}.role_bindings "
+                        "WHERE project_id = %s AND NOT (role_id = ANY(%s))",
+                        (manifest.project_id, selected),
+                    )
+                    connection.execute(
+                        f"""
+                        UPDATE {SCHEMA}.role_scaling_policies
+                        SET min_warm_instances = 0, hibernation_enabled = true,
+                            updated_at = clock_timestamp()
+                        WHERE project_id = %s AND NOT (role_id = ANY(%s))
+                        """,
+                        (manifest.project_id, selected),
+                    )
                     connection.execute(
                         f"UPDATE {SCHEMA}.roles SET status = 'inactive' "
                         "WHERE project_id = %s AND NOT (role_id = ANY(%s))",

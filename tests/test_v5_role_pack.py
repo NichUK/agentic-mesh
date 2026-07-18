@@ -22,6 +22,7 @@ from agentic_mesh_v5.role_pack import RolePackActivator
 from agentic_mesh_v5.role_pack import RolePackConflict
 from agentic_mesh_v5.routing import RouteDraft
 from agentic_mesh_v5.routing import Router
+from agentic_mesh_v5.routing import RoutingNotFound
 
 
 CONFIG = Path(
@@ -285,29 +286,35 @@ def _synthetic_repository(root: Path) -> Path:
     (root / "schemas").mkdir(parents=True)
     (root / "schemas" / "package.schema.json").write_text("{}\n", encoding="utf-8")
     role_id = "finance-analyst"
+    role_settings = {
+        "role": {
+            "schema_version": 1,
+            "role_id": role_id,
+            "display_name": "Finance Analyst",
+            "role_class": "general",
+            "purpose": "Analyse a bounded financial question.",
+            "accountabilities": ["Produce sourced analysis."],
+            "decision_rights": {
+                "owns": ["Analysis method."],
+                "must_not": ["Approve expenditure."],
+            },
+            "consults": [],
+            "handoff_targets": [],
+            "memory_scope": "project-role",
+            "instructions": ["Use the simplest sufficient analysis."],
+            "documentation": ["Analysis record."],
+        }
+    }
     _write_package(
         root,
         f"role/{role_id}@1.0.0",
-        {
-            "role": {
-                "schema_version": 1,
-                "role_id": role_id,
-                "display_name": "Finance Analyst",
-                "role_class": "general",
-                "purpose": "Analyse a bounded financial question.",
-                "accountabilities": ["Produce sourced analysis."],
-                "decision_rights": {
-                    "owns": ["Analysis method."],
-                    "must_not": ["Approve expenditure."],
-                },
-                "consults": [],
-                "handoff_targets": [],
-                "memory_scope": "project-role",
-                "instructions": ["Use the simplest sufficient analysis."],
-                "documentation": ["Analysis record."],
-            }
-        },
+        role_settings,
     )
+    auditor = json.loads(json.dumps(role_settings))
+    auditor["role"]["role_id"] = "finance-auditor"
+    auditor["role"]["display_name"] = "Finance Auditor"
+    auditor["role"]["purpose"] = "Review bounded financial evidence."
+    _write_package(root, "role/finance-auditor@1.0.0", auditor)
     _write_package(
         root,
         "flow/finance@1.0.0",
@@ -406,6 +413,11 @@ def test_synthetic_future_role_uses_the_same_activation_contract(
             "package": "role/finance-analyst@1.0.0",
             "tool_profile": "tool-profile/general@1.0.0",
             "instances": {"minimum": 0, "maximum": 2},
+        },
+        "finance-auditor": {
+            "package": "role/finance-auditor@1.0.0",
+            "tool_profile": "tool-profile/general@1.0.0",
+            "instances": {"minimum": 1, "maximum": 1},
         }
     }
     manifest = _activate_manifest(
@@ -418,9 +430,63 @@ def test_synthetic_future_role_uses_the_same_activation_contract(
         flow_reference="flow/finance@1.0.0",
         actor_id="project-manager",
     )
-    assert [item.role_id for item in activated.roles] == ["finance-analyst"]
-    assert activated.roles[0].tool_profile_id == "general"
-    assert activated.roles[0].maximum_instances == 2
+    assert [item.role_id for item in activated.roles] == [
+        "finance-analyst",
+        "finance-auditor",
+    ]
+
+    smaller_roles = {"finance-analyst": roles["finance-analyst"]}
+    smaller_path = tmp_path / "smaller.yaml"
+    smaller_path.write_text(
+        yaml.safe_dump(_manifest_value("finance", smaller_roles), sort_keys=False),
+        encoding="utf-8",
+    )
+    smaller = load_project_manifest(smaller_path)
+    ProjectManifestStore(postgres_database).activate(
+        smaller,
+        source_revision="b" * 40,
+        actor_id="project-manager",
+        expected_active=manifest.digest,
+    )
+    reduced = RolePackActivator(postgres_database, root).activate(
+        smaller,
+        flow_reference="flow/finance@1.0.0",
+        actor_id="project-manager",
+    )
+    assert [item.role_id for item in reduced.roles] == ["finance-analyst"]
+    assert RolePackActivator(postgres_database, root).get("finance") == reduced
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.work_items
+                (project_id, work_item_id, assigned_role_id, title)
+            VALUES ('finance', 'removed-route', 'finance-analyst', 'Removed route')
+            """
+        )
+        removed = connection.execute(
+            """
+            SELECT role.status, queue.paused, policy.min_warm_instances,
+                   policy.hibernation_enabled
+            FROM agentic_mesh_v5.roles AS role
+            JOIN agentic_mesh_v5.role_queues AS queue USING (project_id, role_id)
+            JOIN agentic_mesh_v5.role_scaling_policies AS policy
+              USING (project_id, role_id)
+            WHERE role.project_id = 'finance' AND role.role_id = 'finance-auditor'
+            """
+        ).fetchone()
+    assert removed == ("inactive", True, 0, True)
+    with pytest.raises(RoutingNotFound):
+        Router(postgres_database).route(
+            RouteDraft(
+                project_id="finance",
+                work_item_id="removed-route",
+                target_role_id="finance-auditor",
+                idempotency_key="removed-auditor",
+                payload={},
+            )
+        )
+    assert reduced.roles[0].tool_profile_id == "general"
+    assert reduced.roles[0].maximum_instances == 2
 
     restricted_roles = {
         "finance-analyst": {
