@@ -409,7 +409,7 @@ def test_minimum_warm_and_project_manager_guardrails_are_enforced(
 
 
 def test_failed_and_concurrent_reconciliation_reuses_one_action_id(
-    fleet_database: str,
+    fleet_database: str, monkeypatch,
 ) -> None:
     with psycopg.connect(fleet_database) as connection:
         connection.execute(
@@ -423,13 +423,21 @@ def test_failed_and_concurrent_reconciliation_reuses_one_action_id(
     scaler = FleetScaler(fleet_database, failing)
     scaler.configure(_policy())
 
+    record_failure = scaler._record_failure
+    monkeypatch.setattr(
+        scaler,
+        "_record_failure",
+        lambda _action: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
     first = scaler.reconcile("alpha")
+    monkeypatch.setattr(scaler, "_record_failure", record_failure)
     second = scaler.reconcile("alpha")
 
     assert first.actions[0].status == "failed"
     assert second.actions[0].status == "completed"
     assert first.actions[0].action.action_id == second.actions[0].action.action_id
     assert "private" not in first.actions[0].detail
+    assert "evidence unavailable" in first.actions[0].detail
     with psycopg.connect(fleet_database) as connection:
         connection.execute(
             """

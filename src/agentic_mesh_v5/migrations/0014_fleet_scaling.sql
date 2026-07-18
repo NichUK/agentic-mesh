@@ -55,6 +55,3 @@ CREATE INDEX role_instances_scaling_idx
 CREATE UNIQUE INDEX role_instances_lifecycle_action_id_idx
     ON agentic_mesh_v5.role_instances(lifecycle_action_id)
     WHERE lifecycle_action_id IS NOT NULL;
-
-CREATE INDEX role_scaling_policy_reconcile_idx
-    ON agentic_mesh_v5.role_scaling_policies(project_id, role_id);

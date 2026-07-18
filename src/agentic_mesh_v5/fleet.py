@@ -223,8 +223,17 @@ class FleetScaler:
             try:
                 self._supervisor.apply(action)
             except Exception:
-                self._record_failure(action)
-                results.append(FleetActionResult(action, "failed", _FAILURE))
+                recorded = False
+                try:
+                    recorded = self._record_failure(action)
+                except Exception:
+                    pass
+                detail = (
+                    _FAILURE
+                    if recorded
+                    else f"{_FAILURE}; durable failure evidence unavailable"
+                )
+                results.append(FleetActionResult(action, "failed", detail))
                 continue
             results.append(self._complete(action))
         return FleetReconcileResult(selected_project, tuple(results))
@@ -529,7 +538,7 @@ class FleetScaler:
         except Exception:
             raise FleetError("fleet action completion failed") from None
 
-    def _record_failure(self, action: FleetAction) -> None:
+    def _record_failure(self, action: FleetAction) -> bool:
         try:
             with psycopg.connect(self._database_url) as connection:
                 updated = connection.execute(
@@ -550,8 +559,9 @@ class FleetScaler:
                         action.instance_id,
                         {"action_id": action.action_id, "detail": _FAILURE},
                     )
+                return updated is not None
         except Exception:
-            raise FleetError("fleet failure recording failed") from None
+            return False
 
     @staticmethod
     def _busy_sql(alias: str) -> str:

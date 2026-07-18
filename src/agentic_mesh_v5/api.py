@@ -661,10 +661,19 @@ def create_app(
     async def lifespan(_app: FastAPI):
         async def reconcile_fleet() -> None:
             while True:
-                try:
-                    await anyio.to_thread.run_sync(fleet_scaler.reconcile)
-                except (DatabaseError, FleetSupervisorError, psycopg.Error):
-                    pass
+                with selected_telemetry.operation("fleet.reconcile") as span:
+                    try:
+                        result = await anyio.to_thread.run_sync(
+                            fleet_scaler.reconcile
+                        )
+                        if any(item.status == "failed" for item in result.actions):
+                            selected_telemetry.record_safe_failure(
+                                span, code="fleet.supervisor_failed"
+                            )
+                    except (DatabaseError, FleetSupervisorError, psycopg.Error):
+                        selected_telemetry.record_safe_failure(
+                            span, code="fleet.reconciliation_failed"
+                        )
                 await anyio.sleep(float(fleet_reconcile_interval_seconds))
 
         try:
