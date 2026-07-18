@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import re
+import uuid
 
 import psycopg
 
@@ -11,10 +13,18 @@ from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.worker_provider import ProviderCapacity
+from agentic_mesh_v5.worker_provider import CapacityAwareWorkerEngine
 from agentic_mesh_v5.worker_provider import ProviderCredits
+from agentic_mesh_v5.worker_provider import ProviderEvent
+from agentic_mesh_v5.worker_provider import ProviderEventKind
 from agentic_mesh_v5.worker_provider import ProviderRateLimitWindow
 from agentic_mesh_v5.worker_provider import ProviderSpendControl
 from agentic_mesh_v5.worker_provider import ProviderUsage
+from agentic_mesh_v5.worker_provider import TurnRequest
+from agentic_mesh_v5.worker_provider import WorkerEngine
+from agentic_mesh_v5.worker_provider import WorkerProviderError
+from agentic_mesh_v5.worker_provider import WorkerThread
+from agentic_mesh_v5.worker_provider import WorkerTurn
 
 
 _STORE_ERROR = "usage operation failed"
@@ -219,6 +229,7 @@ class UsageStore:
         except Exception:
             raise UsageError(_STORE_ERROR) from None
 
+
     def record_capacity(self, draft: CapacityDraft) -> CapacityRecord:
         if not isinstance(draft, CapacityDraft):
             raise ValueError("capacity draft is invalid")
@@ -388,6 +399,136 @@ class UsageStore:
             raise
         except Exception:
             raise UsageError(_STORE_ERROR) from None
+
+
+class UsageCapture:
+    def __init__(self, store: UsageStore, *, account_scope: str = "default") -> None:
+        if not isinstance(store, UsageStore):
+            raise ValueError("usage store is invalid")
+        self._store = store
+        self._account_scope = _identifier(account_scope, "account_scope")
+
+    def capture_capacity(
+        self, *, project_id: str, provider_id: str, engine: WorkerEngine
+    ) -> CapacityRecord:
+        capacity = ProviderCapacity.unknown()
+        if isinstance(engine, CapacityAwareWorkerEngine):
+            try:
+                capacity = engine.read_capacity()
+            except WorkerProviderError:
+                pass
+        return self._store.record_capacity(
+            CapacityDraft(
+                project_id=project_id,
+                provider_id=provider_id,
+                account_scope=self._account_scope,
+                observation_id=uuid.uuid4().hex,
+                observed_at=datetime.now(timezone.utc),
+                capacity=capacity,
+            )
+        )
+
+    def wrap_thread(
+        self,
+        thread: WorkerThread,
+        *,
+        project_id: str,
+        work_item_id: str,
+        role_instance_id: str,
+        provider_id: str,
+    ) -> WorkerThread:
+        return _UsageCapturingThread(
+            thread,
+            store=self._store,
+            project_id=_identifier(project_id, "project_id"),
+            work_item_id=_identifier(work_item_id, "work_item_id"),
+            role_instance_id=_identifier(role_instance_id, "role_instance_id"),
+            provider_id=_identifier(provider_id, "provider_id"),
+            account_scope=self._account_scope,
+        )
+
+
+class _UsageCapturingThread:
+    def __init__(
+        self,
+        thread: WorkerThread,
+        *,
+        store: UsageStore,
+        project_id: str,
+        work_item_id: str,
+        role_instance_id: str,
+        provider_id: str,
+        account_scope: str,
+    ) -> None:
+        self._thread = thread
+        self._store = store
+        self._project_id = project_id
+        self._work_item_id = work_item_id
+        self._role_instance_id = role_instance_id
+        self._provider_id = provider_id
+        self._account_scope = account_scope
+        self.thread_id = thread.thread_id
+
+    def start_turn(self, request: TurnRequest) -> WorkerTurn:
+        turn = self._thread.start_turn(request)
+        if not isinstance(turn, WorkerTurn):
+            raise ValueError("worker turn is invalid")
+        return _UsageCapturingTurn(
+            turn,
+            store=self._store,
+            project_id=self._project_id,
+            work_item_id=self._work_item_id,
+            role_instance_id=self._role_instance_id,
+            provider_id=self._provider_id,
+            account_scope=self._account_scope,
+        )
+
+
+class _UsageCapturingTurn:
+    def __init__(
+        self,
+        turn: WorkerTurn,
+        *,
+        store: UsageStore,
+        project_id: str,
+        work_item_id: str,
+        role_instance_id: str,
+        provider_id: str,
+        account_scope: str,
+    ) -> None:
+        self._turn = turn
+        self._store = store
+        self._project_id = project_id
+        self._work_item_id = work_item_id
+        self._role_instance_id = role_instance_id
+        self._provider_id = provider_id
+        self._account_scope = account_scope
+        self.thread_id = turn.thread_id
+        self.turn_id = turn.turn_id
+
+    def events(self) -> Iterator[ProviderEvent]:
+        for event in self._turn.events():
+            if event.kind is ProviderEventKind.USAGE_UPDATED:
+                self._record(event)
+            yield event
+
+    def interrupt(self) -> None:
+        self._turn.interrupt()
+
+    def _record(self, event: ProviderEvent) -> None:
+        if event.usage is None or event.turn_id != self.turn_id:
+            raise ValueError("provider usage event is invalid")
+        self._store.record_turn(
+            TurnUsageDraft(
+                project_id=self._project_id,
+                work_item_id=self._work_item_id,
+                role_instance_id=self._role_instance_id,
+                provider_id=self._provider_id,
+                account_scope=self._account_scope,
+                turn_id=self.turn_id,
+                usage=event.usage,
+            )
+        )
 
 
 def _validate_update(current: TurnUsageRecord, draft: TurnUsageDraft) -> None:

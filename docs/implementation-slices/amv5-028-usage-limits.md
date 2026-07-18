@@ -17,6 +17,8 @@ reported as unknown rather than as zero.
 - Codex capacity is read through the provider adapter using
   `account/rateLimits/read`; Codex response shapes do not leak into product
   semantics.
+- The thread-affinity boundary refreshes capacity before work and persists turn
+  usage before yielding it. Unsupported or failed capacity reads record unknown.
 - No prompt, response, reasoning, OAuth identity, credential, or raw provider
   payload is stored or returned.
 - Reset credits are observed, not consumed. Sponsor-approved use remains part
@@ -40,6 +42,8 @@ reported as unknown rather than as zero.
 - Unit-test Codex SDK snapshot translation, including absent optional fields.
 - Exercise idempotent, monotonic, conflicting, and concurrent turn accounting
   against Postgres.
+- Exercise automatic ingestion through the thread-affinity coordinator,
+  including a provider that cannot supply capacity.
 - Exercise known and unknown capacity through the authenticated control API and
   verify project isolation.
 - Run all V5 tests, the unchanged V4 baseline, package/secret checks, and a

@@ -294,21 +294,10 @@ def test_codex_adapter_reads_typed_capacity_without_account_identity(
 def test_codex_adapter_accepts_absent_optional_capacity_fields(tmp_path: Path) -> None:
     sdk = FakeSdk(FakeHandle())
     sdk.capacity_response = SimpleNamespace(
-        rate_limits=SimpleNamespace(
-            limit_id=None,
-            limit_name=None,
-            plan_type=None,
-            primary=None,
-            secondary=None,
-            credits=None,
-            individual_limit=None,
-        ),
-        rate_limit_reset_credits=None,
-    )
-    engine = CodexWorkerProvider(
-        CodexProviderConfig(cwd=tmp_path), sdk_factory=lambda _config: sdk
-    ).open()
-
+        rate_limits=SimpleNamespace(**dict.fromkeys(
+            ("limit_id", "limit_name", "plan_type", "primary", "secondary", "credits", "individual_limit")
+        )), rate_limit_reset_credits=None)
+    engine = CodexWorkerProvider(CodexProviderConfig(cwd=tmp_path), sdk_factory=lambda _config: sdk).open()
     capacity = engine.read_capacity()
 
     assert capacity.available is True

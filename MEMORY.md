@@ -130,6 +130,7 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   totals and average use plus remaining percentages and reset times; absent
   provider data is explicitly `unknown`. Prompts, responses, reasoning,
   account identity, credentials, and raw provider payloads are never stored.
+  Thread affinity refreshes capacity and persists usage before yielding it.
 
 ## 2026-07-15 - Bounded Missing-Output Repair
 

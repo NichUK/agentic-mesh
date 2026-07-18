@@ -10,6 +10,8 @@ import psycopg
 from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
+from agentic_mesh_v5.usage import UsageCapture
+from agentic_mesh_v5.usage import UsageStore
 from agentic_mesh_v5.warm_engines import RoleInstanceKey
 from agentic_mesh_v5.warm_engines import WarmEnginePool
 from agentic_mesh_v5.worker_provider import ProviderErrorInfo
@@ -124,6 +126,10 @@ class ThreadAffinityStore:
         if not database_url.startswith(("postgresql://", "postgres://")):
             raise DatabaseConfigurationError("the V5 database URL must use Postgres")
         self._database_url = database_url
+
+    @property
+    def database_url(self) -> str:
+        return self._database_url
 
     def authorize(self, key: ThreadAffinityKey, *, instance_id: str) -> None:
         key = _key(key)
@@ -695,6 +701,7 @@ class ThreadAffinityCoordinator:
             raise ValueError("thread affinity coordinator configuration is invalid")
         self._store = store
         self._pool = pool
+        self._usage = UsageCapture(UsageStore(store.database_url))
 
     def run(
         self,
@@ -746,7 +753,20 @@ class ThreadAffinityCoordinator:
                         thread_id=thread_id,
                         prompt_digest=prompt_digest,
                     )
-                result = operation(thread)
+                self._usage.capture_capacity(
+                    project_id=key.project_id,
+                    provider_id=provider_id,
+                    engine=engine,
+                )
+                result = operation(
+                    self._usage.wrap_thread(
+                        thread,
+                        project_id=key.project_id,
+                        work_item_id=key.work_item_id,
+                        role_instance_id=instance_id,
+                        provider_id=provider_id,
+                    )
+                )
             except BaseException as operation_error:
                 try:
                     self._store.release_operation(claim)
