@@ -109,6 +109,21 @@ def _enqueue(
     )
 
 
+def test_enqueue_rejects_naive_ready_time_before_database_access() -> None:
+    store = RoleQueueStore("postgresql://not-opened/mesh")
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        store.enqueue(
+            project_id="alpha",
+            queue_id="engineering",
+            queue_item_id="item-1",
+            work_item_id="work-1",
+            idempotency_key="idem-1",
+            payload={},
+            available_at=datetime.now(),
+        )
+
+
 def test_priority_and_ready_time_control_claim_order(queue_database) -> None:
     _database_url, store = queue_database
     _enqueue(store, "item-low", "work-1", priority=1)

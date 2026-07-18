@@ -121,6 +121,12 @@ class RoleQueueStore:
         queue_item_id = _required(queue_item_id, "queue_item_id")
         work_item_id = _required(work_item_id, "work_item_id")
         idempotency_key = _required(idempotency_key, "idempotency_key")
+        if available_at is not None and (
+            not isinstance(available_at, datetime)
+            or available_at.tzinfo is None
+            or available_at.utcoffset() is None
+        ):
+            raise ValueError("available_at must be a timezone-aware datetime")
         try:
             with psycopg.connect(self._database_url) as connection:
                 connection.execute(
@@ -319,20 +325,23 @@ class RoleQueueStore:
                 raise QueueNotFound("queue not found")
             row = connection.execute(
                 f"""
+                WITH observed AS (
+                    SELECT clock_timestamp() AS now
+                )
                 SELECT
                     count(*) FILTER (WHERE status IN ('ready', 'leased')),
                     count(*) FILTER (
                         WHERE status = 'ready'
-                          AND available_at <= clock_timestamp()
+                          AND available_at <= (SELECT now FROM observed)
                     ),
                     count(*) FILTER (
                         WHERE status = 'ready'
-                          AND available_at > clock_timestamp()
+                          AND available_at > (SELECT now FROM observed)
                     ),
                     count(*) FILTER (WHERE status = 'leased'),
-                    EXTRACT(epoch FROM clock_timestamp() - min(available_at)
+                    EXTRACT(epoch FROM (SELECT now FROM observed) - min(available_at)
                         FILTER (WHERE status = 'ready'
-                                      AND available_at <= clock_timestamp())),
+                                      AND available_at <= (SELECT now FROM observed))),
                     COALESCE(sum(attempt_count), 0)
                 FROM {SCHEMA}.queue_items
                 WHERE project_id = %s AND queue_id = %s
