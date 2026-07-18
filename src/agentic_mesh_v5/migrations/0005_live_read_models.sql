@@ -8,14 +8,16 @@ CREATE TABLE agentic_mesh_v5.read_model_events (
     operation text NOT NULL CHECK (operation IN ('upsert', 'delete')),
     payload jsonb NOT NULL,
     occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    UNIQUE (project_id, event_id)
+    UNIQUE (project_id, event_id),
+    FOREIGN KEY (project_id) REFERENCES agentic_mesh_v5.projects(project_id)
+        ON DELETE CASCADE
 );
 
 CREATE INDEX read_model_events_project_order_idx
     ON agentic_mesh_v5.read_model_events(project_id, event_id);
 
 CREATE TABLE agentic_mesh_v5.read_model_entities (
-    project_id text NOT NULL,
+    project_id text NOT NULL CHECK (btrim(project_id) <> ''),
     domain text NOT NULL CHECK (
         domain IN ('project', 'work', 'queue', 'role', 'instance', 'progress')
     ),
@@ -26,13 +28,17 @@ CREATE TABLE agentic_mesh_v5.read_model_entities (
     PRIMARY KEY (project_id, domain, entity_id),
     FOREIGN KEY (project_id, source_event_id)
         REFERENCES agentic_mesh_v5.read_model_events(project_id, event_id)
-        ON DELETE RESTRICT
+        ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES agentic_mesh_v5.projects(project_id)
+        ON DELETE CASCADE
 );
 
 CREATE TABLE agentic_mesh_v5.read_model_cursors (
-    project_id text PRIMARY KEY,
+    project_id text PRIMARY KEY CHECK (btrim(project_id) <> ''),
     last_event_id bigint NOT NULL CHECK (last_event_id >= 0),
-    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    FOREIGN KEY (project_id) REFERENCES agentic_mesh_v5.projects(project_id)
+        ON DELETE CASCADE
 );
 
 CREATE OR REPLACE FUNCTION agentic_mesh_v5.emit_read_model_event()
@@ -46,6 +52,12 @@ DECLARE
     selected_payload jsonb;
 BEGIN
     source := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+    IF TG_OP = 'DELETE' AND NOT EXISTS (
+        SELECT 1 FROM agentic_mesh_v5.projects
+        WHERE project_id = source->>'project_id'
+    ) THEN
+        RETURN OLD;
+    END IF;
     selected_domain := CASE TG_TABLE_NAME
         WHEN 'projects' THEN 'project'
         WHEN 'work_items' THEN 'work'
@@ -230,12 +242,27 @@ SELECT project_id, 'progress', progress_id::text, 'upsert', jsonb_strip_nulls(
     )
 ) FROM agentic_mesh_v5.progress ORDER BY project_id, progress_id;
 
+CREATE OR REPLACE FUNCTION agentic_mesh_v5.reject_read_model_event_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND NOT EXISTS (
+        SELECT 1 FROM agentic_mesh_v5.projects
+        WHERE project_id = OLD.project_id
+    ) THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'read-model events are append-only';
+END;
+$$;
+
 CREATE TRIGGER read_model_events_append_only
     BEFORE UPDATE OR DELETE ON agentic_mesh_v5.read_model_events
-    FOR EACH ROW EXECUTE FUNCTION agentic_mesh_v5.reject_event_mutation();
+    FOR EACH ROW EXECUTE FUNCTION agentic_mesh_v5.reject_read_model_event_mutation();
 
 CREATE TRIGGER projects_read_model_event
-    AFTER INSERT OR UPDATE OR DELETE ON agentic_mesh_v5.projects
+    AFTER INSERT OR UPDATE ON agentic_mesh_v5.projects
     FOR EACH ROW EXECUTE FUNCTION agentic_mesh_v5.emit_read_model_event();
 CREATE TRIGGER work_items_read_model_event
     AFTER INSERT OR UPDATE OR DELETE ON agentic_mesh_v5.work_items

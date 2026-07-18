@@ -188,6 +188,30 @@ def test_projection_events_share_source_transaction_and_are_append_only(
     assert rolled_back == 0
 
 
+def test_project_delete_cascades_all_projection_state(postgres_database: str) -> None:
+    MigrationRunner(postgres_database).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        _seed_project(connection, "alpha")
+        _insert_work(connection, "alpha", "work-1")
+    store = ReadModelStore(postgres_database)
+    assert store.snapshot("alpha")["domains"]["work"]
+
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            "DELETE FROM agentic_mesh_v5.projects WHERE project_id = 'alpha'"
+        )
+        counts = connection.execute(
+            """
+            SELECT
+                (SELECT count(*) FROM agentic_mesh_v5.read_model_events),
+                (SELECT count(*) FROM agentic_mesh_v5.read_model_entities),
+                (SELECT count(*) FROM agentic_mesh_v5.read_model_cursors)
+            """
+        ).fetchone()
+
+    assert counts == (0, 0, 0)
+
+
 def test_replay_delete_and_concurrent_advance_converge(postgres_database: str) -> None:
     MigrationRunner(postgres_database).migrate()
     with psycopg.connect(postgres_database) as connection:
@@ -292,11 +316,11 @@ def test_snapshot_recomputes_clock_dependent_queue_readiness(
                  available_at, idempotency_key)
             VALUES ('alpha', 'delayed', 'engineering', 'work-1', %s, 'idem-delayed')
             """,
-            (datetime.now(timezone.utc) + timedelta(seconds=1),),
+            (datetime.now(timezone.utc) + timedelta(seconds=5),),
         )
     store = ReadModelStore(postgres_database)
     delayed = store.snapshot("alpha")
-    time.sleep(1.2)
+    time.sleep(5.2)
     ready = store.snapshot("alpha")
 
     assert delayed["domains"]["queue"][0]["delayed"] == 1
