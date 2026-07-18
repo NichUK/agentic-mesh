@@ -948,6 +948,26 @@ qualified by project, organization-scoped credentials require a grant, and
 secret values never enter Git or the snapshot. Later adapters consume the
 validated snapshot instead of reinterpreting untrusted project YAML.
 
+### V5 Isolated Git Workspaces
+
+Mutating work uses one durable workspace per project/work-item, with one
+standard Git worktree for each selected repository in the pinned manifest.
+Deterministic `codex/<project>-<work-item>` branches and external paths make
+pickup reproducible across role instances without exposing a live runtime or
+user checkout as the agent's mutation target.
+
+Preparation persists its plan before Git side effects and serializes work-item
+and shared-repository metadata operations with Postgres advisory locks. A
+replacement agent resumes only matching registered paths, branches, URLs, and
+base commits. Manifest activation or default-branch movement cannot silently
+change an existing workspace.
+
+Cleanup is deliberately conservative: it removes only registered clean
+worktrees, retains branches and final-head evidence, and leaves dirty, moved,
+substituted, or otherwise mismatched work visible for recovery. The coordinator
+does not fetch, push, merge, reset, clean, delete branches, or carry source
+credentials.
+
 Git owns:
 
 - permanent role templates
