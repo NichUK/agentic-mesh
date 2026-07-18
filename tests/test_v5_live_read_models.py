@@ -156,6 +156,7 @@ def test_migration_backfill_rebuilds_without_changing_authoritative_rows(
     assert snapshot["domains"]["queue"][0]["depth"] == 1
     assert snapshot["domains"]["queue"][0]["ready"] == 1
     assert snapshot["domains"]["progress"][0]["safe_summary"] == "Safe progress"
+    assert snapshot["domains"]["progress"][0]["checkpoint_id"] == "legacy-1"
 
 
 def test_projection_events_share_source_transaction_and_are_append_only(

@@ -139,11 +139,13 @@ def test_complete_checkpoint_is_stored_and_projected_without_rewriting(
             """
         ).fetchone()[0]
     assert event["goal"] == record.goal
+    assert event["checkpoint_id"] == record.checkpoint_id
     assert event["step"] == record.step
     assert event["next_action"] == record.next_action
     assert event["safe_summary"] == record.safe_summary
     live = ReadModelStore(database_url).snapshot("alpha")["domains"]["progress"]
     assert live[0]["safe_summary"] == record.safe_summary
+    assert live[0]["checkpoint_id"] == record.checkpoint_id
     assert live[0]["activity"] == record.activity
 
 
