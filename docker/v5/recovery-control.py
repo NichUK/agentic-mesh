@@ -207,12 +207,16 @@ def load_plan(path: Path) -> RecoveryPlan:
         title=_text(pull_request_value["title"], "pull_request.title", 256),
         body=_text(pull_request_value["body"], "pull_request.body", 4000),
     )
+    evidence_root = _absolute_path(root["evidence_root"], "evidence_root")
+    _validate_external_roots(
+        repository.source, repository.workspace_root, evidence_root
+    )
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
     return RecoveryPlan(
         project_id=project_id,
         repository=repository,
         allowed_paths=allowed_paths,
-        evidence_root=_absolute_path(root["evidence_root"], "evidence_root"),
+        evidence_root=evidence_root,
         commands=commands,
         environments=environments,
         pull_request=pull_request,
@@ -234,7 +238,15 @@ class RecoveryController:
         run_key = _digest(run_id)
         result_path = self.plan.evidence_root / "results" / f"{run_key}.json"
         if result_path.is_file():
-            return _load_completed_result(result_path)
+            return _load_completed_result(
+                result_path,
+                evidence_root=self.plan.evidence_root,
+                project_id=self.plan.project_id,
+                run_id=run_id,
+                goal_digest=_digest(str(job["exact_goal"])),
+                plan_digest=self.plan.digest,
+            )
+        self.stages = []
         deadline = _deadline(str(job["deadline_at"]))
         branch = _branch_name(run_id)
         workspace = self.plan.repository.workspace_root / run_key
@@ -667,7 +679,15 @@ def _validated_job(value: Mapping[str, object], project_id: str) -> dict[str, ob
     return result
 
 
-def _load_completed_result(path: Path) -> dict[str, object]:
+def _load_completed_result(
+    path: Path,
+    *,
+    evidence_root: Path,
+    project_id: str,
+    run_id: str,
+    goal_digest: str,
+    plan_digest: str,
+) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -676,6 +696,37 @@ def _load_completed_result(path: Path) -> dict[str, object]:
         "outcome", "safe_summary", "usage_used", "verification_ref"
     }:
         raise RecoveryControlError("completed recovery result is invalid")
+    reference = value["verification_ref"]
+    prefix = f"evidence://recovery/{project_id}/{run_id}/"
+    if (
+        not isinstance(reference, str)
+        or not reference.startswith(prefix)
+        or re.fullmatch(r"[0-9a-f]{64}", reference.removeprefix(prefix)) is None
+    ):
+        raise RecoveryControlError("completed recovery evidence reference is invalid")
+    digest = reference.removeprefix(prefix)
+    manifest_path = evidence_root / "manifests" / f"{digest}.json"
+    try:
+        encoded = manifest_path.read_bytes()
+        manifest = json.loads(encoded.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RecoveryControlError("completed recovery evidence is unreadable") from exc
+    if hashlib.sha256(encoded).hexdigest() != digest:
+        raise RecoveryControlError("completed recovery evidence digest does not match")
+    if not isinstance(manifest, Mapping) or (
+        manifest.get("project_id"),
+        manifest.get("run_id"),
+        manifest.get("goal_digest"),
+        manifest.get("plan_digest"),
+    ) != (project_id, run_id, goal_digest, plan_digest):
+        raise RecoveryControlError("completed recovery evidence scope does not match")
+    expected_outcome = (
+        "succeeded" if manifest.get("status") == "succeeded" else "failed"
+    )
+    if value["outcome"] != expected_outcome or value["usage_used"] != manifest.get(
+        "usage_used"
+    ):
+        raise RecoveryControlError("completed recovery result does not match evidence")
     return value
 
 
@@ -726,10 +777,10 @@ def _reject_unsafe_command(argv: Sequence[str], stage: str) -> None:
         lowered = {item.lower() for item in argv[1:]}
         if lowered.intersection({"-c", "/c", "-command", "-encodedcommand"}):
             raise PlanError(f"commands.{stage} cannot execute a shell command string")
-    if executable in {"git", "git.exe"} and len(argv) > 1 and argv[1].lower() in {
-        "push", "commit", "merge", "rebase", "tag",
-    }:
-        raise PlanError(f"commands.{stage} cannot mutate source-control governance")
+    if executable in {"git", "git.exe"}:
+        raise PlanError(
+            f"commands.{stage} cannot invoke the runner's source-control boundary"
+        )
 
 
 def _environment_names(value: object, stage: str) -> tuple[str, ...]:
@@ -761,6 +812,27 @@ def _absolute_path(value: object, label: str) -> Path:
     if not path.is_absolute():
         raise PlanError(f"{label} must be absolute")
     return path
+
+
+def _validate_external_roots(source: Path, workspace: Path, evidence: Path) -> None:
+    roots = {
+        "source": source.resolve(),
+        "workspace": workspace.resolve(),
+        "evidence": evidence.resolve(),
+    }
+    for left, right in (("source", "workspace"), ("source", "evidence")):
+        if _is_within(roots[right], roots[left]) or _is_within(
+            roots[left], roots[right]
+        ):
+            raise PlanError(f"{left} and {right} roots must be separate")
+    if _is_within(roots["workspace"], roots["evidence"]) or _is_within(
+        roots["evidence"], roots["workspace"]
+    ):
+        raise PlanError("workspace and evidence roots must be separate")
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    return path == parent or parent in path.parents
 
 
 def _github_repository(value: object) -> str:

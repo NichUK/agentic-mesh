@@ -217,6 +217,18 @@ def test_recovery_repairs_deploys_pushes_and_creates_review_only_pr(tmp_path: Pa
     assert replay == result
     assert len(pull_requests.calls) == 1
 
+    second_job = {**job, "run_id": "run-2", "recovery_request_id": "request-2"}
+    second_result = controller.execute(second_job)
+    second_evidence = _evidence(second_result, evidence_root)
+    assert len(second_evidence["stages"]) == len(evidence["stages"])
+    assert len(pull_requests.calls) == 2
+
+    digest = str(result["verification_ref"]).rsplit("/", 1)[-1]
+    manifest_path = evidence_root / "manifests" / f"{digest}.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(control.RecoveryControlError, match="digest"):
+        controller.execute(job)
+
 
 def test_unrelated_change_is_rejected_before_deployment_or_push(tmp_path: Path):
     plan_path, _, job, _, remote, deployment, evidence_root = _fixture(
@@ -300,6 +312,7 @@ def test_failed_rollback_is_visible_and_never_reports_success(tmp_path: Path):
     [
         ["gh", "pr", "merge", "17"],
         ["git", "push", "origin", "main"],
+        ["git", "status", "--short"],
         ["sh", "-c", "gh pr merge 17"],
     ],
 )
@@ -328,6 +341,20 @@ def test_plan_keeps_source_control_credentials_out_of_agent_stages(tmp_path: Pat
     plan_path.write_text(json.dumps(plan), encoding="utf-8")
 
     with pytest.raises(control.PlanError, match="credential references"):
+        control.load_plan(plan_path)
+
+
+@pytest.mark.parametrize("root_name", ["workspace_root", "evidence_root"])
+def test_plan_requires_runtime_roots_outside_source(tmp_path: Path, root_name: str):
+    plan_path, plan, *_ = _fixture(tmp_path)
+    source = Path(plan["repository"]["source"])
+    if root_name == "workspace_root":
+        plan["repository"][root_name] = str(source / "runtime")
+    else:
+        plan[root_name] = str(source / "runtime")
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+    with pytest.raises(control.PlanError, match="roots must be separate"):
         control.load_plan(plan_path)
 
 

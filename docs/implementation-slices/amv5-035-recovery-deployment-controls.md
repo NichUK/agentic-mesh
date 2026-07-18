@@ -15,7 +15,7 @@ request. The recovery identity cannot approve or merge that pull request.
   externally mounted, project-specific plan.
 - Keep source, deployment roots, credentials, commands, and evidence outside
   the image. The plan names environment variables but never contains their
-  values.
+  values. Source, disposable workspace, and evidence roots must be separate.
 - Create a disposable worktree from a pinned base revision. Reject a dirty
   source repository, an existing recovery branch, symlinks that escape the
   worktree, and every changed path outside the explicit allow-list.
@@ -26,7 +26,9 @@ request. The recovery identity cannot approve or merge that pull request.
   an invalid report or an over-cap result before test, build, or deployment.
 - Execute commands as argument arrays without a shell. Test, build, deploy,
   restart, verification, rollback, and running-revision checks are fixed
-  stages; the runner is not a general workflow engine.
+  stages; the runner is not a general workflow engine. Project-supplied stages
+  cannot invoke Git or GitHub CLI; all source-control work uses the runner's
+  fixed adapter.
 - Commit before building and deploy that immutable commit. After restart, the
   running-revision command must return exactly the candidate commit.
 - If deployment, restart, or verification fails, run the configured rollback,
@@ -57,4 +59,5 @@ request. The recovery identity cannot approve or merge that pull request.
 - Recovery can create a pull request but has no code path to approve or merge
   it. Normal release governance remains the only route to integration.
 - Replaying a completed run returns the same content-addressed result without
-  creating another branch, deployment, push, or pull request.
+  creating another branch, deployment, push, or pull request. Replay verifies
+  the evidence digest and its project, run, exact-goal, and plan provenance.
