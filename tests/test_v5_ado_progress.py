@@ -51,7 +51,7 @@ def postgres_database() -> str:
 
 @pytest.fixture
 def progress_database(postgres_database: str) -> str:
-    assert MigrationRunner(postgres_database).migrate().current_version == 29
+    assert MigrationRunner(postgres_database).migrate().current_version == 30
     with psycopg.connect(postgres_database) as connection:
         connection.execute(
             "INSERT INTO agentic_mesh_v5.projects(project_id,display_name) "

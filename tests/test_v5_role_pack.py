@@ -176,7 +176,7 @@ def test_released_15_role_pack_materializes_routes_and_wakes(
 ) -> None:
     if not (CONFIG / "packages" / "flow" / "sdlc" / "0.1.0").exists():
         pytest.skip("external configuration repository is not available")
-    assert MigrationRunner(postgres_database).migrate().current_version == 29
+    assert MigrationRunner(postgres_database).migrate().current_version == 30
     roles = {}
     for role_id, profile in ROLE_PROFILES.items():
         roles[role_id] = {
@@ -422,7 +422,7 @@ def _general_profile(
 def test_synthetic_future_role_uses_the_same_activation_contract(
     postgres_database: str, tmp_path: Path
 ) -> None:
-    assert MigrationRunner(postgres_database).migrate().current_version == 29
+    assert MigrationRunner(postgres_database).migrate().current_version == 30
     root = _synthetic_repository(tmp_path / "configuration")
     roles = {
         "finance-analyst": {

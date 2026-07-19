@@ -1194,3 +1194,24 @@ or `release_review`.
 - AMV5-054 consumes this evidence for iterative completeness questions;
   AMV5-055 owns manifest preview, backlog candidates, approval, and activation.
   No project-specific import path was introduced.
+
+## 2026-07-19 V5 Import Completeness Questions
+
+- Migration 30 adds one durable import-question session and one append-only
+  event stream; imports do not need an active project record while their
+  identity and boundaries are still being established.
+- A pinned discovery report deterministically produces questions for missing
+  project identity, intent, ownership, sponsors, every source's purpose/access,
+  discovery issues, and deployment. The PM can append concrete source-linked
+  follow-ups when an answer exposes another material ambiguity.
+- Partial answer rounds remain `questioning`. Different replacements require
+  an explicit correction reason and preserve the earlier value in event
+  evidence. Exact retries succeed even with the pre-commit expected version;
+  stale new work and concurrent writers fail closed.
+- Credential answers accept only external references or `none-public`;
+  persisted prompts, answers, rationales, and correction reasons reject common
+  embedded-secret markers. Stored report, question, answer, digest, and
+  readiness consistency are revalidated on every read.
+- Only a version-pinned `require_preview_ready` operation produces the safe
+  resolution consumed by AMV5-055. It is impossible while any material
+  question remains, and it does not create a manifest, backlog, or activation.
