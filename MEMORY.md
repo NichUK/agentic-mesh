@@ -1538,3 +1538,22 @@ or `release_review`.
   queues emptied. The Project Manager remains healthy as the warm project
   leader. All eight work-item queue records are completed; none is ready or
   leased.
+
+## 2026-07-19 V5 Takeover Credential Preflight
+
+- All 16 current role containers have their expected read-only project API
+  token and persistent Codex OAuth mounts. The control plane and warm Project
+  Manager remain healthy, specialists are hibernated, and all eight live work
+  records remain completed.
+- A clean digest-pinned development image reports no GitHub login and no Git
+  credential helper. V5 cannot yet push an isolated engineering branch or open
+  its own PR, so arms-length takeover is not accepted.
+- The host GitHub login is available, but it has not been copied, exposed in an
+  environment variable, or patched into a live container. The authoritative
+  project deployment must materialize the manifest's project-scoped `git`
+  credential as an external read-only mount for every scaled engineering
+  instance, with cross-project denial and secret-redaction evidence.
+- That deployment change awaits the sponsor's pending local-topology and
+  canonical-input answers. This is a legitimate sponsor gate, not a terminal
+  runtime error; no Product Manager handoff or self-development claim has been
+  fabricated.
