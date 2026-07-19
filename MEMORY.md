@@ -1437,6 +1437,8 @@ or `release_review`.
 - The provider observer now suppresses only a failed terminal while an explicit
   retry is pending, then reconciles the exact final state through the existing
   bounded rollout hint and fresh reader. Focused provider and live role-service
-  verification is 27 passed / 12 environment skips. The complete
-  database-backed V5 suite passed in six bounded batches: 643 passed and 2
-  environment skips, with only the existing Starlette/httpx warning.
+  verification is 40 passed against real Postgres. After review clarified that
+  suppression follows only the SDK's explicit `will_retry=true` intent, the
+  affected full-suite batch passed 96 tests. The complete database-backed V5
+  aggregate is 644 passed and 2 environment skips, with only the existing
+  Starlette/httpx warning.

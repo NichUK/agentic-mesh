@@ -687,13 +687,25 @@ def test_stale_owner_state_uses_completed_rollout_hint_and_fresh_reader(
     assert owner_sdk.close_count == 1
 
 
-def test_retryable_interim_failure_waits_for_durable_terminal_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("will_retry", "expected_completion", "expected_observer_reads"),
+    [
+        (True, TurnCompletionStatus.COMPLETED, 1),
+        (False, TurnCompletionStatus.FAILED, 0),
+    ],
+)
+def test_interim_failure_suppression_requires_explicit_retry_intent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    will_retry: bool,
+    expected_completion: TurnCompletionStatus,
+    expected_observer_reads: int,
 ) -> None:
     class OwnerClient:
-        def __init__(self) -> None:
+        def __init__(self, *, will_retry: bool) -> None:
             self._router = SimpleNamespace(_turn_notifications={})
             self.unregister_count = 0
+            self.will_retry = will_retry
 
         def register_turn_notifications(self, turn_id: str) -> None:
             selected: Queue[object] = Queue()
@@ -715,7 +727,7 @@ def test_retryable_interim_failure_waits_for_durable_terminal_state(
                             message="transient provider failure",
                             codex_error_info=SimpleNamespace(root="serverOverloaded"),
                         ),
-                        will_retry=True,
+                        will_retry=self.will_retry,
                     ),
                 )
             )
@@ -739,8 +751,12 @@ def test_retryable_interim_failure_waits_for_durable_terminal_state(
             self.unregister_count += 1
 
     class ObserverClient:
+        def __init__(self) -> None:
+            self.read_count = 0
+
         def thread_read(self, thread_id: str, *, include_turns: bool):
             assert include_turns is True
+            self.read_count += 1
             return SimpleNamespace(
                 thread=SimpleNamespace(
                     id=thread_id,
@@ -761,11 +777,12 @@ def test_retryable_interim_failure_waits_for_durable_terminal_state(
         '{"payload":{"type":"task_complete","turn_id":"turn-1"}}\n',
         encoding="utf-8",
     )
-    owner = OwnerClient()
+    owner = OwnerClient(will_retry=will_retry)
+    observer = ObserverClient()
     owner_handle = FakeHandle()
     owner_handle._client = owner
     observer_handle = FakeHandle()
-    observer_handle._client = ObserverClient()
+    observer_handle._client = observer
     monkeypatch.setattr(codex_provider, "_TURN_STATE_POLL_SECONDS", 0.001)
     engine = CodexWorkerProvider(
         CodexProviderConfig(environment={"CODEX_HOME": str(home)}),
@@ -785,88 +802,8 @@ def test_retryable_interim_failure_waits_for_durable_terminal_state(
         ProviderEventKind.TURN_COMPLETED,
     ]
     assert events[1].error is not None and events[1].error.retryable is True
-    assert events[-1].completion is TurnCompletionStatus.COMPLETED
-    assert owner.unregister_count == 1
-    engine.close()
-
-
-def test_non_retried_overloaded_error_does_not_suppress_terminal_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """OVERLOADED errors are caller-retryable but must not suppress a genuine
-    terminal turn/completed failure when the SDK did not set will_retry=True."""
-
-    class OwnerClient:
-        def __init__(self) -> None:
-            self._router = SimpleNamespace(_turn_notifications={})
-            self.unregister_count = 0
-
-        def register_turn_notifications(self, turn_id: str) -> None:
-            selected: Queue[object] = Queue()
-            selected.put(
-                _notification(
-                    "turn/started",
-                    SimpleNamespace(
-                        thread_id="thread-1", turn=SimpleNamespace(id=turn_id)
-                    ),
-                )
-            )
-            selected.put(
-                _notification(
-                    "error",
-                    SimpleNamespace(
-                        thread_id="thread-1",
-                        turn_id=turn_id,
-                        error=SimpleNamespace(
-                            message="server overloaded, no retry",
-                            codex_error_info=SimpleNamespace(root="serverOverloaded"),
-                        ),
-                        will_retry=False,
-                    ),
-                )
-            )
-            selected.put(
-                _notification(
-                    "turn/completed",
-                    SimpleNamespace(
-                        thread_id="thread-1",
-                        turn=SimpleNamespace(
-                            id=turn_id,
-                            status="failed",
-                            error=SimpleNamespace(message="terminal failure"),
-                        ),
-                    ),
-                )
-            )
-            self._router._turn_notifications[turn_id] = selected
-
-        def unregister_turn_notifications(self, turn_id: str) -> None:
-            self._router._turn_notifications.pop(turn_id, None)
-            self.unregister_count += 1
-
-    owner = OwnerClient()
-    owner_handle = FakeHandle()
-    owner_handle._client = owner
-    monkeypatch.setattr(codex_provider, "_TURN_STATE_POLL_SECONDS", 0.001)
-    engine = CodexWorkerProvider(
-        sdk_factory=lambda _config: FakeSdk(owner_handle),
-    ).open()
-
-    events = list(
-        engine.start_thread(ThreadRequest(cwd=tmp_path))
-        .start_turn(TurnRequest("work"))
-        .events()
-    )
-
-    assert [event.kind for event in events] == [
-        ProviderEventKind.TURN_STARTED,
-        ProviderEventKind.ERROR,
-        ProviderEventKind.TURN_COMPLETED,
-    ]
-    # The error is OVERLOADED so retryable=True at caller level, but will_retry
-    # was False: the subsequent turn/completed failure must not be suppressed.
-    assert events[1].error is not None and events[1].error.retryable is True
-    assert events[-1].completion is TurnCompletionStatus.FAILED
+    assert events[-1].completion is expected_completion
+    assert observer.read_count == expected_observer_reads
     assert owner.unregister_count == 1
     engine.close()
 
