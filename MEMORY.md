@@ -1369,3 +1369,25 @@ or `release_review`.
   warning is the existing Starlette/httpx deprecation warning. A monolithic
   invocation exceeded the ten-minute shell ceiling, while every constituent
   test file completed successfully in the bounded runs.
+
+## 2026-07-19 V5 Rollout-First Terminal Reconciliation
+
+- PR 445 merged as `24b3d5e2b2fa7498f9b414cf4e3b0ba079126885`. The immutable
+  runtime and six worker-class images were rebuilt, pushed, and deployed with
+  exact revision labels. Control, TLS and PM health passed; all 16 roles kept
+  their exact full-name Codex volumes. Stopped `88e892d` containers remain as a
+  temporary rollback set until live qualification completes.
+- BA and Research Analyst reclaimed their intended queues. Both current
+  rollouts reached exact `task_complete`; Research Analyst recorded progress
+  sequence 3 confirming the earlier response was already durably routed. Both
+  leases nevertheless remained open.
+- In-container checks proved the bounded hint was true and a fresh public
+  `thread/read` returned both exact turns as completed. The owner connection's
+  pre-hint synchronous `thread/read` can block indefinitely, preventing later
+  hint checks. Branch `codex/v5-rollout-first-terminal-reconciliation` removes
+  owner reads and permits only hint-gated fresh observation.
+- BA and Research Analyst were stopped before watchdog expiry. Technical
+  attempt 3 still has no fabricated result. Focused provider/live-role
+  verification for the rollout-first correction is 36 passed; complete V5
+  verification is 637 passed and 5 environment skips, with only the existing
+  Starlette/httpx deprecation warning.
