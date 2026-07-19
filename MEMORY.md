@@ -1465,3 +1465,25 @@ or `release_review`.
 - Verification is 40 focused provider/live-role tests against real Postgres and
   96 passed tests in the affected release batch, with only the existing
   Starlette/httpx warning.
+
+## 2026-07-19 V5 Rollout-Authoritative Terminal State
+
+- Merge `feabaab2a668cac55feb60419cdc408abac49d0a` was built and deployed
+  as seven digest-pinned images after reclaiming only inactive BuildKit cache
+  from a full Docker Desktop overlay. Signed repository verification then
+  succeeded; no signature checks or rollback assets were weakened.
+- Live PM delivery proved an exact SDK `turn/completed` failure can precede the
+  same rollout's `task_complete` by about three seconds. A fresh public read
+  after that exact rollout hint reports the turn completed. Accepting the live
+  terminal notification therefore still released and reclaimed valid work.
+- Acceptance for branch `codex/v5-rollout-authoritative-terminal` is: the
+  pinned notification-queue adapter never exposes a terminal event before the
+  exact thread/turn rollout records completion; it then exposes only the fresh
+  observer's terminal state. Pending usage and diagnostic events are retained,
+  message/reasoning content is never parsed, and fallback SDK streams retain
+  their existing fail-closed protocol checks.
+- PM is stopped and the BA correction remains durable and ready. No reliability
+  outcome or sponsor decision was invented.
+- Verification is 40 focused provider/live-role tests against real Postgres and
+  96 passed tests in the affected release batch, with only the existing
+  Starlette/httpx warning. The change removes 23 production lines.
