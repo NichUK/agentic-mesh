@@ -1138,3 +1138,19 @@ or `release_review`.
   credential, and transport ports. V4 environment-secret lookup and implicit
   display-name generation were not ported. AMV5-051 owns project/DM routing and
   AMV5-052 owns approval/progress cards.
+
+## 2026-07-19 V5 Teams Project Routing
+
+- Channel messages resolve only from one exact active tenant, Team, channel,
+  and recipient application. The resolver rechecks the active manifest digest,
+  bot identity, channel, and role binding before returning a route.
+- Personal messages filter tenant/application matches through authenticated
+  sender/project authorization. One candidate routes directly; multiple
+  candidates produce a deterministic `clarification_required` question with no
+  project or role selected. Only a structured exact candidate id resumes it.
+- Project or role names in message text are never parsed. Unknown, duplicate,
+  unauthorized, malformed, spoofed, or concurrently changed authority fails
+  closed with safe codes and no unrelated project disclosure.
+- V4 recipient-bot precedence was retained. V4 text-role parsing,
+  project-manager defaulting, and single-project assumptions were rejected.
+  AMV5-052 remains responsible for Adaptive Card delivery and progress updates.

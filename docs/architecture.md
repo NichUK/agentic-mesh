@@ -112,7 +112,10 @@ operational support.
   user-facing name, and external credential reference to each logical role.
   Recipient authority maps to the role before generic routing; outbound sends
   fail with safe blocker codes when credentials, installation, permission, or
-  transport are unavailable.
+  transport are unavailable. Project resolution uses exact active channel
+  authority or authenticated personal-message candidates. An ambiguous DM
+  produces a structured clarification question with no chosen project; message
+  text never selects project context.
 - Control-plane: supervises topology, role-instance lifecycle, hibernation,
   wake-up, health checks, and configuration reloads.
 - Message store: owns durable delivery, claims, retries, and dead letters.
