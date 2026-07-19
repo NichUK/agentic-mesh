@@ -987,6 +987,7 @@ def create_app(
         return GovernanceStore(database_url, documents)
 
     def configuration_promotions(project_id: str) -> ConfigPromotionStore:
+        queries.project(project_id)
         if config_store_resolver is None:
             raise ControlApiError(
                 503,

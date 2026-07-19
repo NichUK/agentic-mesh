@@ -1322,3 +1322,43 @@ def test_configuration_promotion_api_enforces_sponsor_decisions_and_rollback(
     assert foreign.status_code == 403
     assert unavailable.status_code == 503
     assert activation.get_release(first_digest).digest == first_digest
+
+
+def test_configuration_promotion_api_rejects_unknown_projects(
+    api_database: tuple[str, TestClient], tmp_path: Path
+) -> None:
+    database_url, _unavailable_client = api_database
+    activation = ConfigActivationStore(tmp_path)
+    client = TestClient(
+        create_app(
+            database_url,
+            authorizer=_authorizer(),
+            config_store_resolver=lambda _project_id: activation,
+        )
+    )
+
+    missing_state = client.get(
+        f"{API_PREFIX}/projects/missing/configuration/promotion-state",
+        headers=_headers("operator"),
+    )
+    missing_create = client.post(
+        f"{API_PREFIX}/projects/missing/configuration/drafts",
+        headers=_headers("operator"),
+        json={
+            "draft_id": "missing-draft",
+            "references": ["system/core@1.0.0"],
+            "expected_active_digest": None,
+        },
+    )
+    missing_draft = client.get(
+        f"{API_PREFIX}/projects/missing/configuration/drafts/missing-draft",
+        headers=_headers("operator"),
+    )
+
+    assert missing_state.status_code == 404
+    assert missing_create.status_code == 404
+    assert missing_draft.status_code == 404
+    assert missing_state.json()["detail"] == "project not found"
+    assert missing_create.json()["detail"] == "project not found"
+    assert missing_draft.json()["detail"] == "project not found"
+    assert not (tmp_path / "promotions" / "projects" / "missing").exists()
