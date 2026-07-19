@@ -863,3 +863,21 @@ def test_flow_and_document_adapters_fail_closed(postgres_database: str) -> None:
     )
     assert missing_documents.status_code == 503
     assert missing_documents.json()["type"].endswith("document_store_unavailable")
+    client = TestClient(
+        create_app(
+            postgres_database,
+            authorizer=_authorizer(),
+            flow_resolver=lambda _project_id: _flow(),
+            document_store_resolver=lambda _project_id: None,
+        )
+    )
+    invalid_documents = client.post(
+        f"{API_PREFIX}/projects/qualification/work-items/kernel-proof/flow/artifact",
+        headers=_headers("project-manager"),
+        json={
+            "path": "projects/qualification/work/kernel-proof/product.md",
+            "record_id": "invalid-document-store",
+        },
+    )
+    assert invalid_documents.status_code == 503
+    assert invalid_documents.json()["type"].endswith("document_store_unavailable")

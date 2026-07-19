@@ -904,7 +904,14 @@ def create_app(
                 "document_store_unavailable",
                 "project document store is unavailable",
             )
-        return GovernanceStore(database_url, document_store_resolver(project_id))
+        documents = document_store_resolver(project_id)
+        if not isinstance(documents, DocumentStore):
+            raise ControlApiError(
+                503,
+                "document_store_unavailable",
+                "project document store is invalid",
+            )
+        return GovernanceStore(database_url, documents)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
