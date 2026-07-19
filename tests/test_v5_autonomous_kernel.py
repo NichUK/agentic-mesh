@@ -27,7 +27,7 @@ from agentic_mesh_v5.document_store import (
     DocumentNotFound,
     DocumentPage,
 )
-from agentic_mesh_v5.flow_definition import validate_flow
+from agentic_mesh_v5.flow_definition import FlowDefinitionError, validate_flow
 
 
 TOKENS = {
@@ -839,6 +839,25 @@ def test_flow_and_document_adapters_fail_closed(postgres_database: str) -> None:
     )
     assert unavailable.status_code == 503
     assert unavailable.json()["type"].endswith("flow_configuration_unavailable")
+    def invalid_flow_resolver(_project_id: str):
+        raise FlowDefinitionError("invalid external flow")
+
+    invalid_flow_client = TestClient(
+        create_app(
+            postgres_database,
+            authorizer=_authorizer(),
+            flow_resolver=invalid_flow_resolver,
+        )
+    )
+    invalid_flow = invalid_flow_client.post(
+        f"{API_PREFIX}/projects/qualification/work-items/kernel-proof/flow",
+        headers=_headers("project-manager"),
+        json={"operation_id": "start-invalid-flow"},
+    )
+    assert invalid_flow.status_code == 503
+    assert invalid_flow.json()["type"].endswith(
+        "flow_configuration_unavailable"
+    )
     client = TestClient(
         create_app(
             postgres_database,

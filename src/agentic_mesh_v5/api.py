@@ -55,6 +55,7 @@ from agentic_mesh_v5.fleet import FleetSupervisor
 from agentic_mesh_v5.fleet import FleetSupervisorError
 from agentic_mesh_v5.fleet import ScalingPolicy
 from agentic_mesh_v5.flow_definition import FlowDefinition
+from agentic_mesh_v5.flow_definition import FlowDefinitionError
 from agentic_mesh_v5.flow_definition import load_flow
 from agentic_mesh_v5.flow_engine import FlowEngine
 from agentic_mesh_v5.flow_engine import FlowEngineConflict
@@ -74,6 +75,7 @@ from agentic_mesh_v5.lifecycle import LifecycleConflict
 from agentic_mesh_v5.lifecycle import LifecycleNotFound
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.package_resolver import resolve_packages
+from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.progress import ProgressConflict
 from agentic_mesh_v5.progress import ProgressDraft
 from agentic_mesh_v5.progress import ProgressNotFound
@@ -988,7 +990,14 @@ def create_app(
                 "flow_configuration_unavailable",
                 "project flow configuration is unavailable",
             )
-        flow = flow_resolver(project_id)
+        try:
+            flow = flow_resolver(project_id)
+        except FlowDefinitionError:
+            raise ControlApiError(
+                503,
+                "flow_configuration_unavailable",
+                "project flow configuration is unavailable",
+            ) from None
         if not isinstance(flow, FlowDefinition):
             raise ControlApiError(
                 503,
@@ -2756,8 +2765,13 @@ def _project_flow_resolver(
                 (project_id,),
             ).fetchall()
         if len(rows) != 1:
-            raise DatabaseError("project flow configuration is unavailable")
-        return load_flow(resolve_packages(configuration_root, [rows[0][0]]))
+            raise FlowDefinitionError("project flow configuration is unavailable")
+        try:
+            return load_flow(resolve_packages(configuration_root, [rows[0][0]]))
+        except PackageResolutionError as exc:
+            raise FlowDefinitionError(
+                "project flow configuration is unavailable"
+            ) from exc
 
     return resolve
 

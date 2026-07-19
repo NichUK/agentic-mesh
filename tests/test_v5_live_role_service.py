@@ -417,10 +417,12 @@ def test_docker_fleet_uses_exact_mapping_and_idempotent_commands(tmp_path: Path)
         encoding="utf-8",
     )
     commands: list[list[str]] = []
+    timeouts: list[int] = []
     states = iter(("false\n", "true\n"))
 
     def runner(command, **kwargs):
         commands.append(command)
+        timeouts.append(kwargs["timeout"])
         stdout = next(states) if command[1] == "inspect" else ""
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
@@ -433,10 +435,61 @@ def test_docker_fleet_uses_exact_mapping_and_idempotent_commands(tmp_path: Path)
         ["docker", "start", "mesh-alpha-engineering-1"],
         ["docker", "inspect", "--format", "{{.State.Running}}", "mesh-alpha-engineering-1"],
     ]
+    assert timeouts == [120, 120, 120]
     with pytest.raises(FleetSupervisorError, match="not provisioned"):
         supervisor.apply(
             FleetAction("a2", "bravo", "engineering", "engineering-1", "wake", "queue")
         )
+
+
+def test_docker_fleet_stop_timeout_covers_the_configured_grace(tmp_path: Path) -> None:
+    mapping = tmp_path / "fleet.json"
+    mapping.write_text(
+        json.dumps(
+            {
+                "projects": {
+                    "alpha": {
+                        "instances": {
+                            "engineering-1": {
+                                "role_id": "engineering",
+                                "container": "mesh-alpha-engineering-1",
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[tuple[list[str], int]] = []
+
+    def runner(command, **kwargs):
+        calls.append((command, kwargs["timeout"]))
+        stdout = "true\n" if command[1] == "inspect" else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    DockerContainerFleetSupervisor(
+        mapping, runner=runner, stop_seconds=180
+    ).apply(
+        FleetAction(
+            "a1",
+            "alpha",
+            "engineering",
+            "engineering-1",
+            "hibernate",
+            "idle",
+        )
+    )
+    assert calls[-1] == (
+        [
+            "docker",
+            "stop",
+            "--time",
+            "180",
+            "mesh-alpha-engineering-1",
+        ],
+        210,
+    )
 
 
 def test_role_service_cli_is_explicit() -> None:

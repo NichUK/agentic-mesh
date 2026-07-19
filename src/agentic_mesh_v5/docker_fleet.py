@@ -71,7 +71,8 @@ class DockerContainerFleetSupervisor:
                     "--time",
                     str(self._stop_seconds),
                     container,
-                )
+                ),
+                timeout=self._stop_seconds + 30,
             )
             return
         raise FleetSupervisorError("fleet action is unsupported")
@@ -85,14 +86,16 @@ class DockerContainerFleetSupervisor:
             raise FleetSupervisorError(_SAFE_ERROR)
         return value == "true"
 
-    def _run(self, command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self, command: Sequence[str], *, timeout: int = 120
+    ) -> subprocess.CompletedProcess[str]:
         try:
             result = self._runner(
                 list(command),
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=timeout,
             )
         except Exception:
             raise FleetSupervisorError(_SAFE_ERROR) from None
