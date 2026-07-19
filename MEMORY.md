@@ -1345,3 +1345,27 @@ or `release_review`.
   Starlette/httpx warning. A repository-wide run passed every V5 test and
   retained 11 unrelated V4 baseline failures. Review, immutable rebuild and
   live technical-3 evidence remain required before acceptance.
+
+## 2026-07-19 V5 Independent Terminal Observer
+
+- Merge revision `88e892d145552b2f210ada0ed6794e31e19850c0` deployed successfully
+  to the control plane and all 16 role containers. Direct/TLS health, image
+  revisions, and full-name Codex volume bindings verified cleanly.
+- BA technical-3 recovery recorded progress sequence 1 and routed Research
+  Analyst; autoscaling started that role, which recorded consultation-returned
+  progress sequence 2. This proves container sandbox repair, durable control
+  calls, autoscale, pickup, role execution, and return routing.
+- Both exact Codex rollouts reached `task_complete`, but their owning app-server
+  connections retained active leases. Fresh app-server connections read both
+  exact turns as `completed`. A diagnostic also proved that observing through a
+  second app-server before `task_complete` interrupts the active turn.
+- Branch `codex/v5-independent-turn-observer` adds a bounded exact-turn rollout
+  terminal hint, followed only then by a one-shot fresh public `thread/read`
+  verification. It never uses final-message/reasoning content for completion.
+  BA and Research Analyst are stopped; the two checkpoints remain durable, the
+  formal technical-3 outcome is not fabricated, and consultation is pending.
+- Verification passed 36 focused provider/live-role tests and the complete V5
+  suite in six bounded batches: 637 passed and 5 environment skips. The only
+  warning is the existing Starlette/httpx deprecation warning. A monolithic
+  invocation exceeded the ten-minute shell ceiling, while every constituent
+  test file completed successfully in the bounded runs.

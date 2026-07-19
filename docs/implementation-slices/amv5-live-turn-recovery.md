@@ -48,6 +48,11 @@ repair began. The work item remains active and unacknowledged.
 8. Wait for the configured queue poll interval after any released item so a
    repeatable provider or configuration failure cannot create a tight claim and
    release loop.
+9. If the owning app-server still reports an exact turn as active after its
+   stream has gone silent, inspect only the bounded tail of that thread's local
+   rollout for an exact `task_complete`/`turn_id` hint. Only after that terminal
+   hint may a fresh observer app-server verify the exact turn through public
+   `thread/read`; an observer must never resume an active turn.
 
 ## Acceptance criteria
 
@@ -76,6 +81,9 @@ repair began. The work item remains active and unacknowledged.
   ids are checked before reconciliation.
 - Released work is rate-limited by the configured poll interval while completed
   work may continue immediately to the next queue item.
+- The independent observer is launched only after an exact terminal rollout
+  hint, cannot interrupt active work, and must still verify the exact public
+  thread/turn terminal state before completion is synthesized.
 
 ## Verification
 
@@ -122,3 +130,27 @@ above is the smallest correction for technical attempt 3.
   635 passed / 5 environment skips, with
   the existing Starlette/httpx deprecation warning. A repository-wide run also
   passed every V5 test but retained 11 unrelated V4 baseline failures.
+
+## Live independent-observer finding
+
+- Revision `88e892d145552b2f210ada0ed6794e31e19850c0` deployed cleanly to the
+  control plane and all 16 role containers with zero revision or Codex-volume
+  mismatches. The PM remained healthy and autoscaling started the Research
+  Analyst when BA routed its consultation.
+- BA and Research Analyst recorded durable progress sequences 1 and 2. Their
+  exact Codex rollout turns then recorded `task_complete`, but the owning
+  app-server connections continued to report active leases. Fresh app-server
+  connections verified both exact turns as `completed`.
+- A diagnostic proved that a second app-server which resumes the thread before
+  `task_complete` interrupts the active turn. The observer correction therefore
+  uses the exact bounded rollout event only as a terminal hint and still relies
+  on fresh public `thread/read` as the authoritative completion result.
+- BA and Research Analyst were stopped before watchdog expiry. Their durable
+  checkpoints remain; technical attempt 3 has no fabricated outcome, and the
+  flow consultation obligation remains pending until normal pickup resumes.
+- The independent-observer slice passed 36 focused provider/live-role tests.
+  The complete V5 suite passed in six deterministic batches: 637 passed and 5
+  environment skips, with only the existing Starlette/httpx deprecation
+  warning. The single aggregate invocation exceeded its ten-minute command
+  ceiling; every constituent file completed successfully in the bounded
+  batches.
