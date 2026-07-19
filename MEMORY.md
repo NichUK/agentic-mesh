@@ -1034,3 +1034,19 @@ or `release_review`.
   transaction make exact duplicate and concurrent opens/decisions safe. Each
   committed outcome has one audit event, outbox message, governance record, and
   continuation queue item.
+
+## 2026-07-18 V5 Autonomous Kernel Qualification
+
+- The authenticated `/api/v1` boundary now exposes the existing external-flow
+  and governance operations. Project configuration supplies a validated pinned
+  flow and scoped `DocumentStore`; the request cannot replace either, and the
+  bearer subject is the acting governance role.
+- The qualification uses a compact product-definition, development, QA, and
+  release flow with sponsor CLI approval, two role consultations, an
+  accountable release gate, four document/eTag records, a real Git commit,
+  structured progress, three accepted handoffs, and exact terminal evidence.
+- API recreation, expired worker takeover, global Project Manager monitor
+  takeover, and expired claimed-handoff recovery all use normal claim paths.
+  Final reconciliation requires no ready/leased orphan for the completed work
+  and no direct queue repair. This is the entry evidence for AMV5-046
+  arms-length V5 registration.
