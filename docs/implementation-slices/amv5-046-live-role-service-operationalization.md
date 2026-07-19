@@ -30,6 +30,13 @@ path; it does not add a second workflow engine or scheduler.
   durable-effect check succeeds. Provider failure, heartbeat loss, workspace
   preparation failure, or missing configuration releases or abandons the
   lease through the existing retry path.
+- Bound each provider turn with a configurable timeout. The heartbeat worker
+  interrupts a timed-out turn, preserves the queue item for retry, and returns
+  the safe `provider-turn-timeout` classification.
+- When a crashed worker leaves a thread operation claimed, allow a newer valid
+  queue lease held by any authorized instance of the same role to release only
+  the operation that predates that lease. A current or cross-role operation
+  remains protected.
 - Add one local Docker fleet supervisor that starts and stops only
   pre-provisioned containers from an external instance-to-container map.
   The local immutable control image carries the Docker client and Compose mounts
@@ -58,6 +65,12 @@ path; it does not add a second workflow engine or scheduler.
    --help` is available without a source bind mount.
 8. Run a live local queue item with the current external Codex authentication
    and confirm a durable checkpoint plus terminal provider evidence.
+9. Block a fake provider turn beyond its configured timeout and prove it is
+   interrupted, the affinity claim is released and the queue item is not
+   acknowledged.
+10. Simulate a process crash after a thread operation claim, then prove a newer
+    lease held by the same or another authorized role instance can reclaim it
+    without weakening thread or project isolation.
 
 ## Acceptance criteria
 
@@ -68,7 +81,10 @@ path; it does not add a second workflow engine or scheduler.
 - Queue completion is impossible without both terminal provider completion and
   a new durable project effect attributable to the work turn.
 - Crash or hibernation leaves acknowledged work reclaimable through ordinary
-  lease expiry and preserves thread affinity.
+  lease expiry and preserves thread affinity. A superseded operation cannot
+  block pickup indefinitely after its queue lease expires.
+- Provider turns have a configurable upper bound and timeout never implies
+  queue completion or terminal project failure.
 - Worker startup consumes only external configuration, mounted workspace/source
   boundaries, a token-file/API reference and external `CODEX_HOME`; no secret
   value appears in Git, images, database records, prompts, logs or status JSON.

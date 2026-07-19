@@ -1119,6 +1119,46 @@ def test_stale_operation_claim_cannot_release_current_claim(
     store.release_operation(current)
 
 
+def test_only_a_newer_lease_for_an_authorized_role_instance_releases_an_operation(
+    affinity_database: tuple[str, ThreadAffinityStore],
+) -> None:
+    _database_url, store = affinity_database
+    store.bind_or_read(
+        KEY,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest=DIGEST_A,
+        create_thread=lambda: "thread-one",
+    )
+    store.claim_operation(
+        KEY, instance_id="engineering-1", prompt_digest=DIGEST_A
+    )
+    with psycopg.connect(_database_url) as connection:
+        before, after = connection.execute(
+            """
+            SELECT (active_started_at - interval '1 second')::text,
+                   (active_started_at + interval '1 second')::text
+            FROM agentic_mesh_v5.thread_affinities
+            WHERE project_id = 'alpha' AND work_item_id = 'work-1'
+              AND role_id = 'engineering' AND conversation_id = 'primary'
+            """
+        ).fetchone()
+    assert store.release_superseded_operation(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
+        superseded_before=before,
+    ) is False
+    assert store.release_superseded_operation(
+        KEY,
+        instance_id="engineering-2",
+        prompt_digest=DIGEST_A,
+        superseded_before=after,
+    ) is True
+    binding = store.read(KEY)
+    assert binding is not None and binding.active_operation_id is None
+
+
 def test_existing_unpinned_binding_requires_explicit_reseed(
     postgres_database: str, tmp_path: Path
 ) -> None:

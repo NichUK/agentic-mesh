@@ -1272,3 +1272,30 @@ or `release_review`.
   and read-only external fleet map explicitly.
 - The control service resolves each registered project's single pinned flow
   from external packages and accepts an optional external fleet-map path.
+
+## 2026-07-19 First Live V5 Runtime And Turn Recovery
+
+- The merged V5 runtime at `4b5cb055adc9ed761a1e21134996ffe2394100a1`
+  is registered as ordinary project `agentic-mesh-v5` against external config
+  revision `2305754e1615881684a3553b02d3df84539641e0`. A dedicated migration-31
+  Postgres database, loopback registry, digest-pinned control/TLS edge and 16
+  exact role containers are running from the external
+  `C:\Dev\agentic-mesh-runtime-v5` boundary.
+- Prompts/packages are mounted read-only with only the config lock-state
+  directory writable. API tokens, principal hashes, database password, TLS
+  keys and work requests remain outside Git and images. Each role instance now
+  has its own persistent Docker Codex-home volume seeded from the current
+  external `auth.json`; this avoids sharing Windows SQLite runtime state with
+  Linux workers while retaining the current Codex login.
+- Work item `amv5-live-001` is active in `business_analysis`. Its BA queue item
+  is not acknowledged. The first post-authentication Codex turn held a healthy
+  lease and affinity for twenty minutes but produced no checkpoint, so it was
+  stopped and V5 incident `incident-87412104291fd93467199a4d188386c5` plus
+  failed technical attempt 1 were recorded.
+- The focused recovery slice on `codex/v5-role-turn-recovery` adds a configurable
+  provider-turn timeout and safe stale-affinity reclamation by a newer queue
+  lease, including pickup by another authorized instance of the same role.
+  Focused verification is 38 passed / 1 skipped; broader affected verification
+  is 117 passed / 1 skipped; the complete V5 suite is 625 passed / 5 skipped.
+  Technical attempt 2 must use the reviewed rebuilt image and create a durable
+  checkpoint.
