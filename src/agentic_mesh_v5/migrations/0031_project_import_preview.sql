@@ -59,7 +59,8 @@ CREATE TABLE agentic_mesh_v5.project_import_activations (
     requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     activated_at timestamptz,
     FOREIGN KEY (import_id, revision) REFERENCES
-        agentic_mesh_v5.project_import_previews(import_id, revision),
+        agentic_mesh_v5.project_import_previews(import_id, revision)
+        ON DELETE CASCADE,
     CHECK (
         (status = 'pending' AND receipt IS NULL AND activated_at IS NULL)
         OR (status = 'activated' AND receipt IS NOT NULL

@@ -196,7 +196,6 @@ def test_preview_is_validated_source_complete_and_keeps_candidates_inactive(
     ready_import,
 ) -> None:
     preview = _preview(ready_import)
-
     assert preview.revision == 1
     assert preview.status == "draft"
     assert preview.project_id == "agentic-mesh-v5"
@@ -221,7 +220,6 @@ def test_preview_revision_and_exact_replay_preserve_immutable_history(
         expected=1,
         selected=("candidate-2",),
     )
-
     assert replay == first
     assert second.selected_candidate_ids == ("candidate-2",)
     assert ready_import["store"].get_preview(first.import_id, 1).status == "superseded"
@@ -252,7 +250,6 @@ def test_preview_validation_fails_closed(ready_import, case: str) -> None:
         key = candidates[0].source_keys[0]
         index = next(i for i, item in enumerate(selections) if item.source_key == key)
         selections[index] = SourceSelection(key, "exclude", "Excluded by sponsor")
-
     with pytest.raises(ImportPreviewConflict):
         ready_import["store"].create_preview(
             resolution=resolution,
@@ -295,7 +292,6 @@ def test_only_configured_sponsor_can_decide_latest_revision(ready_import) -> Non
         rationale="Approved exact preview",
         evidence={"review": "sponsor-review-1"},
     )
-
     assert decision == replay
     assert ready_import["store"].get_preview(preview.import_id, 1).status == "approved"
     with pytest.raises(ImportPreviewConflict, match="cannot be revised"):
@@ -314,7 +310,6 @@ def test_rejected_preview_can_be_revised_but_approval_does_not_carry_forward(
         rationale="Choose a different candidate",
     )
     second = _preview(ready_import, expected=1, selected=("candidate-2",))
-
     assert ready_import["store"].get_preview(first.import_id, 1).status == "superseded"
     with pytest.raises(ImportPreviewConflict, match="not sponsor approved"):
         _activate(ready_import, second, _Activator())
@@ -369,10 +364,8 @@ def test_activation_is_exactly_replayable_and_selects_only_approved_candidates(
 ) -> None:
     preview = _approved(ready_import)
     activator = _Activator()
-
     first = _activate(ready_import, preview, activator)
     replay = _activate(ready_import, preview, activator)
-
     assert first == replay
     assert len(activator.calls) == 1
     assert [item.candidate_id for item in activator.calls[0].selected_candidates] == [
@@ -383,16 +376,32 @@ def test_activation_is_exactly_replayable_and_selects_only_approved_candidates(
         _activate(ready_import, preview, activator, "activate-2")
 
 
+def test_import_session_deletion_cascades_through_completed_activation(
+    ready_import,
+) -> None:
+    preview = _approved(ready_import)
+    _activate(ready_import, preview, _Activator())
+    with psycopg.connect(ready_import["database_url"]) as connection:
+        connection.execute(
+            "DELETE FROM agentic_mesh_v5.project_import_question_sessions WHERE import_id = %s",
+            (preview.import_id,),
+        )
+        counts = connection.execute(
+            "SELECT (SELECT count(*) FROM agentic_mesh_v5.project_import_previews), "
+            "(SELECT count(*) FROM agentic_mesh_v5.project_import_preview_decisions), "
+            "(SELECT count(*) FROM agentic_mesh_v5.project_import_activations)"
+        ).fetchone()
+    assert counts == (0, 0, 0)
+
+
 def test_failed_activation_resumes_same_operation_without_terminal_state(
     ready_import,
 ) -> None:
     preview = _approved(ready_import)
     activator = _Activator(fail_once=True)
-
     with pytest.raises(ImportActivationError, match="adapter failed"):
         _activate(ready_import, preview, activator)
     receipt = _activate(ready_import, preview, activator)
-
     assert len(activator.calls) == 2
     with psycopg.connect(ready_import["database_url"]) as connection:
         assert connection.execute(
@@ -413,10 +422,8 @@ def test_concurrent_duplicate_activation_calls_adapter_once(ready_import) -> Non
     def run():
         barrier.wait()
         return _activate(ready_import, preview, activator)
-
     with ThreadPoolExecutor(max_workers=2) as executor:
         receipts = tuple(executor.map(lambda _: run(), range(2)))
-
     assert receipts[0] == receipts[1]
     assert len(activator.calls) == 1
 
@@ -425,7 +432,6 @@ def test_mismatched_receipt_does_not_claim_activation(ready_import) -> None:
     preview = _approved(ready_import)
     with pytest.raises(ImportActivationError, match="receipt disagrees"):
         _activate(ready_import, preview, _Activator(mismatch=True))
-
     assert ready_import["store"].get_preview(preview.import_id, 1).status == "approved"
 
 
@@ -446,7 +452,6 @@ def test_preview_rejects_resolution_after_new_material_question(ready_import) ->
         rationale="New material ambiguity",
         expected_version=state.version,
     )
-
     with pytest.raises(ImportPreviewConflict, match="no longer current"):
         ready_import["store"].decide(
             import_id=preview.import_id,
