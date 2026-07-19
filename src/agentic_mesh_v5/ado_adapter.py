@@ -486,7 +486,14 @@ class ProjectAdoAdapter:
                              organization_url, ado_project,
                              external_work_item_id, external_url, linked_by)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (project_id, work_item_id) DO NOTHING
+                        ON CONFLICT (project_id, work_item_id) DO UPDATE
+                        SET manifest_digest = EXCLUDED.manifest_digest,
+                            organization_url = EXCLUDED.organization_url,
+                            ado_project = EXCLUDED.ado_project,
+                            external_url = EXCLUDED.external_url,
+                            linked_by = EXCLUDED.linked_by
+                        WHERE {SCHEMA}.work_item_ado_links.external_work_item_id
+                              = EXCLUDED.external_work_item_id
                         """,
                         (
                             binding.project_id,
