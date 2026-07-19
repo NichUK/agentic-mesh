@@ -173,12 +173,14 @@ class TokenProvider:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
         self.fail = False
+        self.whitespace = False
 
     def access_token(self, *, provider: str, reference: str) -> str:
         self.calls.append((provider, reference))
         if self.fail:
             raise RuntimeError("credential-value-must-never-leak")
-        return f"token-for:{reference.rsplit('/', 1)[-1]}"
+        token = f"token-for:{reference.rsplit('/', 1)[-1]}"
+        return f"  {token}\n" if self.whitespace else token
 
 
 class FakeTransport:
@@ -303,6 +305,23 @@ def test_each_role_sends_with_its_own_external_identity_and_clear_evidence(
         f"AM Alpha {role_id.replace('-', ' ').title()}" for role_id in ROLE_IDS
     }
     assert transport.sends[0]["access_token"].startswith("token-for:")
+
+
+def test_token_is_normalized_consistently_for_readiness_and_delivery(
+    teams_project: str,
+) -> None:
+    connector, tokens, transport = _connector(teams_project)
+    tokens.whitespace = True
+
+    connector.send_channel(
+        project_id="alpha",
+        role_id="engineering",
+        channel="project",
+        text="Normalized credential",
+    )
+
+    assert transport.checks[0]["access_token"] == "token-for:engineering"
+    assert transport.sends[0]["access_token"] == "token-for:engineering"
 
 
 @pytest.mark.parametrize(

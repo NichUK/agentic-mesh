@@ -300,6 +300,7 @@ class ProjectTeamsConnector:
                 project_id=binding.project_id,
                 role_id=binding.role_id,
             )
+        token = token.strip()
         try:
             installation = self._transport.check_installation(
                 tenant_id=binding.tenant_id,
@@ -331,7 +332,7 @@ class ProjectTeamsConnector:
                 project_id=binding.project_id,
                 role_id=binding.role_id,
             )
-        return token.strip()
+        return token
 
     def _active_snapshot(self, project_id: str) -> Mapping[str, object]:
         try:
