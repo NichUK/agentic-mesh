@@ -278,10 +278,15 @@ class RoleService:
         heartbeat.start()
         reason = "turn-failed"
         try:
-            if self._retry_attempt_already_recorded(
-                claim.queue_item.work_item_id,
-                claim.queue_item.payload,
-            ):
+            try:
+                retry_recorded = self._retry_attempt_already_recorded(
+                    claim.queue_item.work_item_id,
+                    claim.queue_item.payload,
+                )
+            except RoleServiceError as exc:
+                reason = str(exc)
+                return self._release(claim, reason)
+            if retry_recorded:
                 self._queues.complete(
                     project_id=claim.project_id,
                     lease_id=claim.lease_id,

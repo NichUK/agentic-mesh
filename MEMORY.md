@@ -1318,5 +1318,5 @@ or `release_review`.
   service complete an exact stale retry through its own lease when the matching
   immutable failure-attempt record exists. Post-recovery resume routes are not
   eligible, and no provider turn or synthetic checkpoint is created.
-  Verification is 28 focused real-Postgres tests and 629 passed / 5 skipped for
+  Verification is 29 focused real-Postgres tests and 629 passed / 5 skipped for
   the complete V5 suite, with the existing Starlette/httpx warning.

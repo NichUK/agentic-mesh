@@ -68,7 +68,7 @@ repair began. The work item remains active and unacknowledged.
 - Engine-abort focused verification: 71 passed, 1 environment skip against
   real Postgres. Complete V5 regression verification: 627 passed, 5
   environment skips, with the existing Starlette/httpx deprecation warning.
-- Retry-route reconciliation verification: 28 focused real-Postgres tests and
+- Retry-route reconciliation verification: 29 focused real-Postgres tests and
   the complete V5 suite of 629 passed / 5 environment skips, with the same
   existing Starlette/httpx deprecation warning.
 

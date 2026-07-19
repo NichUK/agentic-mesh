@@ -479,10 +479,35 @@ def test_role_service_completes_a_retry_whose_result_is_already_recorded(
             FROM agentic_mesh_v5.queue_items
             WHERE project_id = 'alpha' AND work_item_id = 'work-1'
               AND idempotency_key LIKE 'reliability:%%'
-            ORDER BY created_at
+            ORDER BY (payload #>> '{reliability,attempt_number}')::integer,
+                     created_at
             """
         ).fetchall()
     assert rows == [("1", "completed"), ("2", "ready")]
+
+
+def test_role_service_reports_malformed_retry_metadata_without_opening_provider(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    _seed(postgres_database, ("work-1",))
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            UPDATE agentic_mesh_v5.queue_items
+            SET priority = 200,
+                payload = '{"reliability": "invalid"}'::jsonb
+            WHERE project_id = 'alpha' AND queue_item_id = 'queue-work-1'
+            """
+        )
+    provider = _Provider(_Engine(lambda _turn: None))
+    service = _service(tmp_path, postgres_database, provider)
+    try:
+        result = service.run_once()
+    finally:
+        service.close()
+    assert result.status == "released"
+    assert result.reason == "queue reliability metadata is invalid"
+    assert provider.opens == 0
 
 
 def test_role_service_never_reconciles_a_post_recovery_resume_envelope(
