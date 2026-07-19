@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import uuid
@@ -60,7 +61,7 @@ def postgres_database() -> str:
 
 @pytest.fixture
 def ado_project(postgres_database: str) -> str:
-    assert MigrationRunner(postgres_database).migrate().current_version == 27
+    assert MigrationRunner(postgres_database).migrate().current_version == 28
     _activate_manifest(postgres_database, digest="d" * 64)
     return postgres_database
 
@@ -519,6 +520,161 @@ def test_update_rejects_foreign_project_and_revision_conflict(
             WHERE project_id='alpha' AND work_item_id='mesh-1'
             """
         ).fetchone() == ("active", 1)
+
+
+def test_expected_fields_preserve_a_manual_ado_state(ado_project: str) -> None:
+    adapter, transport, _ = _adapter(
+        ado_project, [_response(), _response(revision=8, status="Removed")]
+    )
+    _link(adapter)
+
+    with pytest.raises(AdoConflict, match="outside the expected state"):
+        adapter.update(
+            project_id="alpha",
+            work_item_id="mesh-1",
+            operation_id="sync-conditional",
+            fields={"System.State": "Active"},
+            expected_fields={"System.State": "New"},
+            actor_id="project-manager",
+        )
+
+    assert len([item for item in transport.calls if item["method"] == "PATCH"]) == 0
+    operation = adapter.get_operation(
+        project_id="alpha", operation_id="sync-conditional"
+    )
+    assert operation is not None
+    assert operation.status == "conflicted"
+    assert operation.external_revision == 8
+    assert operation.attempt_count == 1
+
+    with pytest.raises(AdoConflict, match="outside the expected state"):
+        adapter.update(
+            project_id="alpha",
+            work_item_id="mesh-1",
+            operation_id="sync-conditional",
+            fields={"System.State": "Active"},
+            expected_fields={"System.State": "New"},
+            actor_id="replacement-worker",
+        )
+    assert len([item for item in transport.calls if item["method"] == "PATCH"]) == 0
+
+
+def test_migration_preserves_legacy_update_operation_digests(
+    ado_project: str,
+) -> None:
+    requested = {"System.Title": "Legacy title"}
+    digest = hashlib.sha256(
+        json.dumps(requested, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    adapter, _, _ = _adapter(
+        ado_project, [_response(), _response(revision=4, title="Legacy title")]
+    )
+    _link(adapter)
+    with psycopg.connect(ado_project) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.work_item_ado_update_operations
+                (project_id,operation_id,work_item_id,request_digest,
+                 requested_fields,started_by)
+            VALUES ('alpha','legacy-update','mesh-1',%s,%s,'legacy-worker')
+            """,
+            (digest, Jsonb(requested)),
+        )
+
+    result = adapter.update(
+        project_id="alpha",
+        work_item_id="mesh-1",
+        operation_id="legacy-update",
+        fields=requested,
+        actor_id="replacement-worker",
+    )
+
+    assert result.status == "succeeded"
+    assert result.external_revision == 4
+    assert result.expected_fields == {}
+
+
+def test_comment_marker_reconciles_an_existing_ado_comment(
+    ado_project: str,
+) -> None:
+    marker = "milestone.start-1.abc123"
+    rendered = f"Status: Started\n\nAgentic Mesh milestone: `{marker}`"
+    adapter, transport, _ = _adapter(
+        ado_project,
+        [
+            _response(),
+            _response(),
+            HttpResponse(200, {}, b'{"comments":[]}'),
+            HttpResponse(
+                201,
+                {},
+                json.dumps({"id": 701, "text": rendered}).encode(),
+            ),
+            _response(revision=2),
+            HttpResponse(
+                200,
+                {},
+                json.dumps({"comments": [{"id": 701, "text": rendered}]}).encode(),
+            ),
+        ],
+    )
+    _link(adapter)
+
+    first = adapter.comment_once(
+        project_id="alpha",
+        work_item_id="mesh-1",
+        marker=marker,
+        text="Status: Started",
+    )
+    replay = adapter.comment_once(
+        project_id="alpha",
+        work_item_id="mesh-1",
+        marker=marker,
+        text="Status: Started",
+    )
+
+    assert first == replay
+    assert first.comment_id == 701
+    posts = [item for item in transport.calls if item["method"] == "POST"]
+    assert len(posts) == 1
+    assert posts[0]["headers"]["Content-Type"] == "application/json"
+
+
+def test_comment_marker_search_follows_all_continuation_pages(
+    ado_project: str,
+) -> None:
+    marker = "milestone.old.abc123"
+    rendered = f"Status: Started\n\nAgentic Mesh milestone: `{marker}`"
+    adapter, transport, _ = _adapter(
+        ado_project,
+        [
+            _response(),
+            _response(revision=2),
+            HttpResponse(
+                200,
+                {},
+                b'{"comments":[],"continuationToken":"next-page"}',
+            ),
+            HttpResponse(
+                200,
+                {},
+                json.dumps({"comments": [{"id": 700, "text": rendered}]}).encode(),
+            ),
+        ],
+    )
+    _link(adapter)
+
+    result = adapter.comment_once(
+        project_id="alpha",
+        work_item_id="mesh-1",
+        marker=marker,
+        text="Status: Started",
+    )
+
+    assert result.comment_id == 700
+    assert len([item for item in transport.calls if item["method"] == "GET"]) == 4
+    assert "continuationToken=next-page" in str(transport.calls[-1]["url"])
+    assert not [item for item in transport.calls if item["method"] == "POST"]
 
 
 def test_manifest_rebinding_invalidates_an_existing_link(ado_project: str) -> None:

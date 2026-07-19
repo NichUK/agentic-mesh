@@ -25,6 +25,8 @@ _FIELDS: dict[str, tuple[int, bool]] = {
     "System.Tags": (4_000, True),
     "Microsoft.VSTS.Common.AcceptanceCriteria": (100_000, True),
 }
+_COMMENT_MARKER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+_COMMENT_MARKER_PREFIX = "Agentic Mesh milestone: `"
 
 
 class AdoAdapterError(DatabaseError):
@@ -103,12 +105,28 @@ class AdoLink:
 
 
 @dataclass(frozen=True, slots=True)
+class AdoComment:
+    comment_id: int
+    text: str
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class _AdoCommentsPage:
+    comments: tuple[AdoComment, ...]
+    continuation_token: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class AdoUpdateOperation:
     project_id: str
     operation_id: str
     work_item_id: str
     request_digest: str
     requested_fields: Mapping[str, str]
+    expected_fields: Mapping[str, str]
     status: str
     external_revision: int | None
     attempt_count: int
@@ -178,14 +196,21 @@ class ProjectAdoAdapter:
         operation_id: str,
         fields: Mapping[str, str],
         actor_id: str,
+        expected_fields: Mapping[str, str] | None = None,
     ) -> AdoUpdateOperation:
         project_id = _project_id(project_id)
         work_item_id = _external_id(work_item_id, "work_item_id")
         operation_id = _external_id(operation_id, "operation_id")
         actor_id = _external_id(actor_id, "actor_id")
         requested = _requested_fields(fields)
+        expected = _requested_fields(expected_fields or {}, allow_empty=True)
+        digest_payload: Mapping[str, object] = requested
+        if expected:
+            digest_payload = {"requested": requested, "expected": expected}
         digest = hashlib.sha256(
-            json.dumps(requested, sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(
+                digest_payload, sort_keys=True, separators=(",", ":")
+            ).encode()
         ).hexdigest()
         with psycopg.connect(self._database_url, autocommit=True) as lock:
             lock.execute(
@@ -200,10 +225,16 @@ class ProjectAdoAdapter:
                     operation_id=operation_id,
                     actor_id=actor_id,
                     requested=requested,
+                    expected=expected,
                     digest=digest,
                 )
                 if operation.status == "succeeded":
                     return operation
+                if operation.status == "conflicted":
+                    raise AdoConflict(
+                        operation.last_error
+                        or "ADO fields changed outside the expected state"
+                    )
                 return self._apply_update(operation, link, binding)
             finally:
                 lock.execute(
@@ -215,6 +246,70 @@ class ProjectAdoAdapter:
         return self._read_link(
             _project_id(project_id), _external_id(work_item_id, "work_item_id")
         )
+
+    def comment_once(
+        self,
+        *,
+        project_id: str,
+        work_item_id: str,
+        marker: str,
+        text: str,
+    ) -> AdoComment:
+        link, binding = self._link_and_binding(project_id, work_item_id)
+        if not isinstance(marker, str) or _COMMENT_MARKER.fullmatch(marker) is None:
+            raise ValueError("comment marker is invalid")
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text) > 10_000
+            or "\x00" in text
+            or _COMMENT_MARKER_PREFIX in text
+        ):
+            raise ValueError("comment text is invalid")
+        self._fetch(binding, link.external_work_item_id)
+        marker_text = f"{_COMMENT_MARKER_PREFIX}{marker}`"
+        comments_url = (
+            f"{self._item_url(binding, link.external_work_item_id)}/comments"
+        )
+        continuation_token: str | None = None
+        seen_tokens: set[str] = set()
+        while True:
+            parameters = {
+                "$top": "200",
+                "order": "desc",
+                "api-version": "7.1-preview.4",
+            }
+            if continuation_token is not None:
+                parameters["continuationToken"] = continuation_token
+            response, _ = self._request(
+                binding,
+                "GET",
+                f"{comments_url}?{urlencode(parameters)}",
+                content=None,
+            )
+            page = _comments_page(response)
+            for comment in page.comments:
+                if marker_text in comment.text:
+                    return comment
+            continuation_token = page.continuation_token
+            if continuation_token is None:
+                break
+            if continuation_token in seen_tokens:
+                raise AdoInvalidResponse("ADO repeated a comment continuation token")
+            seen_tokens.add(continuation_token)
+        rendered = f"{text.rstrip()}\n\n{marker_text}"
+        response, _ = self._request(
+            binding,
+            "POST",
+            f"{comments_url}?api-version=7.1-preview.4",
+            content=json.dumps({"text": rendered}, separators=(",", ":")).encode(),
+            content_type="application/json",
+            expected_statuses=frozenset({200, 201}),
+        )
+        comment = _comment(response)
+        if marker_text not in comment.text:
+            raise AdoInvalidResponse("ADO comment response omitted its marker")
+        return comment
 
     def get_operation(
         self, *, project_id: str, operation_id: str
@@ -238,6 +333,16 @@ class ProjectAdoAdapter:
             raise
         if _matches(remote, operation.requested_fields):
             return self._complete(operation, remote.revision, read_attempts)
+        if operation.expected_fields and not _matches(
+            remote, operation.expected_fields
+        ):
+            self._record_conflict(
+                operation,
+                remote.revision,
+                read_attempts,
+                "ADO fields changed outside the expected state",
+            )
+            raise AdoConflict("ADO fields changed outside the expected state")
         try:
             updated, patch_attempts = self._patch(
                 binding,
@@ -248,6 +353,14 @@ class ProjectAdoAdapter:
         except AdoUnavailable as exc:
             self._record_pending(
                 operation, read_attempts + exc.attempts, "ADO is unavailable"
+            )
+            raise
+        except AdoConflict:
+            self._record_conflict(
+                operation,
+                remote.revision,
+                read_attempts + 1,
+                "ADO work item revision changed",
             )
             raise
         if not _matches(updated, operation.requested_fields):
@@ -303,6 +416,8 @@ class ProjectAdoAdapter:
         url: str,
         *,
         content: bytes | None,
+        content_type: str | None = None,
+        expected_statuses: frozenset[int] = frozenset({200}),
     ) -> tuple[HttpResponse, int]:
         try:
             token = self._tokens.access_token(
@@ -318,7 +433,7 @@ class ProjectAdoAdapter:
             "Authorization": f"Bearer {token}",
         }
         if content is not None:
-            headers["Content-Type"] = "application/json-patch+json"
+            headers["Content-Type"] = content_type or "application/json-patch+json"
         for attempt in range(1, self._max_attempts + 1):
             try:
                 response = self._transport.request(
@@ -343,7 +458,7 @@ class ProjectAdoAdapter:
                 raise AdoNotFound("ADO work item was not found")
             if response.status_code in {409, 412}:
                 raise AdoConflict("ADO work item revision changed")
-            if response.status_code != 200:
+            if response.status_code not in expected_statuses:
                 raise AdoInvalidResponse("ADO returned an unexpected status")
             return response, attempt
         raise AssertionError("unreachable")
@@ -534,6 +649,7 @@ class ProjectAdoAdapter:
         operation_id: str,
         actor_id: str,
         requested: Mapping[str, str],
+        expected: Mapping[str, str],
         digest: str,
     ) -> AdoUpdateOperation:
         try:
@@ -545,8 +661,9 @@ class ProjectAdoAdapter:
                         f"""
                         INSERT INTO {SCHEMA}.work_item_ado_update_operations
                             (project_id, operation_id, work_item_id,
-                             request_digest, requested_fields, started_by)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                             request_digest, requested_fields, expected_fields,
+                             started_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (project_id, operation_id) DO NOTHING
                         """,
                         (
@@ -555,6 +672,7 @@ class ProjectAdoAdapter:
                             work_item_id,
                             digest,
                             Jsonb(dict(requested)),
+                            Jsonb(dict(expected)),
                             actor_id,
                         ),
                     )
@@ -565,6 +683,7 @@ class ProjectAdoAdapter:
                         operation.work_item_id != work_item_id
                         or operation.request_digest != digest
                         or dict(operation.requested_fields) != dict(requested)
+                        or dict(operation.expected_fields) != dict(expected)
                     ):
                         raise AdoConflict(
                             "operation_id belongs to another ADO update"
@@ -617,6 +736,32 @@ class ProjectAdoAdapter:
                     connection, operation.project_id, operation.operation_id
                 )
 
+    def _record_conflict(
+        self,
+        operation: AdoUpdateOperation,
+        revision: int,
+        attempts: int,
+        error: str,
+    ) -> None:
+        with psycopg.connect(self._database_url, autocommit=True) as connection:
+            connection.execute(
+                f"""
+                UPDATE {SCHEMA}.work_item_ado_update_operations
+                SET status = 'conflicted', external_revision = %s,
+                    attempt_count = attempt_count + %s, last_error = %s,
+                    completed_at = clock_timestamp(), version = version + 1
+                WHERE project_id = %s AND operation_id = %s
+                  AND status = 'pending'
+                """,
+                (
+                    revision,
+                    attempts,
+                    error,
+                    operation.project_id,
+                    operation.operation_id,
+                ),
+            )
+
     def _read_link(self, project_id: str, work_item_id: str) -> AdoLink:
         with psycopg.connect(
             self._database_url, autocommit=True, row_factory=dict_row
@@ -646,8 +791,9 @@ class ProjectAdoAdapter:
         row = connection.execute(
             f"""
             SELECT project_id, operation_id, work_item_id, request_digest,
-                   requested_fields, status, external_revision, attempt_count,
-                   last_error, started_by, started_at::text,
+                   requested_fields, expected_fields, status,
+                   external_revision, attempt_count, last_error, started_by,
+                   started_at::text,
                    completed_at::text, version
             FROM {SCHEMA}.work_item_ado_update_operations
             WHERE project_id = %s AND operation_id = %s
@@ -674,8 +820,10 @@ class ProjectAdoAdapter:
         )
 
 
-def _requested_fields(value: object) -> dict[str, str]:
-    if not isinstance(value, Mapping) or not value:
+def _requested_fields(
+    value: object, *, allow_empty: bool = False
+) -> dict[str, str]:
+    if not isinstance(value, Mapping) or (not value and not allow_empty):
         raise ValueError("fields must be a non-empty mapping")
     normalized: dict[str, str] = {}
     for name, field_value in value.items():
@@ -688,6 +836,54 @@ def _requested_fields(value: object) -> dict[str, str]:
             raise ValueError(f"ADO field value is invalid: {name}")
         normalized[name] = field_value
     return dict(sorted(normalized.items()))
+
+
+def _comments_page(response: HttpResponse) -> _AdoCommentsPage:
+    payload = _json_mapping(response)
+    values = payload.get("comments")
+    if not isinstance(values, list) or len(values) > 200:
+        raise AdoInvalidResponse("ADO comments response is invalid")
+    continuation_token = payload.get("continuationToken")
+    if continuation_token is not None and (
+        not isinstance(continuation_token, str)
+        or not continuation_token
+        or len(continuation_token) > 2000
+    ):
+        raise AdoInvalidResponse("ADO comment continuation token is invalid")
+    return _AdoCommentsPage(
+        tuple(_comment_value(value) for value in values), continuation_token
+    )
+
+
+def _comment(response: HttpResponse) -> AdoComment:
+    return _comment_value(_json_mapping(response))
+
+
+def _json_mapping(response: HttpResponse) -> Mapping[str, object]:
+    if len(response.content) > 1024 * 1024:
+        raise AdoInvalidResponse("ADO response is too large")
+    try:
+        payload = json.loads(response.content)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise AdoInvalidResponse("ADO response is invalid") from None
+    if not isinstance(payload, Mapping):
+        raise AdoInvalidResponse("ADO response is invalid")
+    return payload
+
+
+def _comment_value(value: object) -> AdoComment:
+    if not isinstance(value, Mapping):
+        raise AdoInvalidResponse("ADO comment response is invalid")
+    comment_id = value.get("id")
+    text = value.get("text")
+    if (
+        isinstance(comment_id, bool)
+        or not isinstance(comment_id, int)
+        or comment_id < 1
+        or not isinstance(text, str)
+    ):
+        raise AdoInvalidResponse("ADO comment response is invalid")
+    return AdoComment(comment_id, text)
 
 
 def _matches(remote: AdoWorkItem, fields: Mapping[str, str]) -> bool:
