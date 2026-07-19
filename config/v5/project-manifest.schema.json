@@ -34,6 +34,7 @@
         "adapter": {"$ref": "#/$defs/id"},
         "drive_id": {"$ref": "#/$defs/externalId"},
         "root": {"type": "string", "pattern": "^/"},
+        "d8a_root_id": {"$ref": "#/$defs/externalId"},
         "credential": {"$ref": "#/$defs/id"}, "owner_project_id": {"$ref": "#/$defs/id"},
         "authorization_ref": {"type": "string", "pattern": "^grant://[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"}}},
     "teams": {"type": "object", "additionalProperties": false,

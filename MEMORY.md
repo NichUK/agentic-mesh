@@ -1235,3 +1235,18 @@ or `release_review`.
   sponsor decisions, immutable release activation, and sponsor rollback through `/api/v1`.
 - Sponsor authorship—not the validating operator—controls implicit approval; activation
   resumes safely if the pointer moved before its draft checkpoint was written.
+
+## 2026-07-19 V5 Dashboard Entra And D8Aroom Boundary
+
+- Dashboard access tokens now use tenant-specific Entra signature, issuer, audience,
+  lifetime, tenant, object-id, and exact app-role validation. External object-id bindings,
+  not token claims, grant project membership; hashed bootstrap tokens remain for local use.
+- Viewer, Sponsor, and Operator app roles map to the existing read, write, and operator
+  scopes. Browser identity headers are never trusted or forwarded.
+- The D8Aroom proxy exposes only the document component's required routes. It constructs a
+  trusted host principal, streams document content, rejects redirects, and filters roots
+  through explicit `d8a_root_id` values in the active immutable project manifest.
+- Audience-bound Mesh access tokens are not forwarded to D8Aroom. Its own externally
+  configured app-only/OBO boundary remains responsible for Graph access.
+- Every node operation checks the project root before contacting D8Aroom, so a valid user
+  cannot use the shared data plane to inspect another project's document library.
