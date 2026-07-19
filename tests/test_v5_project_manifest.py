@@ -81,6 +81,7 @@ def _manifest(project_id: str = "alpha", display_name: str = "Alpha") -> dict:
                 "adapter": "onedrive",
                 "drive_id": f"drive-{project_id}",
                 "root": f"/projects/{project_id}",
+                "d8a_root_id": f"{project_id}-documents",
                 "credential": "graph",
             }
         },
@@ -175,6 +176,7 @@ def test_manifest_schema_and_loader_are_deterministic(tmp_path: Path):
     assert sum(item.kind == "teams-bot-identity" for item in first.resources) == 2
     encoded = json.dumps(first.snapshot)
     assert "secret://projects/alpha/git" in encoded
+    assert first.snapshot["documents"]["project-library"]["d8a_root_id"] == "alpha-documents"
     assert "super-secret-value" not in encoded
 
 
@@ -288,6 +290,7 @@ def test_store_keeps_git_snapshot_history_and_enforces_project_claims(
     assert active.manifest_digest == alpha.digest
     assert active.source_path == "agentic-mesh/project.yaml"
     assert store.get_active("alpha") == active
+    assert store.get_active_manifest("alpha") == alpha
     assert len(store.list_history("alpha")) == 1
 
     replay = store.activate(

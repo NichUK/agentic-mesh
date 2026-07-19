@@ -315,19 +315,25 @@ def _documents(
             item,
             f"documents.{document_id}",
             {"adapter", "drive_id", "root", "credential"},
-            {"owner_project_id", "authorization_ref"},
+            {"owner_project_id", "authorization_ref", "d8a_root_id"},
         )
         adapter = _identifier(record["adapter"], "document adapter")
         drive_id = _external_id(record["drive_id"], "drive_id")
         root = _document_root(record["root"])
         owner, authorization = _ownership(record, project_id)
         credential = _credential_link(record["credential"], credential_ids)
+        d8a_root_id = (
+            _external_id(record["d8a_root_id"], "D8Aroom root_id")
+            if record.get("d8a_root_id") is not None
+            else None
+        )
         normalized[document_id] = {
             "adapter": adapter,
             "drive_id": drive_id,
             "root": root,
             "credential": credential,
             "owner_project_id": owner,
+            **({"d8a_root_id": d8a_root_id} if d8a_root_id else {}),
             **({"authorization_ref": authorization} if authorization else {}),
         }
         resources.append(
@@ -855,6 +861,35 @@ class ProjectManifestStore:
                 ).fetchone()
                 return None if row is None else self._read_active(connection, project_id)
         except ProjectManifestError:
+            raise
+        except Exception as exc:
+            raise ProjectManifestStoreError("project manifest operation failed") from exc
+
+    def get_active_manifest(self, project_id: str) -> ProjectManifest | None:
+        """Return and revalidate the immutable snapshot selected for a project."""
+        project_id = _identifier(project_id, "project_id")
+        try:
+            with psycopg.connect(self._database_url, autocommit=True) as connection:
+                row = connection.execute(
+                    f"""
+                    SELECT snapshots.manifest_digest, snapshots.snapshot
+                    FROM {SCHEMA}.project_manifest_active AS active
+                    JOIN {SCHEMA}.project_manifest_snapshots AS snapshots
+                      ON snapshots.project_id = active.project_id
+                     AND snapshots.manifest_digest = active.manifest_digest
+                    WHERE active.project_id = %s
+                    """,
+                    (project_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            manifest = _normalize_project_manifest(row[1])
+            if manifest.project_id != project_id or manifest.digest != row[0]:
+                raise ProjectManifestStoreError(
+                    "active project manifest failed integrity validation"
+                )
+            return manifest
+        except (ProjectManifestError, ProjectManifestStoreError):
             raise
         except Exception as exc:
             raise ProjectManifestStoreError("project manifest operation failed") from exc

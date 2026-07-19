@@ -203,6 +203,10 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
     assert f"{API_PREFIX}/dashboard/portfolio" in paths
     for domain in ("work", "fleet", "usage", "recovery", "audit"):
         assert f"{API_PREFIX}/projects/{{project_id}}/dashboard/{domain}" in paths
+    d8a_path = (
+        f"{API_PREFIX}/projects/{{project_id}}/documents/d8aroom/{{path}}"
+    )
+    assert set(paths[d8a_path]) == {"get", "post", "put"}
     assert (
         f"{API_PREFIX}/projects/{{project_id}}/work-items/"
         "{work_item_id}/progress"

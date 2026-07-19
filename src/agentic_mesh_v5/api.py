@@ -19,10 +19,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 import psycopg
 from psycopg.rows import dict_row
+from starlette.background import BackgroundTask
 
 from agentic_mesh_v5 import __version__
+from agentic_mesh_v5.api_auth import Authorizer
 from agentic_mesh_v5.api_auth import Principal
-from agentic_mesh_v5.api_auth import TokenAuthorizer
+from agentic_mesh_v5.api_auth import authorizer_from_environment
 from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
@@ -43,6 +45,8 @@ from agentic_mesh_v5.document_store import DocumentNotFound
 from agentic_mesh_v5.document_store import DocumentPermissionDenied
 from agentic_mesh_v5.document_store import DocumentStore
 from agentic_mesh_v5.document_store import DocumentUnavailable
+from agentic_mesh_v5.d8a_proxy import D8AProxy
+from agentic_mesh_v5.d8a_proxy import D8AProxyError
 from agentic_mesh_v5.fleet import FleetConflict
 from agentic_mesh_v5.fleet import FleetNotFound
 from agentic_mesh_v5.fleet import FleetScaler
@@ -71,6 +75,7 @@ from agentic_mesh_v5.progress import ProgressConflict
 from agentic_mesh_v5.progress import ProgressDraft
 from agentic_mesh_v5.progress import ProgressNotFound
 from agentic_mesh_v5.progress import ProgressStore
+from agentic_mesh_v5.project_manifest import ProjectManifestStore
 from agentic_mesh_v5.queues import LeaseExpired
 from agentic_mesh_v5.queues import QueueAuthorizationError
 from agentic_mesh_v5.queues import QueueConflict
@@ -918,12 +923,13 @@ class ControlQueries:
 def create_app(
     database_url: str,
     *,
-    authorizer: TokenAuthorizer | None = None,
+    authorizer: Authorizer | None = None,
     telemetry: Telemetry | None = None,
     fleet_supervisor: FleetSupervisor | None = None,
     flow_resolver: Callable[[str], FlowDefinition] | None = None,
     document_store_resolver: Callable[[str], DocumentStore] | None = None,
     config_store_resolver: Callable[[str], ConfigActivationStore] | None = None,
+    d8a_proxy: D8AProxy | None = None,
     fleet_reconcile_interval_seconds: float = 5.0,
 ) -> FastAPI:
     if (
@@ -934,7 +940,7 @@ def create_app(
         or fleet_reconcile_interval_seconds > 300
     ):
         raise ValueError("fleet reconciliation interval is invalid")
-    selected_authorizer = authorizer or TokenAuthorizer.from_environment()
+    selected_authorizer = authorizer or authorizer_from_environment()
     selected_telemetry = telemetry or Telemetry()
     lifecycle = LifecycleStore(database_url)
     sponsor_approvals = SponsorApprovalCoordinator(database_url)
@@ -952,6 +958,24 @@ def create_app(
     read_models = ReadModelStore(database_url)
     dashboard_reads = DashboardReadStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
+    selected_d8a_proxy = d8a_proxy
+    d8a_base_url = os.environ.get("AGENTIC_MESH_V5_D8A_BASE_URL", "").strip()
+    d8a_tenant_slug = os.environ.get(
+        "AGENTIC_MESH_V5_D8A_TENANT_SLUG", ""
+    ).strip()
+    if selected_d8a_proxy is None and d8a_base_url:
+        if not d8a_tenant_slug:
+            raise ValueError(
+                "AGENTIC_MESH_V5_D8A_TENANT_SLUG is required when "
+                "AGENTIC_MESH_V5_D8A_BASE_URL is configured"
+            )
+        selected_d8a_proxy = D8AProxy(
+            manifest_store=ProjectManifestStore(database_url),
+            base_url=d8a_base_url,
+            tenant_slug=d8a_tenant_slug,
+            tenant_id=os.environ.get("AGENTIC_MESH_V5_D8A_TENANT_ID", "").strip()
+            or None,
+        )
     bearer = HTTPBearer(auto_error=False)
 
     def project_flow(project_id: str) -> FlowDefinition:
@@ -1040,6 +1064,8 @@ def create_app(
                     finally:
                         tasks.cancel_scope.cancel()
         finally:
+            if isinstance(selected_d8a_proxy, D8AProxy):
+                await selected_d8a_proxy.close()
             selected_telemetry.shutdown()
 
     app = FastAPI(
@@ -1137,6 +1163,82 @@ def create_app(
                 403, "organization_access_denied",
                 "identity is not authorized for organization-wide operation",
             )
+
+    async def forward_d8aroom_documents(
+        project_id: str,
+        path: str,
+        request: Request,
+        identity: Principal,
+    ) -> Response:
+        scope = "read" if request.method == "GET" else "write"
+        project_access(identity, project_id, scope)
+        if selected_d8a_proxy is None:
+            raise ControlApiError(
+                503, "d8a_unavailable", "D8Aroom document proxy is not configured"
+            )
+        query = {key: value for key, value in request.query_params.multi_items()}
+        try:
+            result = await selected_d8a_proxy.forward(
+                project_id=project_id,
+                method=request.method,
+                path=path,
+                query=query,
+                content=await request.body(),
+                content_type=request.headers.get("content-type"),
+                principal=identity,
+                request_id=request.state.request_id,
+            )
+        except D8AProxyError as exc:
+            raise ControlApiError(exc.status_code, exc.code, exc.detail) from exc
+        if result.stream is not None:
+            return StreamingResponse(
+                result.stream,
+                status_code=result.status_code,
+                headers=dict(result.headers),
+                background=(
+                    BackgroundTask(result.close) if result.close is not None else None
+                ),
+            )
+        return Response(
+            content=result.content,
+            status_code=result.status_code,
+            headers=dict(result.headers),
+        )
+
+    _d8a_path = f"{API_PREFIX}/projects/{{project_id}}/documents/d8aroom/{{path:path}}"
+
+    @app.get(_d8a_path, response_class=Response)
+    async def get_d8aroom_documents(
+        project_id: str,
+        path: str,
+        request: Request,
+        identity: Principal = Depends(principal),
+    ) -> Response:
+        return await forward_d8aroom_documents(
+            project_id, path, request, identity
+        )
+
+    @app.post(_d8a_path, response_class=Response)
+    async def post_d8aroom_documents(
+        project_id: str,
+        path: str,
+        request: Request,
+        identity: Principal = Depends(principal),
+    ) -> Response:
+        return await forward_d8aroom_documents(
+            project_id, path, request, identity
+        )
+
+    @app.put(_d8a_path, response_class=Response)
+    async def put_d8aroom_documents(
+        project_id: str,
+        path: str,
+        request: Request,
+        identity: Principal = Depends(principal),
+    ) -> Response:
+        return await forward_d8aroom_documents(
+            project_id, path, request, identity
+        )
 
     @app.exception_handler(ControlApiError)
     async def control_error(request: Request, exc: ControlApiError) -> JSONResponse:
