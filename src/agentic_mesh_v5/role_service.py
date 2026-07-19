@@ -26,6 +26,7 @@ from agentic_mesh_v5.thread_affinity import (
 from agentic_mesh_v5.warm_engines import RoleInstanceKey, WarmEnginePool
 from agentic_mesh_v5.worker_provider import (
     ProviderEventKind,
+    SandboxPolicy,
     ThreadRequest,
     TurnCompletionStatus,
     TurnRequest,
@@ -345,6 +346,9 @@ class RoleService:
                     cwd=workspace,
                     base_instructions=prompt.text,
                     developer_instructions=_operational_instructions(),
+                    # The worker container is the project/tool isolation boundary.
+                    # Nested bubblewrap cannot create namespaces in that container.
+                    sandbox=SandboxPolicy.FULL_ACCESS,
                 ),
                 operation=lambda thread: self._run_turn(
                     thread, heartbeat, claim, payload_text
@@ -385,7 +389,7 @@ class RoleService:
         try:
             while not selected.is_set():
                 result = self.run_once()
-                if result.status == "empty":
+                if result.status in {"empty", "released"}:
                     selected.wait(self.config.poll_seconds)
         finally:
             self.close()

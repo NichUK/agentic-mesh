@@ -233,15 +233,18 @@ class _Engine:
         self._effect = effect
         self.created_threads: list[str] = []
         self.resumed_threads: list[str] = []
+        self.thread_requests = []
         self.closed = 0
 
-    def start_thread(self, _request):
+    def start_thread(self, request):
         thread_id = f"thread-{len(self.created_threads) + 1}"
         self.created_threads.append(thread_id)
+        self.thread_requests.append(request)
         return _Thread(thread_id, self._effect)
 
-    def resume_thread(self, thread_id, _request):
+    def resume_thread(self, thread_id, request):
         self.resumed_threads.append(thread_id)
+        self.thread_requests.append(request)
         return _Thread(thread_id, self._effect)
 
     def close(self) -> None:
@@ -358,7 +361,37 @@ def test_role_service_reuses_one_engine_and_separates_work_threads(
     assert provider.opens == 1
     assert engine.created_threads == ["thread-1", "thread-2"]
     assert engine.resumed_threads == []
+    assert all(
+        request.sandbox.value == "full_access" for request in engine.thread_requests
+    )
     assert engine.closed == 1
+
+
+def test_role_service_backs_off_after_released_work(tmp_path: Path) -> None:
+    service = _service(
+        tmp_path,
+        "postgresql://unused",
+        _Provider(_Engine(lambda _turn: None)),
+    )
+
+    class StopAfterWait:
+        stopped = False
+        waits: list[float] = []
+
+        def is_set(self) -> bool:
+            return self.stopped
+
+        def wait(self, seconds: float) -> bool:
+            self.waits.append(seconds)
+            self.stopped = True
+            return True
+
+    stop = StopAfterWait()
+    service.run_once = lambda: service._result("released")  # type: ignore[method-assign]
+
+    service.run_forever(stop=stop)  # type: ignore[arg-type]
+
+    assert stop.waits == [service.config.poll_seconds]
 
 
 def test_role_service_releases_completed_turn_without_durable_effect(
