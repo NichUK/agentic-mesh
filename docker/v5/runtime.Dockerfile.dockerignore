@@ -1,0 +1,7 @@
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!src/agentic_mesh_v5/
+!src/agentic_mesh_v5/**

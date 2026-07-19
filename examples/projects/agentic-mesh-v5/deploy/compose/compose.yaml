@@ -1,0 +1,13 @@
+services:
+  control:
+    image: ${AGENTIC_MESH_V5_IMAGE:?set a digest-pinned V5 image}
+    restart: unless-stopped
+    env_file:
+      - ${AGENTIC_MESH_V5_RUNTIME_ENV:?set the external runtime environment file}
+    ports:
+      - "127.0.0.1:${AGENTIC_MESH_V5_PORT:-18080}:8080"
+    volumes:
+      - type: bind
+        source: ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}
+        target: /mesh/config
+        read_only: true

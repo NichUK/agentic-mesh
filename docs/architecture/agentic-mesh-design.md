@@ -1076,7 +1076,15 @@ shared read-only.
 Agentic Mesh V5 uses this same boundary as every other project. Candidate work
 can build and test in its isolated worktree, but registration creates no
 privileged self-editing or live-deployment path. Immutable deployment,
-verification, and rollback are separate release operations.
+verification, and rollback are separate release operations. One durable
+release coordinator records the candidate before deployment, checks that the
+observed image still matches the registered boundary, and requires both the
+candidate and previous image to support the current database schema. The
+builder and deployment driver are provider-neutral ports; the first adapters
+use Docker and project-owned Docker Compose with fixed arguments and no source
+mount. The boundary advances only after candidate health. A failed candidate is
+rolled back and the previous image is health-verified, while interrupted
+operations resume from their durable phase and observed image.
 
 ### V5 Isolated Git Workspaces
 

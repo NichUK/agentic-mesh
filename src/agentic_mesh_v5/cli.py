@@ -21,6 +21,10 @@ from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import database_url_from_environment
 from agentic_mesh_v5.database_operations import DatabaseBackupService
 from agentic_mesh_v5.database_operations import MaintenanceStore
+from agentic_mesh_v5.docker_releases import DockerComposeDeployment
+from agentic_mesh_v5.docker_releases import DockerImageBuilder
+from agentic_mesh_v5.immutable_releases import ImmutableReleaseCoordinator
+from agentic_mesh_v5.immutable_releases import UpgradeRequest
 from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.package_resolver import resolve_packages
 from agentic_mesh_v5.project_manifest import ProjectManifestError
@@ -127,6 +131,34 @@ def build_parser() -> argparse.ArgumentParser:
     project_register.add_argument("--workspace-root", type=Path, required=True)
     project_register.add_argument("--deployment-adapter", required=True)
     project_register.add_argument("--actor", required=True)
+    runtime_upgrade = subparsers.add_parser(
+        "runtime-upgrade",
+        help="build, verify and deploy one immutable V5 runtime candidate",
+    )
+    runtime_upgrade.add_argument("--project", required=True)
+    runtime_upgrade.add_argument("--operation", required=True)
+    runtime_upgrade.add_argument("--source-root", type=Path, required=True)
+    runtime_upgrade.add_argument("--source-revision", required=True)
+    runtime_upgrade.add_argument(
+        "--dockerfile", type=Path, default=Path("docker/v5/runtime.Dockerfile")
+    )
+    runtime_upgrade.add_argument("--image-repository", required=True)
+    runtime_upgrade.add_argument(
+        "--publish-image",
+        action="store_true",
+        help="push the candidate tag before resolving its repository digest",
+    )
+    runtime_upgrade.add_argument(
+        "--test-target", action="append", required=True, dest="test_targets"
+    )
+    runtime_upgrade.add_argument("--compose-file", type=Path, required=True)
+    runtime_upgrade.add_argument("--image-env-file", type=Path, required=True)
+    runtime_upgrade.add_argument("--compose-project", required=True)
+    runtime_upgrade.add_argument("--service", default="control")
+    runtime_upgrade.add_argument("--minimum-database-version", type=int)
+    runtime_upgrade.add_argument("--maximum-database-version", type=int)
+    runtime_upgrade.add_argument("--health-timeout-seconds", type=int, default=120)
+    runtime_upgrade.add_argument("--actor", required=True)
     api_serve = subparsers.add_parser(
         "api-serve", help="serve the versioned V5 control API"
     )
@@ -381,6 +413,62 @@ def main(argv: Sequence[str] | None = None) -> int:
             as_json=args.json,
         )
         return 0
+
+    if args.command == "runtime-upgrade":
+        try:
+            database_url = database_url_from_environment()
+            available = MigrationRunner(database_url).status().available_version
+            minimum = (
+                available
+                if args.minimum_database_version is None
+                else args.minimum_database_version
+            )
+            maximum = (
+                available
+                if args.maximum_database_version is None
+                else args.maximum_database_version
+            )
+            result = ImmutableReleaseCoordinator(
+                database_url,
+                builder=DockerImageBuilder(
+                    dockerfile=args.dockerfile,
+                    image_repository=args.image_repository,
+                    test_targets=args.test_targets,
+                    minimum_database_version=minimum,
+                    maximum_database_version=maximum,
+                    publish_image=args.publish_image,
+                ),
+                deployment=DockerComposeDeployment(
+                    compose_file=args.compose_file,
+                    image_environment_file=args.image_env_file,
+                    compose_project=args.compose_project,
+                    service=args.service,
+                    health_timeout_seconds=args.health_timeout_seconds,
+                ),
+            ).upgrade(
+                UpgradeRequest(
+                    project_id=args.project,
+                    operation_id=args.operation,
+                    source_root=args.source_root,
+                    source_revision=args.source_revision,
+                    actor_id=args.actor,
+                )
+            )
+        except (DatabaseError, ValueError) as exc:
+            _write(
+                {
+                    "runtime": "agentic-mesh-v5",
+                    "status": "rejected",
+                    "error": str(exc),
+                },
+                as_json=args.json,
+            )
+            return 2
+        _write(
+            {"runtime": "agentic-mesh-v5", **result.to_dict()},
+            as_json=args.json,
+        )
+        return 0 if result.status == "deployed" else 2
 
     if args.command == "api-serve":
         try:
