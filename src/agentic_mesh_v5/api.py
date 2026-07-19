@@ -25,6 +25,8 @@ from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.database import database_url_from_environment
+from agentic_mesh_v5.dashboard_reads import DashboardReadStore
+from agentic_mesh_v5.dashboard_reads import usage_traffic
 from agentic_mesh_v5.continuation import ContinuationAuthorizationError
 from agentic_mesh_v5.continuation import ContinuationConflict
 from agentic_mesh_v5.continuation import ContinuationMonitor
@@ -706,6 +708,32 @@ class ReadModelSnapshotResponse(ApiModel):
     domains: dict[str, list[dict[str, Any]]]
 
 
+class DashboardPortfolioResponse(ApiModel):
+    projects: list[dict[str, Any]]
+
+
+class DashboardPageResponse(ApiModel):
+    project_id: str
+    total: int
+    limit: int
+    offset: int
+    items: list[dict[str, Any]]
+
+
+class DashboardFleetResponse(ApiModel):
+    project_id: str
+    traffic: dict[str, Any]
+    roles: list[dict[str, Any]]
+    instances: list[dict[str, Any]]
+    queues: list[dict[str, Any]]
+
+
+class DashboardUsageResponse(ApiModel):
+    project_id: str
+    traffic: dict[str, Any]
+    usage: UsageSummaryResponse
+
+
 class DomainAvailability(ApiModel):
     domain: str
     status: Literal["planned"]
@@ -878,6 +906,7 @@ def create_app(
     recovery_supervisor = RecoverySupervisorStore(database_url)
     queries = ControlQueries(database_url)
     read_models = ReadModelStore(database_url)
+    dashboard_reads = DashboardReadStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
     bearer = HTTPBearer(auto_error=False)
 
@@ -2225,6 +2254,91 @@ def create_app(
             provider_id=provider_id,
             account_scope=account_scope,
         )
+
+    @app.get(
+        f"{API_PREFIX}/dashboard/portfolio",
+        response_model=DashboardPortfolioResponse,
+        tags=["dashboard"],
+    )
+    def dashboard_portfolio(identity: Principal = Depends(principal)):
+        scope_access(identity, "read")
+        return dashboard_reads.portfolio(identity.projects)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/dashboard/work",
+        response_model=DashboardPageResponse,
+        tags=["dashboard"],
+    )
+    def dashboard_work(
+        project_id: str,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return dashboard_reads.work(project_id, limit=limit, offset=offset)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/dashboard/fleet",
+        response_model=DashboardFleetResponse,
+        tags=["dashboard"],
+    )
+    def dashboard_fleet(
+        project_id: str, identity: Principal = Depends(principal)
+    ):
+        project_access(identity, project_id, "read")
+        return dashboard_reads.fleet(project_id)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/dashboard/usage",
+        response_model=DashboardUsageResponse,
+        tags=["dashboard"],
+    )
+    def dashboard_usage(
+        project_id: str,
+        provider_id: str = Query(
+            default="codex-local", min_length=1, max_length=128
+        ),
+        account_scope: str = Query(default="default", min_length=1, max_length=128),
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        summary = usage_store.summary(
+            project_id, provider_id=provider_id, account_scope=account_scope
+        )
+        return {
+            "project_id": project_id,
+            "traffic": usage_traffic(summary),
+            "usage": summary,
+        }
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/dashboard/recovery",
+        response_model=DashboardPageResponse,
+        tags=["dashboard"],
+    )
+    def dashboard_recovery(
+        project_id: str,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return dashboard_reads.recovery(project_id, limit=limit, offset=offset)
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/dashboard/audit",
+        response_model=DashboardPageResponse,
+        tags=["dashboard"],
+    )
+    def dashboard_audit(
+        project_id: str,
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return dashboard_reads.audit(project_id, limit=limit, offset=offset)
 
     @app.get(
         f"{API_PREFIX}/projects/{{project_id}}/recovery",
