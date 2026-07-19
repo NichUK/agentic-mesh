@@ -173,10 +173,12 @@ def _normalize_project_manifest(value: object) -> ProjectManifest:
     documents, document_resources = _documents(
         root["documents"], project_id, credential_ids
     )
-    teams, teams_resources = _teams(root["teams"], project_id, credential_ids)
-    ado, ado_resources = _ado(root["ado"], project_id, credential_ids)
     packages = _packages(root["packages"])
     roles, minimum, maximum = _roles(root["roles"])
+    teams, teams_resources = _teams(
+        root["teams"], project_id, credential_ids, frozenset(roles)
+    )
+    ado, ado_resources = _ado(root["ado"], project_id, credential_ids)
     limits = _limits(root["limits"], minimum, maximum)
     snapshot: dict[str, object] = {
         "schema_version": 1,
@@ -335,17 +337,22 @@ def _documents(
 
 
 def _teams(
-    value: object, project_id: str, credential_ids: frozenset[str]
+    value: object,
+    project_id: str,
+    credential_ids: frozenset[str],
+    role_ids: frozenset[str],
 ) -> tuple[dict[str, object], tuple[ResourceBinding, ...]]:
     record = _mapping(
         value,
         "teams",
-        {"tenant_id", "team_id", "credential", "channels"},
+        {"tenant_id", "team_id", "credential", "channels", "role_identities"},
         {"owner_project_id", "authorization_ref"},
     )
     tenant_id = _external_id(record["tenant_id"], "tenant_id")
     team_id = _external_id(record["team_id"], "team_id")
     credential = _credential_link(record["credential"], credential_ids)
+    if credential is None:
+        raise ProjectManifestError("Teams connector credential is required")
     owner, authorization = _ownership(record, project_id)
     channels = _named_mapping(record["channels"], "teams.channels", allow_empty=False)
     normalized_channels: dict[str, str] = {}
@@ -361,12 +368,71 @@ def _teams(
                 authorization,
             )
         )
+    identities = _named_mapping(
+        record["role_identities"], "teams.role_identities", allow_empty=False
+    )
+    missing = sorted(role_ids - set(identities))
+    unknown = sorted(set(identities) - role_ids)
+    if missing or unknown:
+        raise ProjectManifestError(
+            "teams role identities disagree with configured roles: "
+            f"missing={missing}, unknown={unknown}"
+        )
+    normalized_identities: dict[str, dict[str, str]] = {}
+    application_ids: set[str] = set()
+    display_names: set[str] = set()
+    identity_credentials: set[str] = set()
+    for role_id, identity_value in sorted(identities.items()):
+        identity = _mapping(
+            identity_value,
+            f"teams.role_identities.{role_id}",
+            {"application_id", "display_name", "credential"},
+        )
+        application_id = _external_id(
+            identity["application_id"], "teams bot application_id"
+        )
+        display_name = _text(
+            identity["display_name"], "teams bot display_name", 100
+        )
+        identity_credential = _credential_link(
+            identity["credential"], credential_ids
+        )
+        if identity_credential is None:
+            raise ProjectManifestError("Teams bot credential is required")
+        application_key = application_id.casefold()
+        display_key = display_name.casefold()
+        if application_key in application_ids:
+            raise ProjectManifestError("Teams bot application ids must be unique")
+        if display_key in display_names:
+            raise ProjectManifestError("Teams bot display names must be unique")
+        if (
+            identity_credential == credential
+            or identity_credential in identity_credentials
+        ):
+            raise ProjectManifestError("Teams bot credentials must be distinct")
+        application_ids.add(application_key)
+        display_names.add(display_key)
+        identity_credentials.add(identity_credential)
+        normalized_identities[role_id] = {
+            "application_id": application_id,
+            "display_name": display_name,
+            "credential": identity_credential,
+        }
+        resources.append(
+            ResourceBinding(
+                "teams-bot-identity",
+                f"{tenant_id}|{application_key}",
+                owner,
+                authorization,
+            )
+        )
     return (
         {
             "tenant_id": tenant_id,
             "team_id": team_id,
             "credential": credential,
             "channels": normalized_channels,
+            "role_identities": normalized_identities,
             "owner_project_id": owner,
             **({"authorization_ref": authorization} if authorization else {}),
         },

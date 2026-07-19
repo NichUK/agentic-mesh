@@ -92,6 +92,18 @@ def _manifest(project_id: str = "alpha", display_name: str = "Alpha") -> dict:
                 "project": f"channel-{project_id}",
                 "approvals": f"approvals-{project_id}",
             },
+            "role_identities": {
+                "project-manager": {
+                    "application_id": f"bot-{project_id}-project-manager",
+                    "display_name": f"AM {display_name} Project Manager",
+                    "credential": "teams-project-manager",
+                },
+                "engineering": {
+                    "application_id": f"bot-{project_id}-engineering",
+                    "display_name": f"AM {display_name} Engineering",
+                    "credential": "teams-engineering",
+                },
+            },
         },
         "ado": {
             "organization": "https://dev.azure.com/seerstone",
@@ -113,6 +125,16 @@ def _manifest(project_id: str = "alpha", display_name: str = "Alpha") -> dict:
                 "scope": "project",
                 "provider": "ado",
                 "reference": f"secret://projects/{project_id}/ado",
+            },
+            "teams-project-manager": {
+                "scope": "project",
+                "provider": "teams-bot",
+                "reference": f"secret://projects/{project_id}/teams/project-manager",
+            },
+            "teams-engineering": {
+                "scope": "project",
+                "provider": "teams-bot",
+                "reference": f"secret://projects/{project_id}/teams/engineering",
             },
         },
         "roles": {
@@ -149,7 +171,8 @@ def test_manifest_schema_and_loader_are_deterministic(tmp_path: Path):
     assert [item.kind for item in first.resources] == sorted(
         item.kind for item in first.resources
     )
-    assert len(first.resources) == 9
+    assert len(first.resources) == 13
+    assert sum(item.kind == "teams-bot-identity" for item in first.resources) == 2
     encoded = json.dumps(first.snapshot)
     assert "secret://projects/alpha/git" in encoded
     assert "super-secret-value" not in encoded
@@ -196,6 +219,39 @@ def test_manifest_rejects_invalid_and_sensitive_boundaries(tmp_path: Path):
     system_credential = _manifest()
     system_credential["credentials"]["git"]["scope"] = "system"
     cases.append(("system", system_credential))
+    missing_bot = _manifest()
+    del missing_bot["teams"]["role_identities"]["engineering"]
+    cases.append(("missing-bot", missing_bot))
+    unknown_bot = _manifest()
+    unknown_bot["teams"]["role_identities"]["finance"] = {
+        "application_id": "bot-alpha-finance",
+        "display_name": "AM Alpha Finance",
+        "credential": "teams-engineering",
+    }
+    cases.append(("unknown-bot", unknown_bot))
+    duplicate_app = _manifest()
+    duplicate_app["teams"]["role_identities"]["engineering"][
+        "application_id"
+    ] = "bot-alpha-project-manager"
+    cases.append(("duplicate-bot-app", duplicate_app))
+    duplicate_name = _manifest()
+    duplicate_name["teams"]["role_identities"]["engineering"][
+        "display_name"
+    ] = "AM Alpha Project Manager"
+    cases.append(("duplicate-bot-name", duplicate_name))
+    duplicate_bot_credential = _manifest()
+    duplicate_bot_credential["teams"]["role_identities"]["engineering"][
+        "credential"
+    ] = "teams-project-manager"
+    cases.append(("duplicate-bot-credential", duplicate_bot_credential))
+    null_connector_credential = _manifest()
+    null_connector_credential["teams"]["credential"] = None
+    cases.append(("null-teams-credential", null_connector_credential))
+    null_bot_credential = _manifest()
+    null_bot_credential["teams"]["role_identities"]["engineering"][
+        "credential"
+    ] = None
+    cases.append(("null-bot-credential", null_bot_credential))
 
     for index, (label, value) in enumerate(cases):
         with pytest.raises(ProjectManifestError):
@@ -390,3 +446,34 @@ def test_foreign_declared_owner_requires_exact_external_grant(
         postgres_database, authorizer=StaticResourceAuthorizer((grant,))
     ).activate(manifest, source_revision="f" * 40, actor_id="project-admin")
     assert result.project_id == "beta"
+
+
+def test_teams_bot_application_cannot_bleed_between_projects(
+    tmp_path: Path, postgres_database: str
+) -> None:
+    MigrationRunner(postgres_database).migrate()
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.projects(project_id, display_name)
+            VALUES ('alpha', 'Alpha'), ('beta', 'Beta')
+            """
+        )
+    alpha = load_project_manifest(_write(tmp_path, _manifest(), "alpha-bot.yaml"))
+    ProjectManifestStore(postgres_database).activate(
+        alpha, source_revision="a" * 40, actor_id="project-admin"
+    )
+    beta_value = _manifest("beta", "Beta")
+    beta_value["teams"]["role_identities"]["engineering"][
+        "application_id"
+    ] = alpha.snapshot["teams"]["role_identities"]["engineering"][
+        "application_id"
+    ]
+    beta = load_project_manifest(_write(tmp_path, beta_value, "beta-bot.yaml"))
+
+    with pytest.raises(
+        ProjectManifestAuthorizationError, match="belongs to project alpha"
+    ):
+        ProjectManifestStore(postgres_database).activate(
+            beta, source_revision="b" * 40, actor_id="project-admin"
+        )

@@ -101,6 +101,13 @@ def _manifest(urls: dict[str, str]) -> dict[str, object]:
             "team_id": "team-alpha",
             "credential": "graph",
             "channels": {"project": "channel-alpha"},
+            "role_identities": {
+                "engineering": {
+                    "application_id": "bot-alpha-engineering",
+                    "display_name": "AM Alpha Engineering",
+                    "credential": "teams-engineering",
+                }
+            },
         },
         "ado": {
             "organization": "https://dev.azure.com/seerstone",
@@ -113,7 +120,7 @@ def _manifest(urls: dict[str, str]) -> dict[str, object]:
                 "provider": name,
                 "reference": f"secret://projects/alpha/{name}",
             }
-            for name in ("git", "graph", "ado")
+            for name in ("git", "graph", "ado", "teams-engineering")
         },
         "roles": {
             "engineering": {

@@ -1120,3 +1120,21 @@ or `release_review`.
   `seerstone/agentic-mesh` User Story through all four states, proved exact
   replay and unchanged V5 state/version, then permanently removed the ADO item
   and qualification database.
+
+## 2026-07-19 V5 Teams Role Identities
+
+- Each manifest role has one distinct Teams bot application id, user-facing
+  display name, and external credential id. The validator rejects missing,
+  extra, shared, or duplicate identities and claims tenant/application pairs as
+  project resources. No bot secret or token is stored.
+- Role-pack activation pins the bot application id as the collaboration
+  identity. All instances of the logical role share it; thread and worker
+  identity remain separate.
+- The Teams adapter maps exact tenant/Team/recipient authority to a logical
+  role, resolves tokens through the external provider, and verifies installation
+  and send permission before delivery. Credential, installation, permission,
+  and transport failures use distinct safe blocker codes.
+- V4's useful recipient-app routing rule was rewritten behind V5 manifest,
+  credential, and transport ports. V4 environment-secret lookup and implicit
+  display-name generation were not ported. AMV5-051 owns project/DM routing and
+  AMV5-052 owns approval/progress cards.

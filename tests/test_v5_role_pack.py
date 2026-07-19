@@ -108,6 +108,14 @@ def _manifest_value(project_id: str, roles: dict[str, dict]) -> dict:
             "team_id": f"team-{project_id}",
             "credential": "graph",
             "channels": {"project": "project", "approvals": "approvals"},
+            "role_identities": {
+                role_id: {
+                    "application_id": f"bot-{project_id}-{role_id}",
+                    "display_name": f"AM {project_id.title()} {role_id.replace('-', ' ').title()}",
+                    "credential": f"teams-{role_id}",
+                }
+                for role_id in roles
+            },
         },
         "ado": {
             "organization": "https://dev.azure.com/example",
@@ -120,7 +128,12 @@ def _manifest_value(project_id: str, roles: dict[str, dict]) -> dict:
                 "provider": name,
                 "reference": f"secret://projects/{project_id}/{name}",
             }
-            for name in ("git", "graph", "ado")
+            for name in (
+                "git",
+                "graph",
+                "ado",
+                *(f"teams-{role_id}" for role_id in roles),
+            )
         },
         "roles": roles,
         "limits": {
@@ -195,6 +208,9 @@ def test_released_15_role_pack_materializes_routes_and_wakes(
     assert len(first.roles) == 15
     assert {item.role_id for item in first.roles} == set(ROLE_PROFILES)
     assert {item.memory_scope for item in first.roles} == {"project-role"}
+    assert {item.collaboration_identity for item in first.roles} == {
+        f"bot-alpha-{role_id}" for role_id in ROLE_PROFILES
+    }
     assert next(item for item in first.roles if item.role_id == "qa-engineer").tool_profile_id == "qa"
 
     with psycopg.connect(postgres_database) as connection:
@@ -433,6 +449,10 @@ def test_synthetic_future_role_uses_the_same_activation_contract(
     assert [item.role_id for item in activated.roles] == [
         "finance-analyst",
         "finance-auditor",
+    ]
+    assert [item.collaboration_identity for item in activated.roles] == [
+        "bot-finance-finance-analyst",
+        "bot-finance-finance-auditor",
     ]
 
     smaller_roles = {"finance-analyst": roles["finance-analyst"]}

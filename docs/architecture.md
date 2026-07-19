@@ -108,6 +108,11 @@ operational support.
   options.
 - Connector bridge: maps Teams, Slack, web, CLI, or other surfaces to the
   internal message/action model. It is transparent plumbing, not a manager.
+  The first V5 Teams adapter binds one manifest-declared bot application,
+  user-facing name, and external credential reference to each logical role.
+  Recipient authority maps to the role before generic routing; outbound sends
+  fail with safe blocker codes when credentials, installation, permission, or
+  transport are unavailable.
 - Control-plane: supervises topology, role-instance lifecycle, hibernation,
   wake-up, health checks, and configuration reloads.
 - Message store: owns durable delivery, claims, retries, and dead letters.
@@ -146,9 +151,9 @@ operational support.
 - Project manifest: V5 loads the strict, Git-owned
   `agentic-mesh/project.yaml`, validates only external resource and credential
   references, and activates an immutable Postgres snapshot. Repository,
-  document-root, Teams-channel, and ADO-project claims are exclusive unless an
-  exact external grant authorizes sharing; project-scoped credential names are
-  isolated by project.
+  document-root, Teams-channel, Teams bot application, and ADO-project claims
+  are exclusive unless an exact external grant authorizes sharing;
+  project-scoped credential names are isolated by project.
 - Git workspace: each mutating work item pins its project-manifest digest and
   exact base commits, then receives deterministic external worktrees for its
   selected repositories. Postgres records branch/path/revision evidence and
