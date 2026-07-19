@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping as RuntimeMapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from glob import escape as escape_glob
@@ -265,6 +265,7 @@ class CodexWorkerTurn:
 
     def events(self) -> Iterator[ProviderEvent]:
         completed = False
+        usage_baseline: ProviderUsage | None = None
         try:
             notification_queue = _sdk_turn_notification_queue(self._handle)
             if notification_queue is None:
@@ -287,6 +288,13 @@ class CodexWorkerTurn:
                 )
                 if event is None:
                     continue
+                if event.kind is ProviderEventKind.USAGE_UPDATED:
+                    total = _notification_usage_total(notification, event)
+                    if usage_baseline is None:
+                        usage_baseline = _subtract_usage(total, event.usage)
+                    event = replace(
+                        event, usage=_subtract_usage(total, usage_baseline)
+                    )
                 if event.kind is ProviderEventKind.TURN_COMPLETED:
                     completed = True
                 yield event
@@ -671,6 +679,44 @@ def _usage(value: object) -> ProviderUsage:
             raise _protocol_error()
         counts.append(count)
     return ProviderUsage(*counts)
+
+
+def _notification_usage_total(
+    notification: object, event: ProviderEvent
+) -> ProviderUsage:
+    if isinstance(notification, ProviderEvent):
+        if event.usage is None:
+            raise _protocol_error()
+        return event.usage
+    payload = getattr(notification, "payload", None)
+    token_usage = getattr(payload, "token_usage", None)
+    return _usage(getattr(token_usage, "total", None))
+
+
+def _subtract_usage(
+    total: ProviderUsage, baseline: ProviderUsage | None
+) -> ProviderUsage:
+    if baseline is None:
+        raise _protocol_error()
+    counts = tuple(
+        current - previous
+        for current, previous in zip(
+            _usage_values(total), _usage_values(baseline), strict=True
+        )
+    )
+    if any(count < 0 for count in counts):
+        raise _protocol_error()
+    return ProviderUsage(*counts)
+
+
+def _usage_values(usage: ProviderUsage) -> tuple[int, int, int, int, int]:
+    return (
+        usage.input_tokens,
+        usage.cached_input_tokens,
+        usage.output_tokens,
+        usage.reasoning_output_tokens,
+        usage.total_tokens,
+    )
 
 
 def _capacity(response: object) -> ProviderCapacity:

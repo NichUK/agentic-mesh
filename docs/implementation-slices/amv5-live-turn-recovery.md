@@ -212,3 +212,27 @@ above is the smallest correction for technical attempt 3.
 - The PM-correction slice passed 38 focused provider/live-role tests. The
   complete V5 suite passed 639 tests with 5 environment skips and only the
   existing Starlette/httpx deprecation warning.
+
+## Live cumulative-usage finding
+
+- Rollout-authoritative terminal reconciliation now holds the queue lease until
+  the exact rollout hint and fresh terminal read, but the role service releases
+  the lease immediately afterwards with the safe `turn-failed` result.
+- A content-free exception trace identifies `UsageConflict` while recording the
+  final `thread/tokenUsage/updated` notification. Codex reports `last` usage for
+  each model invocation inside one outer turn; those individual counters may
+  decrease even though the turn's cumulative usage only increases.
+- Acceptance for the correction is: the Codex provider exposes cumulative
+  usage for one product turn, including multiple model invocations; each
+  emitted cumulative observation is monotonic and retains the provider's exact
+  token totals; an identical durable observation remains idempotent and a
+  lower or differently owned durable observation remains a conflict.
+- Usage normalization must not suppress the exact terminal event, change
+  delivery or handoff semantics, parse prompt/response content, or weaken the
+  existing durable conflict checks. The PM and BA remain stopped until the
+  correction is reviewed and deployed.
+- The correction derives each outer-turn observation from the provider's
+  monotonic thread-total snapshot minus the pre-turn baseline. This preserves
+  exact multi-invocation totals and makes a replayed snapshot idempotent.
+  Verification is 70 focused provider/affinity/live-role tests with one
+  environment-only skip and 97 passed tests in the affected V5 batch.

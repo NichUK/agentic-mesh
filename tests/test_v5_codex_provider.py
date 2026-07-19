@@ -143,7 +143,9 @@ def _scripted_notifications() -> list[SimpleNamespace]:
         ),
         _notification(
             "thread/tokenUsage/updated",
-            SimpleNamespace(**scope, token_usage=SimpleNamespace(last=usage)),
+            SimpleNamespace(
+                **scope, token_usage=SimpleNamespace(last=usage, total=usage)
+            ),
         ),
         _notification(
             "error",
@@ -238,6 +240,69 @@ def test_codex_adapter_maps_configuration_events_and_interrupts(tmp_path: Path) 
     assert events[-1].completion is TurnCompletionStatus.INTERRUPTED
     assert handle.interrupt_count == 1
     assert sdk.close_count == 1
+
+
+def test_codex_adapter_exposes_cumulative_usage_for_one_outer_turn(
+    tmp_path: Path,
+) -> None:
+    scope = {"thread_id": "thread-1", "turn_id": "turn-1"}
+
+    def usage_event(
+        last: tuple[int, ...], total: tuple[int, ...]
+    ) -> SimpleNamespace:
+        names = (
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+            "total_tokens",
+        )
+        return _notification(
+            "thread/tokenUsage/updated",
+            SimpleNamespace(
+                **scope,
+                token_usage=SimpleNamespace(
+                    last=SimpleNamespace(**dict(zip(names, last))),
+                    total=SimpleNamespace(**dict(zip(names, total))),
+                ),
+            ),
+        )
+
+    handle = FakeHandle(
+        [
+            usage_event((100, 80, 40, 10, 140), (1100, 880, 440, 110, 1540)),
+            usage_event((120, 90, 5, 0, 125), (1220, 970, 445, 110, 1665)),
+            usage_event((120, 90, 5, 0, 125), (1220, 970, 445, 110, 1665)),
+            _notification(
+                "turn/completed",
+                SimpleNamespace(
+                    thread_id="thread-1",
+                    turn=SimpleNamespace(id="turn-1", status="completed", error=None),
+                ),
+            ),
+        ]
+    )
+    engine = CodexWorkerProvider(sdk_factory=lambda _config: FakeSdk(handle)).open()
+
+    events = list(
+        engine.start_thread(ThreadRequest(cwd=tmp_path))
+        .start_turn(TurnRequest("work"))
+        .events()
+    )
+    usage = [event.usage for event in events if event.kind is ProviderEventKind.USAGE_UPDATED]
+
+    assert usage[0] is not None and usage[0].total_tokens == 140
+    assert usage[1] is not None
+    assert (
+        usage[1].input_tokens,
+        usage[1].cached_input_tokens,
+        usage[1].output_tokens,
+        usage[1].reasoning_output_tokens,
+        usage[1].total_tokens,
+    ) == (220, 170, 45, 10, 265)
+    assert usage[2] == usage[1]
+    assert events[-1].completion is TurnCompletionStatus.COMPLETED
+    engine.close()
 
 
 def test_codex_adapter_reads_typed_capacity_without_account_identity(
@@ -544,7 +609,14 @@ def test_completed_rollout_uses_fresh_reader_and_drains_pending_usage(
                                 output_tokens=3,
                                 reasoning_output_tokens=1,
                                 total_tokens=12,
-                            )
+                            ),
+                            total=SimpleNamespace(
+                                input_tokens=8,
+                                cached_input_tokens=2,
+                                output_tokens=3,
+                                reasoning_output_tokens=1,
+                                total_tokens=12,
+                            ),
                         ),
                     ),
                 )
