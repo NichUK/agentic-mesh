@@ -1176,3 +1176,21 @@ or `release_review`.
 - V4's role-owned sponsor card pattern was retained. Environment bot secrets,
   payload-authorized sponsors, free-form result parsing, and dashboard-only
   delivery claims were rejected.
+
+## 2026-07-19 V5 Multi-Source Import Discovery
+
+- Proposed imports now use a project-neutral, read-only discovery service that
+  attempts every declared Git repository, document root, and collaboration
+  binding without registering or activating a project.
+- Git inspection uses `git ls-remote`; document inspection calls only the
+  scoped `DocumentStore.list` operation and retains aggregate counts plus a
+  bounded path sample, never content.
+- Unavailable adapters/sources, pagination safety limits, duplicate source ids,
+  shared locators, and default-branch conflicts make the deterministic report
+  incomplete but do not stop remaining sources from being attempted.
+- Reports expose only safe summaries and credential-presence/configuration
+  digests. Credential references, tokens, raw connector errors, and source
+  content do not enter discovery evidence.
+- AMV5-054 consumes this evidence for iterative completeness questions;
+  AMV5-055 owns manifest preview, backlog candidates, approval, and activation.
+  No project-specific import path was introduced.
