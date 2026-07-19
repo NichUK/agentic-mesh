@@ -85,7 +85,7 @@ def postgres_database() -> str:
 
 @pytest.fixture
 def governance_database(postgres_database: str) -> str:
-    assert MigrationRunner(postgres_database).migrate().current_version == 28
+    assert MigrationRunner(postgres_database).migrate().current_version == 29
     lifecycle = LifecycleStore(postgres_database)
     lifecycle.create_project(
         project_id="alpha", display_name="Alpha", sponsor_ids=("sponsor-1",)

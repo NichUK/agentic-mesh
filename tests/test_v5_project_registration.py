@@ -383,7 +383,7 @@ def test_v5_registration_is_idempotent_and_candidate_work_is_arms_length(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert MigrationRunner(postgres_database).migrate().current_version == 28
+    assert MigrationRunner(postgres_database).migrate().current_version == 29
     config, config_revision, release_digest = _configuration(
         tmp_path / "configuration"
     )
