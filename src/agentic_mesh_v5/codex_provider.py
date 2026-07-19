@@ -4,6 +4,7 @@ from collections.abc import Mapping as RuntimeMapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from glob import escape as escape_glob
 import json
 from pathlib import Path
 from queue import Empty, Queue
@@ -458,12 +459,10 @@ def _rollout_terminal_hint(
         sessions = home / "sessions"
         if not sessions.is_dir():
             return False
-        suffix = f"-{thread_id}.jsonl"
+        pattern = f"rollout-*-{escape_glob(thread_id)}.jsonl"
         try:
-            for path in sessions.rglob("rollout-*.jsonl"):
-                if path.name.endswith(suffix) and _rollout_has_completed_turn(
-                    path, turn_id
-                ):
+            for path in sessions.rglob(pattern):
+                if _rollout_has_completed_turn(path, turn_id):
                     return True
         except OSError:
             return False
