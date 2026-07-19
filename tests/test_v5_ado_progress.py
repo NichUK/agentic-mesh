@@ -105,6 +105,7 @@ class FakeProgressClient:
         self.comments: dict[str, AdoComment] = {}
         self.comment_calls = 0
         self.update_calls: list[tuple[str, str]] = []
+        self.operation_ids: list[str] = []
         self.crash_after_comment = False
         self.crash_after_update = False
         self.fail_comment = False
@@ -152,6 +153,7 @@ class FakeProgressClient:
     ) -> int:
         assert project_id == "alpha" and work_item_id == "mesh-1"
         assert operation_id.startswith("milestone-state:")
+        self.operation_ids.append(operation_id)
         assert actor_id
         if self.manual_state_on_update is not None:
             self.state = self.manual_state_on_update
@@ -304,6 +306,27 @@ def test_crash_after_state_update_resumes_without_duplicate_effects(
     assert len(client.comments) == 1
     assert client.update_calls == [("New", "Active")]
     assert client.state == "Active"
+
+
+def test_maximum_length_milestone_id_uses_bounded_delivery_keys(
+    progress_database: str,
+) -> None:
+    client = FakeProgressClient()
+    publisher = AdoMilestonePublisher(progress_database, client=client)
+
+    result = publisher.publish(
+        _request(
+            1,
+            "start",
+            _evidence("source"),
+            milestone_id="m" * 256,
+        )
+    )
+
+    assert result.status == "published"
+    assert len(next(iter(client.comments))) <= 256
+    assert len(client.operation_ids) == 1
+    assert len(client.operation_ids[0]) <= 256
 
 
 def test_pending_blocks_later_work_and_late_sequence_is_suppressed(

@@ -359,7 +359,7 @@ class AdoMilestonePublisher:
         comment = self._client.comment_once(
             project_id=milestone.project_id,
             work_item_id=milestone.work_item_id,
-            marker=f"milestone.{milestone.milestone_id}.{milestone.fingerprint[:16]}",
+            marker=f"milestone.{milestone.fingerprint}",
             text=_comment_text(milestone),
         )
         disposition = "not-requested"
@@ -377,7 +377,7 @@ class AdoMilestonePublisher:
                     revision = self._client.update_state(
                         project_id=milestone.project_id,
                         work_item_id=milestone.work_item_id,
-                        operation_id=f"milestone-state:{milestone.milestone_id}",
+                        operation_id=f"milestone-state:{milestone.fingerprint}",
                         expected_state=predecessor,
                         target_state=target,
                         actor_id=actor_id,
