@@ -369,9 +369,9 @@ def _reconciled_notifications(
                             event is not None
                             and event.kind is ProviderEventKind.ERROR
                         ):
-                            retrying = bool(
-                                event.error is not None
-                                and event.error.retryable
+                            pending_payload = getattr(pending, "payload", None)
+                            retrying = (
+                                getattr(pending_payload, "will_retry", None) is True
                             )
                         if (
                             event is not None
@@ -393,9 +393,8 @@ def _reconciled_notifications(
                 raise notification
             event = _event(notification, thread_id, turn_id)
             if event is not None and event.kind is ProviderEventKind.ERROR:
-                retrying = bool(
-                    event.error is not None and event.error.retryable
-                )
+                notification_payload = getattr(notification, "payload", None)
+                retrying = getattr(notification_payload, "will_retry", None) is True
             if (
                 event is not None
                 and event.kind is ProviderEventKind.TURN_COMPLETED

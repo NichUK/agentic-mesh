@@ -790,6 +790,87 @@ def test_retryable_interim_failure_waits_for_durable_terminal_state(
     engine.close()
 
 
+def test_non_retried_overloaded_error_does_not_suppress_terminal_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OVERLOADED errors are caller-retryable but must not suppress a genuine
+    terminal turn/completed failure when the SDK did not set will_retry=True."""
+
+    class OwnerClient:
+        def __init__(self) -> None:
+            self._router = SimpleNamespace(_turn_notifications={})
+            self.unregister_count = 0
+
+        def register_turn_notifications(self, turn_id: str) -> None:
+            selected: Queue[object] = Queue()
+            selected.put(
+                _notification(
+                    "turn/started",
+                    SimpleNamespace(
+                        thread_id="thread-1", turn=SimpleNamespace(id=turn_id)
+                    ),
+                )
+            )
+            selected.put(
+                _notification(
+                    "error",
+                    SimpleNamespace(
+                        thread_id="thread-1",
+                        turn_id=turn_id,
+                        error=SimpleNamespace(
+                            message="server overloaded, no retry",
+                            codex_error_info=SimpleNamespace(root="serverOverloaded"),
+                        ),
+                        will_retry=False,
+                    ),
+                )
+            )
+            selected.put(
+                _notification(
+                    "turn/completed",
+                    SimpleNamespace(
+                        thread_id="thread-1",
+                        turn=SimpleNamespace(
+                            id=turn_id,
+                            status="failed",
+                            error=SimpleNamespace(message="terminal failure"),
+                        ),
+                    ),
+                )
+            )
+            self._router._turn_notifications[turn_id] = selected
+
+        def unregister_turn_notifications(self, turn_id: str) -> None:
+            self._router._turn_notifications.pop(turn_id, None)
+            self.unregister_count += 1
+
+    owner = OwnerClient()
+    owner_handle = FakeHandle()
+    owner_handle._client = owner
+    monkeypatch.setattr(codex_provider, "_TURN_STATE_POLL_SECONDS", 0.001)
+    engine = CodexWorkerProvider(
+        sdk_factory=lambda _config: FakeSdk(owner_handle),
+    ).open()
+
+    events = list(
+        engine.start_thread(ThreadRequest(cwd=tmp_path))
+        .start_turn(TurnRequest("work"))
+        .events()
+    )
+
+    assert [event.kind for event in events] == [
+        ProviderEventKind.TURN_STARTED,
+        ProviderEventKind.ERROR,
+        ProviderEventKind.TURN_COMPLETED,
+    ]
+    # The error is OVERLOADED so retryable=True at caller level, but will_retry
+    # was False: the subsequent turn/completed failure must not be suppressed.
+    assert events[1].error is not None and events[1].error.retryable is True
+    assert events[-1].completion is TurnCompletionStatus.FAILED
+    assert owner.unregister_count == 1
+    engine.close()
+
+
 def test_rollout_terminal_hint_requires_exact_thread_and_turn(tmp_path: Path) -> None:
     home = tmp_path / "codex-home"
     sessions = home / "sessions" / "2026" / "07" / "19"
