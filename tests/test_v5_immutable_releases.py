@@ -228,6 +228,26 @@ def test_verified_upgrade_is_durable_and_exact_replay_has_no_side_effects(
     assert release == ("deployed", SOURCE_REVISION, 26, 26)
     assert audit == 1
 
+    with psycopg.connect(postgres_database) as connection:
+        release_id = connection.execute(
+            """
+            SELECT release_id FROM agentic_mesh_v5.project_runtime_releases
+            WHERE project_id='alpha'
+            """
+        ).fetchone()[0]
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with connection.transaction():
+                connection.execute(
+                    """
+                    INSERT INTO agentic_mesh_v5.project_runtime_deployment_attempts
+                        (project_id, operation_id, source_revision,
+                         candidate_release_id, status, started_by)
+                    VALUES ('alpha', 'invalid-rollback-metadata', %s, %s,
+                            'deploying', 'test')
+                    """,
+                    (SOURCE_REVISION, release_id),
+                )
+
 
 def test_preflight_and_schema_failures_never_touch_the_deployment(
     postgres_database: str, release_project: UpgradeRequest

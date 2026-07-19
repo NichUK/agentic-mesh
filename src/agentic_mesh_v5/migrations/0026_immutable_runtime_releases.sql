@@ -53,11 +53,19 @@ CREATE TABLE agentic_mesh_v5.project_runtime_deployment_attempts (
             project_id, release_id
         ) ON DELETE RESTRICT,
     CHECK (
-        (candidate_release_id IS NULL AND previous_image_ref IS NULL)
+        (
+            candidate_release_id IS NULL
+            AND previous_image_ref IS NULL
+            AND previous_minimum_database_version IS NULL
+            AND previous_maximum_database_version IS NULL
+        )
         OR (
             candidate_release_id IS NOT NULL
+            AND previous_image_ref IS NOT NULL
             AND previous_image_ref ~ '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
+            AND previous_minimum_database_version IS NOT NULL
             AND previous_minimum_database_version > 0
+            AND previous_maximum_database_version IS NOT NULL
             AND previous_maximum_database_version
                 >= previous_minimum_database_version
         )
