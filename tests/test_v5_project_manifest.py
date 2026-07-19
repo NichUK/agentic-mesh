@@ -262,7 +262,7 @@ def test_store_keeps_git_snapshot_history_and_enforces_project_claims(
     tmp_path: Path, postgres_database: str
 ):
     status = MigrationRunner(postgres_database).migrate()
-    assert status.current_version == 30
+    assert status.current_version == 31
     with psycopg.connect(postgres_database) as connection:
         connection.execute(
             """

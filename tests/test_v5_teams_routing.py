@@ -172,7 +172,7 @@ def _insert_project(
 
 @pytest.fixture
 def teams_router(postgres_database: str):
-    assert MigrationRunner(postgres_database).migrate().current_version == 30
+    assert MigrationRunner(postgres_database).migrate().current_version == 31
     projects = (
         (
             "alpha",
