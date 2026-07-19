@@ -37,7 +37,10 @@ repair began. The work item remains active and unacknowledged.
 6. Treat each project-scoped worker container as the tooling isolation boundary
    and run Codex with its inner sandbox set to full access. The nested Linux
    `bubblewrap` namespace cannot start inside the deployed worker container and
-   otherwise prevents the agent from calling the durable control API.
+   otherwise prevents the agent from calling the durable control API. A
+   deployment may explicitly select a stricter supported policy through
+   `AGENTIC_MESH_V5_CODEX_SANDBOX`; the value is validated and pinned when the
+   role service starts.
 7. When the pinned Codex SDK does not deliver a terminal notification, poll its
    public `thread/read` state through the existing app-server connection and
    reconcile only the exact turn's terminal status. Continue consuming the SDK
@@ -115,6 +118,7 @@ above is the smallest correction for technical attempt 3.
   record a checkpoint. No progress record or formal technical-attempt-3 outcome
   was created. The BA was stopped before deployment of this repair.
 - Focused provider and real-Postgres role-service verification for the repair is
-  31 passed. The complete V5 suite is 632 passed / 5 environment skips, with
+  34 passed after the reviewed sandbox override. The complete pre-review V5
+  suite is 632 passed / 5 environment skips, with
   the existing Starlette/httpx deprecation warning. A repository-wide run also
   passed every V5 test but retained 11 unrelated V4 baseline failures.

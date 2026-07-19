@@ -58,7 +58,7 @@ def _codex_sandbox_policy() -> SandboxPolicy:
         except ValueError:
             valid = ", ".join(p.value for p in SandboxPolicy)
             raise RoleServiceConfigurationError(
-                f"{_CODEX_SANDBOX_ENV}={value!r} is not valid; expected one of: {valid}"
+                f"{_CODEX_SANDBOX_ENV} must be one of: {valid}"
             ) from None
     return SandboxPolicy.FULL_ACCESS
 
@@ -259,6 +259,7 @@ class RoleService:
             raise RoleServiceConfigurationError("role service configuration is invalid")
         self._database_url = database_url
         self.config = config
+        self._sandbox_policy = _codex_sandbox_policy()
         self._queues = RoleQueueStore(database_url)
         selected_factory = provider_factory or self._codex_provider
         self._pool = WarmEnginePool(selected_factory)
@@ -368,7 +369,7 @@ class RoleService:
                     cwd=workspace,
                     base_instructions=prompt.text,
                     developer_instructions=_operational_instructions(),
-                    sandbox=_codex_sandbox_policy(),
+                    sandbox=self._sandbox_policy,
                 ),
                 operation=lambda thread: self._run_turn(
                     thread, heartbeat, claim, payload_text

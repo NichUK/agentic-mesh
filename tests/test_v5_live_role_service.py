@@ -24,7 +24,12 @@ from agentic_mesh_v5.progress import ProgressDraft, ProgressStore
 from agentic_mesh_v5.prompt_renderer import RenderedRoleStatePrompt
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.reliability import ReliabilityStore
-from agentic_mesh_v5.role_service import RoleService, RoleServiceConfig, RoleServiceConfigurationError, _codex_sandbox_policy
+from agentic_mesh_v5.role_service import (
+    RoleService,
+    RoleServiceConfig,
+    RoleServiceConfigurationError,
+    _codex_sandbox_policy,
+)
 from agentic_mesh_v5.thread_affinity import ThreadAffinityKey, ThreadAffinityStore
 from agentic_mesh_v5.worker_provider import (
     EngineMetadata,
@@ -810,19 +815,28 @@ def test_docker_fleet_stop_timeout_covers_the_configured_grace(tmp_path: Path) -
     )
 
 
-def test_codex_sandbox_policy_defaults_to_full_access(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_codex_sandbox_policy_defaults_to_full_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("AGENTIC_MESH_V5_CODEX_SANDBOX", raising=False)
     assert _codex_sandbox_policy() is SandboxPolicy.FULL_ACCESS
 
 
-def test_codex_sandbox_policy_reads_from_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_codex_sandbox_policy_reads_from_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AGENTIC_MESH_V5_CODEX_SANDBOX", "workspace_write")
     assert _codex_sandbox_policy() is SandboxPolicy.WORKSPACE_WRITE
 
 
-def test_codex_sandbox_policy_rejects_invalid_value(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_codex_sandbox_policy_rejects_invalid_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AGENTIC_MESH_V5_CODEX_SANDBOX", "unknown_policy")
-    with pytest.raises(RoleServiceConfigurationError, match="AGENTIC_MESH_V5_CODEX_SANDBOX"):
+    with pytest.raises(
+        RoleServiceConfigurationError,
+        match="AGENTIC_MESH_V5_CODEX_SANDBOX",
+    ):
         _codex_sandbox_policy()
 
 
