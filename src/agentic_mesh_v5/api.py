@@ -5,6 +5,8 @@ from dataclasses import asdict
 from datetime import datetime
 from functools import partial
 import math
+import os
+from pathlib import Path
 import re
 from typing import Any, Callable, Literal
 import uuid
@@ -30,6 +32,12 @@ from agentic_mesh_v5.dashboard_reads import usage_traffic
 from agentic_mesh_v5.continuation import ContinuationAuthorizationError
 from agentic_mesh_v5.continuation import ContinuationConflict
 from agentic_mesh_v5.continuation import ContinuationMonitor
+from agentic_mesh_v5.config_activation import ConfigActivationError
+from agentic_mesh_v5.config_activation import ConfigActivationStore
+from agentic_mesh_v5.config_promotions import ConfigPromotionConflict
+from agentic_mesh_v5.config_promotions import ConfigPromotionError
+from agentic_mesh_v5.config_promotions import ConfigPromotionNotFound
+from agentic_mesh_v5.config_promotions import ConfigPromotionStore
 from agentic_mesh_v5.document_store import DocumentConflict
 from agentic_mesh_v5.document_store import DocumentNotFound
 from agentic_mesh_v5.document_store import DocumentPermissionDenied
@@ -86,6 +94,7 @@ from agentic_mesh_v5.usage import UsageStore
 
 
 API_PREFIX = "/api/v1"
+CONFIG_ROOT_ENV = "AGENTIC_MESH_V5_CONFIG_ROOT"
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 IDENTIFIER_PATTERN = r"^[A-Za-z0-9._:-]{1,128}$"
 
@@ -734,6 +743,28 @@ class DashboardUsageResponse(ApiModel):
     usage: UsageSummaryResponse
 
 
+class ConfigDraftCreate(ApiModel):
+    draft_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    references: list[str] = Field(min_length=1)
+    expected_active_digest: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+
+
+class ConfigDraftDecision(ApiModel):
+    decision: Literal["approved", "rejected"]
+    rationale: str = Field(min_length=1, max_length=4000)
+
+
+class ConfigDraftActivation(ApiModel):
+    reason: str = Field(default="", max_length=4000)
+
+
+class ConfigRollback(ApiModel):
+    target_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str = Field(min_length=1, max_length=4000)
+
+
 class DomainAvailability(ApiModel):
     domain: str
     status: Literal["planned"]
@@ -790,6 +821,18 @@ class ControlQueries:
         if not records:
             raise LifecycleNotFound("project not found")
         return records[0]
+
+    def is_sponsor(self, project_id: str, subject: str) -> bool:
+        self.project(project_id)
+        return bool(
+            self._all(
+                f"""
+                SELECT sponsor_id FROM {SCHEMA}.project_sponsors
+                WHERE project_id = %s AND sponsor_id = %s
+                """,
+                (project_id, subject),
+            )
+        )
 
     def agents(self, project_id: str) -> dict[str, list[dict[str, Any]]]:
         self.project(project_id)
@@ -880,6 +923,7 @@ def create_app(
     fleet_supervisor: FleetSupervisor | None = None,
     flow_resolver: Callable[[str], FlowDefinition] | None = None,
     document_store_resolver: Callable[[str], DocumentStore] | None = None,
+    config_store_resolver: Callable[[str], ConfigActivationStore] | None = None,
     fleet_reconcile_interval_seconds: float = 5.0,
 ) -> FastAPI:
     if (
@@ -941,6 +985,22 @@ def create_app(
                 "project document store is invalid",
             )
         return GovernanceStore(database_url, documents)
+
+    def configuration_promotions(project_id: str) -> ConfigPromotionStore:
+        if config_store_resolver is None:
+            raise ControlApiError(
+                503,
+                "configuration_repository_unavailable",
+                "external configuration repository is unavailable",
+            )
+        store = config_store_resolver(project_id)
+        if not isinstance(store, ConfigActivationStore):
+            raise ControlApiError(
+                503,
+                "configuration_repository_unavailable",
+                "external configuration repository is invalid",
+            )
+        return ConfigPromotionStore(store, project_id=project_id)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -1101,6 +1161,7 @@ def create_app(
     @app.exception_handler(FlowEngineNotFound)
     @app.exception_handler(GovernanceNotFound)
     @app.exception_handler(DocumentNotFound)
+    @app.exception_handler(ConfigPromotionNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
@@ -1116,6 +1177,9 @@ def create_app(
     @app.exception_handler(FlowEngineConflict)
     @app.exception_handler(GovernanceConflict)
     @app.exception_handler(DocumentConflict)
+    @app.exception_handler(ConfigPromotionConflict)
+    @app.exception_handler(ConfigPromotionError)
+    @app.exception_handler(ConfigActivationError)
     async def conflict(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 409, "conflict", str(exc))
 
@@ -2219,6 +2283,121 @@ def create_app(
     def configuration(project_id: str, identity: Principal = Depends(principal)):
         return records("configuration", project_id, identity)
 
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/configuration/promotion-state",
+        tags=["configuration"],
+    )
+    def configuration_promotion_state(
+        project_id: str, identity: Principal = Depends(principal)
+    ):
+        project_access(identity, project_id, "read")
+        return configuration_promotions(project_id).activation.get_state().to_dict()
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/configuration/drafts",
+        status_code=status.HTTP_201_CREATED,
+        tags=["configuration"],
+    )
+    def create_configuration_draft(
+        project_id: str,
+        payload: ConfigDraftCreate,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        return configuration_promotions(project_id).create(
+            draft_id=payload.draft_id,
+            references=payload.references,
+            expected_active_digest=payload.expected_active_digest,
+            actor=identity.subject,
+        ).to_dict()
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/configuration/drafts/{{draft_id}}",
+        tags=["configuration"],
+    )
+    def get_configuration_draft(
+        project_id: str,
+        draft_id: str,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return configuration_promotions(project_id).get(draft_id).to_dict()
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/configuration/drafts/{{draft_id}}/validate",
+        tags=["configuration"],
+    )
+    def validate_configuration_draft(
+        project_id: str,
+        draft_id: str,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        promotions = configuration_promotions(project_id)
+        draft = promotions.get(draft_id)
+        return promotions.validate(
+            draft_id,
+            actor=identity.subject,
+            sponsor_authored=queries.is_sponsor(project_id, draft.created_by),
+        ).to_dict()
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/configuration/drafts/{{draft_id}}/decision",
+        tags=["configuration"],
+    )
+    def decide_configuration_draft(
+        project_id: str,
+        draft_id: str,
+        payload: ConfigDraftDecision,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        if not queries.is_sponsor(project_id, identity.subject):
+            raise ControlApiError(
+                403, "sponsor_required", "configuration decision requires a sponsor"
+            )
+        return configuration_promotions(project_id).decide(
+            draft_id,
+            sponsor_id=identity.subject,
+            decision=payload.decision,
+            rationale=payload.rationale,
+        ).to_dict()
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/configuration/drafts/{{draft_id}}/activate",
+        tags=["configuration"],
+    )
+    def activate_configuration_draft(
+        project_id: str,
+        draft_id: str,
+        payload: ConfigDraftActivation,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        return configuration_promotions(project_id).activate(
+            draft_id, actor=identity.subject, reason=payload.reason
+        ).to_dict()
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/configuration/rollback",
+        tags=["configuration"],
+    )
+    def rollback_configuration(
+        project_id: str,
+        payload: ConfigRollback,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        if not queries.is_sponsor(project_id, identity.subject):
+            raise ControlApiError(
+                403, "sponsor_required", "configuration rollback requires a sponsor"
+            )
+        return configuration_promotions(project_id).rollback(
+            payload.target_digest,
+            sponsor_id=identity.subject,
+            reason=payload.reason,
+        ).to_dict()
+
     @app.get(f"{API_PREFIX}/projects/{{project_id}}/audit", response_model=RecordsResponse, tags=["audit"])
     def audit(project_id: str, identity: Principal = Depends(principal)):
         return records("audit", project_id, identity)
@@ -2428,8 +2607,16 @@ def create_app(
 
 
 def app_from_environment() -> FastAPI:
+    root = os.environ.get(CONFIG_ROOT_ENV, "").strip()
+    resolver = (
+        None
+        if not root
+        else lambda _project_id: ConfigActivationStore(Path(root))
+    )
     return create_app(
-        database_url_from_environment(), telemetry=telemetry_from_environment()
+        database_url_from_environment(),
+        telemetry=telemetry_from_environment(),
+        config_store_resolver=resolver,
     )
 
 

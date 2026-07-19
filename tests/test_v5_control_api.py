@@ -18,6 +18,7 @@ from agentic_mesh_v5.api import API_PREFIX
 from agentic_mesh_v5.api import create_app
 from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
 from agentic_mesh_v5.api_auth import TokenAuthorizer
+from agentic_mesh_v5.config_activation import ConfigActivationStore
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
 from agentic_mesh_v5.dashboard_reads import instance_traffic
@@ -1206,3 +1207,118 @@ def test_dashboard_reads_are_scoped_bounded_and_attention_first(
     assert len(audit.json()["items"]) == 500
     assert forbidden.status_code == 403
     assert unbounded.status_code == 422
+
+
+def test_configuration_promotion_api_enforces_sponsor_decisions_and_rollback(
+    api_database: tuple[str, TestClient], tmp_path: Path
+) -> None:
+    database_url, unavailable_client = api_database
+    schema = tmp_path / "schemas" / "package.schema.json"
+    schema.parent.mkdir(parents=True)
+    schema.write_text("{}\n", encoding="utf-8")
+    for version, workers in (("1.0.0", 1), ("2.0.0", 2)):
+        package = tmp_path / "packages" / "system" / "core" / version
+        package.mkdir(parents=True)
+        (package / "settings.json").write_text(
+            json.dumps({"workers": workers}) + "\n", encoding="utf-8"
+        )
+        (package / "package.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "id": "core",
+                    "kind": "system",
+                    "version": version,
+                    "content": ["settings.json"],
+                    "dependencies": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    activation = ConfigActivationStore(tmp_path)
+    client = TestClient(
+        create_app(
+            database_url,
+            authorizer=_authorizer(),
+            config_store_resolver=lambda _project_id: activation,
+        )
+    )
+    alpha = _headers("alpha")
+    operator = _headers("operator")
+
+    first = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts",
+        headers=alpha,
+        json={
+            "draft_id": "sponsor-draft",
+            "references": ["system/core@1.0.0"],
+            "expected_active_digest": None,
+        },
+    )
+    validated = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts/sponsor-draft/validate",
+        headers=alpha,
+    )
+    activated = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts/sponsor-draft/activate",
+        headers=alpha,
+        json={"reason": "Sponsor-authored change"},
+    )
+    first_digest = activated.json()["validation"]["digest"]
+    second = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts",
+        headers=operator,
+        json={
+            "draft_id": "operator-draft",
+            "references": ["system/core@2.0.0"],
+            "expected_active_digest": first_digest,
+        },
+    )
+    pending = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts/operator-draft/validate",
+        headers=alpha,
+    )
+    forbidden_decision = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts/operator-draft/decision",
+        headers=operator,
+        json={"decision": "approved", "rationale": "self approve"},
+    )
+    approved = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts/operator-draft/decision",
+        headers=alpha,
+        json={"decision": "approved", "rationale": "Sponsor reviewed diff"},
+    )
+    promoted = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts/operator-draft/activate",
+        headers=operator,
+        json={"reason": "Approved change"},
+    )
+    rollback = client.post(
+        f"{API_PREFIX}/projects/alpha/configuration/rollback",
+        headers=alpha,
+        json={"target_digest": first_digest, "reason": "Acceptance rollback"},
+    )
+    foreign = client.get(
+        f"{API_PREFIX}/projects/alpha/configuration/drafts/operator-draft",
+        headers=_headers("bravo"),
+    )
+    unavailable = unavailable_client.get(
+        f"{API_PREFIX}/projects/alpha/configuration/promotion-state",
+        headers=alpha,
+    )
+
+    assert first.status_code == 201
+    assert validated.json()["status"] == "approved"
+    assert validated.json()["decision"]["implicit"] is True
+    assert validated.json()["validation"]["diff"]
+    assert activated.json()["status"] == "activated"
+    assert second.status_code == 201
+    assert pending.json()["status"] == "pending_approval"
+    assert forbidden_decision.status_code == 403
+    assert approved.json()["status"] == "approved"
+    assert promoted.json()["status"] == "activated"
+    assert rollback.json()["active_digest"] == first_digest
+    assert foreign.status_code == 403
+    assert unavailable.status_code == 503
+    assert activation.get_release(first_digest).digest == first_digest
