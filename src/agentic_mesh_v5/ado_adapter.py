@@ -203,7 +203,9 @@ class ProjectAdoAdapter:
         operation_id = _external_id(operation_id, "operation_id")
         actor_id = _external_id(actor_id, "actor_id")
         requested = _requested_fields(fields)
-        expected = _requested_fields(expected_fields or {}, allow_empty=True)
+        expected = _requested_fields(
+            expected_fields or {}, allow_empty_mapping=True
+        )
         digest_payload: Mapping[str, object] = requested
         if expected:
             digest_payload = {"requested": requested, "expected": expected}
@@ -821,9 +823,9 @@ class ProjectAdoAdapter:
 
 
 def _requested_fields(
-    value: object, *, allow_empty: bool = False
+    value: object, *, allow_empty_mapping: bool = False
 ) -> dict[str, str]:
-    if not isinstance(value, Mapping) or (not value and not allow_empty):
+    if not isinstance(value, Mapping) or (not value and not allow_empty_mapping):
         raise ValueError("fields must be a non-empty mapping")
     normalized: dict[str, str] = {}
     for name, field_value in value.items():
