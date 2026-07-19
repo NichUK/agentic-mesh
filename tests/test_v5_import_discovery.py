@@ -287,6 +287,32 @@ def test_conflicting_ids_and_locators_are_reported_after_all_sources_are_tried()
     assert len(report.results) == 3
 
 
+def test_source_identifier_conflicts_across_source_kinds() -> None:
+    store = _PagedDocumentStore({"": ()})
+    report = ProjectImportDiscovery(
+        repositories=_RepositoryAdapter(),
+        documents={"onedrive": DocumentTreeDiscovery(lambda _: store)},
+    ).discover(
+        ImportDiscoveryRequest(
+            None,
+            None,
+            repositories=(_repository("shared"),),
+            document_roots=(_documents("shared"),),
+            bindings=(BindingSource("shared", "teams", "tenant|team"),),
+        )
+    )
+
+    assert report.attempted_all is True
+    assert report.complete is False
+    conflicts = [issue for issue in report.issues if issue.code == "source-id-conflict"]
+    assert len(conflicts) == 3
+    assert {issue.source_kind for issue in conflicts} == {
+        "repository",
+        "document-root",
+        "binding",
+    }
+
+
 def test_observed_default_branch_conflict_makes_report_incomplete() -> None:
     report = ProjectImportDiscovery(
         repositories=_RepositoryAdapter(),

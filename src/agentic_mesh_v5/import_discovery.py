@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
@@ -395,8 +396,12 @@ class DocumentTreeDiscovery:
                         ):
                             latest = item.modified_at
                         if self._sample_size:
-                            samples.append(item.path)
-                            samples = sorted(set(samples))[: self._sample_size]
+                            position = bisect_left(samples, item.path)
+                            if len(samples) < self._sample_size:
+                                samples.insert(position, item.path)
+                            elif position < self._sample_size:
+                                samples.insert(position, item.path)
+                                samples.pop()
                     if not complete or page.next_cursor is None:
                         break
                     if page.next_cursor in seen_cursors:
@@ -577,22 +582,33 @@ class ProjectImportDiscovery:
             ),
         ]
         issues: list[DiscoveryIssue] = []
-        for position, label in ((1, "source-id-conflict"), (2, "locator-conflict")):
-            groups: dict[tuple[str, str], list[str]] = {}
-            for kind, source_id, locator in declarations:
-                value = source_id if position == 1 else locator
-                groups.setdefault((kind, value), []).append(source_id)
-            for (kind, _), source_ids in groups.items():
-                if len(source_ids) > 1:
-                    for source_id in source_ids:
-                        issues.append(
-                            DiscoveryIssue(
-                                label,
-                                kind,
-                                source_id,
-                                "source declaration conflicts with another declaration",
-                            )
-                        )
+        identifiers: dict[str, list[tuple[str, str]]] = {}
+        locators: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        for kind, source_id, locator in declarations:
+            identifiers.setdefault(source_id, []).append((kind, source_id))
+            locators.setdefault((kind, locator), []).append((kind, source_id))
+        for declarations_with_id in identifiers.values():
+            if len(declarations_with_id) > 1:
+                issues.extend(
+                    DiscoveryIssue(
+                        "source-id-conflict",
+                        kind,
+                        source_id,
+                        "source declaration conflicts with another declaration",
+                    )
+                    for kind, source_id in declarations_with_id
+                )
+        for declarations_with_locator in locators.values():
+            if len(declarations_with_locator) > 1:
+                issues.extend(
+                    DiscoveryIssue(
+                        "locator-conflict",
+                        kind,
+                        source_id,
+                        "source declaration conflicts with another declaration",
+                    )
+                    for kind, source_id in declarations_with_locator
+                )
         return issues
 
     @staticmethod
