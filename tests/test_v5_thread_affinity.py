@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -1117,6 +1118,37 @@ def test_stale_operation_claim_cannot_release_current_claim(
     assert binding is not None
     assert binding.active_operation_id == current.operation_id
     store.release_operation(current)
+
+
+def test_only_a_newer_lease_for_an_authorized_role_instance_releases_an_operation(
+    affinity_database: tuple[str, ThreadAffinityStore],
+) -> None:
+    _database_url, store = affinity_database
+    store.bind_or_read(
+        KEY,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest=DIGEST_A,
+        create_thread=lambda: "thread-one",
+    )
+    claim = store.claim_operation(
+        KEY, instance_id="engineering-1", prompt_digest=DIGEST_A
+    )
+    started = datetime.fromisoformat(claim.started_at)
+    assert store.release_superseded_operation(
+        KEY,
+        instance_id="engineering-1",
+        prompt_digest=DIGEST_A,
+        superseded_before=(started - timedelta(seconds=1)).isoformat(),
+    ) is False
+    assert store.release_superseded_operation(
+        KEY,
+        instance_id="engineering-2",
+        prompt_digest=DIGEST_A,
+        superseded_before=(started + timedelta(seconds=1)).isoformat(),
+    ) is True
+    binding = store.read(KEY)
+    assert binding is not None and binding.active_operation_id is None
 
 
 def test_existing_unpinned_binding_requires_explicit_reseed(

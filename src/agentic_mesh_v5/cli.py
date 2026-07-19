@@ -179,6 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     role_service.add_argument("--lease-seconds", type=int, default=120)
     role_service.add_argument("--heartbeat-seconds", type=int, default=30)
+    role_service.add_argument("--turn-timeout-seconds", type=int, default=900)
     role_service.add_argument("--poll-seconds", type=float, default=2.0)
     role_service.add_argument(
         "--once", action="store_true", help="process at most one queue item"
@@ -521,6 +522,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     source_repositories_file=args.source_repositories.resolve(),
                     lease_seconds=args.lease_seconds,
                     heartbeat_seconds=args.heartbeat_seconds,
+                    turn_timeout_seconds=args.turn_timeout_seconds,
                     poll_seconds=args.poll_seconds,
                 ),
             )

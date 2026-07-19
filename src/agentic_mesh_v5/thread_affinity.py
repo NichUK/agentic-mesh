@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import re
 from typing import Callable, TypeVar
 from uuid import uuid4
@@ -441,6 +442,59 @@ class ThreadAffinityStore:
                     raise ThreadAffinityBusy(
                         "thread operation claim is no longer current"
                     )
+        except ThreadAffinityError:
+            raise
+        except Exception:
+            raise ThreadAffinityError(_STORE_ERROR) from None
+
+    def release_superseded_operation(
+        self,
+        key: ThreadAffinityKey,
+        *,
+        instance_id: str,
+        prompt_digest: str,
+        superseded_before: str,
+    ) -> bool:
+        """Release a role operation only when a newer queue lease supersedes it."""
+        key = _key(key)
+        instance_id = _required(instance_id, "instance_id")
+        prompt_digest = _digest(prompt_digest)
+        try:
+            boundary = datetime.fromisoformat(superseded_before)
+        except (TypeError, ValueError):
+            raise ValueError("superseded_before must be an ISO timestamp") from None
+        if boundary.tzinfo is None or boundary.utcoffset() is None:
+            raise ValueError("superseded_before must include a timezone")
+        try:
+            with psycopg.connect(self._database_url, connect_timeout=5) as connection:
+                if not self._authorized(connection, key, instance_id):
+                    raise ThreadAffinityAuthorizationError(
+                        "role instance is not authorized for thread affinity"
+                    )
+                row = connection.execute(
+                    f"""
+                    UPDATE {SCHEMA}.thread_affinities
+                    SET active_operation_id = NULL,
+                        active_instance_id = NULL,
+                        active_started_at = NULL,
+                        updated_at = clock_timestamp()
+                    WHERE project_id = %s AND work_item_id = %s
+                      AND role_id = %s AND conversation_id = %s
+                      AND prompt_digest = %s
+                      AND active_operation_id IS NOT NULL
+                      AND active_started_at < %s
+                    RETURNING 1
+                    """,
+                    (
+                        key.project_id,
+                        key.work_item_id,
+                        key.role_id,
+                        key.conversation_id,
+                        prompt_digest,
+                        boundary,
+                    ),
+                ).fetchone()
+                return row is not None
         except ThreadAffinityError:
             raise
         except Exception:

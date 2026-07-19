@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 from threading import Event, Lock, Thread
+from time import monotonic
 from typing import Callable, Literal, Mapping
 
 import psycopg
@@ -56,6 +57,7 @@ class RoleServiceConfig:
     source_repositories_file: Path
     lease_seconds: int = 120
     heartbeat_seconds: int = 30
+    turn_timeout_seconds: int = 900
     poll_seconds: float = 2.0
 
     def __post_init__(self) -> None:
@@ -85,6 +87,13 @@ class RoleServiceConfig:
             or self.heartbeat_seconds * 2 >= self.lease_seconds
         ):
             raise RoleServiceConfigurationError("heartbeat_seconds is invalid")
+        if (
+            isinstance(self.turn_timeout_seconds, bool)
+            or not isinstance(self.turn_timeout_seconds, int)
+            or self.turn_timeout_seconds < 1
+            or self.turn_timeout_seconds > 14_400
+        ):
+            raise RoleServiceConfigurationError("turn_timeout_seconds is invalid")
         if (
             isinstance(self.poll_seconds, bool)
             or not isinstance(self.poll_seconds, (int, float))
@@ -133,9 +142,12 @@ class _LeaseHeartbeat:
         self._claim = claim
         self._config = config
         self._stop = Event()
+        self._wake = Event()
         self._lock = Lock()
         self._turn: WorkerTurn | None = None
+        self._turn_deadline: float | None = None
         self.error: Exception | None = None
+        self.failure_reason: str | None = None
         self._thread = Thread(target=self._run, name=f"lease-{claim.lease_id}", daemon=True)
 
     def start(self) -> None:
@@ -144,15 +156,41 @@ class _LeaseHeartbeat:
     def watch(self, turn: WorkerTurn) -> None:
         with self._lock:
             self._turn = turn
+            self._turn_deadline = monotonic() + self._config.turn_timeout_seconds
+        self._wake.set()
 
     def close(self) -> None:
         self._stop.set()
+        self._wake.set()
         self._thread.join(timeout=max(5, self._config.heartbeat_seconds + 1))
         if self._thread.is_alive() and self.error is None:
             self.error = RoleServiceError("lease heartbeat did not stop")
 
     def _run(self) -> None:
-        while not self._stop.wait(self._config.heartbeat_seconds):
+        next_heartbeat = monotonic() + self._config.heartbeat_seconds
+        while not self._stop.is_set():
+            with self._lock:
+                deadline = self._turn_deadline
+            wake_at = next_heartbeat if deadline is None else min(next_heartbeat, deadline)
+            self._wake.wait(max(0.0, wake_at - monotonic()))
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+            now = monotonic()
+            with self._lock:
+                deadline = self._turn_deadline
+                turn = self._turn
+            if deadline is not None and now >= deadline:
+                self.error = RoleServiceError("provider turn timed out")
+                self.failure_reason = "provider-turn-timeout"
+                if turn is not None:
+                    try:
+                        turn.interrupt()
+                    except Exception:
+                        pass
+                return
+            if now < next_heartbeat:
+                continue
             try:
                 self._queues.heartbeat(
                     project_id=self._claim.project_id,
@@ -160,10 +198,10 @@ class _LeaseHeartbeat:
                     lease_token=self._claim.lease_token,
                     lease_seconds=self._config.lease_seconds,
                 )
+                next_heartbeat = monotonic() + self._config.heartbeat_seconds
             except Exception as exc:
                 self.error = exc
-                with self._lock:
-                    turn = self._turn
+                self.failure_reason = "lease-heartbeat-failed"
                 if turn is not None:
                     try:
                         turn.interrupt()
@@ -191,9 +229,8 @@ class RoleService:
         self._queues = RoleQueueStore(database_url)
         selected_factory = provider_factory or self._codex_provider
         self._pool = WarmEnginePool(selected_factory)
-        self._affinity = ThreadAffinityCoordinator(
-            ThreadAffinityStore(database_url), self._pool
-        )
+        self._affinity_store = ThreadAffinityStore(database_url)
+        self._affinity = ThreadAffinityCoordinator(self._affinity_store, self._pool)
         self._workspace_resolver = workspace_resolver or self._prepare_workspace
         self._prompt_resolver = prompt_resolver or (
             lambda role, flow, state: render_role_state_prompt(
@@ -256,6 +293,12 @@ class RoleService:
                 self.config.role_id,
                 conversation,
             )
+            self._affinity_store.release_superseded_operation(
+                key,
+                instance_id=self.config.instance_id,
+                prompt_digest=prompt.digest,
+                superseded_before=claim.acquired_at,
+            )
             completed = self._affinity.run(
                 key,
                 instance_id=self.config.instance_id,
@@ -271,7 +314,7 @@ class RoleService:
             )
             heartbeat.close()
             if heartbeat.error is not None:
-                reason = "lease-heartbeat-failed"
+                reason = heartbeat.failure_reason or "lease-heartbeat-failed"
                 return self._release(claim, reason)
             after = self._progress_cursor(claim.queue_item.work_item_id)
             if not completed:

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from threading import Event
 import time
 import uuid
 from urllib.parse import urlsplit, urlunsplit
@@ -23,6 +24,7 @@ from agentic_mesh_v5.progress import ProgressDraft, ProgressStore
 from agentic_mesh_v5.prompt_renderer import RenderedRoleStatePrompt
 from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.role_service import RoleService, RoleServiceConfig
+from agentic_mesh_v5.thread_affinity import ThreadAffinityKey, ThreadAffinityStore
 from agentic_mesh_v5.worker_provider import (
     EngineMetadata,
     ProviderEvent,
@@ -187,6 +189,34 @@ class _Turn:
         pass
 
 
+class _BlockingTurn:
+    def __init__(self, thread_id: str) -> None:
+        self.thread_id = thread_id
+        self.turn_id = f"turn-{uuid.uuid4().hex}"
+        self.interrupted = Event()
+
+    def events(self):
+        self.interrupted.wait(timeout=10)
+        yield ProviderEvent(
+            ProviderEventKind.TURN_COMPLETED,
+            self.thread_id,
+            self.turn_id,
+            completion=TurnCompletionStatus.INTERRUPTED,
+        )
+
+    def interrupt(self) -> None:
+        self.interrupted.set()
+
+
+class _BlockingThread:
+    def __init__(self, thread_id: str, turn: _BlockingTurn) -> None:
+        self.thread_id = thread_id
+        self._turn = turn
+
+    def start_turn(self, _request):
+        return self._turn
+
+
 class _Thread:
     def __init__(self, thread_id: str, effect) -> None:
         self.thread_id = thread_id
@@ -217,6 +247,16 @@ class _Engine:
         self.closed += 1
 
 
+class _BlockingEngine(_Engine):
+    def __init__(self) -> None:
+        super().__init__(lambda _turn: None)
+        self.turn = _BlockingTurn("thread-1")
+
+    def start_thread(self, _request):
+        self.created_threads.append("thread-1")
+        return _BlockingThread("thread-1", self.turn)
+
+
 class _Provider:
     provider_id = "fake"
 
@@ -236,6 +276,7 @@ def _service(
     *,
     lease_seconds: int = 120,
     heartbeat_seconds: int = 30,
+    turn_timeout_seconds: int = 900,
 ) -> RoleService:
     sources = tmp_path / "sources.json"
     sources.write_text(
@@ -255,6 +296,7 @@ def _service(
             source_repositories_file=sources,
             lease_seconds=lease_seconds,
             heartbeat_seconds=heartbeat_seconds,
+            turn_timeout_seconds=turn_timeout_seconds,
         ),
         provider_factory=lambda _key: provider,
         workspace_resolver=lambda _project, _work, _actor: tmp_path,
@@ -320,6 +362,82 @@ def test_role_service_releases_completed_turn_without_durable_effect(
         .status
         == "ready"
     )
+
+
+def test_role_service_interrupts_a_provider_turn_at_the_configured_timeout(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    _seed(postgres_database, ("work-1",))
+    engine = _BlockingEngine()
+    service = _service(
+        tmp_path,
+        postgres_database,
+        _Provider(engine),
+        lease_seconds=30,
+        heartbeat_seconds=5,
+        turn_timeout_seconds=1,
+    )
+    started = time.monotonic()
+    try:
+        result = service.run_once()
+    finally:
+        service.close()
+    assert time.monotonic() - started < 5
+    assert result.status == "released"
+    assert result.reason == "provider-turn-timeout"
+    assert engine.turn.interrupted.is_set()
+    binding = ThreadAffinityStore(postgres_database).read(
+        ThreadAffinityKey("alpha", "work-1", "engineering", "delivery")
+    )
+    assert binding is not None and binding.active_operation_id is None
+
+
+def test_role_service_reclaims_only_an_operation_superseded_by_its_new_lease(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    _seed(postgres_database, ("work-1",))
+    key = ThreadAffinityKey("alpha", "work-1", "engineering", "delivery")
+    affinity = ThreadAffinityStore(postgres_database)
+    affinity.bind_or_read(
+        key,
+        instance_id="engineering-1",
+        provider_id="fake",
+        prompt_digest="c" * 64,
+        create_thread=lambda: "old-thread",
+    )
+    affinity.claim_operation(
+        key, instance_id="engineering-1", prompt_digest="c" * 64
+    )
+
+    def effect(turn_id: str) -> None:
+        ProgressStore(postgres_database).record(
+            ProgressDraft(
+                project_id="alpha",
+                work_item_id="work-1",
+                role_instance_id="engineering-1",
+                checkpoint_id=turn_id,
+                expected_previous_sequence=0,
+                status="in_progress",
+                goal="Recover the superseded turn",
+                step="Resume the durable thread",
+                completed_action="Released the operation owned by the expired lease",
+                activity=None,
+                blocker=None,
+                next_action="Continue the flow",
+                safe_summary="The newer lease resumed the existing thread safely.",
+            )
+        )
+
+    engine = _Engine(effect)
+    service = _service(tmp_path, postgres_database, _Provider(engine))
+    try:
+        result = service.run_once()
+    finally:
+        service.close()
+    assert result.status == "completed"
+    assert engine.resumed_threads == ["old-thread"]
+    binding = affinity.read(key)
+    assert binding is not None and binding.active_operation_id is None
 
 
 def test_role_service_heartbeats_a_long_turn(
