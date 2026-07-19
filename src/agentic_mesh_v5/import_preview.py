@@ -562,16 +562,18 @@ class ImportPreviewStore:
         if decision is None or decision.decision != "approved":
             raise ImportPreviewConflict("exact preview revision is not sponsor approved")
         existing = connection.execute(
-            f"SELECT revision, operation_id, status, receipt "
+            f"SELECT revision, operation_id, status, receipt, requested_by "
             f"FROM {SCHEMA}.project_import_activations "
             "WHERE import_id = %s FOR UPDATE",
             (import_id,),
         ).fetchone()
+        request_actor_id = actor_id
         if existing is not None:
             if existing[0] != revision or existing[1] != operation_id:
                 raise ImportPreviewConflict("import already has another activation")
+            request_actor_id = existing[4]
             if existing[2] == "activated":
-                return self._request(preview, operation_id, actor_id, connection), (
+                return self._request(preview, operation_id, request_actor_id, connection), (
                     _receipt_from_dict(existing[3])
                 )
         else:
@@ -592,7 +594,7 @@ class ImportPreviewStore:
             "WHERE import_id = %s",
             (import_id,),
         )
-        return self._request(preview, operation_id, actor_id, connection), None
+        return self._request(preview, operation_id, request_actor_id, connection), None
 
     def _request(self, preview, operation_id, actor_id, connection):
         manifest = validate_project_manifest(dict(preview.manifest_snapshot))

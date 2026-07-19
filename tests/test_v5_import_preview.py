@@ -349,12 +349,18 @@ def _approved(context):
     return preview
 
 
-def _activate(context, preview, activator, operation_id="activate-1"):
+def _activate(
+    context,
+    preview,
+    activator,
+    operation_id="activate-1",
+    actor_id="project-manager",
+):
     return context["store"].activate(
         import_id=preview.import_id,
         revision=preview.revision,
         operation_id=operation_id,
-        actor_id="project-manager",
+        actor_id=actor_id,
         activator=activator,
     )
 
@@ -412,6 +418,20 @@ def test_failed_activation_resumes_same_operation_without_terminal_state(
             """,
             (preview.import_id,),
         ).fetchone() == ("activated", 2, None)
+
+
+def test_failed_activation_resume_reuses_original_request_actor(ready_import) -> None:
+    preview = _approved(ready_import)
+    activator = _Activator(fail_once=True)
+
+    with pytest.raises(ImportActivationError, match="adapter failed"):
+        _activate(ready_import, preview, activator, actor_id="project-manager")
+    _activate(ready_import, preview, activator, actor_id="release-operator")
+
+    assert [request.requested_by for request in activator.calls] == [
+        "project-manager",
+        "project-manager",
+    ]
 
 
 def test_concurrent_duplicate_activation_calls_adapter_once(ready_import) -> None:
