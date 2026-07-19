@@ -252,8 +252,8 @@ above is the smallest correction for technical attempt 3.
   multi-invocation totals and no longer raise `UsageConflict`. Every repaired
   route reached durable queue completion after its attributable checkpoint.
 - Reliability incident `incident-87412104291fd93467199a4d188386c5` is
-  durably `recovered`: technical attempts 1 through 3 remain failed and PM
-  correction attempt 1 is recorded succeeded with exact revision, image,
+  durably `recovered`: technical attempts 1 through 3 remain failed, and PM
+  correction attempt 1 is recorded as succeeded with exact revision, image,
   test, health, route and progress evidence.
 - The work correctly remains in `business_analysis`. Its artifact,
   consultation and owner-review obligations are pending because the existing

@@ -1526,9 +1526,9 @@ or `release_review`.
   source on attempt 7. All routes for `amv5-live-001` are completed; no ready
   or leased item remains.
 - Reliability incident `incident-87412104291fd93467199a4d188386c5` is
-  formally `recovered`. PM correction attempt 1 is succeeded with exact commit,
-  image digest, test, health, route and progress evidence. No technical failure
-  history was rewritten.
+  formally `recovered`. PM correction attempt 1 is recorded as succeeded with
+  exact commit, image digest, test, health, route and progress evidence. No
+  technical failure history was rewritten.
 - The work remains active in `business_analysis` by design. The existing brief
   at `work-items/amv5-live-001/010-business-analysis.md` withholds owner review
   and Product Manager handoff pending seven material sponsor decisions about
