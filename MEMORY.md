@@ -1228,3 +1228,10 @@ or `release_review`.
 - AMV5-056 adds authorized portfolio, work, fleet, usage, recovery, and audit APIs.
 - Traffic lights use deterministic stored-fact rules and stable reason codes; work,
   recovery, and audit collections are bounded for large projects.
+
+## 2026-07-19 V5 Configuration Promotion API
+
+- AMV5-057 exposes external package-composition drafts, deterministic validation/diff,
+  sponsor decisions, immutable release activation, and sponsor rollback through `/api/v1`.
+- Sponsor authorship—not the validating operator—controls implicit approval; activation
+  resumes safely if the pointer moved before its draft checkpoint was written.
