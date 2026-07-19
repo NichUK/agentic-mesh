@@ -1487,3 +1487,28 @@ or `release_review`.
 - Verification is 40 focused provider/live-role tests against real Postgres and
   96 passed tests in the affected release batch, with only the existing
   Starlette/httpx warning. The change removes 23 production lines.
+
+## 2026-07-19 V5 Cumulative Turn Usage Finding
+
+- Merge `5de1264e2ceb78a5e39293397ac52ce71e701d17` is deployed across the
+  control plane and all 16 role containers. Exact rollout completion and fresh
+  terminal observation now work, but a subsequent durable usage write raises
+  `UsageConflict` and causes the role service to release the lease.
+- Content-free database and rollout evidence shows that Codex emits one `last`
+  usage breakdown per internal model invocation. Within the same outer turn,
+  input tokens increased while output and reasoning tokens decreased between
+  two valid invocation observations. Those records are increments, not
+  cumulative turn counters.
+- Acceptance for branch `codex/v5-cumulative-turn-usage` is to normalize Codex
+  increments into monotonic cumulative product-turn usage before persistence,
+  retain exact totals across multiple invocations, keep identical replay
+  idempotency and genuine ownership/decrease conflicts, and leave terminal and
+  delivery semantics unchanged. No prompt or response content is inspected.
+- PM and BA remain stopped. PM correction attempt 1 and BA correction route
+  `route-851759e1ddfaad93e6825bc1dbf17cf0` remain durable; no reliability
+  outcome or sponsor decision has been fabricated.
+- The implemented normalization subtracts a per-turn baseline from Codex's
+  monotonic thread-total snapshot. A replayed snapshot therefore remains the
+  same cumulative observation rather than being counted twice. Verification is
+  70 focused tests with one environment-only skip and 97 passed tests in the
+  affected V5 batch; the only warning is the existing Starlette/httpx warning.
