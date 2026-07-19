@@ -96,7 +96,7 @@ class D8AProxy:
             raise D8AProxyError(413, "d8a_request_too_large", "D8Aroom request is too large")
 
         headers = {
-            "accept": "application/json",
+            "accept": "*/*" if response_mode == "stream" else "application/json",
             "x-ms-client-principal": _principal_header(principal),
             "x-agentic-mesh-project-id": project_id,
             "x-correlation-id": request_id,

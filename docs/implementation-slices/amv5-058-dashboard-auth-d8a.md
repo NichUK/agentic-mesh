@@ -36,7 +36,8 @@ manifest is the authority for the D8Aroom root IDs available inside that project
 ## External configuration
 
 The API selects Entra authentication when any Entra setting is present and requires all
-three together:
+three together. A partial Entra deployment fails closed at startup; it never silently
+falls back to a bootstrap token:
 
 - `AGENTIC_MESH_V5_ENTRA_TENANT_ID`
 - `AGENTIC_MESH_V5_ENTRA_AUDIENCE`

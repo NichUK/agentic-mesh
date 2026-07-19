@@ -959,15 +959,20 @@ def create_app(
     dashboard_reads = DashboardReadStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
     selected_d8a_proxy = d8a_proxy
-    if selected_d8a_proxy is None and os.environ.get(
-        "AGENTIC_MESH_V5_D8A_BASE_URL", ""
-    ).strip():
+    d8a_base_url = os.environ.get("AGENTIC_MESH_V5_D8A_BASE_URL", "").strip()
+    d8a_tenant_slug = os.environ.get(
+        "AGENTIC_MESH_V5_D8A_TENANT_SLUG", ""
+    ).strip()
+    if selected_d8a_proxy is None and d8a_base_url:
+        if not d8a_tenant_slug:
+            raise ValueError(
+                "AGENTIC_MESH_V5_D8A_TENANT_SLUG is required when "
+                "AGENTIC_MESH_V5_D8A_BASE_URL is configured"
+            )
         selected_d8a_proxy = D8AProxy(
             manifest_store=ProjectManifestStore(database_url),
-            base_url=os.environ["AGENTIC_MESH_V5_D8A_BASE_URL"].strip(),
-            tenant_slug=os.environ.get(
-                "AGENTIC_MESH_V5_D8A_TENANT_SLUG", ""
-            ).strip(),
+            base_url=d8a_base_url,
+            tenant_slug=d8a_tenant_slug,
             tenant_id=os.environ.get("AGENTIC_MESH_V5_D8A_TENANT_ID", "").strip()
             or None,
         )

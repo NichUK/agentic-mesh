@@ -14,6 +14,8 @@ import pytest
 
 from agentic_mesh_v5.api import API_PREFIX, create_app
 from agentic_mesh_v5.api_auth import EntraAuthorizer, Principal, TokenAuthorizer
+from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
+from agentic_mesh_v5.api_auth import authorizer_from_environment
 from agentic_mesh_v5.d8a_proxy import D8AProxy, D8AProxyError, D8AProxyResult
 
 
@@ -132,6 +134,15 @@ def test_entra_app_roles_have_exact_mesh_permissions(role: str, scopes: set[str]
     assert principal.scopes == scopes
 
 
+def test_partial_entra_environment_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENTIC_MESH_V5_ENTRA_TENANT_ID", TENANT_ID)
+    monkeypatch.delenv("AGENTIC_MESH_V5_ENTRA_AUDIENCE", raising=False)
+    monkeypatch.delenv("AGENTIC_MESH_V5_ENTRA_BINDINGS_FILE", raising=False)
+
+    with pytest.raises(AuthenticationConfigurationError, match="required together"):
+        authorizer_from_environment()
+
+
 class _ManifestStore:
     def __init__(self, roots: tuple[str, ...]) -> None:
         self._roots = roots
@@ -237,7 +248,8 @@ async def _d8a_proxy_streams_document_content() -> None:
             yield b"document-"
             yield b"bytes"
 
-    async def handler(_request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept"] == "*/*"
         return httpx.Response(
             200, stream=Stream(), headers={"content-type": "application/pdf"}
         )
@@ -325,3 +337,16 @@ def test_d8a_api_enforces_project_roles_without_forwarding_access_token() -> Non
     assert proxy.calls[0]["principal"].subject == "viewer"
     assert denied.status_code == 403
     assert len(proxy.calls) == 1
+
+
+def test_d8a_environment_requires_explicit_tenant_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENTIC_MESH_V5_D8A_BASE_URL", "https://documents.example.test")
+    monkeypatch.delenv("AGENTIC_MESH_V5_D8A_TENANT_SLUG", raising=False)
+
+    with pytest.raises(ValueError, match="D8A_TENANT_SLUG is required"):
+        create_app(
+            "postgresql://unused/mesh",
+            authorizer=_token_authorizer("viewer-token", ["read"]),
+        )
