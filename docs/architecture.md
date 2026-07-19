@@ -91,6 +91,13 @@ operational support.
   action, activity, blocker, next action, and safe summary fields under an
   idempotency id and expected sequence. Sensitive content fails before
   persistence; live views consume the structured record without model parsing.
+- Role service: one project/role/instance process claims only its durable role
+  queue, renews the lease during the provider turn, renders the pinned external
+  prompt, prepares an isolated worktree, and reuses the warm engine plus durable
+  work-item thread affinity. It acknowledges the queue only after terminal
+  provider completion and a new progress checkpoint from that role instance.
+  Local fleet control can start or stop only exact pre-provisioned containers
+  listed in an external project/instance map; it never constructs shell input.
 - Failure policy: advances one durable work-item incident through three
   technical retries, three distinct Project Manager corrections, and one
   independent recovery request. Attempt/event history is append-only, and the

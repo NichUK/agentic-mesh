@@ -11,3 +11,10 @@ services:
         source: ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}
         target: /mesh/config
         read_only: true
+      - type: bind
+        source: ${AGENTIC_MESH_FLEET_MAP_HOST_PATH:?set the external fleet map}
+        target: /mesh/runtime/fleet.json
+        read_only: true
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock

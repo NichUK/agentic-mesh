@@ -29,6 +29,7 @@ from agentic_mesh_v5.database import DatabaseConfigurationError
 from agentic_mesh_v5.database import DatabaseError
 from agentic_mesh_v5.database import SCHEMA
 from agentic_mesh_v5.database import database_url_from_environment
+from agentic_mesh_v5.docker_fleet import DockerContainerFleetSupervisor
 from agentic_mesh_v5.dashboard_reads import DashboardReadStore
 from agentic_mesh_v5.dashboard_reads import usage_traffic
 from agentic_mesh_v5.continuation import ContinuationAuthorizationError
@@ -54,6 +55,8 @@ from agentic_mesh_v5.fleet import FleetSupervisor
 from agentic_mesh_v5.fleet import FleetSupervisorError
 from agentic_mesh_v5.fleet import ScalingPolicy
 from agentic_mesh_v5.flow_definition import FlowDefinition
+from agentic_mesh_v5.flow_definition import FlowDefinitionError
+from agentic_mesh_v5.flow_definition import load_flow
 from agentic_mesh_v5.flow_engine import FlowEngine
 from agentic_mesh_v5.flow_engine import FlowEngineConflict
 from agentic_mesh_v5.flow_engine import FlowEngineNotFound
@@ -71,6 +74,8 @@ from agentic_mesh_v5.lifecycle import LifecycleAuthorizationError
 from agentic_mesh_v5.lifecycle import LifecycleConflict
 from agentic_mesh_v5.lifecycle import LifecycleNotFound
 from agentic_mesh_v5.lifecycle import LifecycleStore
+from agentic_mesh_v5.package_resolver import resolve_packages
+from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.progress import ProgressConflict
 from agentic_mesh_v5.progress import ProgressDraft
 from agentic_mesh_v5.progress import ProgressNotFound
@@ -985,7 +990,14 @@ def create_app(
                 "flow_configuration_unavailable",
                 "project flow configuration is unavailable",
             )
-        flow = flow_resolver(project_id)
+        try:
+            flow = flow_resolver(project_id)
+        except FlowDefinitionError:
+            raise ControlApiError(
+                503,
+                "flow_configuration_unavailable",
+                "project flow configuration is unavailable",
+            ) from None
         if not isinstance(flow, FlowDefinition):
             raise ControlApiError(
                 503,
@@ -2717,17 +2729,51 @@ def create_app(
 
 
 def app_from_environment() -> FastAPI:
+    database_url = database_url_from_environment()
     root = os.environ.get(CONFIG_ROOT_ENV, "").strip()
-    resolver = (
+    config_resolver = (
         None
         if not root
         else lambda _project_id: ConfigActivationStore(Path(root))
     )
-    return create_app(
-        database_url_from_environment(),
-        telemetry=telemetry_from_environment(),
-        config_store_resolver=resolver,
+    flow_resolver = (
+        None if not root else _project_flow_resolver(database_url, Path(root))
     )
+    fleet_map = os.environ.get("AGENTIC_MESH_V5_FLEET_MAP", "").strip()
+    fleet_supervisor = (
+        None
+        if not fleet_map
+        else DockerContainerFleetSupervisor(Path(fleet_map))
+    )
+    return create_app(
+        database_url,
+        telemetry=telemetry_from_environment(),
+        fleet_supervisor=fleet_supervisor,
+        flow_resolver=flow_resolver,
+        config_store_resolver=config_resolver,
+    )
+
+
+def _project_flow_resolver(
+    database_url: str, configuration_root: Path
+) -> Callable[[str], FlowDefinition]:
+    def resolve(project_id: str) -> FlowDefinition:
+        with psycopg.connect(database_url, autocommit=True) as connection:
+            rows = connection.execute(
+                f"SELECT DISTINCT flow_reference FROM {SCHEMA}.role_bindings "
+                "WHERE project_id = %s",
+                (project_id,),
+            ).fetchall()
+        if len(rows) != 1:
+            raise FlowDefinitionError("project flow configuration is unavailable")
+        try:
+            return load_flow(resolve_packages(configuration_root, [rows[0][0]]))
+        except PackageResolutionError as exc:
+            raise FlowDefinitionError(
+                "project flow configuration is unavailable"
+            ) from exc
+
+    return resolve
 
 
 def _request_route(request: Request) -> str:

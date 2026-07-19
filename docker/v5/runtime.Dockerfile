@@ -15,8 +15,13 @@ RUN python -m pip wheel --no-cache-dir --no-deps --wheel-dir /wheels .
 FROM ${PYTHON_BASE_IMAGE} AS v5-runtime
 
 ARG VCS_REF
-RUN addgroup --system --gid 10001 mesh \
-    && adduser --system --uid 10001 --ingroup mesh --home /mesh mesh
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends docker.io \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system --gid 10001 mesh \
+    && adduser --system --uid 10001 --ingroup mesh --home /mesh mesh \
+    && adduser mesh root
 COPY --from=v5-runtime-build /wheels /wheels
 RUN python -m pip install --no-cache-dir /wheels/*.whl \
     && rm -rf /wheels \

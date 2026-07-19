@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-mesh-v5-worker"
+version = "0.1.0"
+description = "Project-neutral Agentic Mesh V5 role-service runtime."
+requires-python = ">=3.11"
+dependencies = [
+  "bleach>=6.1",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "Markdown>=3.7",
+  "opentelemetry-api==1.42.1",
+  "opentelemetry-exporter-otlp-proto-grpc==1.42.1",
+  "opentelemetry-sdk==1.42.1",
+  "openai-codex==0.144.4",
+  "psycopg[binary]>=3.2",
+  "PyJWT[crypto]>=2.10,<3",
+  "PyYAML>=6.0",
+  "uvicorn>=0.34,<1",
+  "websocket-client>=1.8",
+]
+
+[project.scripts]
+agentic-mesh-v5 = "agentic_mesh_v5.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["agentic_mesh_v5*"]
+
+[tool.setuptools.package-data]
+agentic_mesh_v5 = ["migrations/*.sql"]
