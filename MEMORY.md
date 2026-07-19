@@ -1442,3 +1442,26 @@ or `release_review`.
   affected full-suite batch passed 96 tests. The complete database-backed V5
   aggregate is 644 passed and 2 environment skips, with only the existing
   Starlette/httpx warning.
+
+## 2026-07-19 V5 Terminal Completion Authority
+
+- Merge `513f2cb7fe02d87bae60755ffbd9f61e3ee6c54e` was built into seven
+  digest-pinned images and deployed with the `eda132d0` fleet retained for
+  rollback. Direct/TLS health, all 17 revisions, PM health and persistent Codex
+  volume bindings passed.
+- Live PM turns then proved the remaining early release was not an internal
+  retry. Exact rollouts completed normally, but the SDK emitted an `error`
+  notification immediately after a successful durable tool output and about
+  three seconds before `task_complete`. The role service released the lease at
+  that notification and reclaimed the still-finishing conversation.
+- Acceptance for branch `codex/v5-terminal-authority` is: provider error events
+  remain available as diagnostics but do not decide delivery completion; only
+  an authoritative `TURN_COMPLETED` event may set the turn outcome. A stream
+  that ends or fails without that event must still fail closed through the
+  provider protocol boundary. No message or reasoning content is inspected.
+- PM is stopped and the BA correction remains durable and ready while the
+  correction is reviewed. No PM-correction outcome or sponsor decision was
+  invented.
+- Verification is 40 focused provider/live-role tests against real Postgres and
+  96 passed tests in the affected release batch, with only the existing
+  Starlette/httpx warning.
