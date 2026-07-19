@@ -436,8 +436,9 @@ def test_role_service_reuses_one_engine_and_separates_work_threads(
     assert engine.closed == 1
 
 
-def test_role_service_continues_an_explicitly_retryable_provider_error(
-    postgres_database: str, tmp_path: Path
+@pytest.mark.parametrize("retryable", [True, False])
+def test_role_service_defers_provider_error_to_terminal_completion(
+    postgres_database: str, tmp_path: Path, retryable: bool
 ) -> None:
     _seed(postgres_database, ("work-1",))
 
@@ -451,19 +452,19 @@ def test_role_service_continues_an_explicitly_retryable_provider_error(
                 expected_previous_sequence=0,
                 status="in_progress",
                 goal="Process durable work",
-                step="Finish after the provider retry",
-                completed_action="Recorded the completed retried turn",
+                step="Finish after the provider diagnostic",
+                completed_action="Recorded the authoritative completed turn",
                 activity=None,
                 blocker=None,
                 next_action="Continue the configured flow",
-                safe_summary="The provider retried and the role turn completed.",
+                safe_summary="The provider reported an error event, then the role turn completed.",
             )
         )
 
     service = _service(
         tmp_path,
         postgres_database,
-        _Provider(_ErrorThenCompletionEngine(effect, retryable=True)),
+        _Provider(_ErrorThenCompletionEngine(effect, retryable=retryable)),
     )
     try:
         result = service.run_once()
@@ -477,32 +478,6 @@ def test_role_service_continues_an_explicitly_retryable_provider_error(
         .get_item("alpha", "queue-work-1")
         .status
         == "completed"
-    )
-
-
-def test_role_service_fails_closed_on_a_non_retryable_provider_error(
-    postgres_database: str, tmp_path: Path
-) -> None:
-    _seed(postgres_database, ("work-1",))
-    effects: list[str] = []
-    service = _service(
-        tmp_path,
-        postgres_database,
-        _Provider(_ErrorThenCompletionEngine(effects.append, retryable=False)),
-    )
-    try:
-        result = service.run_once()
-    finally:
-        service.close()
-
-    assert result.status == "released"
-    assert result.reason == "provider-not-completed"
-    assert effects == []
-    assert (
-        RoleQueueStore(postgres_database)
-        .get_item("alpha", "queue-work-1")
-        .status
-        == "ready"
     )
 
 
