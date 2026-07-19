@@ -1222,3 +1222,9 @@ or `release_review`.
   resumable activation operation; unfinished candidates remain inactive until selected.
 - Only a resolved sponsor may approve the latest validated revision. Activation is
   serialized and idempotent, receipts must match, and contracts expose no V4 runtime state.
+
+## 2026-07-19 V5 Dashboard Read Contracts
+
+- AMV5-056 adds authorized portfolio, work, fleet, usage, recovery, and audit APIs.
+- Traffic lights use deterministic stored-fact rules and stable reason codes; work,
+  recovery, and audit collections are bounded for large projects.

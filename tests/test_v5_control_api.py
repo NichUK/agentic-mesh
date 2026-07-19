@@ -20,6 +20,12 @@ from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
 from agentic_mesh_v5.api_auth import TokenAuthorizer
 from agentic_mesh_v5.database import MigrationRunner
 from agentic_mesh_v5.database import load_migrations
+from agentic_mesh_v5.dashboard_reads import instance_traffic
+from agentic_mesh_v5.dashboard_reads import operational_traffic
+from agentic_mesh_v5.dashboard_reads import queue_traffic
+from agentic_mesh_v5.dashboard_reads import recovery_traffic
+from agentic_mesh_v5.dashboard_reads import traffic_status
+from agentic_mesh_v5.dashboard_reads import usage_traffic
 from agentic_mesh_v5.fleet import FleetAction
 from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.usage import CapacityDraft
@@ -193,6 +199,9 @@ def test_openapi_and_problem_contract_do_not_require_a_database() -> None:
         in paths
     )
     assert f"{API_PREFIX}/projects/{{project_id}}/recovery" in paths
+    assert f"{API_PREFIX}/dashboard/portfolio" in paths
+    for domain in ("work", "fleet", "usage", "recovery", "audit"):
+        assert f"{API_PREFIX}/projects/{{project_id}}/dashboard/{domain}" in paths
     assert (
         f"{API_PREFIX}/projects/{{project_id}}/work-items/"
         "{work_item_id}/progress"
@@ -1005,3 +1014,195 @@ def test_validation_and_store_failures_are_actionable_and_redacted() -> None:
     assert unavailable.status_code == 503
     assert unavailable.json()["type"].endswith(":durable_store_unavailable")
     assert "127.0.0.1" not in unavailable.text
+
+
+@pytest.mark.parametrize(
+    ("remaining", "expected"), ((4, "red"), (20, "amber"), (21, "green"))
+)
+def test_dashboard_traffic_rules_are_deterministic(remaining: int, expected: str) -> None:
+    reasons = traffic_status(
+        (("amber", "gate.pending"), ("red", "work.error"), ("amber", "gate.pending"))
+    )
+    usage = usage_traffic(
+        {
+            "capacity": {
+                "status": "known",
+                "primary": {"remaining_percent": remaining},
+            }
+        }
+    )
+
+    assert reasons == {
+        "light": "red",
+        "reasons": [
+            {"severity": "red", "code": "work.error"},
+            {"severity": "amber", "code": "gate.pending"},
+        ],
+    }
+    assert usage["light"] == expected
+    assert usage_traffic({"capacity": {"status": "unknown"}})["light"] == "amber"
+    assert instance_traffic(
+        status="hibernated", last_error=None, heartbeat_age=999
+    )["light"] == "green"
+    assert operational_traffic(
+        {"status": "completed", "pending_gates": 1, "rejected_gates": 1}
+    )["light"] == "green"
+
+
+@pytest.mark.parametrize(
+    ("facts", "options", "light", "code"),
+    (
+        ({"status": "error"}, {}, "red", "work.error"),
+        ({"error_work": 1}, {}, "red", "work.error"),
+        ({"timed_out_gates": 1}, {}, "red", "gate.timed_out"),
+        ({"rejected_gates": 1}, {}, "red", "gate.rejected"),
+        ({"failed_recovery": 1}, {}, "red", "recovery.failed"),
+        ({"terminal_incidents": 1}, {}, "red", "incident.terminal"),
+        ({"failed_instances": 1}, {}, "red", "fleet.instance_failed"),
+        ({}, {"overdue_claims": 1}, "red", "handoff.claim_overdue"),
+        ({}, {"overdue_acceptances": 1}, "red", "handoff.acceptance_overdue"),
+        ({}, {"queue_age": 120}, "red", "queue.wait_over_120_seconds"),
+        ({}, {"paused": True}, "amber", "project.paused"),
+        ({"pending_gates": 1}, {}, "amber", "gate.pending"),
+        ({"active_incidents": 1}, {}, "amber", "incident.active"),
+        ({"pending_recovery": 1}, {}, "amber", "recovery.pending"),
+        ({}, {"queue_age": 60}, "amber", "queue.wait_over_60_seconds"),
+    ),
+)
+def test_each_operational_traffic_rule(
+    facts: dict[str, object], options: dict[str, object], light: str, code: str
+) -> None:
+    result = operational_traffic(facts, **options)
+
+    assert result["light"] == light
+    assert code in {reason["code"] for reason in result["reasons"]}
+
+
+@pytest.mark.parametrize(
+    ("result", "light", "code"),
+    (
+        (instance_traffic(status="failed", last_error=None, heartbeat_age=None),
+         "red", "fleet.instance_failed"),
+        (instance_traffic(status="running", last_error="boom", heartbeat_age=0),
+         "red", "fleet.instance_failed"),
+        (instance_traffic(status="running", last_error=None, heartbeat_age=120),
+         "red", "fleet.heartbeat_stale"),
+        (instance_traffic(status="running", last_error=None, heartbeat_age=60),
+         "amber", "fleet.heartbeat_delayed"),
+        (queue_traffic(age=None, paused=True, depth=1),
+         "amber", "queue.paused_with_work"),
+        (recovery_traffic("failed"), "red", "recovery.failed"),
+        (recovery_traffic("pending"), "amber", "recovery.pending"),
+    ),
+)
+def test_each_fleet_and_recovery_traffic_rule(
+    result: dict[str, object], light: str, code: str
+) -> None:
+    assert result["light"] == light
+    assert code in {reason["code"] for reason in result["reasons"]}
+
+
+def test_dashboard_reads_are_scoped_bounded_and_attention_first(
+    api_database: tuple[str, TestClient],
+) -> None:
+    database_url, client = api_database
+    with psycopg.connect(database_url) as connection:
+        work = [
+            (
+                "alpha",
+                f"work-{index:04d}",
+                "engineering",
+                f"Work {index:04d}",
+                "error" if index == 0 else "completed",
+            )
+            for index in range(522)
+        ]
+        connection.cursor().executemany(
+            """
+            INSERT INTO agentic_mesh_v5.work_items
+                (project_id, work_item_id, assigned_role_id, title, status)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            work,
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.role_queues(project_id, queue_id, role_id)
+            VALUES ('alpha', 'engineering', 'engineering');
+            INSERT INTO agentic_mesh_v5.queue_items
+                (project_id, queue_item_id, queue_id, work_item_id,
+                 available_at, idempotency_key)
+            VALUES ('alpha', 'queued-1', 'engineering', 'work-0001',
+                    clock_timestamp() - interval '130 seconds', 'dashboard-queued-1');
+            INSERT INTO agentic_mesh_v5.gates
+                (project_id, gate_id, work_item_id, gate_type, requested_by,
+                 correlation_id)
+            VALUES ('alpha', 'gate-1', 'work-0002', 'sponsor', 'project-manager',
+                    'dashboard-gate-1');
+            UPDATE agentic_mesh_v5.role_instances
+            SET heartbeat_at = clock_timestamp() - interval '130 seconds'
+            WHERE project_id = 'alpha' AND instance_id = 'eng-1'
+            """
+        )
+        connection.cursor().executemany(
+            """
+            INSERT INTO agentic_mesh_v5.audit_records
+                (scope, project_id, actor_id, action, object_type, object_id)
+            VALUES ('project', 'alpha', 'tester', 'observed', 'work', %s)
+            """,
+            [(f"audit-{index:04d}",) for index in range(510)],
+        )
+
+    portfolio = client.get(
+        f"{API_PREFIX}/dashboard/portfolio", headers=_headers("viewer")
+    )
+    repeated = client.get(
+        f"{API_PREFIX}/dashboard/portfolio", headers=_headers("viewer")
+    )
+    work_page = client.get(
+        f"{API_PREFIX}/projects/alpha/dashboard/work?limit=500&offset=500",
+        headers=_headers("viewer"),
+    )
+    fleet = client.get(
+        f"{API_PREFIX}/projects/alpha/dashboard/fleet", headers=_headers("viewer")
+    )
+    usage = client.get(
+        f"{API_PREFIX}/projects/alpha/dashboard/usage", headers=_headers("viewer")
+    )
+    recovery = client.get(
+        f"{API_PREFIX}/projects/alpha/dashboard/recovery", headers=_headers("viewer")
+    )
+    audit = client.get(
+        f"{API_PREFIX}/projects/alpha/dashboard/audit?limit=500",
+        headers=_headers("viewer"),
+    )
+    forbidden = client.get(
+        f"{API_PREFIX}/projects/bravo/dashboard/work", headers=_headers("viewer")
+    )
+    unbounded = client.get(
+        f"{API_PREFIX}/projects/alpha/dashboard/audit?limit=501",
+        headers=_headers("viewer"),
+    )
+
+    assert portfolio.status_code == repeated.status_code == 200, portfolio.text
+    assert [item["project_id"] for item in portfolio.json()["projects"]] == ["alpha"]
+    assert portfolio.json()["projects"][0]["traffic"]["light"] == "red"
+    assert "fleet.heartbeat_stale" in {
+        reason["code"]
+        for reason in portfolio.json()["projects"][0]["traffic"]["reasons"]
+    }
+    assert (
+        portfolio.json()["projects"][0]["traffic"]
+        == repeated.json()["projects"][0]["traffic"]
+    )
+    assert work_page.status_code == 200
+    assert work_page.json()["total"] == 522
+    assert len(work_page.json()["items"]) == 22
+    assert all("payload" not in item for item in work_page.json()["items"])
+    assert fleet.json()["traffic"]["light"] == "red"
+    assert usage.json()["traffic"]["light"] == "amber"
+    assert recovery.json()["total"] == 0
+    assert audit.json()["total"] == 510
+    assert len(audit.json()["items"]) == 500
+    assert forbidden.status_code == 403
+    assert unbounded.status_code == 422
