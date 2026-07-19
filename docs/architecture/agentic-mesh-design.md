@@ -769,6 +769,23 @@ correction. Exact concurrent or repeated requests replay the one committed
 result; conflicting decisions fail without another event or queue item. Teams
 cards and dashboard controls remain adapters over this same API.
 
+The flow and governance stores are also available through the authenticated
+versioned control API. A project-configured resolver supplies the already
+validated and digest-pinned flow, and a project-scoped resolver supplies its
+`DocumentStore`; callers cannot submit a replacement flow or local document
+mount. Start, dispatch, artifact verification, consultation and accountable
+gate evidence, transition preparation/pickup, and completion all use the same
+durable operations described above. The bearer subject is the acting role, so
+governance requests cannot add a different role identity in their payload.
+
+The autonomous-kernel qualification uses that boundary and the sponsor CLI to
+complete one compact product-definition, development, verification, and
+release flow. It recreates the API while work is active, takes over expired
+worker and global-PM leases, reclaims an expired target handoff lease, and then
+reconciles documents, immutable Git revision, governance records, structured
+progress, accepted handoffs, terminal evidence, and queue state. This is a
+qualification scenario over production APIs, not a special workflow endpoint.
+
 ### Artifact Store
 
 Purpose:

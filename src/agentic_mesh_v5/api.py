@@ -6,7 +6,7 @@ from datetime import datetime
 from functools import partial
 import math
 import re
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 import uuid
 
 import anyio
@@ -28,12 +28,25 @@ from agentic_mesh_v5.database import database_url_from_environment
 from agentic_mesh_v5.continuation import ContinuationAuthorizationError
 from agentic_mesh_v5.continuation import ContinuationConflict
 from agentic_mesh_v5.continuation import ContinuationMonitor
+from agentic_mesh_v5.document_store import DocumentConflict
+from agentic_mesh_v5.document_store import DocumentNotFound
+from agentic_mesh_v5.document_store import DocumentPermissionDenied
+from agentic_mesh_v5.document_store import DocumentStore
+from agentic_mesh_v5.document_store import DocumentUnavailable
 from agentic_mesh_v5.fleet import FleetConflict
 from agentic_mesh_v5.fleet import FleetNotFound
 from agentic_mesh_v5.fleet import FleetScaler
 from agentic_mesh_v5.fleet import FleetSupervisor
 from agentic_mesh_v5.fleet import FleetSupervisorError
 from agentic_mesh_v5.fleet import ScalingPolicy
+from agentic_mesh_v5.flow_definition import FlowDefinition
+from agentic_mesh_v5.flow_engine import FlowEngine
+from agentic_mesh_v5.flow_engine import FlowEngineConflict
+from agentic_mesh_v5.flow_engine import FlowEngineNotFound
+from agentic_mesh_v5.flow_engine import TransitionSource
+from agentic_mesh_v5.governance import GovernanceConflict
+from agentic_mesh_v5.governance import GovernanceNotFound
+from agentic_mesh_v5.governance import GovernanceStore
 from agentic_mesh_v5.health import HealthReporter
 from agentic_mesh_v5.handoffs import HandoffAuthorizationError
 from agentic_mesh_v5.handoffs import HandoffConflict
@@ -143,6 +156,108 @@ class WorkItemResponse(ApiModel):
     version: int
     terminal_reason: str | None
     terminal_evidence: dict[str, Any]
+
+
+class FlowStart(ApiModel):
+    operation_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    fields: dict[str, Any] = Field(default_factory=dict)
+
+
+class FlowDispatch(ApiModel):
+    kind: Literal["consult", "inform"]
+    obligation_id: str = Field(pattern=IDENTIFIER_PATTERN)
+
+
+class ArtifactVerify(ApiModel):
+    path: str = Field(min_length=1, max_length=4000)
+    record_id: str = Field(pattern=IDENTIFIER_PATTERN)
+
+
+class ConsultationRecord(ApiModel):
+    obligation_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    decision: Literal["responded", "exception"]
+    record_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    reason: str = Field(default="", max_length=4000)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovernanceGateDecision(ApiModel):
+    obligation_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    decision: Literal["approved", "rejected", "exception"]
+    record_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    reason: str = Field(default="", max_length=4000)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    architecture_impact: Literal["no-material", "material", "uncertain"] | None = None
+
+
+class FlowTransitionPrepare(ApiModel):
+    outcome: str = Field(pattern=IDENTIFIER_PATTERN)
+    fields: dict[str, Any] = Field(default_factory=dict)
+    source_lease_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    source_lease_token: str = Field(min_length=1, max_length=512)
+    expected_version: int = Field(ge=1)
+    operation_id: str = Field(pattern=IDENTIFIER_PATTERN)
+
+
+class FlowTransitionAction(ApiModel):
+    expected_version: int = Field(ge=1)
+    operation_id: str = Field(pattern=IDENTIFIER_PATTERN)
+
+
+class FlowComplete(FlowTransitionAction):
+    evidence: dict[str, Any]
+
+    @model_validator(mode="after")
+    def require_evidence(self):
+        if not self.evidence:
+            raise ValueError("completion evidence is required")
+        return self
+
+
+class FlowRunResponse(ApiModel):
+    project_id: str
+    work_item_id: str
+    flow_id: str
+    flow_digest: str
+    current_state: str
+    owner_role_id: str
+    status: str
+    fields: dict[str, Any]
+    version: int
+    pending_route_id: str | None
+    pending_target_state: str | None
+    pending_target_role_id: str | None
+    pending_handoff_id: str | None
+
+
+class FlowObligationResponse(ApiModel):
+    project_id: str
+    work_item_id: str
+    state: str
+    entry_version: int
+    kind: str
+    obligation_id: str
+    accountable_role_id: str
+    payload: dict[str, Any]
+    status: str
+    evidence: dict[str, Any]
+
+
+class GovernanceRecordResponse(ApiModel):
+    project_id: str
+    work_item_id: str
+    record_id: str
+    state: str
+    entry_version: int
+    obligation_kind: str
+    obligation_id: str
+    decision: str
+    actor_role_id: str
+    reason: str
+    evidence: dict[str, Any]
+    document_path: str | None
+    document_etag: str | None
+    recorded_at: str
 
 
 class FailureIncidentCreate(ApiModel):
@@ -735,6 +850,8 @@ def create_app(
     authorizer: TokenAuthorizer | None = None,
     telemetry: Telemetry | None = None,
     fleet_supervisor: FleetSupervisor | None = None,
+    flow_resolver: Callable[[str], FlowDefinition] | None = None,
+    document_store_resolver: Callable[[str], DocumentStore] | None = None,
     fleet_reconcile_interval_seconds: float = 5.0,
 ) -> FastAPI:
     if (
@@ -754,6 +871,7 @@ def create_app(
     queues = RoleQueueStore(database_url)
     router = Router(database_url)
     handoff_store = HandoffStore(database_url)
+    flow_engine = FlowEngine(database_url)
     continuation_monitor = ContinuationMonitor(database_url)
     fleet_scaler = FleetScaler(database_url, fleet_supervisor)
     reliability = ReliabilityStore(database_url)
@@ -762,6 +880,38 @@ def create_app(
     read_models = ReadModelStore(database_url)
     health_reporter = HealthReporter(database_url, selected_telemetry)
     bearer = HTTPBearer(auto_error=False)
+
+    def project_flow(project_id: str) -> FlowDefinition:
+        if flow_resolver is None:
+            raise ControlApiError(
+                503,
+                "flow_configuration_unavailable",
+                "project flow configuration is unavailable",
+            )
+        flow = flow_resolver(project_id)
+        if not isinstance(flow, FlowDefinition):
+            raise ControlApiError(
+                503,
+                "flow_configuration_unavailable",
+                "project flow configuration is invalid",
+            )
+        return flow
+
+    def governance(project_id: str) -> GovernanceStore:
+        if document_store_resolver is None:
+            raise ControlApiError(
+                503,
+                "document_store_unavailable",
+                "project document store is unavailable",
+            )
+        documents = document_store_resolver(project_id)
+        if not isinstance(documents, DocumentStore):
+            raise ControlApiError(
+                503,
+                "document_store_unavailable",
+                "project document store is invalid",
+            )
+        return GovernanceStore(database_url, documents)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -919,6 +1069,9 @@ def create_app(
     @app.exception_handler(HandoffNotFound)
     @app.exception_handler(FleetNotFound)
     @app.exception_handler(ReliabilityNotFound)
+    @app.exception_handler(FlowEngineNotFound)
+    @app.exception_handler(GovernanceNotFound)
+    @app.exception_handler(DocumentNotFound)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 404, "not_found", str(exc))
 
@@ -931,6 +1084,9 @@ def create_app(
     @app.exception_handler(ContinuationConflict)
     @app.exception_handler(FleetConflict)
     @app.exception_handler(ReliabilityConflict)
+    @app.exception_handler(FlowEngineConflict)
+    @app.exception_handler(GovernanceConflict)
+    @app.exception_handler(DocumentConflict)
     async def conflict(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 409, "conflict", str(exc))
 
@@ -938,8 +1094,13 @@ def create_app(
     @app.exception_handler(QueueAuthorizationError)
     @app.exception_handler(HandoffAuthorizationError)
     @app.exception_handler(ContinuationAuthorizationError)
+    @app.exception_handler(DocumentPermissionDenied)
     async def forbidden(request: Request, exc: Exception) -> JSONResponse:
         return _problem_response(request, 403, "operation_forbidden", str(exc))
+
+    @app.exception_handler(DocumentUnavailable)
+    async def document_unavailable(request: Request, exc: Exception) -> JSONResponse:
+        return _problem_response(request, 503, "document_store_unavailable", str(exc))
 
     @app.exception_handler(ValueError)
     async def invalid_value(request: Request, exc: ValueError) -> JSONResponse:
@@ -1187,6 +1348,280 @@ def create_app(
                 correlation_id=payload.correlation_id,
                 expected_version=payload.expected_version,
                 reason=payload.reason,
+                evidence=payload.evidence,
+            )
+        )
+
+    def require_flow_role(project_id: str, work_item_id: str, role_id: str) -> None:
+        run = flow_engine.get(project_id, work_item_id)
+        if run.owner_role_id != role_id:
+            raise ControlApiError(
+                403,
+                "flow_role_denied",
+                "authenticated role does not own the current flow state",
+            )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/flow",
+        response_model=FlowRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["flow"],
+    )
+    def start_flow(
+        project_id: str,
+        work_item_id: str,
+        payload: FlowStart,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        flow = project_flow(project_id)
+        if identity.subject != flow.leader_role:
+            raise ControlApiError(
+                403,
+                "flow_role_denied",
+                "only the configured flow leader can start a flow",
+            )
+        return asdict(
+            flow_engine.start(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                flow=flow,
+                fields=payload.fields,
+                actor_id=identity.subject,
+                operation_id=payload.operation_id,
+            )
+        )
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/flow",
+        response_model=FlowRunResponse,
+        tags=["flow"],
+    )
+    def get_flow(
+        project_id: str,
+        work_item_id: str,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return asdict(flow_engine.get(project_id, work_item_id))
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/obligations",
+        response_model=list[FlowObligationResponse],
+        tags=["flow"],
+    )
+    def flow_obligations(
+        project_id: str,
+        work_item_id: str,
+        current_only: bool = Query(default=True),
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return [
+            asdict(item)
+            for item in flow_engine.obligations(
+                project_id, work_item_id, current_only=current_only
+            )
+        ]
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/dispatch",
+        response_model=FlowObligationResponse,
+        tags=["flow"],
+    )
+    def dispatch_flow_obligation(
+        project_id: str,
+        work_item_id: str,
+        payload: FlowDispatch,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        require_flow_role(project_id, work_item_id, identity.subject)
+        return asdict(
+            flow_engine.dispatch(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                kind=payload.kind,
+                obligation_id=payload.obligation_id,
+                actor_id=identity.subject,
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/artifact",
+        response_model=GovernanceRecordResponse,
+        tags=["governance"],
+    )
+    def verify_flow_artifact(
+        project_id: str,
+        work_item_id: str,
+        payload: ArtifactVerify,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        return asdict(
+            governance(project_id).verify_artifact(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                path=payload.path,
+                actor_role_id=identity.subject,
+                record_id=payload.record_id,
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/consultations",
+        response_model=GovernanceRecordResponse,
+        tags=["governance"],
+    )
+    def record_flow_consultation(
+        project_id: str,
+        work_item_id: str,
+        payload: ConsultationRecord,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        return asdict(
+            governance(project_id).record_consultation(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                obligation_id=payload.obligation_id,
+                decision=payload.decision,
+                actor_role_id=identity.subject,
+                record_id=payload.record_id,
+                reason=payload.reason,
+                evidence=payload.evidence,
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/gates",
+        response_model=GovernanceRecordResponse,
+        tags=["governance"],
+    )
+    def decide_flow_gate(
+        project_id: str,
+        work_item_id: str,
+        payload: GovernanceGateDecision,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        return asdict(
+            governance(project_id).decide_gate(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                obligation_id=payload.obligation_id,
+                decision=payload.decision,
+                actor_role_id=identity.subject,
+                record_id=payload.record_id,
+                reason=payload.reason,
+                evidence=payload.evidence,
+                architecture_impact=payload.architecture_impact,
+            )
+        )
+
+    @app.get(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/governance",
+        response_model=list[GovernanceRecordResponse],
+        tags=["governance"],
+    )
+    def flow_governance_records(
+        project_id: str,
+        work_item_id: str,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "read")
+        return [
+            asdict(item)
+            for item in governance(project_id).records(project_id, work_item_id)
+        ]
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/transitions/prepare",
+        response_model=FlowRunResponse,
+        tags=["flow"],
+    )
+    def prepare_flow_transition(
+        project_id: str,
+        work_item_id: str,
+        payload: FlowTransitionPrepare,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        require_flow_role(project_id, work_item_id, identity.subject)
+        return asdict(
+            flow_engine.prepare_transition(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                outcome=payload.outcome,
+                fields=payload.fields,
+                source=TransitionSource(
+                    payload.source_lease_id, payload.source_lease_token
+                ),
+                expected_version=payload.expected_version,
+                actor_id=identity.subject,
+                operation_id=payload.operation_id,
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/transitions/pickup",
+        response_model=FlowRunResponse,
+        tags=["flow"],
+    )
+    def pickup_flow_transition(
+        project_id: str,
+        work_item_id: str,
+        payload: FlowTransitionAction,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        run = flow_engine.get(project_id, work_item_id)
+        if identity.subject != run.pending_target_role_id:
+            raise ControlApiError(
+                403,
+                "flow_role_denied",
+                "only the accepted target role can pick up a transition",
+            )
+        return asdict(
+            flow_engine.pickup_transition(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                expected_version=payload.expected_version,
+                actor_id=identity.subject,
+                operation_id=payload.operation_id,
+            )
+        )
+
+    @app.post(
+        f"{API_PREFIX}/projects/{{project_id}}/work-items/{{work_item_id}}/"
+        "flow/complete",
+        response_model=FlowRunResponse,
+        tags=["flow"],
+    )
+    def complete_flow(
+        project_id: str,
+        work_item_id: str,
+        payload: FlowComplete,
+        identity: Principal = Depends(principal),
+    ):
+        project_access(identity, project_id, "write")
+        require_flow_role(project_id, work_item_id, identity.subject)
+        return asdict(
+            flow_engine.complete(
+                project_id=project_id,
+                work_item_id=work_item_id,
+                expected_version=payload.expected_version,
+                actor_id=identity.subject,
+                operation_id=payload.operation_id,
                 evidence=payload.evidence,
             )
         )

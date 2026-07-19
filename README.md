@@ -37,6 +37,14 @@ schema-aware readiness at `/api/v1/health/ready`. It creates local
 OpenTelemetry spans and metrics without requiring a collector. Set the standard
 `OTEL_EXPORTER_OTLP_ENDPOINT`, or its traces/metrics-specific endpoint, to
 enable OTLP/gRPC export; credentials and collector settings remain external.
+The same authenticated boundary exposes the pinned external-flow operations:
+start/read, obligation dispatch, document artifact verification, consultation
+and accountable gate evidence, handoff-backed transition preparation/pickup,
+and terminal completion. The acting role comes from the bearer principal, while
+flow and `DocumentStore` adapters are supplied by project configuration rather
+than request payloads. The AMV5-045 qualification drives a compact product,
+development, QA, and release flow through these APIs and the sponsor CLI,
+including API/worker/PM restart recovery and a reclaimed handoff lease.
 
 V5 database maintenance and native backup operations use the same external
 `AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,

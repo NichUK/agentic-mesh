@@ -124,6 +124,13 @@ operational support.
   bootstrap CLI decisions require the configured project sponsor; approval
   resumes the current flow owner once, while rejection or timeout returns the
   still-pending obligation to the Project Manager for correction.
+- Autonomous kernel boundary: exposes the existing flow and governance stores
+  through authenticated `/api/v1` operations without a second coordinator.
+  The project supplies a pinned-flow resolver and scoped `DocumentStore`; the
+  authenticated subject supplies role identity. The qualification flow proves
+  product, Git-backed development, QA, sponsor approval, accepted handoffs,
+  release evidence, restart takeover, and terminal completion without direct
+  queue repair.
 - Role pack: binds externally configured role templates to project queues, tool
   profiles, and prompts. Concrete instances share the logical role binding and
   role memory while retaining separate instance and work-item thread identity.
