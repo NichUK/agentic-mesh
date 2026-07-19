@@ -180,7 +180,7 @@ def teams_router(postgres_database: str):
             "a" * 64,
             "tenant-one",
             "team-alpha",
-            "channel-alpha",
+            "19:channel-alpha@thread.tacv2",
             "shared-engineering-app",
         ),
         (
@@ -247,7 +247,7 @@ def test_channel_routes_only_by_exact_active_authority(teams_router) -> None:
         sender_id="alice",
         tenant_id="tenant-one",
         team_id="team-alpha",
-        channel_id="channel-alpha",
+        channel_id="19:channel-alpha@thread.tacv2",
         recipient_application_id="28:shared-engineering-app",
     )
 
@@ -280,7 +280,7 @@ def test_channel_spoofing_unknown_authority_and_malformed_values_fail_closed(
         "sender_id": "alice",
         "tenant_id": "tenant-one",
         "team_id": "team-alpha",
-        "channel_id": "channel-alpha",
+        "channel_id": "19:channel-alpha@thread.tacv2",
         "recipient_application_id": "shared-engineering-app",
     }
     request[field] = value
@@ -303,7 +303,7 @@ def test_duplicate_active_channel_authority_is_rejected(teams_router) -> None:
             digest="d" * 64,
             tenant_id="tenant-one",
             team_id="team-alpha",
-            channel_id="channel-alpha",
+            channel_id="19:channel-alpha@thread.tacv2",
             application_id="delta-engineering-app",
         )
 
@@ -312,7 +312,7 @@ def test_duplicate_active_channel_authority_is_rejected(teams_router) -> None:
             sender_id="alice",
             tenant_id="tenant-one",
             team_id="team-alpha",
-            channel_id="channel-alpha",
+            channel_id="19:channel-alpha@thread.tacv2",
             recipient_application_id="shared-engineering-app",
         )
 
@@ -479,7 +479,7 @@ def test_active_binding_change_is_rejected_before_route_return(
             sender_id="alice",
             tenant_id="tenant-one",
             team_id="team-alpha",
-            channel_id="channel-alpha",
+            channel_id="19:channel-alpha@thread.tacv2",
             recipient_application_id="shared-engineering-app",
         )
 

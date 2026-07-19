@@ -14,7 +14,7 @@ from agentic_mesh_v5.teams_connector import TeamsRoleIdentityBinding
 
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
-_EXTERNAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+_EXTERNAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REJECTION_CODES = frozenset(
     {
