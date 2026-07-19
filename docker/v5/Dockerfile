@@ -23,7 +23,12 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY worker-healthcheck.py /usr/local/bin/agentic-mesh-worker-healthcheck
+COPY docker/v5/worker-pyproject.toml /opt/agentic-mesh-build/pyproject.toml
+COPY src/agentic_mesh_v5 /opt/agentic-mesh-build/src/agentic_mesh_v5
+RUN python -m pip install --no-cache-dir /opt/agentic-mesh-build \
+    && rm -rf /opt/agentic-mesh-build
+
+COPY docker/v5/worker-healthcheck.py /usr/local/bin/agentic-mesh-worker-healthcheck
 RUN chmod 0755 /usr/local/bin/agentic-mesh-worker-healthcheck \
     && mkdir -p /opt/agentic-mesh
 
@@ -36,7 +41,7 @@ CMD ["codex", "--version"]
 
 FROM v5-worker-base AS v5-general-worker
 
-COPY manifests/general.json /opt/agentic-mesh/image-manifest.json
+COPY docker/v5/manifests/general.json /opt/agentic-mesh/image-manifest.json
 ENV AGENTIC_MESH_TOOL_PROFILE_ID=general
 LABEL org.opencontainers.image.title="Agentic Mesh V5 general worker" \
       io.agentic-mesh.profile="general" \
@@ -50,7 +55,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential gh pkg-config python3-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-COPY manifests/development.json /opt/agentic-mesh/image-manifest.json
+COPY docker/v5/manifests/development.json /opt/agentic-mesh/image-manifest.json
 ENV AGENTIC_MESH_TOOL_PROFILE_ID=development
 LABEL org.opencontainers.image.title="Agentic Mesh V5 development worker" \
       io.agentic-mesh.profile="development" \
@@ -65,7 +70,7 @@ RUN apt-get update \
     && python -m pip install --no-cache-dir pytest==8.4.2 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-COPY manifests/qa.json /opt/agentic-mesh/image-manifest.json
+COPY docker/v5/manifests/qa.json /opt/agentic-mesh/image-manifest.json
 ENV AGENTIC_MESH_TOOL_PROFILE_ID=qa
 LABEL org.opencontainers.image.title="Agentic Mesh V5 QA worker" \
       io.agentic-mesh.profile="qa" \
@@ -98,7 +103,7 @@ RUN apt-get update \
         "postgresql-client-${POSTGRES_CLIENT_MAJOR}" \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-COPY manifests/operations.json /opt/agentic-mesh/image-manifest.json
+COPY docker/v5/manifests/operations.json /opt/agentic-mesh/image-manifest.json
 ENV AGENTIC_MESH_TOOL_PROFILE_ID=operations
 LABEL org.opencontainers.image.title="Agentic Mesh V5 operations worker" \
       io.agentic-mesh.profile="operations" \
@@ -126,10 +131,10 @@ RUN --mount=type=cache,target=/root/.npm \
     && ln -s /opt/agentic-mesh/ux-tools/node_modules/.bin/playwright /usr/local/bin/playwright \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /root/.cache
-COPY ux-smoke-test.mjs /opt/agentic-mesh/ux-tools/ux-smoke-test.mjs
+COPY docker/v5/ux-smoke-test.mjs /opt/agentic-mesh/ux-tools/ux-smoke-test.mjs
 RUN chmod 0755 /opt/agentic-mesh/ux-tools/ux-smoke-test.mjs \
     && ln -s /opt/agentic-mesh/ux-tools/ux-smoke-test.mjs /usr/local/bin/agentic-mesh-ux-smoke
-COPY manifests/ux.json /opt/agentic-mesh/image-manifest.json
+COPY docker/v5/manifests/ux.json /opt/agentic-mesh/image-manifest.json
 ENV AGENTIC_MESH_TOOL_PROFILE_ID=ux
 LABEL org.opencontainers.image.title="Agentic Mesh V5 UX worker" \
       io.agentic-mesh.profile="ux" \
@@ -178,11 +183,11 @@ RUN apt-get update \
     && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /root/.cache
-COPY recovery-drill.py /usr/local/bin/agentic-mesh-recovery-drill
-COPY recovery-control.py /usr/local/bin/agentic-mesh-recovery-control
+COPY docker/v5/recovery-drill.py /usr/local/bin/agentic-mesh-recovery-drill
+COPY docker/v5/recovery-control.py /usr/local/bin/agentic-mesh-recovery-control
 RUN chmod 0755 /usr/local/bin/agentic-mesh-recovery-drill \
     /usr/local/bin/agentic-mesh-recovery-control
-COPY manifests/recovery.json /opt/agentic-mesh/image-manifest.json
+COPY docker/v5/manifests/recovery.json /opt/agentic-mesh/image-manifest.json
 ENV AGENTIC_MESH_TOOL_PROFILE_ID=recovery
 LABEL org.opencontainers.image.title="Agentic Mesh V5 recovery worker" \
       io.agentic-mesh.profile="recovery" \

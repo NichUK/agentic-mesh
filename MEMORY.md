@@ -1250,3 +1250,23 @@ or `release_review`.
   configured app-only/OBO boundary remains responsible for Graph access.
 - Every node operation checks the project root before contacting D8Aroom, so a valid user
   cannot use the shared data plane to inspect another project's document library.
+
+## 2026-07-19 V5 Live Role-Service Operationalization
+
+- V5 now has one runnable role-service loop per configured
+  project/role/instance. It claims only that role queue, heartbeats the lease,
+  renders the pinned external role/flow/state prompt, prepares the existing
+  isolated Git worktree, and runs through the warm-engine/thread-affinity
+  coordinators.
+- Queue acknowledgement requires terminal provider completion and a new
+  structured progress checkpoint for the exact role instance. A completed turn
+  without that attributable durable checkpoint releases the item for retry.
+- The current Codex OAuth cache remains external through `CODEX_HOME`; source
+  repositories, API token files, configuration and fleet mappings are external
+  deployment inputs. The project-neutral worker package contains V5 only.
+- Local fleet wake/hibernate uses an exact external
+  project/instance-to-container map and argument-list Docker calls. Unknown
+  instances, role mismatches and command failures fail closed without shell
+  interpolation or raw external error text.
+- The control service resolves each registered project's single pinned flow
+  from external packages and accepts an optional external fleet-map path.

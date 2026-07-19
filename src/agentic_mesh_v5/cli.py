@@ -33,6 +33,9 @@ from agentic_mesh_v5.project_registration import ProjectRegistrationCoordinator
 from agentic_mesh_v5.recovery_supervisor import CommandRecoveryLauncher
 from agentic_mesh_v5.recovery_supervisor import RecoverySupervisor
 from agentic_mesh_v5.recovery_supervisor import RecoverySupervisorError
+from agentic_mesh_v5.role_service import RoleService
+from agentic_mesh_v5.role_service import RoleServiceConfig
+from agentic_mesh_v5.role_service import RoleServiceError
 from agentic_mesh_v5.tool_profiles import ToolProfileError
 from agentic_mesh_v5.tool_profiles import ToolProfileRegistry
 
@@ -164,6 +167,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     api_serve.add_argument("--host", default="127.0.0.1")
     api_serve.add_argument("--port", type=int, default=8080)
+    role_service = subparsers.add_parser(
+        "role-service", help="run one durable project role instance"
+    )
+    role_service.add_argument("--config-root", type=Path, required=True)
+    role_service.add_argument("--project", required=True)
+    role_service.add_argument("--role", required=True)
+    role_service.add_argument("--instance", required=True)
+    role_service.add_argument(
+        "--source-repositories", type=Path, required=True
+    )
+    role_service.add_argument("--lease-seconds", type=int, default=120)
+    role_service.add_argument("--heartbeat-seconds", type=int, default=30)
+    role_service.add_argument("--poll-seconds", type=float, default=2.0)
+    role_service.add_argument(
+        "--once", action="store_true", help="process at most one queue item"
+    )
     subparsers.add_parser(
         "control-status", help="read control API health through external authentication"
     )
@@ -488,6 +507,48 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         uvicorn.run(app, host=args.host, port=args.port)
         return 0
+
+    if args.command == "role-service":
+        service = None
+        try:
+            service = RoleService(
+                database_url_from_environment(),
+                RoleServiceConfig(
+                    project_id=args.project,
+                    role_id=args.role,
+                    instance_id=args.instance,
+                    configuration_root=args.config_root.resolve(),
+                    source_repositories_file=args.source_repositories.resolve(),
+                    lease_seconds=args.lease_seconds,
+                    heartbeat_seconds=args.heartbeat_seconds,
+                    poll_seconds=args.poll_seconds,
+                ),
+            )
+            if args.once:
+                result = service.run_once()
+                service.close()
+                service = None
+                _write(
+                    {"runtime": "agentic-mesh-v5", **result.to_dict()},
+                    as_json=args.json,
+                )
+                return 0 if result.status in {"empty", "completed"} else 2
+            service.run_forever()
+            service = None
+            return 0
+        except (DatabaseError, RoleServiceError, ValueError) as exc:
+            _write(
+                {
+                    "runtime": "agentic-mesh-v5",
+                    "status": "rejected",
+                    "error": str(exc),
+                },
+                as_json=args.json,
+            )
+            return 2
+        finally:
+            if service is not None:
+                service.close()
 
     if args.command in {"control-status", "control-call", "sponsor-decision"}:
         try:

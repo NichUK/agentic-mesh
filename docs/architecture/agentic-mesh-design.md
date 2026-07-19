@@ -518,10 +518,10 @@ and a composite database foreign key. A missing or rejected recorded thread is
 an error; the runtime must not silently start a context-free replacement. A new
 binding and its first turn run within the same warm-engine checkout because
 Codex does not guarantee an untouched empty thread is resumable after shutdown.
-AMV5-025 provides this production coordinator before a V5 worker dispatch loop
-exists. The later routing/worker loop must invoke the coordinator; automated
-source-boundary checks reject any other product module that starts or resumes a
-provider thread directly.
+AMV5-025 provides this production coordinator. The V5 role service invokes it
+after claiming the configured project-role queue and preparing the isolated
+worktree; automated source-boundary checks reject any other product module that
+starts or resumes a provider thread directly.
 
 Every affinity also pins the 64-character digest of the effective immutable
 configuration release used to seed the thread. Global activation or rollback

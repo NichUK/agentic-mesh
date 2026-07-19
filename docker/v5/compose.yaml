@@ -1,5 +1,6 @@
 x-worker-build: &worker-build
-  context: .
+  context: ../..
+  dockerfile: docker/v5/Dockerfile
   args:
     SOURCE_DATE_EPOCH: "1751328000"
   provenance: false
