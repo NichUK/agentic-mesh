@@ -132,7 +132,7 @@ def _seed(
     urls: dict[str, str],
     work_items: tuple[str, ...],
 ) -> dict[str, object]:
-    assert MigrationRunner(database_url).migrate().current_version == 28
+    assert MigrationRunner(database_url).migrate().current_version == 29
     with psycopg.connect(database_url) as connection:
         connection.execute(
             "INSERT INTO agentic_mesh_v5.projects(project_id, display_name) "

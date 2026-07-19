@@ -70,7 +70,13 @@ reference only from the active project manifest. It links the authoritative V5
 work item to a numeric ADO ID and project-qualified URL, verifies
 `System.TeamProject` on every response, and uses durable operation IDs plus a
 read-before-patch check for safe update replay. ADO outages leave the V5 work
-item unchanged and the external operation pending for pickup.
+item unchanged and the external operation pending for pickup. The milestone
+publisher sends only start, material handoff, blocker/recovery, pull request,
+deployment, and acceptance updates—not the event stream. Each durable update
+has one ordered sequence, a stable comment marker, typed evidence, and a next
+action. Conditional state changes preserve manual ADO edits and require the
+approved implementation/test or acceptance/owner-review evidence before moving
+to `Resolved` or `Closed`.
 
 V5 database maintenance and native backup operations use the same external
 `AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,

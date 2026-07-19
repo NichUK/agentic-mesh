@@ -1098,6 +1098,17 @@ second patch when ADO already contains the requested values. Bounded transport,
 throttling, or service failure leaves that operation pending and does not alter
 the V5 work item.
 
+ADO progress is a milestone projection, not an event mirror. V5 persists and
+sequences only start, material handoff, blocker/recovery, pull request,
+deployment, and acceptance updates. A stable compact marker line reconciles a
+comment created immediately before a crash. Later milestones cannot overtake an earlier
+pending one, and late sequences are suppressed without external traffic.
+`New` may become `Active` at start; pull-request or deployment evidence may move
+`Active` to `Resolved` only when implementation and automated-test references
+are present; acceptance may move `Resolved` to `Closed` only with acceptance and
+owner-review evidence. Conditional updates retain any unexpected human-edited
+state and record that disposition rather than overwriting it.
+
 ### V5 Isolated Git Workspaces
 
 Mutating work uses one durable workspace per project/work-item, with one

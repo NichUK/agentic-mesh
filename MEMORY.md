@@ -1100,3 +1100,23 @@ or `release_review`.
   `seerstone/agentic-mesh`; same-organization dashboard item 1 was rejected as
   foreign. Runtime status/version stayed unchanged, and the temporary ADO item
   and qualification database were removed.
+
+## 2026-07-19 V5 ADO Milestone Progress
+
+- Migration 29 adds durable, ordered ADO milestone records on top of migration
+  28's conditional delivery primitives. The publisher is deliberately
+  not an event mirror: only start, material handoff, blocker/recovery, pull
+  request, deployment, and acceptance updates are eligible.
+- Each milestone carries a concise status/summary, typed evidence references,
+  and next action. A durable fingerprint and compact marker line make exact
+  retry, worker pickup, and crashes after comment or state update idempotent;
+  late sequences are suppressed and cannot overtake an earlier pending update.
+- Start maps `New` to `Active`; implementation plus automated-test evidence can
+  map `Active` to `Resolved`; acceptance plus owner-review evidence can map
+  `Resolved` to `Closed`. Any unexpected/manual ADO state is preserved and its
+  disposition recorded. ADO failure never changes authoritative V5 work state.
+- ADO strips HTML comments, so retry uses a compact visible marker line and
+  paginates the complete comment history. Real qualification moved a temporary
+  `seerstone/agentic-mesh` User Story through all four states, proved exact
+  replay and unchanged V5 state/version, then permanently removed the ADO item
+  and qualification database.
