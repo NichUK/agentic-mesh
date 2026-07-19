@@ -41,18 +41,18 @@ repair began. The work item remains active and unacknowledged.
    deployment may explicitly select a stricter supported policy through
    `AGENTIC_MESH_V5_CODEX_SANDBOX`; the value is validated and pinned when the
    role service starts.
-7. When the pinned Codex SDK does not deliver a terminal notification, poll its
-   public `thread/read` state through the existing app-server connection and
-   reconcile only the exact turn's terminal status. Continue consuming the SDK
-   notification queue normally so output, errors and usage remain captured.
+7. Do not query `thread/read` through the app-server connection that owns the
+   active turn. That synchronous request can block behind the turn and prevent
+   later terminal reconciliation. Continue consuming only the owner's SDK
+   notification queue so output, errors and usage remain captured.
 8. Wait for the configured queue poll interval after any released item so a
    repeatable provider or configuration failure cannot create a tight claim and
    release loop.
-9. If the owning app-server still reports an exact turn as active after its
-   stream has gone silent, inspect only the bounded tail of that thread's local
-   rollout for an exact `task_complete`/`turn_id` hint. Only after that terminal
-   hint may a fresh observer app-server verify the exact turn through public
-   `thread/read`; an observer must never resume an active turn.
+9. After the owning stream goes silent, inspect only the bounded tail of that
+   thread's local rollout for an exact `task_complete`/`turn_id` hint. Only
+   after that terminal hint may a fresh observer app-server verify the exact
+   turn through public `thread/read`; an observer must never resume an active
+   turn.
 
 ## Acceptance criteria
 
@@ -76,9 +76,10 @@ repair began. The work item remains active and unacknowledged.
   idempotent, and does not synthesize a progress checkpoint.
 - A role can execute the V5 control CLI inside its project-scoped worker
   container without requiring host namespace privileges.
-- A terminal turn visible through `thread/read` completes the provider iterator
-  even if its terminal stream notification is absent; the exact thread and turn
-  ids are checked before reconciliation.
+- A terminal turn verified by the fresh observer completes the provider
+  iterator even if its terminal stream notification is absent; the owner
+  connection is never queried and exact thread and turn ids are checked before
+  reconciliation.
 - Released work is rate-limited by the configured poll interval while completed
   work may continue immediately to the next queue item.
 - The independent observer is launched only after an exact terminal rollout
@@ -154,3 +155,25 @@ above is the smallest correction for technical attempt 3.
   warning. The single aggregate invocation exceeded its ten-minute command
   ceiling; every constituent file completed successfully in the bounded
   batches.
+
+## Live rollout-first finding
+
+- Revision `24b3d5e2b2fa7498f9b414cf4e3b0ba079126885` deployed cleanly to the
+  control plane and all 16 role containers. Direct/TLS health, image revision
+  labels, and all exact full-name Codex volume bindings were verified.
+- Retried BA and Research Analyst turns both recorded exact `task_complete`
+  events. Research Analyst added progress sequence 3, confirming the prior
+  response remained durably and idempotently routed, but both queue leases
+  remained open.
+- Inside both live containers the rollout hint returned true and a separately
+  opened public `thread/read` returned the exact turn as `completed`. The
+  remaining blocker is therefore the owner's earlier synchronous
+  `thread/read`, which can block before the terminal hint exists and prevent
+  the event loop from ever checking it again.
+- Branch `codex/v5-rollout-first-terminal-reconciliation` removes owner reads
+  from reconciliation. Only an exact local terminal hint can authorize the
+  fresh observer. BA and Research Analyst were stopped before watchdog expiry;
+  no technical-attempt-3 outcome was fabricated.
+- The rollout-first correction passed 36 focused provider/live-role tests and
+  the complete V5 suite in bounded groups: 637 passed and 5 environment skips,
+  with only the existing Starlette/httpx deprecation warning.

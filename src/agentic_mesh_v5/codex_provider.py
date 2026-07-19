@@ -345,23 +345,17 @@ def _reconciled_notifications(
             try:
                 notification = notifications.get(timeout=_TURN_STATE_POLL_SECONDS)
             except Empty:
+                if not terminal_hint(thread_id, turn_id):
+                    continue
                 terminal = _read_terminal_turn(
-                    lambda selected: getattr(client, "thread_read")(
-                        selected, include_turns=True
-                    ),
+                    terminal_reader,
                     thread_id,
                     turn_id,
                 )
-                if terminal is None and terminal_hint(thread_id, turn_id):
-                    terminal = _read_terminal_turn(
-                        terminal_reader,
-                        thread_id,
-                        turn_id,
-                    )
                 if terminal is not None:
-                    # The read response shares the app-server transport, so
-                    # notifications emitted before it are already routed. Drain
-                    # them first to retain terminal usage and error events.
+                    # The exact rollout hint is written by the owner before the
+                    # observer read. Drain owner notifications already routed
+                    # so terminal usage and error events remain available.
                     while True:
                         try:
                             pending = notifications.get_nowait()

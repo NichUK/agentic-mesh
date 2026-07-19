@@ -494,13 +494,14 @@ def test_stream_transport_failure_is_retryable_and_redacted(tmp_path: Path) -> N
     engine.close()
 
 
-def test_missing_terminal_notification_is_reconciled_from_thread_state(
+def test_completed_rollout_uses_fresh_reader_and_drains_pending_usage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class ReconciledClient:
         def __init__(self) -> None:
             self._router = SimpleNamespace(_turn_notifications={})
             self.unregister_count = 0
+            self.read_count = 0
 
         def register_turn_notifications(self, turn_id: str) -> None:
             selected: Queue[object] = Queue()
@@ -519,8 +520,18 @@ def test_missing_terminal_notification_is_reconciled_from_thread_state(
             self.unregister_count += 1
 
         def thread_read(self, thread_id: str, *, include_turns: bool):
+            self.read_count += 1
+            raise AssertionError("owner thread/read must not be used")
+
+    class ObserverClient:
+        def __init__(self, owner: ReconciledClient) -> None:
+            self.owner = owner
+            self.read_count = 0
+
+        def thread_read(self, thread_id: str, *, include_turns: bool):
             assert include_turns is True
-            self._router._turn_notifications["turn-1"].put(
+            self.read_count += 1
+            self.owner._router._turn_notifications["turn-1"].put(
                 _notification(
                     "thread/tokenUsage/updated",
                     SimpleNamespace(
@@ -549,12 +560,28 @@ def test_missing_terminal_notification_is_reconciled_from_thread_state(
                 )
             )
 
+    home = tmp_path / "codex-home"
+    rollout = home / "sessions" / "2026" / "07" / "19" / (
+        "rollout-2026-07-19T00-00-00-thread-1.jsonl"
+    )
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(
+        '{"payload":{"type":"task_complete","turn_id":"turn-1"}}\n',
+        encoding="utf-8",
+    )
     client = ReconciledClient()
+    observer_client = ObserverClient(client)
     handle = FakeHandle()
     handle._client = client
+    observer_handle = FakeHandle()
+    observer_handle._client = observer_client
+    owner_sdk = FakeSdk(handle)
+    observer_sdk = FakeSdk(observer_handle)
     monkeypatch.setattr(codex_provider, "_TURN_STATE_POLL_SECONDS", 0.001)
     engine = CodexWorkerProvider(
-        sdk_factory=lambda _config: FakeSdk(handle)
+        CodexProviderConfig(environment={"CODEX_HOME": str(home)}),
+        sdk_factory=lambda _config: owner_sdk,
+        observer_sdk_factory=lambda _config: observer_sdk,
     ).open()
 
     turn = engine.start_thread(ThreadRequest(cwd=tmp_path)).start_turn(
@@ -570,6 +597,9 @@ def test_missing_terminal_notification_is_reconciled_from_thread_state(
     assert events[-1].completion is TurnCompletionStatus.COMPLETED
     assert events[-2].usage is not None and events[-2].usage.total_tokens == 12
     assert client.unregister_count == 1
+    assert client.read_count == 0
+    assert observer_client.read_count == 1
+    assert observer_sdk.close_count == 1
     engine.close()
 
 
@@ -649,7 +679,7 @@ def test_stale_owner_state_uses_completed_rollout_hint_and_fresh_reader(
         ProviderEventKind.TURN_COMPLETED,
     ]
     assert events[-1].completion is TurnCompletionStatus.COMPLETED
-    assert owner_client.read_count == 1
+    assert owner_client.read_count == 0
     assert observer_client.read_count == 1
     assert observer_sdk.close_count == 1
     assert "must not be used" not in repr(events)
