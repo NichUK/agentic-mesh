@@ -198,31 +198,24 @@ class _Turn:
         pass
 
 
-class _RetryableErrorTurn(_Turn):
+class _ErrorThenCompletionTurn(_Turn):
+    def __init__(self, thread_id: str, effect, *, retryable: bool) -> None:
+        super().__init__(thread_id, effect)
+        self._retryable = retryable
+
     def events(self):
         yield ProviderEvent(
             ProviderEventKind.ERROR,
             self.thread_id,
             self.turn_id,
             error=ProviderErrorInfo(
-                ProviderErrorKind.TRANSPORT,
-                True,
-                "provider transport will retry",
-            ),
-        )
-        yield from super().events()
-
-
-class _NonRetryableErrorTurn(_Turn):
-    def events(self):
-        yield ProviderEvent(
-            ProviderEventKind.ERROR,
-            self.thread_id,
-            self.turn_id,
-            error=ProviderErrorInfo(
-                ProviderErrorKind.EXECUTION,
-                False,
-                "provider execution failed",
+                (
+                    ProviderErrorKind.TRANSPORT
+                    if self._retryable
+                    else ProviderErrorKind.EXECUTION
+                ),
+                self._retryable,
+                "provider operation failed",
             ),
         )
         yield from super().events()
@@ -265,14 +258,17 @@ class _Thread:
         return _Turn(self.thread_id, self._effect)
 
 
-class _RetryableErrorThread(_Thread):
-    def start_turn(self, _request):
-        return _RetryableErrorTurn(self.thread_id, self._effect)
+class _ErrorThenCompletionThread(_Thread):
+    def __init__(self, thread_id: str, effect, *, retryable: bool) -> None:
+        super().__init__(thread_id, effect)
+        self._retryable = retryable
 
-
-class _NonRetryableErrorThread(_Thread):
     def start_turn(self, _request):
-        return _NonRetryableErrorTurn(self.thread_id, self._effect)
+        return _ErrorThenCompletionTurn(
+            self.thread_id,
+            self._effect,
+            retryable=self._retryable,
+        )
 
 
 class _Engine:
@@ -299,30 +295,29 @@ class _Engine:
         self.closed += 1
 
 
-class _RetryableErrorEngine(_Engine):
+class _ErrorThenCompletionEngine(_Engine):
+    def __init__(self, effect, *, retryable: bool) -> None:
+        super().__init__(effect)
+        self._retryable = retryable
+
     def start_thread(self, request):
         thread_id = f"thread-{len(self.created_threads) + 1}"
         self.created_threads.append(thread_id)
         self.thread_requests.append(request)
-        return _RetryableErrorThread(thread_id, self._effect)
+        return _ErrorThenCompletionThread(
+            thread_id,
+            self._effect,
+            retryable=self._retryable,
+        )
 
     def resume_thread(self, thread_id, request):
         self.resumed_threads.append(thread_id)
         self.thread_requests.append(request)
-        return _RetryableErrorThread(thread_id, self._effect)
-
-
-class _NonRetryableErrorEngine(_Engine):
-    def start_thread(self, request):
-        thread_id = f"thread-{len(self.created_threads) + 1}"
-        self.created_threads.append(thread_id)
-        self.thread_requests.append(request)
-        return _NonRetryableErrorThread(thread_id, self._effect)
-
-    def resume_thread(self, thread_id, request):
-        self.resumed_threads.append(thread_id)
-        self.thread_requests.append(request)
-        return _NonRetryableErrorThread(thread_id, self._effect)
+        return _ErrorThenCompletionThread(
+            thread_id,
+            self._effect,
+            retryable=self._retryable,
+        )
 
 
 class _BlockingEngine(_Engine):
@@ -468,7 +463,7 @@ def test_role_service_continues_an_explicitly_retryable_provider_error(
     service = _service(
         tmp_path,
         postgres_database,
-        _Provider(_RetryableErrorEngine(effect)),
+        _Provider(_ErrorThenCompletionEngine(effect, retryable=True)),
     )
     try:
         result = service.run_once()
@@ -493,7 +488,7 @@ def test_role_service_fails_closed_on_a_non_retryable_provider_error(
     service = _service(
         tmp_path,
         postgres_database,
-        _Provider(_NonRetryableErrorEngine(effects.append)),
+        _Provider(_ErrorThenCompletionEngine(effects.append, retryable=False)),
     )
     try:
         result = service.run_once()
