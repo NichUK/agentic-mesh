@@ -1534,3 +1534,7 @@ or `release_review`.
   and Product Manager handoff pending seven material sponsor decisions about
   live scope, topology, supported host/runtime, canonical inputs, acceptance
   targets, cutover scope and the Postgres/ADR-003 position.
+- Business Analyst and Research Analyst automatically hibernated after their
+  queues emptied. The Project Manager remains healthy as the warm project
+  leader. All eight work-item queue records are completed; none is ready or
+  leased.

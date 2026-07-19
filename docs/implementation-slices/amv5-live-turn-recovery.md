@@ -259,3 +259,7 @@ above is the smallest correction for technical attempt 3.
   consultation and owner-review obligations are pending because the existing
   brief identifies seven material sponsor questions. No product handoff,
   lifecycle advancement or sponsor decision was fabricated.
+- After their queues emptied, the Business Analyst and Research Analyst
+  instances automatically reached `hibernated`; the Project Manager remains
+  healthy as the warm project leader. The work item has eight completed queue
+  records and none ready or leased.
