@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
 import re
 from typing import Mapping, Protocol
 
@@ -97,6 +98,20 @@ class TeamsDelivery:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class TeamsPersonalDelivery:
+    project_id: str
+    role_id: str
+    display_name: str
+    recipient_id: str
+    external_delivery_id: str
+    operation_id: str
+    connector: str = "teams"
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
 class TeamsTransport(Protocol):
     def check_installation(
         self,
@@ -118,6 +133,44 @@ class TeamsTransport(Protocol):
         text: str,
         access_token: str,
     ) -> str: ...
+
+    def send_personal_message(
+        self,
+        *,
+        tenant_id: str,
+        recipient_id: str,
+        application_id: str,
+        display_name: str,
+        text: str,
+        operation_id: str,
+        access_token: str,
+    ) -> str: ...
+
+    def send_personal_card(
+        self,
+        *,
+        tenant_id: str,
+        recipient_id: str,
+        application_id: str,
+        display_name: str,
+        fallback_text: str,
+        card: Mapping[str, object],
+        operation_id: str,
+        access_token: str,
+    ) -> str: ...
+
+    def update_personal_card(
+        self,
+        *,
+        tenant_id: str,
+        recipient_id: str,
+        application_id: str,
+        external_delivery_id: str,
+        fallback_text: str,
+        card: Mapping[str, object],
+        operation_id: str,
+        access_token: str,
+    ) -> None: ...
 
 
 class ProjectTeamsConnector:
@@ -282,6 +335,117 @@ class ProjectTeamsConnector:
             external_id,
         )
 
+    def send_personal_message(
+        self,
+        *,
+        project_id: str,
+        role_id: str,
+        recipient_id: str,
+        text: str,
+        operation_id: str,
+    ) -> TeamsPersonalDelivery:
+        binding = self.binding(project_id=project_id, role_id=role_id)
+        recipient_id = _external_id(recipient_id, "recipient_id")
+        text = _message(text)
+        operation_id = _external_id(operation_id, "operation_id")
+        access_token = self._ready(binding)
+        try:
+            external_id = self._transport.send_personal_message(
+                tenant_id=binding.tenant_id,
+                recipient_id=recipient_id,
+                application_id=binding.application_id,
+                display_name=binding.display_name,
+                text=text,
+                operation_id=operation_id,
+                access_token=access_token,
+            )
+        except Exception:
+            raise TeamsConnectorBlocked(
+                "connector-unavailable",
+                project_id=binding.project_id,
+                role_id=binding.role_id,
+            ) from None
+        return _personal_delivery(binding, recipient_id, external_id, operation_id)
+
+    def send_personal_card(
+        self,
+        *,
+        project_id: str,
+        role_id: str,
+        recipient_id: str,
+        fallback_text: str,
+        card: Mapping[str, object],
+        operation_id: str,
+    ) -> TeamsPersonalDelivery:
+        binding = self.binding(project_id=project_id, role_id=role_id)
+        recipient_id = _external_id(recipient_id, "recipient_id")
+        fallback_text = _message(fallback_text)
+        card = _card(card)
+        operation_id = _external_id(operation_id, "operation_id")
+        access_token = self._ready(binding)
+        try:
+            external_id = self._transport.send_personal_card(
+                tenant_id=binding.tenant_id,
+                recipient_id=recipient_id,
+                application_id=binding.application_id,
+                display_name=binding.display_name,
+                fallback_text=fallback_text,
+                card=card,
+                operation_id=operation_id,
+                access_token=access_token,
+            )
+        except Exception:
+            raise TeamsConnectorBlocked(
+                "connector-unavailable",
+                project_id=binding.project_id,
+                role_id=binding.role_id,
+            ) from None
+        return _personal_delivery(binding, recipient_id, external_id, operation_id)
+
+    def update_personal_card(
+        self,
+        *,
+        project_id: str,
+        role_id: str,
+        recipient_id: str,
+        external_delivery_id: str,
+        fallback_text: str,
+        card: Mapping[str, object],
+        operation_id: str,
+    ) -> None:
+        binding = self.binding(project_id=project_id, role_id=role_id)
+        recipient_id = _external_id(recipient_id, "recipient_id")
+        external_delivery_id = _external_id(
+            external_delivery_id, "external_delivery_id"
+        )
+        fallback_text = _message(fallback_text)
+        card = _card(card)
+        operation_id = _external_id(operation_id, "operation_id")
+        access_token = self._ready(binding)
+        try:
+            result = self._transport.update_personal_card(
+                tenant_id=binding.tenant_id,
+                recipient_id=recipient_id,
+                application_id=binding.application_id,
+                external_delivery_id=external_delivery_id,
+                fallback_text=fallback_text,
+                card=card,
+                operation_id=operation_id,
+                access_token=access_token,
+            )
+        except Exception:
+            raise TeamsConnectorBlocked(
+                "connector-unavailable",
+                project_id=binding.project_id,
+                role_id=binding.role_id,
+            ) from None
+        if result is not None:
+            raise TeamsConnectorBlocked(
+                "connector-unavailable",
+                project_id=binding.project_id,
+                role_id=binding.role_id,
+            )
+
     def _ready(self, binding: TeamsRoleIdentityBinding) -> str:
         try:
             token = self._tokens.access_token(
@@ -404,6 +568,30 @@ def _binding(
         ) from None
 
 
+def _personal_delivery(
+    binding: TeamsRoleIdentityBinding,
+    recipient_id: str,
+    external_delivery_id: object,
+    operation_id: str,
+) -> TeamsPersonalDelivery:
+    try:
+        external_id = _external_id(external_delivery_id, "external_delivery_id")
+    except ValueError:
+        raise TeamsConnectorBlocked(
+            "connector-unavailable",
+            project_id=binding.project_id,
+            role_id=binding.role_id,
+        ) from None
+    return TeamsPersonalDelivery(
+        binding.project_id,
+        binding.role_id,
+        binding.display_name,
+        recipient_id,
+        external_id,
+        operation_id,
+    )
+
+
 def _mapping(value: object, field: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise TeamsConnectorConfigurationError(f"{field} is invalid")
@@ -460,3 +648,23 @@ def _message(value: object) -> str:
     ):
         raise ValueError("Teams message is invalid")
     return value.strip()
+
+
+def _card(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("Teams card is invalid")
+    card = dict(value)
+    if card.get("type") != "AdaptiveCard" or card.get("version") != "1.5":
+        raise ValueError("Teams card is invalid")
+    try:
+        encoded = json.dumps(
+            card,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError):
+        raise ValueError("Teams card is invalid") from None
+    if len(encoded.encode("utf-8")) > 100_000:
+        raise ValueError("Teams card is invalid")
+    return card

@@ -1073,6 +1073,24 @@ an exact structured project id from that choice. Free text, role mentions, and
 arbitrary project hints never influence routing. Unknown, duplicated, spoofed,
 or concurrently changed authority fails closed.
 
+Managed sponsor-gate creation appends a `teams.approval` message in the same
+event/outbox transaction as the durable gate. The Teams notification adapter
+uses the requesting role's pinned bot identity and one stable operation id per
+sponsor, so a partial multi-sponsor retry does not create a second card. The
+Adaptive Card contains only the safe proposed-change summary, expiry, rationale
+input, and approve/reject actions; sponsor identity always comes from the
+authenticated Teams activity rather than card data.
+
+A callback is eligible only after the matching project/gate/sponsor outbox
+message is durably dispatched. It delegates approval or rejection to the
+existing sponsor coordinator, preserving its lock, expiry, governance record,
+idempotent replay, and one continuation route. Card updates after approve,
+reject, or observed expiry use idempotent operations and can be retried without
+rolling back the decision. Selected safe progress checkpoints can be published
+once through a `teams.progress` event/outbox message and sent from the recording
+role to all configured project sponsors. Publication is explicit, keeping live
+checkpoint volume out of Teams unless it is useful.
+
 ## Git And Configuration
 
 ### V5 Project Manifest Boundary
