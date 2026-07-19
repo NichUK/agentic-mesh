@@ -1057,8 +1057,21 @@ project/role pair. Outbound delivery resolves a token from the external
 credential provider and verifies installation and send permission before using
 the selected role identity. Missing installation, revoked permission,
 credential failure, and connector failure produce safe blocker codes without
-exposing credential values. Project inference, ambiguous DMs, and cards are
-separate later slices rather than parallel routing logic.
+exposing credential values. Project inference and ambiguous DMs use the
+connector-boundary resolver below; cards remain a separate later slice rather
+than a parallel routing path.
+
+Project inference is now a connector-boundary operation over immutable active
+manifest snapshots. A channel activity must match one tenant, Team, channel,
+and recipient application, after which the current role binding and manifest
+digest are rechecked before returning the connector-neutral project/role pair.
+A personal activity first filters tenant/application matches through the
+authenticated sender's project authorization. One candidate routes directly;
+multiple candidates return a `clarification_required` action containing only
+authorized projects and no selected project or role. The next request may carry
+an exact structured project id from that choice. Free text, role mentions, and
+arbitrary project hints never influence routing. Unknown, duplicated, spoofed,
+or concurrently changed authority fails closed.
 
 ## Git And Configuration
 

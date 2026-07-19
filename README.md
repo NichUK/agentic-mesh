@@ -86,7 +86,15 @@ connector adapter maps inbound recipient ids to logical roles and checks bot
 installation and send permission before outbound delivery. Missing installation,
 revoked permission, credential failure, and connector failure are safe explicit
 blockers; tokens never enter the manifest, database, image, delivery evidence,
-or error text. Project/DM routing and approval cards remain later slices.
+or error text.
+
+V5 Teams project routing uses only active manifest authority. Channel messages
+require one exact tenant, Team, channel, and recipient bot match. Personal
+messages are filtered through authenticated sender/project authorization: one
+candidate routes, while multiple candidates return a structured question and
+no selected project. Only an exact structured project choice can resume that
+route; message text is never parsed for project or role selection. Approval
+cards and progress updates remain a later slice.
 
 V5 database maintenance and native backup operations use the same external
 `AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,

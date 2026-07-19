@@ -22,7 +22,7 @@
   },
   "$defs": {
     "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"},
-    "externalId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+    "externalId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$"},
     "repository": {"type": "object", "additionalProperties": false,
       "required": ["url", "default_branch"], "properties": {
         "url": {"type": "string", "pattern": "^https://[^@?#]+\\.git$"},

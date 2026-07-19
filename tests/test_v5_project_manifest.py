@@ -89,7 +89,7 @@ def _manifest(project_id: str = "alpha", display_name: str = "Alpha") -> dict:
             "team_id": f"team-{project_id}",
             "credential": "graph",
             "channels": {
-                "project": f"channel-{project_id}",
+                "project": f"19:channel-{project_id}@thread.tacv2",
                 "approvals": f"approvals-{project_id}",
             },
             "role_identities": {
