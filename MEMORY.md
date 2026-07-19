@@ -1085,3 +1085,18 @@ or `release_review`.
 - The project-owned V5 Compose output mounts external configuration but no
   source. The runtime image installs only the V5 package tree and runs as a
   non-root user.
+
+## 2026-07-19 V5 Project-Configured ADO Adapter
+
+- Migration 27 stores project/work-item ADO links and durable idempotent field
+  update operations; V5 lifecycle state remains authoritative.
+- Organization, project, and token reference come only from the active manifest.
+  Project-qualified URLs are necessary but not sufficient: every ADO response
+  must return the exact configured `System.TeamProject`.
+- Updates persist before the side effect, use a revision test, and read before
+  retrying so a crash after a successful patch cannot duplicate it. Transient
+  failures are bounded and leave a resumable pending operation.
+- Real qualification created, linked, updated, and replayed a temporary item in
+  `seerstone/agentic-mesh`; same-organization dashboard item 1 was rejected as
+  foreign. Runtime status/version stayed unchanged, and the temporary ADO item
+  and qualification database were removed.

@@ -349,7 +349,7 @@ def test_runtime_upgrade_cli_returns_failure_for_non_deployed_outcome(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     class Status:
-        available_version = 26
+        available_version = 27
 
     class Runner:
         def __init__(self, database_url: str) -> None:

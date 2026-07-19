@@ -176,7 +176,7 @@ def test_migration_backfills_resolved_legacy_gate(postgres_database: str) -> Non
                     'legacy-pm', clock_timestamp(), 'legacy-correlation')
             """
         )
-    assert MigrationRunner(postgres_database).migrate().current_version == 26
+    assert MigrationRunner(postgres_database).migrate().current_version == 27
     with psycopg.connect(postgres_database) as connection:
         row = connection.execute(
             """
@@ -194,7 +194,7 @@ def _bootstrap(
     open_gate: bool = True,
     gate_type: str = "sponsor_approval",
 ):
-    assert MigrationRunner(database_url).migrate().current_version == 26
+    assert MigrationRunner(database_url).migrate().current_version == 27
     lifecycle = LifecycleStore(database_url)
     lifecycle.create_project(
         project_id="alpha",

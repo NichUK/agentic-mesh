@@ -65,6 +65,13 @@ builds, pass `--publish-image` with an authenticated registry repository; the
 candidate tag is pushed before its immutable `repo@sha256` reference is
 resolved. Publication is never implicit.
 
+The V5 ADO adapter resolves its organization, project, and external credential
+reference only from the active project manifest. It links the authoritative V5
+work item to a numeric ADO ID and project-qualified URL, verifies
+`System.TeamProject` on every response, and uses durable operation IDs plus a
+read-before-patch check for safe update replay. ADO outages leave the V5 work
+item unchanged and the external operation pending for pickup.
+
 V5 database maintenance and native backup operations use the same external
 `AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,
 publishes a custom-format archive with its checksum manifest as the publication
