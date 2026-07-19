@@ -236,3 +236,26 @@ above is the smallest correction for technical attempt 3.
   exact multi-invocation totals and makes a replayed snapshot idempotent.
   Verification is 70 focused provider/affinity/live-role tests with one
   environment-only skip and 97 passed tests in the affected V5 batch.
+
+## Live qualification result
+
+- PR 451 merged as `d93791ef0cacf6b39208a274589d2206a19ae480` and was
+  built into seven digest-pinned images. Direct and TLS health, exact revision
+  labels, commands, environments, mounts and all 16 full-name Codex volumes
+  match the retained `5de1264e` rollback fleet.
+- PM correction `route-b3cda59958669bcf76a778d59c183599` completed on
+  attempt 23. BA correction `route-851759e1ddfaad93e6825bc1dbf17cf0`
+  completed on attempt 2. The historical BA source, consultation return and
+  Research Analyst source then completed normally on attempts 167, 1 and 7.
+  No ready or leased work remains for this work item.
+- Usage records for the successful PM and BA turns contain cumulative
+  multi-invocation totals and no longer raise `UsageConflict`. Every repaired
+  route reached durable queue completion after its attributable checkpoint.
+- Reliability incident `incident-87412104291fd93467199a4d188386c5` is
+  durably `recovered`: technical attempts 1 through 3 remain failed and PM
+  correction attempt 1 is recorded succeeded with exact revision, image,
+  test, health, route and progress evidence.
+- The work correctly remains in `business_analysis`. Its artifact,
+  consultation and owner-review obligations are pending because the existing
+  brief identifies seven material sponsor questions. No product handoff,
+  lifecycle advancement or sponsor decision was fabricated.

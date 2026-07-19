@@ -1512,3 +1512,25 @@ or `release_review`.
   same cumulative observation rather than being counted twice. Verification is
   70 focused tests with one environment-only skip and 97 passed tests in the
   affected V5 batch; the only warning is the existing Starlette/httpx warning.
+
+## 2026-07-19 V5 Live Queue-Completion Qualification
+
+- PR 451 merged as `d93791ef0cacf6b39208a274589d2206a19ae480`. Seven
+  digest-pinned images were built and deployed across the control plane and all
+  16 role containers. Direct/TLS health, exact revision labels, command/env/
+  mount parity and all full-name persistent Codex volumes passed. The prior
+  `5de1264e` fleet is the immediate rollback.
+- The PM correction completed normally on attempt 23 and the BA correction on
+  attempt 2. The repaired fleet then completed the historical BA source on
+  attempt 167, its consultation return on attempt 1, and the Research Analyst
+  source on attempt 7. All routes for `amv5-live-001` are completed; no ready
+  or leased item remains.
+- Reliability incident `incident-87412104291fd93467199a4d188386c5` is
+  formally `recovered`. PM correction attempt 1 is succeeded with exact commit,
+  image digest, test, health, route and progress evidence. No technical failure
+  history was rewritten.
+- The work remains active in `business_analysis` by design. The existing brief
+  at `work-items/amv5-live-001/010-business-analysis.md` withholds owner review
+  and Product Manager handoff pending seven material sponsor decisions about
+  live scope, topology, supported host/runtime, canonical inputs, acceptance
+  targets, cutover scope and the Postgres/ADR-003 position.
