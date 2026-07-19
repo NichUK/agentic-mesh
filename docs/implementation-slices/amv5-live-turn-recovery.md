@@ -53,6 +53,10 @@ repair began. The work item remains active and unacknowledged.
    after that terminal hint may a fresh observer app-server verify the exact
    turn through public `thread/read`; an observer must never resume an active
    turn.
+10. Treat an `error` event as terminal only when its provider classification is
+    non-retryable or missing. When the provider explicitly marks the error as
+    retryable, continue the same event stream so its internal retry can reach a
+    terminal event without releasing the lease or starting a second turn.
 
 ## Acceptance criteria
 
@@ -85,6 +89,9 @@ repair began. The work item remains active and unacknowledged.
 - The independent observer is launched only after an exact terminal rollout
   hint, cannot interrupt active work, and must still verify the exact public
   thread/turn terminal state before completion is synthesized.
+- An explicitly retryable provider error cannot release the queue item; a
+  subsequent attributable checkpoint and completed turn close the same lease.
+  Non-retryable or malformed errors still fail closed.
 
 ## Verification
 
@@ -177,3 +184,31 @@ above is the smallest correction for technical attempt 3.
 - The rollout-first correction passed 36 focused provider/live-role tests and
   the complete V5 suite in bounded groups: 637 passed and 5 environment skips,
   with only the existing Starlette/httpx deprecation warning.
+
+## Live PM-correction finding
+
+- The rollout-first release merged as
+  `57988d574bf16a9a9b80db8c79a0aba794fbf926` and deployed cleanly across
+  control and all 16 role containers. Direct/TLS health, PM health, revision
+  labels, and exact Codex volume bindings passed.
+- The reviewed technical-3 BA lease reached its 600-second watchdog and was
+  released without queue completion. Technical attempt 3 is now durably
+  recorded as failed with the exact revision, lease, completed rollout turn,
+  blocked provider-handle turn, checkpoint and clean-stop evidence. Reliability
+  correctly advanced to PM correction attempt 1.
+- The PM recorded progress sequence 7 and routed one distinct minimal BA
+  correction. A supported `role-service --once` diagnostic first reconciled the
+  already-recorded technical envelope, then processed the correction envelope
+  and returned the safe result `provider-not-completed`.
+- Lease timing and exact rollout ids prove that the first provider turn was
+  released about three seconds after `turn/started`, continued as a ghost and
+  later completed; the immediate reclaim opened a different handle that never
+  started. The role service was treating an explicitly retryable provider
+  `error` event as terminal while Codex continued its internal retry.
+- Branch `codex/v5-retryable-provider-events` continues only explicitly
+  retryable errors and retains fail-closed handling for all other errors. PM,
+  BA and Research Analyst are stopped while the correction is reviewed; the
+  correction envelope remains durable and retryable.
+- The PM-correction slice passed 38 focused provider/live-role tests. The
+  complete V5 suite passed 639 tests with 5 environment skips and only the
+  existing Starlette/httpx deprecation warning.
