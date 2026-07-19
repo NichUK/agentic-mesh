@@ -23,6 +23,7 @@ from agentic_mesh_v5.lifecycle import LifecycleStore
 from agentic_mesh_v5.progress import ProgressDraft, ProgressStore
 from agentic_mesh_v5.prompt_renderer import RenderedRoleStatePrompt
 from agentic_mesh_v5.queues import RoleQueueStore
+from agentic_mesh_v5.reliability import ReliabilityStore
 from agentic_mesh_v5.role_service import RoleService, RoleServiceConfig
 from agentic_mesh_v5.thread_affinity import ThreadAffinityKey, ThreadAffinityStore
 from agentic_mesh_v5.worker_provider import (
@@ -435,6 +436,101 @@ def test_role_service_closes_an_engine_when_interrupt_does_not_end_the_stream(
         ThreadAffinityKey("alpha", "work-1", "engineering", "delivery")
     )
     assert binding is not None and binding.active_operation_id is None
+
+
+def test_role_service_completes_a_retry_whose_result_is_already_recorded(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    _seed(postgres_database, ("work-1",))
+    reliability = ReliabilityStore(postgres_database)
+    incident = reliability.start(
+        project_id="alpha",
+        work_item_id="work-1",
+        idempotency_key="failure-work-1",
+        failure_category="provider-timeout",
+        safe_summary="The provider turn did not complete.",
+        source_ref="evidence://provider-timeout",
+        actor_id="engineering-1",
+    ).incident
+    reliability.record_attempt(
+        project_id="alpha",
+        work_item_id="work-1",
+        incident_id=incident.incident_id,
+        attempt_id="work-1-technical-1",
+        stage="technical",
+        attempt_number=1,
+        outcome="failed",
+        evidence={"source": "evidence://technical-1"},
+        actor_id="engineering-1",
+    )
+    provider = _Provider(_Engine(lambda _turn: None))
+    service = _service(tmp_path, postgres_database, provider)
+    try:
+        result = service.run_once()
+    finally:
+        service.close()
+    assert result.status == "completed"
+    assert result.reason == "reliability-attempt-already-recorded"
+    assert provider.opens == 0
+    with psycopg.connect(postgres_database) as connection:
+        rows = connection.execute(
+            """
+            SELECT payload #>> '{reliability,attempt_number}', status
+            FROM agentic_mesh_v5.queue_items
+            WHERE project_id = 'alpha' AND work_item_id = 'work-1'
+              AND idempotency_key LIKE 'reliability:%%'
+            ORDER BY created_at
+            """
+        ).fetchall()
+    assert rows == [("1", "completed"), ("2", "ready")]
+
+
+def test_role_service_never_reconciles_a_post_recovery_resume_envelope(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    _seed(postgres_database, ("work-1",))
+    reliability = ReliabilityStore(postgres_database)
+    incident = reliability.start(
+        project_id="alpha",
+        work_item_id="work-1",
+        idempotency_key="failure-work-1",
+        failure_category="provider-timeout",
+        safe_summary="The provider turn did not complete.",
+        source_ref="evidence://provider-timeout",
+        actor_id="engineering-1",
+    ).incident
+    reliability.record_attempt(
+        project_id="alpha",
+        work_item_id="work-1",
+        incident_id=incident.incident_id,
+        attempt_id="work-1-technical-1",
+        stage="technical",
+        attempt_number=1,
+        outcome="failed",
+        evidence={"source": "evidence://technical-1"},
+        actor_id="engineering-1",
+    )
+    with psycopg.connect(postgres_database) as connection:
+        connection.execute(
+            """
+            UPDATE agentic_mesh_v5.queue_items
+            SET payload = jsonb_set(
+                payload, '{reliability,resumed_after_recovery}', 'true'::jsonb
+            )
+            WHERE project_id = 'alpha'
+              AND idempotency_key = %s
+            """,
+            (f"reliability:{incident.incident_id}:technical-1",),
+        )
+    provider = _Provider(_Engine(lambda _turn: None))
+    service = _service(tmp_path, postgres_database, provider)
+    try:
+        result = service.run_once()
+    finally:
+        service.close()
+    assert result.status == "released"
+    assert result.reason == "no-durable-effect"
+    assert provider.opens == 1
 
 
 def test_role_service_reclaims_only_an_operation_superseded_by_its_new_lease(

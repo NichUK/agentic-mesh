@@ -278,6 +278,20 @@ class RoleService:
         heartbeat.start()
         reason = "turn-failed"
         try:
+            if self._retry_attempt_already_recorded(
+                claim.queue_item.work_item_id,
+                claim.queue_item.payload,
+            ):
+                self._queues.complete(
+                    project_id=claim.project_id,
+                    lease_id=claim.lease_id,
+                    lease_token=claim.lease_token,
+                )
+                return self._result(
+                    "completed",
+                    claim=claim,
+                    reason="reliability-attempt-already-recorded",
+                )
             context = self._work_context(claim.queue_item.work_item_id)
             prompt = self._prompt_resolver(
                 context.role_reference, context.flow_reference, context.state_id
@@ -418,6 +432,63 @@ class RoleService:
         if row is None:
             raise RoleServiceError("active role flow context is unavailable")
         return _WorkContext(*row)
+
+    def _retry_attempt_already_recorded(
+        self,
+        work_item_id: str,
+        payload: Mapping[str, object],
+    ) -> bool:
+        reliability = payload.get("reliability")
+        if reliability is None:
+            return False
+        if not isinstance(reliability, Mapping):
+            raise RoleServiceError("queue reliability metadata is invalid")
+        resumed = reliability.get("resumed_after_recovery")
+        if resumed is True:
+            return False
+        if resumed is not False:
+            raise RoleServiceError("queue reliability metadata is invalid")
+        incident_id = reliability.get("incident_id")
+        stage = reliability.get("stage")
+        attempt_number = reliability.get("attempt_number")
+        if (
+            not isinstance(incident_id, str)
+            or _ID.fullmatch(incident_id) is None
+            or stage not in {"technical", "pm_correction", "recovery"}
+            or isinstance(attempt_number, bool)
+            or not isinstance(attempt_number, int)
+            or not 1 <= attempt_number <= (1 if stage == "recovery" else 3)
+        ):
+            raise RoleServiceError("queue reliability metadata is invalid")
+        try:
+            with psycopg.connect(
+                self._database_url, autocommit=True
+            ) as connection:
+                return connection.execute(
+                    f"""
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM {SCHEMA}.failure_attempts AS attempt
+                        JOIN {SCHEMA}.failure_incidents AS incident
+                          ON incident.project_id = attempt.project_id
+                         AND incident.incident_id = attempt.incident_id
+                        WHERE attempt.project_id = %s
+                          AND attempt.incident_id = %s
+                          AND incident.work_item_id = %s
+                          AND attempt.stage = %s
+                          AND attempt.stage_attempt = %s
+                    )
+                    """,
+                    (
+                        self.config.project_id,
+                        incident_id,
+                        work_item_id,
+                        stage,
+                        attempt_number,
+                    ),
+                ).fetchone()[0]
+        except Exception as exc:
+            raise RoleServiceError(_SAFE_FAILURE) from exc
 
     def _progress_cursor(self, work_item_id: str) -> int:
         try:
