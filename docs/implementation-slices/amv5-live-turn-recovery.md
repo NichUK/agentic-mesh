@@ -118,7 +118,7 @@ above is the smallest correction for technical attempt 3.
   record a checkpoint. No progress record or formal technical-attempt-3 outcome
   was created. The BA was stopped before deployment of this repair.
 - Focused provider and real-Postgres role-service verification for the repair is
-  34 passed after the reviewed sandbox override. The complete pre-review V5
-  suite is 632 passed / 5 environment skips, with
+  34 passed after the reviewed sandbox override. The final complete V5 suite is
+  635 passed / 5 environment skips, with
   the existing Starlette/httpx deprecation warning. A repository-wide run also
   passed every V5 test but retained 11 unrelated V4 baseline failures.

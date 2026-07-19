@@ -1340,8 +1340,8 @@ or `release_review`.
   validated startup-pinned stricter sandbox override, reconciles only an exact
   terminal turn through `thread/read`, and backs off released queue work.
 - Focused Codex-provider and real-Postgres role-service verification is 34
-  passed after the reviewed sandbox override. Complete pre-review V5
-  verification is 632 passed / 5 skips with the existing
+  passed after the reviewed sandbox override. Final complete V5 verification
+  is 635 passed / 5 skips with the existing
   Starlette/httpx warning. A repository-wide run passed every V5 test and
   retained 11 unrelated V4 baseline failures. Review, immutable rebuild and
   live technical-3 evidence remain required before acceptance.
