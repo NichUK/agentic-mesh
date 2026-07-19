@@ -1391,3 +1391,27 @@ or `release_review`.
   verification for the rollout-first correction is 36 passed; complete V5
   verification is 637 passed and 5 environment skips, with only the existing
   Starlette/httpx deprecation warning.
+
+## 2026-07-19 V5 Retryable Provider Event Correction
+
+- PR 446 merged as `57988d574bf16a9a9b80db8c79a0aba794fbf926` and the
+  runtime plus six worker-class images were rebuilt, pushed and deployed. TLS,
+  control, PM, all revision labels and all exact Codex volume bindings passed.
+- BA and Research Analyst recorded fresh progress, but the reviewed BA lease
+  reached its 600-second watchdog without queue completion. Technical attempt
+  3 is now formally recorded failed with exact evidence; the reliability state
+  advanced to `pm_correction` attempt 1.
+- PM progress sequence 7 routed bounded correction
+  `route-851759e1ddfaad93e6825bc1dbf17cf0`. A supported BA `role-service
+  --once` run returned `provider-not-completed`. Lease and rollout timing showed
+  the first turn was released about three seconds after starting, continued as
+  a ghost, and completed while the reclaim opened a different pending handle.
+- Root cause: `_run_turn` treated every provider `error` event as terminal even
+  when `error.retryable` was true and Codex was continuing its internal retry.
+  Branch `codex/v5-retryable-provider-events` continues only explicitly
+  retryable errors and otherwise fails closed. Focused provider/live-role
+  verification is 38 passed; the complete V5 suite is 639 passed and 5
+  environment skips with only the existing Starlette/httpx warning.
+- PM, BA and Research Analyst are stopped during review. The PM correction and
+  BA correction envelopes remain durable; no terminal project outcome or
+  sponsor decision was invented.

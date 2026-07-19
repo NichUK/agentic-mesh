@@ -431,6 +431,8 @@ class RoleService:
             if heartbeat.error is not None:
                 return False
             if event.kind is ProviderEventKind.ERROR:
+                if event.error is not None and event.error.retryable:
+                    continue
                 return False
             if event.kind is ProviderEventKind.TURN_COMPLETED:
                 completed = event.completion is TurnCompletionStatus.COMPLETED

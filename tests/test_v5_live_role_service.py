@@ -35,6 +35,8 @@ from agentic_mesh_v5.worker_provider import (
     EngineMetadata,
     ProviderEvent,
     ProviderEventKind,
+    ProviderErrorInfo,
+    ProviderErrorKind,
     SandboxPolicy,
     TurnCompletionStatus,
 )
@@ -196,6 +198,29 @@ class _Turn:
         pass
 
 
+class _ErrorThenCompletionTurn(_Turn):
+    def __init__(self, thread_id: str, effect, *, retryable: bool) -> None:
+        super().__init__(thread_id, effect)
+        self._retryable = retryable
+
+    def events(self):
+        yield ProviderEvent(
+            ProviderEventKind.ERROR,
+            self.thread_id,
+            self.turn_id,
+            error=ProviderErrorInfo(
+                (
+                    ProviderErrorKind.TRANSPORT
+                    if self._retryable
+                    else ProviderErrorKind.EXECUTION
+                ),
+                self._retryable,
+                "provider operation failed",
+            ),
+        )
+        yield from super().events()
+
+
 class _BlockingTurn:
     def __init__(self, thread_id: str) -> None:
         self.thread_id = thread_id
@@ -233,6 +258,19 @@ class _Thread:
         return _Turn(self.thread_id, self._effect)
 
 
+class _ErrorThenCompletionThread(_Thread):
+    def __init__(self, thread_id: str, effect, *, retryable: bool) -> None:
+        super().__init__(thread_id, effect)
+        self._retryable = retryable
+
+    def start_turn(self, _request):
+        return _ErrorThenCompletionTurn(
+            self.thread_id,
+            self._effect,
+            retryable=self._retryable,
+        )
+
+
 class _Engine:
     def __init__(self, effect) -> None:
         self.metadata = EngineMetadata("fake", "fake", "1", "test", "test")
@@ -255,6 +293,31 @@ class _Engine:
 
     def close(self) -> None:
         self.closed += 1
+
+
+class _ErrorThenCompletionEngine(_Engine):
+    def __init__(self, effect, *, retryable: bool) -> None:
+        super().__init__(effect)
+        self._retryable = retryable
+
+    def start_thread(self, request):
+        thread_id = f"thread-{len(self.created_threads) + 1}"
+        self.created_threads.append(thread_id)
+        self.thread_requests.append(request)
+        return _ErrorThenCompletionThread(
+            thread_id,
+            self._effect,
+            retryable=self._retryable,
+        )
+
+    def resume_thread(self, thread_id, request):
+        self.resumed_threads.append(thread_id)
+        self.thread_requests.append(request)
+        return _ErrorThenCompletionThread(
+            thread_id,
+            self._effect,
+            retryable=self._retryable,
+        )
 
 
 class _BlockingEngine(_Engine):
@@ -371,6 +434,76 @@ def test_role_service_reuses_one_engine_and_separates_work_threads(
         request.sandbox.value == "full_access" for request in engine.thread_requests
     )
     assert engine.closed == 1
+
+
+def test_role_service_continues_an_explicitly_retryable_provider_error(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    _seed(postgres_database, ("work-1",))
+
+    def effect(turn_id: str) -> None:
+        ProgressStore(postgres_database).record(
+            ProgressDraft(
+                project_id="alpha",
+                work_item_id="work-1",
+                role_instance_id="engineering-1",
+                checkpoint_id=turn_id,
+                expected_previous_sequence=0,
+                status="in_progress",
+                goal="Process durable work",
+                step="Finish after the provider retry",
+                completed_action="Recorded the completed retried turn",
+                activity=None,
+                blocker=None,
+                next_action="Continue the configured flow",
+                safe_summary="The provider retried and the role turn completed.",
+            )
+        )
+
+    service = _service(
+        tmp_path,
+        postgres_database,
+        _Provider(_ErrorThenCompletionEngine(effect, retryable=True)),
+    )
+    try:
+        result = service.run_once()
+    finally:
+        service.close()
+
+    assert result.status == "completed"
+    assert result.reason == "durable-effect-recorded"
+    assert (
+        RoleQueueStore(postgres_database)
+        .get_item("alpha", "queue-work-1")
+        .status
+        == "completed"
+    )
+
+
+def test_role_service_fails_closed_on_a_non_retryable_provider_error(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    _seed(postgres_database, ("work-1",))
+    effects: list[str] = []
+    service = _service(
+        tmp_path,
+        postgres_database,
+        _Provider(_ErrorThenCompletionEngine(effects.append, retryable=False)),
+    )
+    try:
+        result = service.run_once()
+    finally:
+        service.close()
+
+    assert result.status == "released"
+    assert result.reason == "provider-not-completed"
+    assert effects == []
+    assert (
+        RoleQueueStore(postgres_database)
+        .get_item("alpha", "queue-work-1")
+        .status
+        == "ready"
+    )
 
 
 def test_role_service_backs_off_after_released_work(tmp_path: Path) -> None:
