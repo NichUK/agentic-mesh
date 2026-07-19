@@ -1267,6 +1267,8 @@ or `release_review`.
 - Local fleet wake/hibernate uses an exact external
   project/instance-to-container map and argument-list Docker calls. Unknown
   instances, role mismatches and command failures fail closed without shell
-  interpolation or raw external error text.
+  interpolation or raw external error text. The local immutable control image
+  carries the Docker client; its Compose deployment mounts the engine socket
+  and read-only external fleet map explicitly.
 - The control service resolves each registered project's single pinned flow
   from external packages and accepts an optional external fleet-map path.

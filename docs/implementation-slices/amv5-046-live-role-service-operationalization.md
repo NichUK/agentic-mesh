@@ -32,7 +32,9 @@ path; it does not add a second workflow engine or scheduler.
   lease through the existing retry path.
 - Add one local Docker fleet supervisor that starts and stops only
   pre-provisioned containers from an external instance-to-container map.
-  Container creation, secrets and project mounts remain deployment concerns.
+  The local immutable control image carries the Docker client and Compose mounts
+  the engine socket plus a read-only fleet map. Container creation, secrets and
+  project mounts remain deployment concerns.
 - Add a `role-service` CLI command and install the V5 package into the existing
   project-neutral worker image. Do not add another message broker, daemon
   framework, agent protocol, prompt store, or container orchestrator.
