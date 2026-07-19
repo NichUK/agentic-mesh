@@ -161,6 +161,11 @@ operational support.
   after health, and restores the prior compatible image on failure. Restarted
   operations reconcile from the observed image and their Postgres attempt;
   neither the build nor deployment path mounts the source checkout.
+- ADO work adapter: resolves one exact organization/project/credential binding
+  from the active manifest, retains only project-scoped external links and
+  idempotent update operations, and revalidates `System.TeamProject` on every
+  remote response. External availability never owns or advances V5 lifecycle
+  state.
 - Shared memory: V5 stores concise, source-linked accelerators at project-role,
   project, and organization-role scope. Logical role instances share these
   records, but provider threads never enter the memory model. Every write must

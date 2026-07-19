@@ -1086,6 +1086,18 @@ mount. The boundary advances only after candidate health. A failed candidate is
 rolled back and the previous image is health-verified, while interrupted
 operations resume from their durable phase and observed image.
 
+### V5 Azure DevOps Work Adapter
+
+V5 work items remain authoritative. An active manifest supplies the only ADO
+organization, project, and credential reference the adapter may use. A durable
+link records the numeric ADO ID and canonical project-qualified URL; every read
+or patch also requires the returned `System.TeamProject` to match that binding.
+Updates allow only the small configured work-field set and persist an operation
+before the REST side effect. Exact retries read first and complete without a
+second patch when ADO already contains the requested values. Bounded transport,
+throttling, or service failure leaves that operation pending and does not alter
+the V5 work item.
+
 ### V5 Isolated Git Workspaces
 
 Mutating work uses one durable workspace per project/work-item, with one

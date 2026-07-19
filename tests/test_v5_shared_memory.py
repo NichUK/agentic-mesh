@@ -71,7 +71,7 @@ def postgres_database() -> str:
 @pytest.fixture
 def memory(postgres_database: str) -> tuple[SharedMemoryStore, MutableSourceVerifier]:
     status = MigrationRunner(postgres_database).migrate()
-    assert status.current_version == 26
+    assert status.current_version == 27
     with psycopg.connect(postgres_database, autocommit=True) as connection:
         connection.execute(
             """

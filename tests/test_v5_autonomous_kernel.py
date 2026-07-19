@@ -390,7 +390,7 @@ def _git_evidence(root: Path) -> str:
 def test_small_sdlc_project_completes_through_api_and_cli_with_restart_recovery(
     postgres_database: str, tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    assert MigrationRunner(postgres_database).migrate().current_version == 26
+    assert MigrationRunner(postgres_database).migrate().current_version == 27
     flow = _flow()
     documents = _Documents()
 
