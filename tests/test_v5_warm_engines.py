@@ -306,6 +306,32 @@ def test_explicit_discard_is_identity_safe_and_opens_replacement() -> None:
     pool.shutdown()
 
 
+def test_abort_active_evicts_without_waiting_for_the_operation_lock() -> None:
+    factory = ProviderFactory()
+    pool = WarmEnginePool(factory)
+    entered = Event()
+    release = Event()
+
+    def operation(engine: FakeEngine) -> int:
+        entered.set()
+        assert release.wait(5)
+        return engine.number
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        running = executor.submit(pool.run, KEY, operation)
+        assert entered.wait(5)
+        aborted = executor.submit(pool.abort_active, KEY)
+        assert aborted.result(timeout=5) is True
+        assert factory.providers[0].engine.close_count == 1
+        assert pool.snapshot(KEY) is None
+        release.set()
+        assert running.result(timeout=5) == 1
+
+    assert pool.abort_active(KEY) is False
+    assert pool.run(KEY, lambda engine: engine.number) == 2
+    pool.shutdown()
+
+
 def test_close_retries_and_lifecycle_errors_are_safe() -> None:
     once_factory = ProviderFactory(close_failures=1)
     once = WarmEnginePool(once_factory)

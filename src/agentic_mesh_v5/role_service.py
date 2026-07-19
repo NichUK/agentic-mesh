@@ -136,11 +136,17 @@ class _WorkContext:
 
 class _LeaseHeartbeat:
     def __init__(
-        self, queues: RoleQueueStore, claim: LeaseClaim, config: RoleServiceConfig
+        self,
+        queues: RoleQueueStore,
+        claim: LeaseClaim,
+        config: RoleServiceConfig,
+        *,
+        abort_engine: Callable[[], bool],
     ) -> None:
         self._queues = queues
         self._claim = claim
         self._config = config
+        self._abort_engine = abort_engine
         self._stop = Event()
         self._wake = Event()
         self._lock = Lock()
@@ -188,6 +194,10 @@ class _LeaseHeartbeat:
                         turn.interrupt()
                     except Exception:
                         pass
+                try:
+                    self._abort_engine()
+                except Exception:
+                    pass
                 return
             if now < next_heartbeat:
                 continue
@@ -255,7 +265,16 @@ class RoleService:
         )
         if claim is None:
             return self._result("empty")
-        heartbeat = _LeaseHeartbeat(self._queues, claim, self.config)
+        engine_key = RoleInstanceKey(
+            self.config.project_id,
+            self.config.instance_id,
+        )
+        heartbeat = _LeaseHeartbeat(
+            self._queues,
+            claim,
+            self.config,
+            abort_engine=lambda: self._pool.abort_active(engine_key),
+        )
         heartbeat.start()
         reason = "turn-failed"
         try:
