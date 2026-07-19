@@ -184,6 +184,8 @@ def test_discovers_multiple_sources_and_produces_a_deterministic_report() -> Non
     )
     assert document.credential_configured is True
     assert len(document.configuration_digest) == 64
+    ado = next(item for item in first.results if item.source_id == "ado")
+    assert ado.summary["binding_kind"] == "ado"
     assert bindings.calls == ["ado", "ado"]
     assert all(method[0] in {"", "architecture"} for method in store.calls)
 

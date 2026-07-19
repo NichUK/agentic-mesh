@@ -525,7 +525,9 @@ class ProjectImportDiscovery:
             adapter = self._bindings.get(source.kind, self._declared_binding)
             try:
                 inventory = adapter.inspect(source)
-                results.append(self._success("binding", source, asdict(inventory)))
+                summary = asdict(inventory)
+                summary["binding_kind"] = source.kind
+                results.append(self._success("binding", source, summary))
             except Exception:
                 results.append(self._unavailable("binding", source))
                 issues.append(self._unavailable_issue("binding", source.source_id))

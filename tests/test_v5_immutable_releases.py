@@ -55,7 +55,7 @@ def postgres_database() -> str:
 
 @pytest.fixture
 def release_project(postgres_database: str, tmp_path: Path) -> UpgradeRequest:
-    assert MigrationRunner(postgres_database).migrate().current_version == 29
+    assert MigrationRunner(postgres_database).migrate().current_version == 30
     roots = []
     for name in ("configuration", "running", "state", "workspaces", "source"):
         root = tmp_path / name
@@ -171,8 +171,8 @@ class FakeDeployment:
 def _candidate(
     image_ref: str,
     *,
-    minimum: int = 29,
-    maximum: int = 29,
+    minimum: int = 30,
+    maximum: int = 30,
 ) -> VerifiedImage:
     return VerifiedImage(
         image_ref=image_ref,
@@ -225,7 +225,7 @@ def test_verified_upgrade_is_durable_and_exact_replay_has_no_side_effects(
             """
         ).fetchone()[0]
     assert boundary == (CANDIDATE, 2)
-    assert release == ("deployed", SOURCE_REVISION, 29, 29)
+    assert release == ("deployed", SOURCE_REVISION, 30, 30)
     assert audit == 1
 
     with psycopg.connect(postgres_database) as connection:
@@ -266,7 +266,7 @@ def test_preflight_and_schema_failures_never_touch_the_deployment(
     incompatible_request = replace(release_project, operation_id="upgrade-2")
     incompatible = ImmutableReleaseCoordinator(
         postgres_database,
-        builder=FakeBuilder(_candidate(CANDIDATE, minimum=30, maximum=31)),
+        builder=FakeBuilder(_candidate(CANDIDATE, minimum=31, maximum=32)),
         deployment=deployment,
     ).upgrade(incompatible_request)
     assert incompatible.status == "rejected"

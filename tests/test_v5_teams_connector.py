@@ -70,7 +70,7 @@ def postgres_database() -> str:
 
 @pytest.fixture
 def teams_project(postgres_database: str) -> str:
-    assert MigrationRunner(postgres_database).migrate().current_version == 29
+    assert MigrationRunner(postgres_database).migrate().current_version == 30
     digest = "d" * 64
     identities = {
         role_id: {

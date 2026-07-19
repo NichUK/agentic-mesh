@@ -61,7 +61,7 @@ def postgres_database() -> str:
 
 @pytest.fixture
 def ado_project(postgres_database: str) -> str:
-    assert MigrationRunner(postgres_database).migrate().current_version == 29
+    assert MigrationRunner(postgres_database).migrate().current_version == 30
     _activate_manifest(postgres_database, digest="d" * 64)
     return postgres_database
 
