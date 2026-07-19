@@ -46,6 +46,15 @@ than request payloads. The AMV5-045 qualification drives a compact product,
 development, QA, and release flow through these APIs and the sponsor CLI,
 including API/worker/PM restart recovery and a reclaimed handoff lease.
 
+V5 is described as an ordinary arm's-length project by
+`examples/projects/agentic-mesh-v5/agentic-mesh/project.yaml`. The generic
+`project-register` CLI pins that manifest, the active external configuration
+revision, a digest-addressed running image, and disjoint install, state, and
+workspace roots. Project source work can then use only the existing isolated
+worktree path; registration does not introduce a self-hosting execution mode.
+Run `python -m agentic_mesh_v5 project-register --help` for the bootstrap
+arguments. Immutable candidate deployment and rollback remain AMV5-047 work.
+
 V5 database maintenance and native backup operations use the same external
 `AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,
 publishes a custom-format archive with its checksum manifest as the publication

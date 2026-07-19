@@ -1050,3 +1050,25 @@ or `release_review`.
   Final reconciliation requires no ready/leased orphan for the completed work
   and no direct queue repair. This is the entry evidence for AMV5-046
   arms-length V5 registration.
+
+## 2026-07-19 V5 Arm's-Length Project Registration
+
+- One generic coordinator registers any project through its validated
+  manifest, exact active external-configuration release and Git revision,
+  ordinary role pack, and a durable Postgres runtime boundary. Exact replay is
+  idempotent; project identity, sponsor, override, manifest, image, or root
+  conflicts fail before active project configuration changes.
+- The boundary pins a digest-addressed running image plus disjoint external
+  configuration, running-install, runtime-state, and workspace roots. Project
+  roots cannot overlap another project, and source work is prepared only by
+  the existing isolated multi-repository worktree coordinator.
+- Agentic Mesh V5 now has a secret-free 15-role project manifest and a
+  separately versioned external project override that repeats the simplicity,
+  minimal-handoff, mature-reuse, sponsor-ambiguity, and live-runtime isolation
+  rules. The active organization release and merged configuration revision are
+  pinned independently.
+- The `project-register` bootstrap CLI exposes this path without a dashboard.
+  Qualification commits and tests a candidate change in its worktree, rebuilds
+  the coordinator as a restart simulation, and proves the source checkout,
+  running install, runtime state, and running image reference remain unchanged.
+  Building and promoting the candidate image belongs to AMV5-047.

@@ -1,0 +1,105 @@
+schema_version: 1
+project_id: agentic-mesh-v5
+display_name: Agentic Mesh V5
+packages:
+  organization_release_digest: b1a9b91e9d970e9ba38f7c568bed3a4e5b0a08560e7f84e5b96ab4defbbef39b
+  overrides:
+    - project-override/agentic-mesh-v5@0.1.0
+repositories:
+  primary:
+    url: https://github.com/NichUK/agentic-mesh.git
+    default_branch: develop
+    credential: git
+documents:
+  project-library:
+    adapter: onedrive
+    drive_id: agentic-mesh-documents
+    root: /Agentic Mesh V5
+    credential: graph
+teams:
+  tenant_id: seerstone
+  team_id: agentic-mesh-v5
+  credential: graph
+  channels:
+    project: agentic-mesh-v5
+    approvals: agentic-mesh-v5-approvals
+ado:
+  organization: https://dev.azure.com/seerstone
+  project: agentic-mesh
+  credential: ado
+credentials:
+  git:
+    scope: project
+    provider: git
+    reference: oauth-cache://projects/agentic-mesh-v5/git
+  graph:
+    scope: project
+    provider: graph
+    reference: oauth-cache://projects/agentic-mesh-v5/graph
+  ado:
+    scope: project
+    provider: ado
+    reference: oauth-cache://projects/agentic-mesh-v5/ado
+roles:
+  business-analyst:
+    package: role/business-analyst@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  delivery-manager:
+    package: role/delivery-manager@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  engineering:
+    package: role/engineering@0.1.0
+    tool_profile: tool-profile/development@0.1.0
+    instances: {minimum: 0, maximum: 2}
+  enterprise-architect:
+    package: role/enterprise-architect@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  platform-engineer:
+    package: role/platform-engineer@0.1.0
+    tool_profile: tool-profile/operations@0.1.0
+    instances: {minimum: 0, maximum: 1}
+  product-manager:
+    package: role/product-manager@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  project-manager:
+    package: role/project-manager@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 1, maximum: 1}
+  prompt-engineer:
+    package: role/prompt-engineer@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  qa-engineer:
+    package: role/qa-engineer@0.1.0
+    tool_profile: tool-profile/qa@0.1.0
+    instances: {minimum: 0, maximum: 1}
+  release-manager:
+    package: role/release-manager@0.1.0
+    tool_profile: tool-profile/operations@0.1.0
+    instances: {minimum: 0, maximum: 1}
+  research-analyst:
+    package: role/research-analyst@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  security-architect:
+    package: role/security-architect@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  solution-architect:
+    package: role/solution-architect@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  technical-writer:
+    package: role/technical-writer@0.1.0
+    tool_profile: tool-profile/general@0.2.0
+    instances: {minimum: 0, maximum: 1}
+  ux-designer:
+    package: role/ux-designer@0.1.0
+    tool_profile: tool-profile/ux@0.1.0
+    instances: {minimum: 0, maximum: 1}
+limits:
+  max_total_instances: 16

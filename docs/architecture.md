@@ -45,6 +45,13 @@ Projects may run multiple instances of the same role where needed. The runtime
 must treat role template, role instance, and project assignment as separate
 concepts.
 
+V5 registers every project, including Agentic Mesh itself, through the same
+manifest and role-pack path. A durable runtime boundary pins the external
+configuration revision and digest-addressed running image while keeping the
+running install, runtime state, and external worktrees disjoint. Self-hosted
+development is therefore ordinary project work, not a privileged mutation
+path into the live runtime.
+
 Idle role-agent instances can hibernate after a configurable grace period.
 The control-plane wakes hibernated instances when new role work, DMs, mentions,
 scheduled work, or manual operator action requires them. This keeps local and
