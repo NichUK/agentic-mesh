@@ -39,6 +39,28 @@ from agentic_mesh_v5.worker_provider import (
 _ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _CONVERSATION = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _SAFE_FAILURE = "role service turn failed"
+_CODEX_SANDBOX_ENV = "AGENTIC_MESH_V5_CODEX_SANDBOX"
+
+
+def _codex_sandbox_policy() -> SandboxPolicy:
+    """Return the Codex sandbox policy from the environment.
+
+    Defaults to ``full_access`` because the worker container is the
+    project/tool isolation boundary and nested bubblewrap cannot create
+    namespaces inside it.  Set ``AGENTIC_MESH_V5_CODEX_SANDBOX`` to
+    ``read_only`` or ``workspace_write`` to use a stricter policy in
+    deployments where additional sandboxing is available.
+    """
+    value = os.environ.get(_CODEX_SANDBOX_ENV, "").strip()
+    if value:
+        try:
+            return SandboxPolicy(value)
+        except ValueError:
+            valid = ", ".join(p.value for p in SandboxPolicy)
+            raise RoleServiceConfigurationError(
+                f"{_CODEX_SANDBOX_ENV}={value!r} is not valid; expected one of: {valid}"
+            ) from None
+    return SandboxPolicy.FULL_ACCESS
 
 
 class RoleServiceError(RuntimeError):
@@ -346,9 +368,7 @@ class RoleService:
                     cwd=workspace,
                     base_instructions=prompt.text,
                     developer_instructions=_operational_instructions(),
-                    # The worker container is the project/tool isolation boundary.
-                    # Nested bubblewrap cannot create namespaces in that container.
-                    sandbox=SandboxPolicy.FULL_ACCESS,
+                    sandbox=_codex_sandbox_policy(),
                 ),
                 operation=lambda thread: self._run_turn(
                     thread, heartbeat, claim, payload_text
