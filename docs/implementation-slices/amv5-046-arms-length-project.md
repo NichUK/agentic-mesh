@@ -2,10 +2,9 @@
 
 ## Outcome
 
-Register Agentic Mesh V5 through the same project manifest, role-pack, runtime
-boundary, and isolated-worktree mechanisms used by any other project. V5 may
-build and test a candidate replacement, but cannot mutate the running install
-or runtime state through its source workspace.
+Register V5 through the project manifest, role-pack, runtime boundary, and
+isolated-worktree mechanisms used by any project. V5 may build and test a
+candidate, but cannot mutate the running install or state from its workspace.
 
 ## Scope and boundaries
 
@@ -13,9 +12,8 @@ or runtime state through its source workspace.
   mode or V5-specific workflow path.
 - Require an active external configuration release at an exact Git revision,
   then activate the ordinary project manifest and role pack.
-- Persist the manifest digest, configuration revision/root, digest-pinned
-  running image, running-install root, runtime-state root, workspace root, and
-  deployment adapter. Store references and paths only, never credentials.
+- Persist the manifest/configuration pins, digest-pinned image, deployment
+  adapter, and install/state/workspace paths. Never store credentials.
 - Require configuration, running install, runtime state, and workspaces to be
   pairwise disjoint. Runtime install/state/workspace roots cannot overlap the
   corresponding roots of another project.
@@ -28,11 +26,9 @@ or runtime state through its source workspace.
 - Expose the same operation through the bootstrap `project-register` CLI so an
   operator can register or exactly replay a project without a dashboard.
 
-The concrete V5 declaration is
-`examples/projects/agentic-mesh-v5/agentic-mesh/project.yaml`. Its
-`project-override/agentic-mesh-v5@0.1.0` package remains in the separate
-organization configuration repository and repeats the simplicity and live
-runtime isolation rules.
+The concrete declaration is `examples/projects/agentic-mesh-v5/agentic-mesh/project.yaml`.
+Its external `project-override/agentic-mesh-v5@0.1.0` package repeats the
+simplicity and live-runtime isolation rules.
 
 ## Acceptance criteria
 

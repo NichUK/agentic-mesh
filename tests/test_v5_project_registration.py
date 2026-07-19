@@ -277,6 +277,7 @@ def _manifest(
     release_digest: str,
     repository_url: str,
     overrides: list[str] | None = None,
+    ado_project: str = "agentic-mesh",
 ):
     value = {
         "schema_version": 1,
@@ -308,7 +309,7 @@ def _manifest(
         },
         "ado": {
             "organization": "https://dev.azure.com/seerstone",
-            "project": "agentic-mesh",
+            "project": ado_project,
             "credential": "ado",
         },
         "credentials": {
@@ -580,6 +581,7 @@ def test_registration_rejects_conflicts_before_project_activation(
         release_digest=release_digest,
         repository_url="https://github.com/example/dashboard.git",
         overrides=[],
+        ado_project="dashboard",
     )
     other_values = {
         **values,
@@ -596,3 +598,25 @@ def test_registration_rejects_conflicts_before_project_activation(
         assert connection.execute(
             "SELECT count(*) FROM agentic_mesh_v5.projects WHERE project_id='dashboard'"
         ).fetchone()[0] == 0
+
+    dashboard_workspaces = tmp_path / "dashboard-workspaces"
+    dashboard_workspaces.mkdir()
+    other_values["workspace_root"] = dashboard_workspaces
+    coordinator.register(other, **other_values)
+    LifecycleStore(postgres_database).create_work_item(
+        project_id="agentic-mesh-v5",
+        work_item_id="foreign-protected-source",
+        title="Reject another project's protected source",
+        owner_role_id="project-manager",
+        actor_id="project-manager",
+        correlation_id="corr-foreign-protected-source",
+    )
+    with pytest.raises(ProjectRegistrationConflict, match="protected"):
+        coordinator.prepare_workspace(
+            project_id="agentic-mesh-v5",
+            work_item_id="foreign-protected-source",
+            actor_id="project-manager",
+            source_repositories={
+                "primary": Path(other_values["runtime_state_root"])
+            },
+        )

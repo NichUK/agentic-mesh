@@ -25,6 +25,7 @@ from agentic_mesh_v5.role_pack import RolePackActivation, RolePackActivator
 
 
 _ID = re.compile(r"^[a-z][a-z0-9-]{0,127}$")
+_PROJECT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 _ALLOWED_CONFIG_STATE = ("activation/", "releases/", "state/")
@@ -159,7 +160,7 @@ class ProjectRegistrationCoordinator:
         return ProjectRegistration(activation, roles, boundary)
 
     def get(self, project_id: str) -> ProjectRuntimeBoundary | None:
-        project_id = _identifier(project_id, "project_id")
+        project_id = _project_identifier(project_id)
         try:
             with psycopg.connect(
                 self._database_url, autocommit=True, row_factory=dict_row
@@ -195,15 +196,7 @@ class ProjectRegistrationCoordinator:
             raise ProjectRegistrationConflict(
                 "project runtime boundary is not registered"
             )
-        protected = tuple(
-            Path(value)
-            for value in (
-                boundary.configuration_root,
-                boundary.running_install_root,
-                boundary.runtime_state_root,
-                boundary.workspace_root,
-            )
-        )
+        protected = self._protected_roots()
         for source in source_repositories.values():
             selected = _existing_root(source, "source repository")
             if any(_overlaps(selected, root) for root in protected):
@@ -218,6 +211,29 @@ class ProjectRegistrationCoordinator:
             actor_id=actor_id,
             source_repositories=source_repositories,
         )
+
+    def _protected_roots(self) -> tuple[Path, ...]:
+        try:
+            with psycopg.connect(
+                self._database_url, autocommit=True, row_factory=dict_row
+            ) as connection:
+                rows = self._boundary_rows(connection)
+            return tuple(
+                Path(str(row[key]))
+                for row in rows
+                for key in (
+                    "configuration_root",
+                    "running_install_root",
+                    "runtime_state_root",
+                    "workspace_root",
+                )
+            )
+        except ProjectRegistrationError:
+            raise
+        except Exception as exc:
+            raise ProjectRegistrationError(
+                "project runtime boundary read failed"
+            ) from exc
 
     def _verify_configuration(
         self, revision: str, manifest: ProjectManifest
@@ -528,6 +544,12 @@ def _git(root: Path, *arguments: str) -> str:
 def _identifier(value: object, field: str) -> str:
     if not isinstance(value, str) or _ID.fullmatch(value) is None:
         raise ValueError(f"{field} is invalid")
+    return value
+
+
+def _project_identifier(value: object) -> str:
+    if not isinstance(value, str) or _PROJECT_ID.fullmatch(value) is None:
+        raise ValueError("project_id is invalid")
     return value
 
 
