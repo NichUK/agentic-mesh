@@ -32,33 +32,6 @@ EXTERNAL_CONFIG = Path(
         ROOT.parent / "agentic-mesh-config",
     )
 )
-SDLC_RELEASE_REFERENCES = (
-    "system/core@0.1.0",
-    "policy/behavioral-guardrails@0.1.0",
-    "flow/sdlc@0.1.0",
-    "role/business-analyst@0.1.0",
-    "role/delivery-manager@0.1.0",
-    "role/engineering@0.1.0",
-    "role/enterprise-architect@0.1.0",
-    "role/platform-engineer@0.1.0",
-    "role/product-manager@0.1.0",
-    "role/project-manager@0.1.0",
-    "role/prompt-engineer@0.1.0",
-    "role/qa-engineer@0.1.0",
-    "role/release-manager@0.1.0",
-    "role/research-analyst@0.1.0",
-    "role/security-architect@0.1.0",
-    "role/solution-architect@0.1.0",
-    "role/technical-writer@0.1.0",
-    "role/ux-designer@0.1.0",
-    "tool-profile/general@0.2.0",
-    "tool-profile/development@0.1.0",
-    "tool-profile/qa@0.1.0",
-    "tool-profile/operations@0.1.0",
-    "tool-profile/ux@0.1.0",
-)
-
-
 @pytest.fixture
 def postgres_database() -> str:
     base_url = os.environ.get("AGENTIC_MESH_TEST_DATABASE_URL")
@@ -385,7 +358,15 @@ def test_checked_in_v5_project_manifest_pins_the_external_sdlc_release() -> None
         / "0.1.0"
     ).exists():
         return
-    release = resolve_packages(EXTERNAL_CONFIG, SDLC_RELEASE_REFERENCES)
+    roles = manifest.snapshot["roles"].values()
+    references = (
+        "system/core@0.1.0",
+        "policy/behavioral-guardrails@0.1.0",
+        "flow/sdlc@0.1.0",
+        *(role["package"] for role in roles),
+        *sorted({role["tool_profile"] for role in roles}),
+    )
+    release = resolve_packages(EXTERNAL_CONFIG, references)
     override = resolve_packages(
         EXTERNAL_CONFIG, packages["overrides"]
     )
@@ -550,6 +531,11 @@ def test_registration_rejects_conflicts_before_project_activation(
     coordinator = ProjectRegistrationCoordinator(
         postgres_database, configuration_root=config
     )
+    with pytest.raises(ValueError, match="running_install_root"):
+        coordinator.register(
+            manifest,
+            **{**values, "running_install_root": tmp_path / "missing-install"},
+        )
     coordinator.register(manifest, **values)
 
     conflicting = {**values, "running_image_ref": IMAGE.replace("b" * 64, "c" * 64)}

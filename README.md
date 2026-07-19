@@ -50,7 +50,7 @@ V5 is described as an ordinary arm's-length project by
 `examples/projects/agentic-mesh-v5/agentic-mesh/project.yaml`. The generic
 `project-register` CLI pins that manifest, the active external configuration
 revision, a digest-addressed running image, and disjoint install, state, and
-workspace roots. Project source work can then use only the existing isolated
+workspace roots (all supplied as absolute paths). Project source work uses the isolated
 worktree path; registration does not introduce a self-hosting execution mode.
 Run `python -m agentic_mesh_v5 project-register --help` for the bootstrap
 arguments. Immutable candidate deployment and rollback remain AMV5-047 work.

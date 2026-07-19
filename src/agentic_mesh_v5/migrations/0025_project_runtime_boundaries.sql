@@ -16,6 +16,12 @@ CREATE TABLE agentic_mesh_v5.project_runtime_boundaries (
     registered_by text NOT NULL CHECK (btrim(registered_by) <> ''),
     registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     version integer NOT NULL DEFAULT 1 CHECK (version > 0),
+    CHECK (configuration_root <> running_install_root
+       AND configuration_root <> runtime_state_root
+       AND configuration_root <> workspace_root
+       AND running_install_root <> runtime_state_root
+       AND running_install_root <> workspace_root
+       AND runtime_state_root <> workspace_root),
     UNIQUE (running_install_root),
     UNIQUE (runtime_state_root),
     UNIQUE (workspace_root),

@@ -106,7 +106,9 @@ class ProjectRegistrationCoordinator:
     ) -> ProjectRegistration:
         if not isinstance(manifest, ProjectManifest):
             raise ValueError("validated project manifest is required")
-        configuration_revision = _commit(configuration_revision)
+        configuration_revision = _commit(
+            configuration_revision, "configuration_revision"
+        )
         actor_id = _text(actor_id, "actor_id")
         deployment_adapter = _identifier(deployment_adapter, "deployment_adapter")
         running_image_ref = _image(running_image_ref)
@@ -125,7 +127,7 @@ class ProjectRegistrationCoordinator:
             "workspace_root": roots[3],
             "deployment_adapter": deployment_adapter,
         }
-        source_revision = _commit(source_revision)
+        source_revision = _commit(source_revision, "source_revision")
         with psycopg.connect(self._database_url, autocommit=True) as lock:
             lock.execute(
                 "SELECT pg_advisory_lock(hashtextextended(%s, 0))",
@@ -485,8 +487,8 @@ def _runtime_roots(
 ) -> tuple[str, str, str, str]:
     roots = (
         configuration,
-        _absolute(running_install, "running_install_root"),
-        _absolute(runtime_state, "runtime_state_root"),
+        _existing_root(running_install, "running_install_root"),
+        _existing_root(runtime_state, "runtime_state_root"),
         _absolute(workspace, "workspace_root"),
     )
     for index, root in enumerate(roots):
@@ -535,8 +537,9 @@ def _git(root: Path, *arguments: str) -> str:
         text=True,
     )
     if completed.returncode != 0:
+        detail = completed.stderr.strip() or "no diagnostic"
         raise ProjectRegistrationConflict(
-            f"configuration Git command failed: {arguments[0]}"
+            f"configuration Git command failed: {' '.join(arguments)}: {detail[:500]}"
         )
     return completed.stdout.strip()
 
@@ -553,9 +556,9 @@ def _project_identifier(value: object) -> str:
     return value
 
 
-def _commit(value: object) -> str:
+def _commit(value: object, field: str) -> str:
     if not isinstance(value, str) or _COMMIT.fullmatch(value) is None:
-        raise ValueError("revision is invalid")
+        raise ValueError(f"{field} is invalid")
     return value
 
 
