@@ -41,5 +41,29 @@ simplicity and live-runtime isolation rules.
   same registration and worktree plan.
 - A candidate revision can be built/tested without being treated as the running
   revision or mutating the digest-pinned running image.
+- An engineering instance can authenticate to the manifest's Git repository,
+  push its isolated feature branch, and open a review PR through the declared
+  project-scoped `git` credential. The credential is mounted externally and
+  read-only; its value never enters Git, an image, container environment,
+  database, log, progress record, or test evidence.
+- Recreated and scaled engineering instances receive the same project-scoped
+  Git capability without copying credentials into role memory. A different
+  project cannot resolve or mount the credential, and missing authentication
+  fails before source mutation or a false handoff.
 - Another project cannot claim or nest within V5 install, state, or workspace
   roots, while the organization configuration root may be shared read-only.
+
+## Live takeover credential preflight
+
+The 2026-07-19 live fleet proves external API-token and Codex OAuth delivery
+for all 16 current roles. A clean development image preflight also proves that
+GitHub authentication and a Git credential helper are absent. V5 therefore is
+not yet authorized to take over its own development even though queue pickup,
+completion, recovery, and hibernation qualification passed.
+
+The correction must be made in the authoritative project deployment so every
+future engineering instance receives the manifest's `git` credential. Do not
+patch a token into the current container, use an environment variable, or
+reuse an unscoped host credential mount. The sponsor's pending topology and
+canonical-input decisions determine which project-owned deployment artifact
+materializes the external read-only mount.
