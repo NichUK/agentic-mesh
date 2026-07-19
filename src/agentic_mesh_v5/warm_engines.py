@@ -129,6 +129,18 @@ class WarmEnginePool:
         finally:
             entry.operation_lock.release()
 
+    def abort_active(self, key: RoleInstanceKey) -> bool:
+        """Evict and close the engine that owns a timed-out active operation."""
+        key = _key(key)
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None or not entry.active:
+                return False
+            del self._entries[key]
+        if not _close_twice(entry.engine):
+            raise WarmEngineLifecycleError(_LIFECYCLE_ERROR)
+        return True
+
     def hibernate(self, key: RoleInstanceKey) -> bool:
         key = _key(key)
         while True:

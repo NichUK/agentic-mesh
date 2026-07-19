@@ -257,6 +257,21 @@ class _BlockingEngine(_Engine):
         return _BlockingThread("thread-1", self.turn)
 
 
+class _CloseOnlyTurn(_BlockingTurn):
+    def interrupt(self) -> None:
+        pass
+
+
+class _CloseOnlyEngine(_BlockingEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.turn = _CloseOnlyTurn("thread-1")
+
+    def close(self) -> None:
+        super().close()
+        self.turn.interrupted.set()
+
+
 class _Provider:
     provider_id = "fake"
 
@@ -385,6 +400,36 @@ def test_role_service_interrupts_a_provider_turn_at_the_configured_timeout(
     assert time.monotonic() - started < 5
     assert result.status == "released"
     assert result.reason == "provider-turn-timeout"
+    assert engine.turn.interrupted.is_set()
+    binding = ThreadAffinityStore(postgres_database).read(
+        ThreadAffinityKey("alpha", "work-1", "engineering", "delivery")
+    )
+    assert binding is not None and binding.active_operation_id is None
+
+
+def test_role_service_closes_an_engine_when_interrupt_does_not_end_the_stream(
+    postgres_database: str, tmp_path: Path
+) -> None:
+    _seed(postgres_database, ("work-1",))
+    engine = _CloseOnlyEngine()
+    provider = _Provider(engine)
+    service = _service(
+        tmp_path,
+        postgres_database,
+        provider,
+        lease_seconds=30,
+        heartbeat_seconds=5,
+        turn_timeout_seconds=1,
+    )
+    started = time.monotonic()
+    try:
+        result = service.run_once()
+    finally:
+        service.close()
+    assert time.monotonic() - started < 5
+    assert result.status == "released"
+    assert result.reason == "provider-turn-timeout"
+    assert engine.closed == 1
     assert engine.turn.interrupted.is_set()
     binding = ThreadAffinityStore(postgres_database).read(
         ThreadAffinityKey("alpha", "work-1", "engineering", "delivery")

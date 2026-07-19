@@ -26,6 +26,10 @@ repair began. The work item remains active and unacknowledged.
    an authorized instance of the same role. This supports restart and
    autoscaled cross-instance pickup without allowing an unrelated role or an
    older claim to steal an active thread.
+4. If the provider acknowledges `interrupt()` but its event stream does not
+   unwind, evict and close the active warm engine. This uses the existing
+   provider `close()` contract; the next attempt opens a replacement engine
+   while retaining the durable thread id and external Codex home.
 
 ## Acceptance criteria
 
@@ -41,6 +45,9 @@ repair began. The work item remains active and unacknowledged.
   unauthorized role, or an operation newer than the queue lease remains
   protected.
 - Existing warm-engine, queue, CLI and Codex-provider behavior remains green.
+- A provider stream that ignores turn interruption is unblocked by engine
+  closure, after which the queue lease and exact affinity operation are
+  released and the closed engine cannot be reused.
 
 ## Verification
 
@@ -51,3 +58,16 @@ repair began. The work item remains active and unacknowledged.
   Starlette/httpx deprecation warning.
 - A second live technical attempt must run from a reviewed immutable image and
   produce a durable checkpoint before this recovery slice is accepted.
+- Engine-abort focused verification: 71 passed, 1 environment skip against
+  real Postgres. Complete V5 regression verification: 627 passed, 5
+  environment skips, with the existing Starlette/httpx deprecation warning.
+
+## Live attempt-2 finding
+
+The reviewed timeout/reclaim image at merge revision
+`250ec5b1d94539c9e872db0e2a8479d795b7c5f5` returned the retry queue item to
+`ready` at its 600-second watchdog boundary without acknowledging it. The
+Codex provider stream did not finish after `turn.interrupt()`, so the role loop
+and `work` affinity remained active until the container was stopped. Technical
+attempt 2 is therefore recorded as failed. The bounded engine-abort addition
+above is the smallest correction for technical attempt 3.

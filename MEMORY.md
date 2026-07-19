@@ -1299,3 +1299,16 @@ or `release_review`.
   is 117 passed / 1 skipped; the complete V5 suite is 625 passed / 5 skipped.
   Technical attempt 2 must use the reviewed rebuilt image and create a durable
   checkpoint.
+- PR #441 merged as `250ec5b1d94539c9e872db0e2a8479d795b7c5f5` and was
+  deployed as digest-pinned control, general, development, QA, operations, UX,
+  and recovery images. The control/TLS edge and 16 role containers were
+  recreated against their external volumes; the PM is warm and all non-BA
+  specialists remain hibernated.
+- Live technical attempt 2 proved the 600-second watchdog returns the queue
+  item to `ready` without completion, but Codex's event stream did not unwind
+  after `turn.interrupt()`. The incident advanced durably to technical attempt
+  3. Branch `codex/v5-provider-abort` adds active warm-engine eviction/closure
+  at the timeout boundary so the provider stream, queue lease, and affinity can
+  unwind together; focused real-Postgres verification is 71 passed / 1 skipped.
+  Complete V5 verification is 627 passed / 5 skipped with the existing
+  Starlette/httpx deprecation warning.
