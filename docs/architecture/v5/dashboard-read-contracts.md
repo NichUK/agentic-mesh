@@ -8,9 +8,11 @@ or the corresponding project-scoped dashboard path.
 Traffic lights are derived from stored operational facts, not editable labels:
 
 - red: terminal/error state, failed recovery or worker, timed-out/rejected gate,
-  overdue handoff, or ready queue age of at least 120 seconds;
+  overdue handoff, running-worker heartbeat age of at least 120 seconds, or ready
+  queue age of at least 120 seconds;
 - amber: paused state, pending gate/recovery/incident, unknown or low remaining
-  usage capacity, stale heartbeat, or ready queue age of at least 60 seconds;
+  usage capacity, running-worker heartbeat age of at least 60 seconds, or ready
+  queue age of at least 60 seconds;
 - green: no red or amber reason.
 
 Every response includes stable reason codes. Red outranks amber, reasons are
