@@ -67,6 +67,10 @@ class FakeSdkThread:
         self.turn_calls.append((prompt, kwargs))
         return self.handle
 
+    def read(self, *, include_turns: bool):
+        client = getattr(self.handle, "_client", None)
+        return client.thread_read(self.id, include_turns=include_turns)
+
 
 class FakeSdk:
     def __init__(self, handle: FakeHandle) -> None:
@@ -567,6 +571,110 @@ def test_missing_terminal_notification_is_reconciled_from_thread_state(
     assert events[-2].usage is not None and events[-2].usage.total_tokens == 12
     assert client.unregister_count == 1
     engine.close()
+
+
+def test_stale_owner_state_uses_completed_rollout_hint_and_fresh_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class TurnClient:
+        def __init__(self, status: str) -> None:
+            self.status = status
+            self._router = SimpleNamespace(_turn_notifications={})
+            self.unregister_count = 0
+            self.read_count = 0
+
+        def register_turn_notifications(self, turn_id: str) -> None:
+            selected: Queue[object] = Queue()
+            selected.put(
+                _notification(
+                    "turn/started",
+                    SimpleNamespace(
+                        thread_id="thread-1", turn=SimpleNamespace(id=turn_id)
+                    ),
+                )
+            )
+            self._router._turn_notifications[turn_id] = selected
+
+        def unregister_turn_notifications(self, turn_id: str) -> None:
+            self._router._turn_notifications.pop(turn_id, None)
+            self.unregister_count += 1
+
+        def thread_read(self, thread_id: str, *, include_turns: bool):
+            assert include_turns is True
+            self.read_count += 1
+            return SimpleNamespace(
+                thread=SimpleNamespace(
+                    id=thread_id,
+                    turns=[
+                        SimpleNamespace(
+                            id="turn-1", status=self.status, error=None
+                        )
+                    ],
+                )
+            )
+
+    home = tmp_path / "codex-home"
+    rollout = home / "sessions" / "2026" / "07" / "19" / (
+        "rollout-2026-07-19T00-00-00-thread-1.jsonl"
+    )
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(
+        "not-json\n"
+        + '{"type":"event_msg","payload":{"type":"task_complete",'
+        '"turn_id":"turn-1","last_agent_message":"must not be used"}}\n',
+        encoding="utf-8",
+    )
+    owner_client = TurnClient("inProgress")
+    observer_client = TurnClient("completed")
+    owner_handle = FakeHandle()
+    owner_handle._client = owner_client
+    observer_handle = FakeHandle()
+    observer_handle._client = observer_client
+    owner_sdk = FakeSdk(owner_handle)
+    observer_sdk = FakeSdk(observer_handle)
+    monkeypatch.setattr(codex_provider, "_TURN_STATE_POLL_SECONDS", 0.001)
+    engine = CodexWorkerProvider(
+        CodexProviderConfig(environment={"CODEX_HOME": str(home)}),
+        sdk_factory=lambda _config: owner_sdk,
+        observer_sdk_factory=lambda _config: observer_sdk,
+    ).open()
+
+    turn = engine.start_thread(ThreadRequest(cwd=tmp_path)).start_turn(
+        TurnRequest("work")
+    )
+    events = list(turn.events())
+
+    assert [event.kind for event in events] == [
+        ProviderEventKind.TURN_STARTED,
+        ProviderEventKind.TURN_COMPLETED,
+    ]
+    assert events[-1].completion is TurnCompletionStatus.COMPLETED
+    assert owner_client.read_count == 1
+    assert observer_client.read_count == 1
+    assert observer_sdk.close_count == 1
+    assert "must not be used" not in repr(events)
+    engine.close()
+    assert owner_sdk.close_count == 1
+
+
+def test_rollout_terminal_hint_requires_exact_thread_and_turn(tmp_path: Path) -> None:
+    home = tmp_path / "codex-home"
+    sessions = home / "sessions" / "2026" / "07" / "19"
+    sessions.mkdir(parents=True)
+    (sessions / "rollout-2026-07-19T00-00-00-thread-1.jsonl").write_text(
+        '{"payload":{"type":"task_complete","turn_id":"turn-2"}}\n',
+        encoding="utf-8",
+    )
+    (sessions / "rollout-2026-07-19T00-00-01-thread-2.jsonl").write_text(
+        '{"payload":{"type":"task_complete","turn_id":"turn-1"}}\n',
+        encoding="utf-8",
+    )
+
+    has_terminal = codex_provider._rollout_terminal_hint(
+        CodexProviderConfig(environment={"CODEX_HOME": str(home)})
+    )
+
+    assert has_terminal("thread-1", "turn-1") is False
 
 
 def test_invalid_config_startup_cleanup_and_close_retry_are_safe(

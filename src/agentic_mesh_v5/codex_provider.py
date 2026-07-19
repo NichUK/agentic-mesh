@@ -4,6 +4,7 @@ from collections.abc import Mapping as RuntimeMapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import json
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable, Iterator, Mapping
@@ -64,6 +65,7 @@ _SAFE_MESSAGES = {
     ProviderErrorKind.INTERNAL: "provider operation failed",
 }
 _TURN_STATE_POLL_SECONDS = 1.0
+_ROLLOUT_TAIL_BYTES = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,16 +83,25 @@ class CodexWorkerProvider:
         config: CodexProviderConfig | None = None,
         *,
         sdk_factory: Callable[[CodexConfig], Any] = Codex,
+        observer_sdk_factory: Callable[[CodexConfig], Any] | None = None,
     ) -> None:
         self._config = config or CodexProviderConfig()
         self._sdk_factory = sdk_factory
+        self._observer_sdk_factory = observer_sdk_factory or sdk_factory
 
     def open(self) -> CodexWorkerEngine:
         config = _sdk_config(self._config)
         sdk: Any | None = None
         try:
             sdk = self._sdk_factory(config)
-            return CodexWorkerEngine(self.provider_id, sdk)
+            return CodexWorkerEngine(
+                self.provider_id,
+                sdk,
+                terminal_reader=_FreshTerminalReader(
+                    config, self._observer_sdk_factory
+                ),
+                terminal_hint=_rollout_terminal_hint(self._config),
+            )
         except Exception as exc:
             if sdk is not None:
                 try:
@@ -101,9 +112,18 @@ class CodexWorkerProvider:
 
 
 class CodexWorkerEngine:
-    def __init__(self, provider_id: str, sdk: Any) -> None:
+    def __init__(
+        self,
+        provider_id: str,
+        sdk: Any,
+        *,
+        terminal_reader: Callable[[str], object],
+        terminal_hint: Callable[[str, str], bool],
+    ) -> None:
         self._provider_id = provider_id
         self._sdk = sdk
+        self._terminal_reader = terminal_reader
+        self._terminal_hint = terminal_hint
         self._closed = False
         self._metadata = _metadata(provider_id, getattr(sdk, "metadata", None))
 
@@ -127,7 +147,11 @@ class CodexWorkerEngine:
             )
         except Exception as exc:
             raise _exception(exc) from None
-        return CodexWorkerThread(thread)
+        return CodexWorkerThread(
+            thread,
+            terminal_reader=self._terminal_reader,
+            terminal_hint=self._terminal_hint,
+        )
 
     def resume_thread(
         self, thread_id: str, request: ThreadRequest
@@ -149,7 +173,11 @@ class CodexWorkerEngine:
             )
         except Exception as exc:
             raise _exception(exc) from None
-        return CodexWorkerThread(thread)
+        return CodexWorkerThread(
+            thread,
+            terminal_reader=self._terminal_reader,
+            terminal_hint=self._terminal_hint,
+        )
 
     def read_capacity(self) -> ProviderCapacity:
         self._ensure_open()
@@ -182,8 +210,16 @@ class CodexWorkerEngine:
 
 
 class CodexWorkerThread:
-    def __init__(self, thread: Any) -> None:
+    def __init__(
+        self,
+        thread: Any,
+        *,
+        terminal_reader: Callable[[str], object],
+        terminal_hint: Callable[[str, str], bool],
+    ) -> None:
         self._thread = thread
+        self._terminal_reader = terminal_reader
+        self._terminal_hint = terminal_hint
         self.thread_id = _required_text(getattr(thread, "id", None), "thread_id")
 
     def start_turn(self, request: TurnRequest) -> CodexWorkerTurn:
@@ -202,14 +238,28 @@ class CodexWorkerThread:
             )
         except Exception as exc:
             raise _exception(exc) from None
-        return CodexWorkerTurn(self.thread_id, handle)
+        return CodexWorkerTurn(
+            self.thread_id,
+            handle,
+            terminal_reader=self._terminal_reader,
+            terminal_hint=self._terminal_hint,
+        )
 
 
 class CodexWorkerTurn:
-    def __init__(self, thread_id: str, handle: Any) -> None:
+    def __init__(
+        self,
+        thread_id: str,
+        handle: Any,
+        *,
+        terminal_reader: Callable[[str], object],
+        terminal_hint: Callable[[str, str], bool],
+    ) -> None:
         self.thread_id = thread_id
         self.turn_id = _required_text(getattr(handle, "id", None), "turn_id")
         self._handle = handle
+        self._terminal_reader = terminal_reader
+        self._terminal_hint = terminal_hint
         self._interrupt_requested = False
 
     def events(self) -> Iterator[ProviderEvent]:
@@ -225,6 +275,8 @@ class CodexWorkerTurn:
                     selected_queue,
                     self.thread_id,
                     self.turn_id,
+                    terminal_reader=self._terminal_reader,
+                    terminal_hint=self._terminal_hint,
                 )
             for notification in notifications:
                 event = (
@@ -282,6 +334,9 @@ def _reconciled_notifications(
     notifications: Queue[object],
     thread_id: str,
     turn_id: str,
+    *,
+    terminal_reader: Callable[[str], object],
+    terminal_hint: Callable[[str, str], bool],
 ) -> Iterator[object]:
     unregister = getattr(client, "unregister_turn_notifications")
     try:
@@ -289,7 +344,19 @@ def _reconciled_notifications(
             try:
                 notification = notifications.get(timeout=_TURN_STATE_POLL_SECONDS)
             except Empty:
-                terminal = _read_terminal_turn(client, thread_id, turn_id)
+                terminal = _read_terminal_turn(
+                    lambda selected: getattr(client, "thread_read")(
+                        selected, include_turns=True
+                    ),
+                    thread_id,
+                    turn_id,
+                )
+                if terminal is None and terminal_hint(thread_id, turn_id):
+                    terminal = _read_terminal_turn(
+                        terminal_reader,
+                        thread_id,
+                        turn_id,
+                    )
                 if terminal is not None:
                     # The read response shares the app-server transport, so
                     # notifications emitted before it are already routed. Drain
@@ -322,13 +389,10 @@ def _reconciled_notifications(
 
 
 def _read_terminal_turn(
-    client: object, thread_id: str, turn_id: str
+    reader: Callable[[str], object], thread_id: str, turn_id: str
 ) -> ProviderEvent | None:
-    read = getattr(client, "thread_read", None)
-    if not callable(read):
-        return None
     try:
-        response = read(thread_id, include_turns=True)
+        response = reader(thread_id)
     except Exception:
         return None
     thread = getattr(response, "thread", None)
@@ -359,6 +423,79 @@ def _read_terminal_turn(
         completion=completion,
         error=info,
     )
+
+
+class _FreshTerminalReader:
+    def __init__(
+        self,
+        config: CodexConfig,
+        sdk_factory: Callable[[CodexConfig], Any],
+    ) -> None:
+        self._config = config
+        self._sdk_factory = sdk_factory
+
+    def __call__(self, thread_id: str) -> object:
+        sdk = self._sdk_factory(self._config)
+        try:
+            thread = sdk.thread_resume(thread_id)
+            return thread.read(include_turns=True)
+        finally:
+            try:
+                sdk.close()
+            except Exception:
+                pass
+
+
+def _rollout_terminal_hint(
+    config: CodexProviderConfig,
+) -> Callable[[str, str], bool]:
+    raw_home = config.environment.get("CODEX_HOME")
+    home = Path(raw_home) if isinstance(raw_home, str) and raw_home else None
+
+    def has_terminal(thread_id: str, turn_id: str) -> bool:
+        if home is None:
+            return False
+        sessions = home / "sessions"
+        if not sessions.is_dir():
+            return False
+        suffix = f"-{thread_id}.jsonl"
+        try:
+            for path in sessions.rglob("rollout-*.jsonl"):
+                if path.name.endswith(suffix) and _rollout_has_completed_turn(
+                    path, turn_id
+                ):
+                    return True
+        except OSError:
+            return False
+        return False
+
+    return has_terminal
+
+
+def _rollout_has_completed_turn(path: Path, turn_id: str) -> bool:
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, 2)
+            size = stream.tell()
+            start = max(0, size - _ROLLOUT_TAIL_BYTES)
+            stream.seek(start)
+            if start:
+                stream.readline()
+            for raw_line in stream:
+                try:
+                    record = json.loads(raw_line)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                payload = record.get("payload") if isinstance(record, dict) else None
+                if (
+                    isinstance(payload, dict)
+                    and payload.get("type") == "task_complete"
+                    and payload.get("turn_id") == turn_id
+                ):
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def _sdk_config(config: CodexProviderConfig) -> CodexConfig:
