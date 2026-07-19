@@ -1548,7 +1548,7 @@ or `release_review`.
 - A clean digest-pinned development image reports no GitHub login and no Git
   credential helper. V5 cannot yet push an isolated engineering branch or open
   its own PR, so arms-length takeover is not accepted.
-- The host GitHub login is available, but it has not been copied, exposed in an
+- The host GitHub login is available, but it has not been copied, exposed as an
   environment variable, or patched into a live container. The authoritative
   project deployment must materialize the manifest's project-scoped `git`
   credential as an external read-only mount for every scaled engineering

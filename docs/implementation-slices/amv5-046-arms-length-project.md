@@ -59,7 +59,7 @@ The 2026-07-19 live fleet proves external API-token and Codex OAuth delivery
 for all 16 current roles. A clean development image preflight also proves that
 GitHub authentication and a Git credential helper are absent. V5 therefore is
 not yet authorized to take over its own development even though queue pickup,
-completion, recovery and hibernation qualification passed.
+completion, recovery, and hibernation qualification passed.
 
 The correction must be made in the authoritative project deployment so every
 future engineering instance receives the manifest's `git` credential. Do not
