@@ -296,7 +296,7 @@ class TeamsApprovalCallbackHandler:
             decision=decision,
             rationale=rationale,
             evidence={"channel": "teams", "activity_id": activity_id},
-            operation_id=f"teams:{activity_id}",
+            operation_id=_operation_id("callback", activity_id),
         )
         return TeamsApprovalCallbackResult(
             project_id,

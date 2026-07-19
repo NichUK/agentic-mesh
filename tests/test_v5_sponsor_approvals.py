@@ -903,15 +903,16 @@ def test_teams_cards_use_requesting_role_and_callback_changes_gate_once(
         "decision": decision,
         "rationale": f"Teams {decision} rationale.",
     }
+    callback_activity_id = f"19:callback-{decision}@thread.tacv2"
     result = handler.handle_action(
         action=action,
         authenticated_sponsor_id="sponsor-1",
-        activity_id=f"callback-{decision}",
+        activity_id=callback_activity_id,
     )
     replay = handler.handle_action(
         action=action,
         authenticated_sponsor_id="sponsor-1",
-        activity_id=f"callback-{decision}",
+        activity_id=callback_activity_id,
     )
     assert len(transport.updates) == 0
     _dispatch_all(postgres_database, notifications)
