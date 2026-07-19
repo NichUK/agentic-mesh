@@ -340,7 +340,6 @@ def _reconciled_notifications(
     terminal_hint: Callable[[str, str], bool],
 ) -> Iterator[object]:
     unregister = getattr(client, "unregister_turn_notifications")
-    retrying = False
     try:
         while True:
             try:
@@ -367,44 +366,22 @@ def _reconciled_notifications(
                         event = _event(pending, thread_id, turn_id)
                         if (
                             event is not None
-                            and event.kind is ProviderEventKind.ERROR
-                        ):
-                            pending_payload = getattr(pending, "payload", None)
-                            retrying = (
-                                getattr(pending_payload, "will_retry", None) is True
-                            )
-                        if (
-                            event is not None
                             and event.kind is ProviderEventKind.TURN_COMPLETED
-                            and retrying
-                            and event.completion is TurnCompletionStatus.FAILED
                         ):
                             continue
                         yield pending
-                        if (
-                            event is not None
-                            and event.kind is ProviderEventKind.TURN_COMPLETED
-                        ):
-                            return
                     yield terminal
                     return
                 continue
             if isinstance(notification, BaseException):
                 raise notification
             event = _event(notification, thread_id, turn_id)
-            if event is not None and event.kind is ProviderEventKind.ERROR:
-                notification_payload = getattr(notification, "payload", None)
-                retrying = getattr(notification_payload, "will_retry", None) is True
             if (
                 event is not None
                 and event.kind is ProviderEventKind.TURN_COMPLETED
-                and retrying
-                and event.completion is TurnCompletionStatus.FAILED
             ):
                 continue
             yield notification
-            if event is not None and event.kind is ProviderEventKind.TURN_COMPLETED:
-                return
     finally:
         unregister(turn_id)
 

@@ -688,18 +688,13 @@ def test_stale_owner_state_uses_completed_rollout_hint_and_fresh_reader(
 
 
 @pytest.mark.parametrize(
-    ("will_retry", "expected_completion", "expected_observer_reads"),
-    [
-        (True, TurnCompletionStatus.COMPLETED, 1),
-        (False, TurnCompletionStatus.FAILED, 0),
-    ],
+    "will_retry",
+    [True, False],
 )
-def test_interim_failure_suppression_requires_explicit_retry_intent(
+def test_reconciled_terminal_requires_exact_rollout_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     will_retry: bool,
-    expected_completion: TurnCompletionStatus,
-    expected_observer_reads: int,
 ) -> None:
     class OwnerClient:
         def __init__(self, *, will_retry: bool) -> None:
@@ -802,8 +797,8 @@ def test_interim_failure_suppression_requires_explicit_retry_intent(
         ProviderEventKind.TURN_COMPLETED,
     ]
     assert events[1].error is not None and events[1].error.retryable is True
-    assert events[-1].completion is expected_completion
-    assert observer.read_count == expected_observer_reads
+    assert events[-1].completion is TurnCompletionStatus.COMPLETED
+    assert observer.read_count == 1
     assert owner.unregister_count == 1
     engine.close()
 
