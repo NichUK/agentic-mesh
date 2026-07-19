@@ -53,7 +53,17 @@ revision, a digest-addressed running image, and disjoint install, state, and
 workspace roots (all supplied as absolute paths). Project source work uses the isolated
 worktree path; registration does not introduce a self-hosting execution mode.
 Run `python -m agentic_mesh_v5 project-register --help` for the bootstrap
-arguments. Immutable candidate deployment and rollback remain AMV5-047 work.
+arguments. `runtime-upgrade` then verifies an exact clean commit, runs the
+selected tests, builds and smoke-checks the V5-only image, deploys its content
+digest through the project-owned Compose file, and either records candidate
+health or restores the verified previous image. The operation is durable and
+idempotent, and live source is never mounted into the running service. Run
+`python -m agentic_mesh_v5 runtime-upgrade --help` for the explicit project,
+source, test, image, and Compose arguments.
+On a classic Docker engine that does not retain repository digests for local
+builds, pass `--publish-image` with an authenticated registry repository; the
+candidate tag is pushed before its immutable `repo@sha256` reference is
+resolved. Publication is never implicit.
 
 V5 database maintenance and native backup operations use the same external
 `AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,

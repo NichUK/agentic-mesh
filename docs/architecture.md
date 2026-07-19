@@ -154,6 +154,13 @@ operational support.
   selected repositories. Postgres records branch/path/revision evidence and
   supports crash pickup; cleanup removes only registered clean worktrees and
   never resets live source, deletes branches, or discards dirty user work.
+- Runtime release: one durable project coordinator verifies an exact clean Git
+  commit, configured tests, a V5-only image smoke probe, content digest, and
+  database compatibility range. A project-owned deployment adapter observes
+  drift, deploys only the immutable image, commits the registered boundary only
+  after health, and restores the prior compatible image on failure. Restarted
+  operations reconcile from the observed image and their Postgres attempt;
+  neither the build nor deployment path mounts the source checkout.
 - Shared memory: V5 stores concise, source-linked accelerators at project-role,
   project, and organization-role scope. Logical role instances share these
   records, but provider threads never enter the memory model. Every write must

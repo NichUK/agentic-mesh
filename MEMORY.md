@@ -1065,3 +1065,23 @@ or `release_review`.
   Qualification commits and tests a worktree candidate, rebuilds the
   coordinator after restart, and proves source, install, state, and image stay
   unchanged. Candidate image promotion belongs to AMV5-047.
+
+## 2026-07-19 V5 Immutable Runtime Upgrades
+
+- Migration 26 records immutable project runtime releases and durable,
+  idempotent deployment attempts. One per-project advisory lock serializes
+  upgrades; restart pickup observes the deployment before deciding whether to
+  finish the candidate, redeploy it, or complete rollback.
+- The Docker builder requires the requested clean Git commit, configured tests,
+  an OCI revision label, a unique repository digest, and a V5 boundary smoke
+  probe. Only bounded evidence hashes enter Postgres.
+- The first deployment adapter uses fixed Docker Compose argument arrays,
+  rejects builds and source-overlapping bind mounts, selects only digest-pinned
+  images through an atomically replaced project environment file, and waits for
+  container health.
+- The registered runtime boundary changes only after candidate health. Failed
+  candidate health restores and verifies the previous database-compatible
+  image; an unverified rollback remains explicitly failed.
+- The project-owned V5 Compose output mounts external configuration but no
+  source. The runtime image installs only the V5 package tree and runs as a
+  non-root user.
