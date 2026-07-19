@@ -23,6 +23,9 @@ from agentic_mesh_v5.database_operations import DatabaseBackupService
 from agentic_mesh_v5.database_operations import MaintenanceStore
 from agentic_mesh_v5.package_resolver import PackageResolutionError
 from agentic_mesh_v5.package_resolver import resolve_packages
+from agentic_mesh_v5.project_manifest import ProjectManifestError
+from agentic_mesh_v5.project_manifest import load_project_manifest
+from agentic_mesh_v5.project_registration import ProjectRegistrationCoordinator
 from agentic_mesh_v5.recovery_supervisor import CommandRecoveryLauncher
 from agentic_mesh_v5.recovery_supervisor import RecoverySupervisor
 from agentic_mesh_v5.recovery_supervisor import RecoverySupervisorError
@@ -104,6 +107,26 @@ def build_parser() -> argparse.ArgumentParser:
         "database-restore", help="restore a verified archive into an empty database"
     )
     database_restore.add_argument("--archive", type=Path, required=True)
+    project_register = subparsers.add_parser(
+        "project-register",
+        help="register a project manifest and its protected runtime boundary",
+    )
+    project_register.add_argument("--manifest", type=Path, required=True)
+    project_register.add_argument("--config-root", type=Path, required=True)
+    project_register.add_argument("--source-revision", required=True)
+    project_register.add_argument("--configuration-revision", required=True)
+    project_register.add_argument("--flow-package", required=True)
+    project_register.add_argument(
+        "--sponsor", action="append", required=True, dest="sponsors"
+    )
+    project_register.add_argument("--running-image", required=True)
+    project_register.add_argument(
+        "--running-install-root", type=Path, required=True
+    )
+    project_register.add_argument("--runtime-state-root", type=Path, required=True)
+    project_register.add_argument("--workspace-root", type=Path, required=True)
+    project_register.add_argument("--deployment-adapter", required=True)
+    project_register.add_argument("--actor", required=True)
     api_serve = subparsers.add_parser(
         "api-serve", help="serve the versioned V5 control API"
     )
@@ -315,6 +338,45 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "runtime": "agentic-mesh-v5",
                 "status": operation_status,
                 **result,
+            },
+            as_json=args.json,
+        )
+        return 0
+
+    if args.command == "project-register":
+        try:
+            manifest = load_project_manifest(args.manifest)
+            registration = ProjectRegistrationCoordinator(
+                database_url_from_environment(),
+                configuration_root=args.config_root,
+            ).register(
+                manifest,
+                source_revision=args.source_revision,
+                configuration_revision=args.configuration_revision,
+                flow_reference=args.flow_package,
+                sponsor_ids=args.sponsors,
+                running_image_ref=args.running_image,
+                running_install_root=args.running_install_root,
+                runtime_state_root=args.runtime_state_root,
+                workspace_root=args.workspace_root,
+                deployment_adapter=args.deployment_adapter,
+                actor_id=args.actor,
+            )
+        except (DatabaseError, ProjectManifestError, ValueError) as exc:
+            _write(
+                {
+                    "runtime": "agentic-mesh-v5",
+                    "status": "rejected",
+                    "error": str(exc),
+                },
+                as_json=args.json,
+            )
+            return 2
+        _write(
+            {
+                "runtime": "agentic-mesh-v5",
+                "status": "project-registered",
+                **registration.to_dict(),
             },
             as_json=args.json,
         )

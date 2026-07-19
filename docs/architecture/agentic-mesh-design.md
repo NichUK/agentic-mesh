@@ -1064,6 +1064,20 @@ qualified by project, organization-scoped credentials require a grant, and
 secret values never enter Git or the snapshot. Later adapters consume the
 validated snapshot instead of reinterpreting untrusted project YAML.
 
+### V5 Project Runtime Registration
+
+Registration composes the ordinary manifest, external role pack, and worktree
+services. It pins the exact configuration Git revision, digest-addressed
+running image, deployment adapter, and pairwise-disjoint configuration,
+running-install, runtime-state, and workspace roots. Runtime roots cannot
+overlap another project, while the organization configuration checkout may be
+shared read-only.
+
+Agentic Mesh V5 uses this same boundary as every other project. Candidate work
+can build and test in its isolated worktree, but registration creates no
+privileged self-editing or live-deployment path. Immutable deployment,
+verification, and rollback are separate release operations.
+
 ### V5 Isolated Git Workspaces
 
 Mutating work uses one durable workspace per project/work-item, with one

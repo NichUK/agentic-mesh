@@ -1050,3 +1050,18 @@ or `release_review`.
   Final reconciliation requires no ready/leased orphan for the completed work
   and no direct queue repair. This is the entry evidence for AMV5-046
   arms-length V5 registration.
+
+## 2026-07-19 V5 Arm's-Length Project Registration
+
+- One generic coordinator registers the validated manifest, exact active
+  config release/revision, role pack, and durable Postgres runtime boundary.
+  Exact replay is idempotent; identity, sponsor, override, manifest, image, or
+  root conflicts fail before active project configuration changes.
+- The digest-addressed image and disjoint config/install/state/workspace roots
+  cannot overlap another project. Source uses only the isolated worktree path.
+- V5 has a secret-free 15-role manifest and external override repeating the
+  simplicity, minimal-handoff, reuse, ambiguity, and isolation rules.
+- The `project-register` bootstrap CLI exposes this path without a dashboard.
+  Qualification commits and tests a worktree candidate, rebuilds the
+  coordinator after restart, and proves source, install, state, and image stay
+  unchanged. Candidate image promotion belongs to AMV5-047.
