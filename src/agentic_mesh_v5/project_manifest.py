@@ -141,6 +141,11 @@ def load_project_manifest(path: Path) -> ProjectManifest:
     return _normalize_project_manifest(value)
 
 
+def validate_project_manifest(value: object) -> ProjectManifest:
+    """Validate an in-memory snapshot without reading or activating it."""
+    return _normalize_project_manifest(value)
+
+
 def _normalize_project_manifest(value: object) -> ProjectManifest:
     root = _mapping(
         value,

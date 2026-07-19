@@ -58,7 +58,7 @@ def postgres_database() -> str:
 
 @pytest.fixture
 def question_store(postgres_database: str) -> ImportQuestionStore:
-    assert MigrationRunner(postgres_database).migrate().current_version == 30
+    assert MigrationRunner(postgres_database).migrate().current_version == 31
     return ImportQuestionStore(postgres_database)
 
 
@@ -162,7 +162,7 @@ def test_start_pins_discovery_and_builds_complete_initial_question_set(
 def test_multiple_answer_rounds_survive_restart_and_unlock_pinned_preview(
     postgres_database: str,
 ) -> None:
-    assert MigrationRunner(postgres_database).migrate().current_version == 30
+    assert MigrationRunner(postgres_database).migrate().current_version == 31
     first_store = ImportQuestionStore(postgres_database)
     import_id, state = _start(first_store, _report(project_hints=True)[0])
     split = len(state.questions) // 2

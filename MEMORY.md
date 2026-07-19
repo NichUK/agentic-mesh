@@ -1215,3 +1215,10 @@ or `release_review`.
 - Only a version-pinned `require_preview_ready` operation produces the safe
   resolution consumed by AMV5-055. It is impossible while any material
   question remains, and it does not create a manifest, backlog, or activation.
+
+## 2026-07-19 V5 Import Preview And Activation
+
+- Migration 31 stores immutable, revisable previews, exact sponsor decisions, and one
+  resumable activation operation; unfinished candidates remain inactive until selected.
+- Only a resolved sponsor may approve the latest validated revision. Activation is
+  serialized and idempotent, receipts must match, and contracts expose no V4 runtime state.
