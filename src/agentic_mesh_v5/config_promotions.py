@@ -96,10 +96,6 @@ class ConfigPromotionStore:
         )
         with self.activation._locked():
             path = self._path(draft_id)
-            if self.activation._read_state().active_digest != expected_active_digest:
-                raise ConfigPromotionConflict(
-                    "active configuration differs from draft baseline"
-                )
             if path.exists():
                 existing = self._read(path)
                 if (
@@ -109,6 +105,10 @@ class ConfigPromotionStore:
                 ):
                     raise ConfigPromotionConflict("configuration draft id conflicts")
                 return existing
+            if self.activation._read_state().active_digest != expected_active_digest:
+                raise ConfigPromotionConflict(
+                    "active configuration differs from draft baseline"
+                )
             self.drafts_dir.mkdir(parents=True, exist_ok=True)
             self.activation._atomic_write(path, draft.to_dict())
         return draft

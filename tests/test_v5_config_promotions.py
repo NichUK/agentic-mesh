@@ -78,6 +78,12 @@ def test_non_sponsor_draft_requires_approval_then_activates_and_rolls_back(
     activated = promotion.activate(
         draft.draft_id, actor="operator", reason="Approved promotion"
     )
+    assert promotion.create(
+        draft_id="draft-1",
+        references=["system/core@2.0.0"],
+        expected_active_digest=first.digest,
+        actor="operator",
+    ) == activated
     rolled_back = promotion.rollback(
         first.digest, sponsor_id="sponsor", reason="Acceptance failed"
     )

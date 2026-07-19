@@ -1307,6 +1307,18 @@ def test_configuration_promotion_api_enforces_sponsor_decisions_and_rollback(
         f"{API_PREFIX}/projects/alpha/configuration/promotion-state",
         headers=alpha,
     )
+    misconfigured = TestClient(
+        create_app(
+            database_url,
+            authorizer=_authorizer(),
+            config_store_resolver=lambda _project_id: ConfigActivationStore(
+                tmp_path / "not-mounted"
+            ),
+        )
+    ).get(
+        f"{API_PREFIX}/projects/alpha/configuration/promotion-state",
+        headers=alpha,
+    )
 
     assert first.status_code == 201
     assert validated.json()["status"] == "approved"
@@ -1321,6 +1333,7 @@ def test_configuration_promotion_api_enforces_sponsor_decisions_and_rollback(
     assert rollback.json()["active_digest"] == first_digest
     assert foreign.status_code == 403
     assert unavailable.status_code == 503
+    assert misconfigured.status_code == 503
     assert activation.get_release(first_digest).digest == first_digest
 
 

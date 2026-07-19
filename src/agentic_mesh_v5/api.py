@@ -994,7 +994,14 @@ def create_app(
                 "configuration_repository_unavailable",
                 "external configuration repository is unavailable",
             )
-        store = config_store_resolver(project_id)
+        try:
+            store = config_store_resolver(project_id)
+        except ConfigActivationError as exc:
+            raise ControlApiError(
+                503,
+                "configuration_repository_unavailable",
+                "external configuration repository is unavailable",
+            ) from exc
         if not isinstance(store, ConfigActivationStore):
             raise ControlApiError(
                 503,
