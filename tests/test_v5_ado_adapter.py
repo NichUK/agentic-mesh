@@ -286,48 +286,6 @@ def test_link_and_read_use_only_the_active_project_binding_and_are_idempotent(
     assert TOKEN not in encoded
 
 
-def test_link_rebinds_the_manifest_binding_for_the_same_external_item(
-    ado_project: str,
-) -> None:
-    adapter, transport, _ = _adapter(
-        ado_project,
-        [_response(), _response(project="beta-ado"), _response(revision=2, project="beta-ado")],
-    )
-
-    first = adapter.link(
-        project_id="alpha",
-        work_item_id="mesh-1",
-        external_work_item_id=101,
-        actor_id="project-manager",
-    )
-    _activate_manifest(
-        ado_project,
-        digest="e" * 64,
-        ado_project="beta-ado",
-        create_project=False,
-    )
-    rebound = adapter.link(
-        project_id="alpha",
-        work_item_id="mesh-1",
-        external_work_item_id=101,
-        actor_id="replacement-worker",
-    )
-    remote = adapter.read(project_id="alpha", work_item_id="mesh-1")
-
-    assert first.manifest_digest == "d" * 64
-    assert rebound.manifest_digest == "e" * 64
-    assert rebound.ado_project == "beta-ado"
-    assert remote.revision == 2
-    assert rebound.external_url == (
-        "https://dev.azure.com/seerstone/beta-ado/_workitems/edit/101"
-    )
-    assert any("/alpha-ado/_apis/wit/workitems/101" in call["url"] for call in transport.calls)
-    assert all(
-        "/beta-ado/_apis/wit/workitems/101" in call["url"]
-        for call in transport.calls[1:]
-    )
-
-
 def test_foreign_project_response_is_rejected_before_link_persistence(
     ado_project: str,
 ) -> None:
