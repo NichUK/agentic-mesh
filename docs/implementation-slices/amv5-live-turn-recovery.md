@@ -30,6 +30,10 @@ repair began. The work item remains active and unacknowledged.
    unwind, evict and close the active warm engine. This uses the existing
    provider `close()` contract; the next attempt opens a replacement engine
    while retaining the durable thread id and external Codex home.
+5. When a role leases an earlier retry envelope whose exact incident, stage,
+   and attempt result is already durable, complete that envelope through its
+   current lease without opening a provider turn. Never apply this shortcut to
+   the post-recovery resume envelope.
 
 ## Acceptance criteria
 
@@ -48,6 +52,9 @@ repair began. The work item remains active and unacknowledged.
 - A provider stream that ignores turn interruption is unblocked by engine
   closure, after which the queue lease and exact affinity operation are
   released and the closed engine cannot be reused.
+- Recorded retry results cannot leave stale high-priority envelopes that starve
+  the incident's required next attempt; reconciliation is lease-owned,
+  idempotent, and does not synthesize a progress checkpoint.
 
 ## Verification
 
@@ -61,6 +68,9 @@ repair began. The work item remains active and unacknowledged.
 - Engine-abort focused verification: 71 passed, 1 environment skip against
   real Postgres. Complete V5 regression verification: 627 passed, 5
   environment skips, with the existing Starlette/httpx deprecation warning.
+- Retry-route reconciliation verification: 29 focused real-Postgres tests and
+  the complete V5 suite of 629 passed / 5 environment skips, with the same
+  existing Starlette/httpx deprecation warning.
 
 ## Live attempt-2 finding
 

@@ -1312,3 +1312,11 @@ or `release_review`.
   unwind together; focused real-Postgres verification is 71 passed / 1 skipped.
   Complete V5 verification is 627 passed / 5 skipped with the existing
   Starlette/httpx deprecation warning.
+- Before live technical attempt 3, durable inspection found the already
+  recorded technical-1 and technical-2 retry envelopes still `ready` ahead of
+  technical-3. Branch `codex/v5-retry-route-reconciliation` makes the role
+  service complete an exact stale retry through its own lease when the matching
+  immutable failure-attempt record exists. Post-recovery resume routes are not
+  eligible, and no provider turn or synthetic checkpoint is created.
+  Verification is 29 focused real-Postgres tests and 629 passed / 5 skipped for
+  the complete V5 suite, with the existing Starlette/httpx warning.
