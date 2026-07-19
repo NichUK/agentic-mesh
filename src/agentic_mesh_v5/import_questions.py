@@ -340,34 +340,32 @@ class ImportQuestionStore:
         try:
             with psycopg.connect(self._database_url, autocommit=True) as connection:
                 with connection.transaction():
-                    row = connection.execute(
-                        f"SELECT discovery_digest, discovery_report "
-                        f"FROM {SCHEMA}.project_import_question_sessions "
-                        "WHERE import_id = %s FOR UPDATE",
-                        (import_id,),
-                    ).fetchone()
-                    if row is None:
-                        connection.execute(
-                            f"""
-                            INSERT INTO {SCHEMA}.project_import_question_sessions
-                                (import_id, discovery_digest, discovery_report,
-                                 questionnaire_digest, questions, created_by)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            """,
-                            (
-                                import_id,
-                                report.digest,
-                                Jsonb(report_payload),
-                                questionnaire_digest,
-                                Jsonb(question_payload),
-                                actor_id,
-                            ),
-                        )
-                    elif row[0] != report.digest or row[1] != report_payload:
+                    connection.execute(
+                        f"""
+                        INSERT INTO {SCHEMA}.project_import_question_sessions
+                            (import_id, discovery_digest, discovery_report,
+                             questionnaire_digest, questions, created_by)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (import_id) DO NOTHING
+                        """,
+                        (
+                            import_id,
+                            report.digest,
+                            Jsonb(report_payload),
+                            questionnaire_digest,
+                            Jsonb(question_payload),
+                            actor_id,
+                        ),
+                    )
+                    state = self._read(connection, import_id, for_update=True)
+                    if (
+                        state.discovery_digest != report.digest
+                        or dict(state.discovery_report) != report_payload
+                    ):
                         raise ImportQuestionConflict(
                             "import id is already pinned to another discovery report"
                         )
-                    return self._read(connection, import_id)
+                    return state
         except ImportQuestionError:
             raise
         except Exception as exc:

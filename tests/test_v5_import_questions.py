@@ -364,6 +364,23 @@ def test_duplicate_start_and_identical_updates_are_idempotent(
     assert len(question_store.history(import_id)) == 2
 
 
+def test_concurrent_start_is_idempotent(question_store: ImportQuestionStore) -> None:
+    report = _report(project_hints=True)[0]
+    import_id = str(uuid.uuid4())
+    barrier = Barrier(2)
+
+    def start(actor: str):
+        barrier.wait()
+        return question_store.start(import_id=import_id, report=report, actor_id=actor)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        states = tuple(executor.map(start, ("pm-one", "pm-two")))
+
+    assert states[0] == states[1]
+    assert states[0].version == 1
+    assert question_store.history(import_id) == ()
+
+
 def test_same_import_id_rejects_another_discovery_report(
     question_store: ImportQuestionStore,
 ) -> None:
