@@ -340,6 +340,7 @@ def _reconciled_notifications(
     terminal_hint: Callable[[str, str], bool],
 ) -> Iterator[object]:
     unregister = getattr(client, "unregister_turn_notifications")
+    retrying = False
     try:
         while True:
             try:
@@ -363,8 +364,23 @@ def _reconciled_notifications(
                             break
                         if isinstance(pending, BaseException):
                             raise pending
-                        yield pending
                         event = _event(pending, thread_id, turn_id)
+                        if (
+                            event is not None
+                            and event.kind is ProviderEventKind.ERROR
+                        ):
+                            retrying = bool(
+                                event.error is not None
+                                and event.error.retryable
+                            )
+                        if (
+                            event is not None
+                            and event.kind is ProviderEventKind.TURN_COMPLETED
+                            and retrying
+                            and event.completion is TurnCompletionStatus.FAILED
+                        ):
+                            continue
+                        yield pending
                         if (
                             event is not None
                             and event.kind is ProviderEventKind.TURN_COMPLETED
@@ -375,8 +391,19 @@ def _reconciled_notifications(
                 continue
             if isinstance(notification, BaseException):
                 raise notification
-            yield notification
             event = _event(notification, thread_id, turn_id)
+            if event is not None and event.kind is ProviderEventKind.ERROR:
+                retrying = bool(
+                    event.error is not None and event.error.retryable
+                )
+            if (
+                event is not None
+                and event.kind is ProviderEventKind.TURN_COMPLETED
+                and retrying
+                and event.completion is TurnCompletionStatus.FAILED
+            ):
+                continue
+            yield notification
             if event is not None and event.kind is ProviderEventKind.TURN_COMPLETED:
                 return
     finally:

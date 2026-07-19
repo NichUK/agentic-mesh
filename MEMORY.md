@@ -1415,3 +1415,28 @@ or `release_review`.
 - PM, BA and Research Analyst are stopped during review. The PM correction and
   BA correction envelopes remain durable; no terminal project outcome or
   sponsor decision was invented.
+
+## 2026-07-19 V5 Retryable Terminal Reconciliation
+
+- PR 447 merged as `eda132d0ec1dc44f6c80c06a8326d448cb8162ff`. Exact
+  immutable runtime and six worker-class images were built, pushed and deployed
+  with the prior `57988d5` fleet retained for rollback. Direct and TLS health,
+  all 17 revision labels, PM health and all full-name Codex volumes verified.
+- The live PM correction exposed one narrower provider transition. After an
+  `error` with `will_retry=true`, Codex can emit an interim failed
+  `turn/completed` notification while the same rollout continues its internal
+  retry. Treating that interim notification as final released the lease and
+  allowed a second handle to collide with the still-running turn. PM was
+  stopped after safe idempotent checkpoints; the BA correction remains ready.
+- Acceptance for branch `codex/v5-retryable-terminal-reconciliation` is: an
+  interim failed completion following an explicitly retryable error must not
+  terminate delivery; the lease must remain held until exact rollout evidence
+  and a fresh observer confirm the final turn; completed/interrupted and
+  non-retryable terminal states retain their existing fail-closed behaviour.
+  No message or reasoning content may be parsed.
+- The provider observer now suppresses only a failed terminal while an explicit
+  retry is pending, then reconciles the exact final state through the existing
+  bounded rollout hint and fresh reader. Focused provider and live role-service
+  verification is 27 passed / 12 environment skips. The complete
+  database-backed V5 suite passed in six bounded batches: 643 passed and 2
+  environment skips, with only the existing Starlette/httpx warning.

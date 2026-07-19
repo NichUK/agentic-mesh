@@ -687,6 +687,109 @@ def test_stale_owner_state_uses_completed_rollout_hint_and_fresh_reader(
     assert owner_sdk.close_count == 1
 
 
+def test_retryable_interim_failure_waits_for_durable_terminal_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class OwnerClient:
+        def __init__(self) -> None:
+            self._router = SimpleNamespace(_turn_notifications={})
+            self.unregister_count = 0
+
+        def register_turn_notifications(self, turn_id: str) -> None:
+            selected: Queue[object] = Queue()
+            selected.put(
+                _notification(
+                    "turn/started",
+                    SimpleNamespace(
+                        thread_id="thread-1", turn=SimpleNamespace(id=turn_id)
+                    ),
+                )
+            )
+            selected.put(
+                _notification(
+                    "error",
+                    SimpleNamespace(
+                        thread_id="thread-1",
+                        turn_id=turn_id,
+                        error=SimpleNamespace(
+                            message="transient provider failure",
+                            codex_error_info=SimpleNamespace(root="serverOverloaded"),
+                        ),
+                        will_retry=True,
+                    ),
+                )
+            )
+            selected.put(
+                _notification(
+                    "turn/completed",
+                    SimpleNamespace(
+                        thread_id="thread-1",
+                        turn=SimpleNamespace(
+                            id=turn_id,
+                            status="failed",
+                            error=SimpleNamespace(message="interim failure"),
+                        ),
+                    ),
+                )
+            )
+            self._router._turn_notifications[turn_id] = selected
+
+        def unregister_turn_notifications(self, turn_id: str) -> None:
+            self._router._turn_notifications.pop(turn_id, None)
+            self.unregister_count += 1
+
+    class ObserverClient:
+        def thread_read(self, thread_id: str, *, include_turns: bool):
+            assert include_turns is True
+            return SimpleNamespace(
+                thread=SimpleNamespace(
+                    id=thread_id,
+                    turns=[
+                        SimpleNamespace(
+                            id="turn-1", status="completed", error=None
+                        )
+                    ],
+                )
+            )
+
+    home = tmp_path / "codex-home"
+    rollout = home / "sessions" / "2026" / "07" / "19" / (
+        "rollout-2026-07-19T00-00-00-thread-1.jsonl"
+    )
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(
+        '{"payload":{"type":"task_complete","turn_id":"turn-1"}}\n',
+        encoding="utf-8",
+    )
+    owner = OwnerClient()
+    owner_handle = FakeHandle()
+    owner_handle._client = owner
+    observer_handle = FakeHandle()
+    observer_handle._client = ObserverClient()
+    monkeypatch.setattr(codex_provider, "_TURN_STATE_POLL_SECONDS", 0.001)
+    engine = CodexWorkerProvider(
+        CodexProviderConfig(environment={"CODEX_HOME": str(home)}),
+        sdk_factory=lambda _config: FakeSdk(owner_handle),
+        observer_sdk_factory=lambda _config: FakeSdk(observer_handle),
+    ).open()
+
+    events = list(
+        engine.start_thread(ThreadRequest(cwd=tmp_path))
+        .start_turn(TurnRequest("work"))
+        .events()
+    )
+
+    assert [event.kind for event in events] == [
+        ProviderEventKind.TURN_STARTED,
+        ProviderEventKind.ERROR,
+        ProviderEventKind.TURN_COMPLETED,
+    ]
+    assert events[1].error is not None and events[1].error.retryable is True
+    assert events[-1].completion is TurnCompletionStatus.COMPLETED
+    assert owner.unregister_count == 1
+    engine.close()
+
+
 def test_rollout_terminal_hint_requires_exact_thread_and_turn(tmp_path: Path) -> None:
     home = tmp_path / "codex-home"
     sessions = home / "sessions" / "2026" / "07" / "19"
