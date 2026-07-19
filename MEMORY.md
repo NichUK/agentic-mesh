@@ -1320,3 +1320,28 @@ or `release_review`.
   eligible, and no provider turn or synthetic checkpoint is created.
   Verification is 29 focused real-Postgres tests and 629 passed / 5 skipped for
   the complete V5 suite, with the existing Starlette/httpx warning.
+
+## 2026-07-19 V5 Container Sandbox And Turn-State Reconciliation
+
+- The failed live technical-3 preflight was traced without consuming a formal
+  reliability outcome. A manual fleet-recreation suffix error had mounted new
+  volumes missing the first letter of each role. The original external Codex
+  homes and persisted threads remained intact. All 16 role containers now use
+  their exact full-name volumes; the PM is healthy and the BA is stopped.
+- After restoring `amv5-codex-business-analyst-1`, the BA's full prompt resumed
+  successfully and Codex finished the retry task in about 12 seconds. The
+  pinned SDK stream missed its terminal notification while `thread/read`
+  reported the exact turn completed, leaving the role loop blocked until its
+  timeout.
+- The agent could not create a durable checkpoint because Codex's nested
+  `bubblewrap` sandbox cannot create its namespace inside the deployed worker
+  container. Branch `codex/v5-container-sandbox-turn-reconciliation` makes the
+  already project-scoped container the default isolation boundary, supports a
+  validated startup-pinned stricter sandbox override, reconciles only an exact
+  terminal turn through `thread/read`, and backs off released queue work.
+- Focused Codex-provider and real-Postgres role-service verification is 34
+  passed after the reviewed sandbox override. Final complete V5 verification
+  is 635 passed / 5 skips with the existing
+  Starlette/httpx warning. A repository-wide run passed every V5 test and
+  retained 11 unrelated V4 baseline failures. Review, immutable rebuild and
+  live technical-3 evidence remain required before acceptance.

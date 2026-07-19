@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
+from queue import Queue
 from types import SimpleNamespace
 
 from openai_codex import Codex
@@ -12,6 +13,7 @@ from openai_codex import ServerBusyError
 from openai_codex import TransportClosedError
 import pytest
 
+import agentic_mesh_v5.codex_provider as codex_provider
 from agentic_mesh_v5.codex_provider import CodexProviderConfig
 from agentic_mesh_v5.codex_provider import CodexWorkerProvider
 from agentic_mesh_v5.worker_provider import ApprovalPolicy
@@ -485,6 +487,85 @@ def test_stream_transport_failure_is_retryable_and_redacted(tmp_path: Path) -> N
     assert captured.value.info.kind is ProviderErrorKind.TRANSPORT
     assert captured.value.info.retryable is True
     assert "secret" not in str(captured.value)
+    engine.close()
+
+
+def test_missing_terminal_notification_is_reconciled_from_thread_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ReconciledClient:
+        def __init__(self) -> None:
+            self._router = SimpleNamespace(_turn_notifications={})
+            self.unregister_count = 0
+
+        def register_turn_notifications(self, turn_id: str) -> None:
+            selected: Queue[object] = Queue()
+            selected.put(
+                _notification(
+                    "turn/started",
+                    SimpleNamespace(
+                        thread_id="thread-1", turn=SimpleNamespace(id=turn_id)
+                    ),
+                )
+            )
+            self._router._turn_notifications[turn_id] = selected
+
+        def unregister_turn_notifications(self, turn_id: str) -> None:
+            self._router._turn_notifications.pop(turn_id, None)
+            self.unregister_count += 1
+
+        def thread_read(self, thread_id: str, *, include_turns: bool):
+            assert include_turns is True
+            self._router._turn_notifications["turn-1"].put(
+                _notification(
+                    "thread/tokenUsage/updated",
+                    SimpleNamespace(
+                        thread_id=thread_id,
+                        turn_id="turn-1",
+                        token_usage=SimpleNamespace(
+                            last=SimpleNamespace(
+                                input_tokens=8,
+                                cached_input_tokens=2,
+                                output_tokens=3,
+                                reasoning_output_tokens=1,
+                                total_tokens=12,
+                            )
+                        ),
+                    ),
+                )
+            )
+            return SimpleNamespace(
+                thread=SimpleNamespace(
+                    id=thread_id,
+                    turns=[
+                        SimpleNamespace(
+                            id="turn-1", status="completed", error=None
+                        )
+                    ],
+                )
+            )
+
+    client = ReconciledClient()
+    handle = FakeHandle()
+    handle._client = client
+    monkeypatch.setattr(codex_provider, "_TURN_STATE_POLL_SECONDS", 0.001)
+    engine = CodexWorkerProvider(
+        sdk_factory=lambda _config: FakeSdk(handle)
+    ).open()
+
+    turn = engine.start_thread(ThreadRequest(cwd=tmp_path)).start_turn(
+        TurnRequest("work")
+    )
+    events = list(turn.events())
+
+    assert [event.kind for event in events] == [
+        ProviderEventKind.TURN_STARTED,
+        ProviderEventKind.USAGE_UPDATED,
+        ProviderEventKind.TURN_COMPLETED,
+    ]
+    assert events[-1].completion is TurnCompletionStatus.COMPLETED
+    assert events[-2].usage is not None and events[-2].usage.total_tokens == 12
+    assert client.unregister_count == 1
     engine.close()
 
 

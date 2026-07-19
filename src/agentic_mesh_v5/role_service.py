@@ -26,6 +26,7 @@ from agentic_mesh_v5.thread_affinity import (
 from agentic_mesh_v5.warm_engines import RoleInstanceKey, WarmEnginePool
 from agentic_mesh_v5.worker_provider import (
     ProviderEventKind,
+    SandboxPolicy,
     ThreadRequest,
     TurnCompletionStatus,
     TurnRequest,
@@ -38,6 +39,28 @@ from agentic_mesh_v5.worker_provider import (
 _ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _CONVERSATION = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _SAFE_FAILURE = "role service turn failed"
+_CODEX_SANDBOX_ENV = "AGENTIC_MESH_V5_CODEX_SANDBOX"
+
+
+def _codex_sandbox_policy() -> SandboxPolicy:
+    """Return the Codex sandbox policy from the environment.
+
+    Defaults to ``full_access`` because the worker container is the
+    project/tool isolation boundary and nested bubblewrap cannot create
+    namespaces inside it.  Set ``AGENTIC_MESH_V5_CODEX_SANDBOX`` to
+    ``read_only`` or ``workspace_write`` to use a stricter policy in
+    deployments where additional sandboxing is available.
+    """
+    value = os.environ.get(_CODEX_SANDBOX_ENV, "").strip()
+    if value:
+        try:
+            return SandboxPolicy(value)
+        except ValueError:
+            valid = ", ".join(p.value for p in SandboxPolicy)
+            raise RoleServiceConfigurationError(
+                f"{_CODEX_SANDBOX_ENV} must be one of: {valid}"
+            ) from None
+    return SandboxPolicy.FULL_ACCESS
 
 
 class RoleServiceError(RuntimeError):
@@ -236,6 +259,7 @@ class RoleService:
             raise RoleServiceConfigurationError("role service configuration is invalid")
         self._database_url = database_url
         self.config = config
+        self._sandbox_policy = _codex_sandbox_policy()
         self._queues = RoleQueueStore(database_url)
         selected_factory = provider_factory or self._codex_provider
         self._pool = WarmEnginePool(selected_factory)
@@ -345,6 +369,7 @@ class RoleService:
                     cwd=workspace,
                     base_instructions=prompt.text,
                     developer_instructions=_operational_instructions(),
+                    sandbox=self._sandbox_policy,
                 ),
                 operation=lambda thread: self._run_turn(
                     thread, heartbeat, claim, payload_text
@@ -385,7 +410,7 @@ class RoleService:
         try:
             while not selected.is_set():
                 result = self.run_once()
-                if result.status == "empty":
+                if result.status in {"empty", "released"}:
                     selected.wait(self.config.poll_seconds)
         finally:
             self.close()

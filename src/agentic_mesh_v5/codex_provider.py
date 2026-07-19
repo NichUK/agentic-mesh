@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from queue import Empty, Queue
 from typing import Any, Callable, Iterator, Mapping
 
 from openai_codex import ApprovalMode as CodexApprovalMode
@@ -62,6 +63,7 @@ _SAFE_MESSAGES = {
     ProviderErrorKind.PROTOCOL: "provider protocol response was invalid",
     ProviderErrorKind.INTERNAL: "provider operation failed",
 }
+_TURN_STATE_POLL_SECONDS = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,8 +215,23 @@ class CodexWorkerTurn:
     def events(self) -> Iterator[ProviderEvent]:
         completed = False
         try:
-            for notification in self._handle.stream():
-                event = _event(notification, self.thread_id, self.turn_id)
+            notification_queue = _sdk_turn_notification_queue(self._handle)
+            if notification_queue is None:
+                notifications = self._handle.stream()
+            else:
+                client, selected_queue = notification_queue
+                notifications = _reconciled_notifications(
+                    client,
+                    selected_queue,
+                    self.thread_id,
+                    self.turn_id,
+                )
+            for notification in notifications:
+                event = (
+                    notification
+                    if isinstance(notification, ProviderEvent)
+                    else _event(notification, self.thread_id, self.turn_id)
+                )
                 if event is None:
                     continue
                 if event.kind is ProviderEventKind.TURN_COMPLETED:
@@ -235,6 +252,113 @@ class CodexWorkerTurn:
         except Exception as exc:
             raise _exception(exc) from None
         self._interrupt_requested = True
+
+
+def _sdk_turn_notification_queue(handle: object) -> tuple[object, Queue[object]] | None:
+    """Use the pinned SDK queue so a missing terminal event can be reconciled."""
+    client = getattr(handle, "_client", None)
+    router = getattr(client, "_router", None)
+    queues = getattr(router, "_turn_notifications", None)
+    register = getattr(client, "register_turn_notifications", None)
+    unregister = getattr(client, "unregister_turn_notifications", None)
+    turn_id = getattr(handle, "id", None)
+    if (
+        not isinstance(queues, dict)
+        or not callable(register)
+        or not callable(unregister)
+        or not isinstance(turn_id, str)
+    ):
+        return None
+    register(turn_id)
+    selected = queues.get(turn_id)
+    if not isinstance(selected, Queue):
+        unregister(turn_id)
+        return None
+    return client, selected
+
+
+def _reconciled_notifications(
+    client: object,
+    notifications: Queue[object],
+    thread_id: str,
+    turn_id: str,
+) -> Iterator[object]:
+    unregister = getattr(client, "unregister_turn_notifications")
+    try:
+        while True:
+            try:
+                notification = notifications.get(timeout=_TURN_STATE_POLL_SECONDS)
+            except Empty:
+                terminal = _read_terminal_turn(client, thread_id, turn_id)
+                if terminal is not None:
+                    # The read response shares the app-server transport, so
+                    # notifications emitted before it are already routed. Drain
+                    # them first to retain terminal usage and error events.
+                    while True:
+                        try:
+                            pending = notifications.get_nowait()
+                        except Empty:
+                            break
+                        if isinstance(pending, BaseException):
+                            raise pending
+                        yield pending
+                        event = _event(pending, thread_id, turn_id)
+                        if (
+                            event is not None
+                            and event.kind is ProviderEventKind.TURN_COMPLETED
+                        ):
+                            return
+                    yield terminal
+                    return
+                continue
+            if isinstance(notification, BaseException):
+                raise notification
+            yield notification
+            event = _event(notification, thread_id, turn_id)
+            if event is not None and event.kind is ProviderEventKind.TURN_COMPLETED:
+                return
+    finally:
+        unregister(turn_id)
+
+
+def _read_terminal_turn(
+    client: object, thread_id: str, turn_id: str
+) -> ProviderEvent | None:
+    read = getattr(client, "thread_read", None)
+    if not callable(read):
+        return None
+    try:
+        response = read(thread_id, include_turns=True)
+    except Exception:
+        return None
+    thread = getattr(response, "thread", None)
+    if getattr(thread, "id", None) != thread_id:
+        raise _protocol_error()
+    turns = getattr(thread, "turns", None)
+    if not isinstance(turns, list):
+        raise _protocol_error()
+    selected = next(
+        (turn for turn in turns if getattr(turn, "id", None) == turn_id),
+        None,
+    )
+    if selected is None:
+        return None
+    status = _enum_value(getattr(selected, "status", None))
+    if status in {"inProgress", "pending"}:
+        return None
+    completion = _completion(status)
+    info = (
+        _turn_error(getattr(selected, "error", None), retryable=False)
+        if completion is TurnCompletionStatus.FAILED
+        else None
+    )
+    return ProviderEvent(
+        ProviderEventKind.TURN_COMPLETED,
+        thread_id,
+        turn_id,
+        completion=completion,
+        error=info,
+    )
 
 
 def _sdk_config(config: CodexProviderConfig) -> CodexConfig:
