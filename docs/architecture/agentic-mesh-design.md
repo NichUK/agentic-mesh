@@ -1043,6 +1043,23 @@ Team: Quantauma Project
 Teams approval and action UX should use Adaptive Cards. The internal action
 model must remain generic so Slack can map the same action to Block Kit later.
 
+V5 gives every logical project role one explicit Teams bot identity. The
+project manifest records the bot application id, user-facing display name, and
+external credential id; role activation pins the application id. Concrete
+same-role worker instances therefore share one collaboration identity while
+retaining separate runtime identity and work-item threads. Bot application ids,
+display names, and credential bindings are unique across a project, and the
+tenant/application pair is an isolated project resource.
+
+Inbound Teams authority is accepted only when tenant, Team, and recipient bot
+application all match the active manifest, then reduces to the connector-neutral
+project/role pair. Outbound delivery resolves a token from the external
+credential provider and verifies installation and send permission before using
+the selected role identity. Missing installation, revoked permission,
+credential failure, and connector failure produce safe blocker codes without
+exposing credential values. Project inference, ambiguous DMs, and cards are
+separate later slices rather than parallel routing logic.
+
 ## Git And Configuration
 
 ### V5 Project Manifest Boundary

@@ -78,6 +78,16 @@ action. Conditional state changes preserve manual ADO edits and require the
 approved implementation/test or acceptance/owner-review evidence before moving
 to `Resolved` or `Closed`.
 
+The V5 Teams binding declares one distinct bot application id, display name,
+and external credential reference for every logical role in the project
+manifest. Role activation pins that application id, so every same-role worker
+instance shares the role identity without sharing work-item context. The first
+connector adapter maps inbound recipient ids to logical roles and checks bot
+installation and send permission before outbound delivery. Missing installation,
+revoked permission, credential failure, and connector failure are safe explicit
+blockers; tokens never enter the manifest, database, image, delivery evidence,
+or error text. Project/DM routing and approval cards remain later slices.
+
 V5 database maintenance and native backup operations use the same external
 `AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,
 publishes a custom-format archive with its checksum manifest as the publication

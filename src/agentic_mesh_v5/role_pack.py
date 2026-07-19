@@ -216,6 +216,14 @@ class RolePackActivator:
             flow_reference,
             flow.entry_state,
         )
+        try:
+            teams = manifest.snapshot["teams"]
+            identity = teams["role_identities"][role_id]
+            collaboration_identity = str(identity["application_id"])
+        except (KeyError, TypeError):
+            raise RolePackConflict(
+                f"role {role_id} has no Teams collaboration identity"
+            ) from None
         return _PreparedRole(
             RoleBinding(
                 manifest.project_id,
@@ -231,7 +239,7 @@ class RolePackActivator:
                 prompt.digest,
                 str(snapshot["role_class"]),
                 str(snapshot["memory_scope"]),
-                role_id,
+                collaboration_identity,
                 minimum,
                 maximum,
             ),

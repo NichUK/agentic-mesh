@@ -279,6 +279,13 @@ def _manifest(
             "team_id": f"team-{project_id}",
             "credential": "graph",
             "channels": {"project": "project", "approvals": "approvals"},
+            "role_identities": {
+                "project-manager": {
+                    "application_id": f"bot-{project_id}-project-manager",
+                    "display_name": f"AM {project_id} Project Manager",
+                    "credential": "teams-project-manager",
+                }
+            },
         },
         "ado": {
             "organization": "https://dev.azure.com/seerstone",
@@ -291,7 +298,7 @@ def _manifest(
                 "provider": name,
                 "reference": f"secret://projects/{project_id}/{name}",
             }
-            for name in ("git", "graph", "ado")
+            for name in ("git", "graph", "ado", "teams-project-manager")
         },
         "roles": {
             "project-manager": {

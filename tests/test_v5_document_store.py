@@ -424,6 +424,13 @@ def _manifest(project_id: str, drive_id: str, root: str) -> dict[str, object]:
             "team_id": f"team-{project_id}",
             "credential": "graph",
             "channels": {"project": f"channel-{project_id}"},
+            "role_identities": {
+                "engineering": {
+                    "application_id": f"bot-{project_id}-engineering",
+                    "display_name": f"AM {project_id.title()} Engineering",
+                    "credential": "teams-engineering",
+                }
+            },
         },
         "ado": {
             "organization": "https://dev.azure.com/seerstone",
@@ -436,7 +443,7 @@ def _manifest(project_id: str, drive_id: str, root: str) -> dict[str, object]:
                 "provider": name,
                 "reference": f"secret://projects/{project_id}/{name}",
             }
-            for name in ("git", "graph", "ado")
+            for name in ("git", "graph", "ado", "teams-engineering")
         },
         "roles": {
             "engineering": {

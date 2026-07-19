@@ -23,6 +23,67 @@ teams:
   channels:
     project: agentic-mesh-v5
     approvals: agentic-mesh-v5-approvals
+  role_identities:
+    business-analyst:
+      application_id: bot-amv5-business-analyst
+      display_name: AM V5 Business Analyst
+      credential: teams-business-analyst
+    delivery-manager:
+      application_id: bot-amv5-delivery-manager
+      display_name: AM V5 Delivery Manager
+      credential: teams-delivery-manager
+    engineering:
+      application_id: bot-amv5-engineering
+      display_name: AM V5 Engineering
+      credential: teams-engineering
+    enterprise-architect:
+      application_id: bot-amv5-enterprise-architect
+      display_name: AM V5 Enterprise Architect
+      credential: teams-enterprise-architect
+    platform-engineer:
+      application_id: bot-amv5-platform-engineer
+      display_name: AM V5 Platform Engineer
+      credential: teams-platform-engineer
+    product-manager:
+      application_id: bot-amv5-product-manager
+      display_name: AM V5 Product Manager
+      credential: teams-product-manager
+    project-manager:
+      application_id: bot-amv5-project-manager
+      display_name: AM V5 Project Manager
+      credential: teams-project-manager
+    prompt-engineer:
+      application_id: bot-amv5-prompt-engineer
+      display_name: AM V5 Prompt Engineer
+      credential: teams-prompt-engineer
+    qa-engineer:
+      application_id: bot-amv5-qa-engineer
+      display_name: AM V5 QA Engineer
+      credential: teams-qa-engineer
+    release-manager:
+      application_id: bot-amv5-release-manager
+      display_name: AM V5 Release Manager
+      credential: teams-release-manager
+    research-analyst:
+      application_id: bot-amv5-research-analyst
+      display_name: AM V5 Research Analyst
+      credential: teams-research-analyst
+    security-architect:
+      application_id: bot-amv5-security-architect
+      display_name: AM V5 Security Architect
+      credential: teams-security-architect
+    solution-architect:
+      application_id: bot-amv5-solution-architect
+      display_name: AM V5 Solution Architect
+      credential: teams-solution-architect
+    technical-writer:
+      application_id: bot-amv5-technical-writer
+      display_name: AM V5 Technical Writer
+      credential: teams-technical-writer
+    ux-designer:
+      application_id: bot-amv5-ux-designer
+      display_name: AM V5 UX Designer
+      credential: teams-ux-designer
 ado:
   organization: https://dev.azure.com/seerstone
   project: agentic-mesh
@@ -40,6 +101,66 @@ credentials:
     scope: project
     provider: ado
     reference: oauth-cache://projects/agentic-mesh-v5/ado
+  teams-business-analyst:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/business-analyst
+  teams-delivery-manager:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/delivery-manager
+  teams-engineering:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/engineering
+  teams-enterprise-architect:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/enterprise-architect
+  teams-platform-engineer:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/platform-engineer
+  teams-product-manager:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/product-manager
+  teams-project-manager:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/project-manager
+  teams-prompt-engineer:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/prompt-engineer
+  teams-qa-engineer:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/qa-engineer
+  teams-release-manager:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/release-manager
+  teams-research-analyst:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/research-analyst
+  teams-security-architect:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/security-architect
+  teams-solution-architect:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/solution-architect
+  teams-technical-writer:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/technical-writer
+  teams-ux-designer:
+    scope: project
+    provider: teams-bot
+    reference: secret://projects/agentic-mesh-v5/teams/ux-designer
 roles:
   business-analyst:
     package: role/business-analyst@0.1.0
