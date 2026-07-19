@@ -459,12 +459,7 @@ class ThreadAffinityStore:
         key = _key(key)
         instance_id = _required(instance_id, "instance_id")
         prompt_digest = _digest(prompt_digest)
-        try:
-            boundary = datetime.fromisoformat(superseded_before)
-        except (TypeError, ValueError):
-            raise ValueError("superseded_before must be an ISO timestamp") from None
-        if boundary.tzinfo is None or boundary.utcoffset() is None:
-            raise ValueError("superseded_before must include a timezone")
+        boundary = _timestamp(superseded_before, "superseded_before")
         try:
             with psycopg.connect(self._database_url, connect_timeout=5) as connection:
                 if not self._authorized(connection, key, instance_id):
@@ -851,6 +846,23 @@ def _binding(key: ThreadAffinityKey, row: object) -> ThreadBinding:
     }:
         raise ThreadAffinityError(_STORE_ERROR)
     return binding
+
+
+def _timestamp(value: object, label: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be an ISO timestamp")
+    normalized = value.strip().replace(" ", "T", 1)
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    elif re.search(r"[+-][0-9]{2}$", normalized):
+        normalized += ":00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        raise ValueError(f"{label} must be an ISO timestamp") from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{label} must include a timezone")
+    return parsed
 
 
 def _validate_thread(thread: object, expected_id: str | None = None) -> None:
