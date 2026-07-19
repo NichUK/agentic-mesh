@@ -14,6 +14,7 @@ from agentic_mesh_v5.events import EventDraft, EventStore, OutboundDraft
 from agentic_mesh_v5.lifecycle import ApprovalRecord
 from agentic_mesh_v5.lifecycle import LifecycleAuthorizationError
 from agentic_mesh_v5.lifecycle import LifecycleConflict, LifecycleNotFound
+from agentic_mesh_v5.progress import reject_sensitive_content
 from agentic_mesh_v5.routing import RouteDraft, Router
 
 
@@ -74,6 +75,7 @@ class SponsorApprovalCoordinator:
         if type(expires_in_seconds) is not int or not 1 <= expires_in_seconds <= 604_800:
             raise ValueError("expires_in_seconds must be between 1 and 604800")
         evidence = _evidence(evidence)
+        teams_summary = _teams_summary(evidence, gate_id)
         with self._events.transaction() as transaction:
             existing = self._gate_row(transaction, project_id, gate_id, lock=True)
             if existing is not None:
@@ -224,6 +226,20 @@ class SponsorApprovalCoordinator:
                     "expires_at": row[11],
                     "sponsor_ids": list(sponsors),
                 },
+                additional_outbound=(
+                    OutboundDraft(
+                        topic="teams.approval",
+                        payload={
+                            "project_id": project_id,
+                            "work_item_id": work_item_id,
+                            "gate_id": gate_id,
+                            "requested_role_id": requested_by,
+                            "sponsor_ids": list(sponsors),
+                            "summary": teams_summary,
+                            "expires_at": row[11],
+                        },
+                    ),
+                ),
             )
             return _gate_record(row)
 
@@ -377,6 +393,16 @@ class SponsorApprovalCoordinator:
                 event_type=f"sponsor_gate.{decision}",
                 status="active",
                 payload=governance_evidence,
+                additional_outbound=(
+                    OutboundDraft(
+                        topic="teams.approval-status",
+                        payload={
+                            "project_id": project_id,
+                            "gate_id": gate_id,
+                            "status": decision,
+                        },
+                    ),
+                ),
             )
         return ApprovalRecord(
             project_id, approval_id, gate_id, sponsor_id,
@@ -459,6 +485,16 @@ class SponsorApprovalCoordinator:
                 event_type="sponsor_gate.timed_out",
                 status="active",
                 payload={"gate_id": gate_id, "obligation_id": gate[10]},
+                additional_outbound=(
+                    OutboundDraft(
+                        topic="teams.approval-status",
+                        payload={
+                            "project_id": project_id,
+                            "gate_id": gate_id,
+                            "status": "expired",
+                        },
+                    ),
+                ),
             )
             return _gate_record(row)
 
@@ -625,6 +661,7 @@ class SponsorApprovalCoordinator:
         event_type,
         status,
         payload,
+        additional_outbound: Sequence[OutboundDraft] = (),
     ) -> None:
         transaction.append(
             EventDraft(
@@ -647,6 +684,7 @@ class SponsorApprovalCoordinator:
                         "status": status,
                     },
                 ),
+                *additional_outbound,
             ),
         )
 
@@ -704,3 +742,12 @@ def _digest(*values: object) -> str:
         values, allow_nan=False, sort_keys=True, separators=(",", ":")
     )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _teams_summary(evidence: Mapping[str, object], gate_id: str) -> str:
+    value = evidence.get("summary", f"Approval requested for {gate_id}.")
+    if not isinstance(value, str) or not value.strip() or len(value) > 1000:
+        raise ValueError("Teams approval summary is invalid")
+    summary = value.strip()
+    reject_sensitive_content(summary, "Teams approval summary")
+    return summary

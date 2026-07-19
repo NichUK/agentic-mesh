@@ -94,7 +94,13 @@ messages are filtered through authenticated sender/project authorization: one
 candidate routes, while multiple candidates return a structured question and
 no selected project. Only an exact structured project choice can resume that
 route; message text is never parsed for project or role selection. Approval
-cards and progress updates remain a later slice.
+requests use the same durable gate and transactional outbox as the rest of V5.
+The requesting role sends one idempotent personal Adaptive Card to each project
+sponsor; authenticated callbacks are accepted only after durable dispatch and
+delegate to the exactly-once sponsor coordinator. Approved, rejected, and
+expired cards are updated safely. Selected structured progress checkpoints can
+use the same outbox to send concise role-specific sponsor updates without
+turning every live checkpoint into notification noise.
 
 V5 database maintenance and native backup operations use the same external
 `AGENTIC_MESH_V5_DATABASE_URL`. A backup briefly enters the durable write pause,

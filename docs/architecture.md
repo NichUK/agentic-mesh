@@ -115,7 +115,10 @@ operational support.
   transport are unavailable. Project resolution uses exact active channel
   authority or authenticated personal-message candidates. An ambiguous DM
   produces a structured clarification question with no chosen project; message
-  text never selects project context.
+  text never selects project context. Managed sponsor gates atomically enqueue
+  role-specific approval cards through the transactional outbox. Authenticated
+  callbacks reuse the durable sponsor coordinator, and selected structured
+  progress checkpoints can use the same idempotent delivery adapter.
 - Control-plane: supervises topology, role-instance lifecycle, hibernation,
   wake-up, health checks, and configuration reloads.
 - Message store: owns durable delivery, claims, retries, and dead letters.

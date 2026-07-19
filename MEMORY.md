@@ -1154,3 +1154,25 @@ or `release_review`.
 - V4 recipient-bot precedence was retained. V4 text-role parsing,
   project-manager defaulting, and single-project assumptions were rejected.
   AMV5-052 remains responsible for Adaptive Card delivery and progress updates.
+
+## 2026-07-19 V5 Teams Approval And Progress Delivery
+
+- Opening a managed sponsor gate now writes `teams.approval` in the same
+  transactional outbox operation as the gate event. No parallel notification
+  or decision store was added.
+- The idempotent adapter sends one personal Adaptive Card per sponsor using the
+  requesting role's active bot. Stable per-sponsor operation ids make partial
+  retry safe. Cards contain a safe summary, expiry, rationale input, and
+  approve/reject actions; they never carry a trusted sponsor identity.
+- Callbacks require an already-dispatched project/gate/sponsor card and use the
+  authenticated Teams sender. `SponsorApprovalCoordinator` remains the only
+  decision authority, preserving expiry, authorization, replay, governance,
+  concurrency, and exactly-once continuation behaviour. All cards are updated
+  idempotently after approval, rejection, or observed expiry.
+- Explicit `TeamsProgressPublisher` publication writes one event/outbox request
+  per immutable structured checkpoint. The recording role sends its safe
+  summary, status, and next action to project sponsors; repeat publication and
+  partial delivery are idempotent.
+- V4's role-owned sponsor card pattern was retained. Environment bot secrets,
+  payload-authorized sponsors, free-form result parsing, and dashboard-only
+  delivery claims were rejected.
