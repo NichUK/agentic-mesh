@@ -113,11 +113,11 @@ services:
       - source: business_analyst_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-business-analyst:/codex-home
 
   delivery-manager:
@@ -129,11 +129,11 @@ services:
       - source: delivery_manager_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-delivery-manager:/codex-home
 
   engineering-1:
@@ -148,13 +148,13 @@ services:
       - source: engineering_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
       - ./gitconfig:/etc/gitconfig:ro
-      - ${AGENTIC_MESH_GITHUB_CONFIG_PATH}:/run/agentic-mesh/github:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_GITHUB_CONFIG_PATH:?set the project-scoped GitHub config path}:/run/agentic-mesh/github:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-engineering-1:/codex-home
 
   engineering-2:
@@ -169,13 +169,13 @@ services:
       - source: engineering_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
       - ./gitconfig:/etc/gitconfig:ro
-      - ${AGENTIC_MESH_GITHUB_CONFIG_PATH}:/run/agentic-mesh/github:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_GITHUB_CONFIG_PATH:?set the project-scoped GitHub config path}:/run/agentic-mesh/github:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-engineering-2:/codex-home
 
   enterprise-architect:
@@ -187,11 +187,11 @@ services:
       - source: enterprise_architect_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-enterprise-architect:/codex-home
 
   platform-engineer:
@@ -203,11 +203,11 @@ services:
       - source: platform_engineer_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-platform-engineer:/codex-home
 
   product-manager:
@@ -219,11 +219,11 @@ services:
       - source: product_manager_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-product-manager:/codex-home
 
   project-manager:
@@ -237,11 +237,11 @@ services:
       - source: project_manager_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-project-manager:/codex-home
 
   prompt-engineer:
@@ -253,11 +253,11 @@ services:
       - source: prompt_engineer_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-prompt-engineer:/codex-home
 
   qa-engineer:
@@ -269,11 +269,11 @@ services:
       - source: qa_engineer_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-qa-engineer:/codex-home
 
   release-manager:
@@ -285,11 +285,11 @@ services:
       - source: release_manager_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-release-manager:/codex-home
 
   research-analyst:
@@ -301,11 +301,11 @@ services:
       - source: research_analyst_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-research-analyst:/codex-home
 
   security-architect:
@@ -317,11 +317,11 @@ services:
       - source: security_architect_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-security-architect:/codex-home
 
   solution-architect:
@@ -333,11 +333,11 @@ services:
       - source: solution_architect_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-solution-architect:/codex-home
 
   technical-writer:
@@ -349,11 +349,11 @@ services:
       - source: technical_writer_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-technical-writer:/codex-home
 
   ux-designer:
@@ -365,11 +365,11 @@ services:
       - source: ux_designer_api_token
         target: api_token
     volumes:
-      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
-      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
-      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
-      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-ux-designer:/codex-home
 
 networks:
@@ -382,33 +382,33 @@ secrets:
   business_analyst_api_token:
     file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/business-analyst.token
   delivery_manager_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/delivery-manager.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/delivery-manager.token
   engineering_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/engineering.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/engineering.token
   enterprise_architect_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/enterprise-architect.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/enterprise-architect.token
   platform_engineer_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/platform-engineer.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/platform-engineer.token
   product_manager_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/product-manager.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/product-manager.token
   project_manager_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/project-manager.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/project-manager.token
   prompt_engineer_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/prompt-engineer.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/prompt-engineer.token
   qa_engineer_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/qa-engineer.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/qa-engineer.token
   release_manager_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/release-manager.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/release-manager.token
   research_analyst_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/research-analyst.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/research-analyst.token
   security_architect_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/security-architect.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/security-architect.token
   solution_architect_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/solution-architect.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/solution-architect.token
   technical_writer_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/technical-writer.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/technical-writer.token
   ux_designer_api_token:
-    file: ${AGENTIC_MESH_TOKEN_ROOT}/ux-designer.token
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/ux-designer.token
 
 volumes:
   codex-business-analyst: {name: agentic-mesh-v5-codex-business-analyst-1}
