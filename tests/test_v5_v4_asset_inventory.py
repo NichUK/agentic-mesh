@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 
@@ -44,6 +44,10 @@ def test_inventory_entries_are_complete_and_source_linked() -> None:
             for story in item["target_stories"]
         )
         source = str(item["source"])
+        source_path = PurePosixPath(source)
+        assert not source_path.is_absolute(), source
+        assert ".." not in source_path.parts, source
+        assert "\\" not in source, source
         if not (ROOT / source).is_file():
             archived = subprocess.run(
                 ["git", "cat-file", "-e", f"{retired_revision}:{source}"],
@@ -51,7 +55,9 @@ def test_inventory_entries_are_complete_and_source_linked() -> None:
                 check=False,
                 capture_output=True,
             )
-            assert archived.returncode == 0, source
+            assert archived.returncode == 0, (
+                f"{source}: {archived.stderr.decode(errors='replace').strip()}"
+            )
 
 
 def test_inventory_covers_every_active_v4_asset_class() -> None:
