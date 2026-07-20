@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
@@ -30,6 +31,7 @@ from agentic_mesh_v5.dashboard_reads import traffic_status
 from agentic_mesh_v5.dashboard_reads import usage_traffic
 from agentic_mesh_v5.fleet import FleetAction
 from agentic_mesh_v5.lifecycle import LifecycleStore
+from agentic_mesh_v5.queues import RoleQueueStore
 from agentic_mesh_v5.usage import CapacityDraft
 from agentic_mesh_v5.usage import TurnUsageDraft
 from agentic_mesh_v5.usage import UsageConflict
@@ -191,7 +193,11 @@ def api_database(postgres_database: str) -> tuple[str, TestClient]:
             """
         )
     return postgres_database, TestClient(
-        create_app(postgres_database, authorizer=_authorizer())
+        create_app(
+            postgres_database,
+            authorizer=_authorizer(),
+            enable_pm_monitor_background=False,
+        )
     )
 
 
@@ -316,6 +322,208 @@ def test_global_pm_monitor_api_is_operator_only_and_hides_token_from_status(
     assert sweep.json()["observations"] == []
     assert sweep.json()["sweep_count"] == 1
     assert forbidden.status_code == 403
+
+
+def _seed_pm_monitor_runtime(database_url: str) -> None:
+    MigrationRunner(database_url).migrate()
+    lifecycle = LifecycleStore(database_url)
+    lifecycle.create_project(
+        project_id="alpha", display_name="Alpha", sponsor_ids=("sponsor-1",)
+    )
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.roles(project_id, role_id, template_id)
+            VALUES ('alpha', 'engineering', 'engineering'),
+                   ('alpha', 'project-manager', 'project-manager')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.role_instances
+                (project_id, instance_id, role_id, status)
+            VALUES ('alpha', 'pm-1', 'project-manager', 'running')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agentic_mesh_v5.work_items
+                (project_id, work_item_id, assigned_role_id, title, status)
+            VALUES ('alpha', 'orphan', 'engineering', 'Orphan', 'active')
+            """
+        )
+    RoleQueueStore(database_url).create_queue(
+        project_id="alpha", queue_id="project-manager", role_id="project-manager"
+    )
+
+
+def test_api_lifespan_automatically_runs_pm_monitor_and_routes_orphan_once(
+    postgres_database: str,
+) -> None:
+    _seed_pm_monitor_runtime(postgres_database)
+    app = create_app(
+        postgres_database,
+        authorizer=_authorizer(),
+        pm_monitor_interval_seconds=0.05,
+        pm_monitor_lease_seconds=1,
+    )
+
+    with TestClient(app):
+        deadline = time.monotonic() + 2
+        routed = 0
+        sweep_count = 0
+        while time.monotonic() < deadline and (routed != 1 or sweep_count < 2):
+            with psycopg.connect(postgres_database) as connection:
+                routed = connection.execute(
+                    """
+                    SELECT count(*) FROM agentic_mesh_v5.queue_items
+                    WHERE project_id = 'alpha'
+                      AND queue_id = 'project-manager'
+                      AND work_item_id = 'orphan'
+                    """
+                ).fetchone()[0]
+                sweep_count = connection.execute(
+                    """
+                    SELECT COALESCE((
+                        SELECT sweep_count
+                        FROM agentic_mesh_v5.pm_monitor_lease
+                        WHERE monitor_id = 'global-project-manager'
+                    ), 0)
+                    """
+                ).fetchone()[0]
+            if routed != 1 or sweep_count < 2:
+                time.sleep(0.02)
+
+    assert routed == 1
+    assert sweep_count >= 2
+    with psycopg.connect(postgres_database) as connection:
+        disposition = connection.execute(
+            """
+            SELECT disposition FROM agentic_mesh_v5.continuation_status
+            WHERE project_id = 'alpha' AND work_item_id = 'orphan'
+            """
+        ).fetchone()[0]
+        status = connection.execute(
+            """
+            SELECT status FROM agentic_mesh_v5.work_items
+            WHERE project_id = 'alpha' AND work_item_id = 'orphan'
+            """
+        ).fetchone()[0]
+    assert disposition == "progressing"
+    assert status == "active"
+
+
+def test_api_lifespan_pm_monitor_restart_takes_over_without_duplicate_routes(
+    postgres_database: str,
+) -> None:
+    _seed_pm_monitor_runtime(postgres_database)
+
+    def app():
+        return create_app(
+            postgres_database,
+            authorizer=_authorizer(),
+            pm_monitor_interval_seconds=0.05,
+            pm_monitor_lease_seconds=1,
+        )
+
+    with TestClient(app()):
+        deadline = time.monotonic() + 2
+        first_owner = None
+        while time.monotonic() < deadline and first_owner is None:
+            with psycopg.connect(postgres_database) as connection:
+                row = connection.execute(
+                    """
+                    SELECT owner_id, sweep_count
+                    FROM agentic_mesh_v5.pm_monitor_lease
+                    WHERE monitor_id = 'global-project-manager'
+                    """
+                ).fetchone()
+            if row is not None and row[1] >= 1:
+                first_owner = row[0]
+            else:
+                time.sleep(0.02)
+
+    assert first_owner is not None
+    time.sleep(1.1)
+
+    with TestClient(app()):
+        deadline = time.monotonic() + 2
+        second_owner = None
+        while time.monotonic() < deadline and second_owner is None:
+            with psycopg.connect(postgres_database) as connection:
+                row = connection.execute(
+                    """
+                    SELECT owner_id, sweep_count
+                    FROM agentic_mesh_v5.pm_monitor_lease
+                    WHERE monitor_id = 'global-project-manager'
+                    """
+                ).fetchone()
+            if row is not None and row[0] != first_owner and row[1] >= 1:
+                second_owner = row[0]
+            else:
+                time.sleep(0.02)
+
+    assert second_owner is not None
+    with psycopg.connect(postgres_database) as connection:
+        assert connection.execute(
+            """
+            SELECT count(*) FROM agentic_mesh_v5.queue_items
+            WHERE project_id = 'alpha'
+              AND queue_id = 'project-manager'
+              AND work_item_id = 'orphan'
+            """
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            """
+            SELECT count(*) FROM agentic_mesh_v5.audit_records
+            WHERE action = 'pm-monitor.taken-over'
+            """
+        ).fetchone()[0] == 1
+
+
+def test_api_lifespan_pm_monitor_failure_does_not_kill_app(
+    postgres_database: str, monkeypatch
+) -> None:
+    _seed_pm_monitor_runtime(postgres_database)
+    failed = {"seen": False}
+    from agentic_mesh_v5.continuation import ContinuationMonitor
+
+    actual = ContinuationMonitor.sweep
+
+    def flaky_sweep(self, *, owner_id: str, lease_token: str):
+        if not failed["seen"]:
+            failed["seen"] = True
+            raise RuntimeError("transient PM monitor failure")
+        return actual(self, owner_id=owner_id, lease_token=lease_token)
+
+    monkeypatch.setattr(ContinuationMonitor, "sweep", flaky_sweep)
+    app = create_app(
+        postgres_database,
+        authorizer=_authorizer(),
+        pm_monitor_interval_seconds=0.05,
+        pm_monitor_lease_seconds=1,
+    )
+
+    with TestClient(app) as client:
+        health = client.get(f"{API_PREFIX}/health")
+        deadline = time.monotonic() + 2
+        routed = 0
+        while time.monotonic() < deadline and routed != 1:
+            with psycopg.connect(postgres_database) as connection:
+                routed = connection.execute(
+                    """
+                    SELECT count(*) FROM agentic_mesh_v5.queue_items
+                    WHERE project_id = 'alpha'
+                      AND queue_id = 'project-manager'
+                      AND work_item_id = 'orphan'
+                    """
+                ).fetchone()[0]
+            if routed != 1:
+                time.sleep(0.02)
+
+    assert health.status_code == 200
+    assert failed["seen"] is True
+    assert routed == 1
 
 
 def test_fleet_policy_and_reconciliation_api_are_strictly_scoped(

@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import re
+import socket
 from typing import Any, Callable, Literal
 import uuid
 
@@ -941,15 +942,22 @@ def create_app(
     config_store_resolver: Callable[[str], ConfigActivationStore] | None = None,
     d8a_proxy: D8AProxy | None = None,
     fleet_reconcile_interval_seconds: float = 5.0,
+    pm_monitor_interval_seconds: float = 5.0,
+    pm_monitor_lease_seconds: int = 60,
+    enable_pm_monitor_background: bool = True,
 ) -> FastAPI:
+    _validated_poll_seconds(
+        fleet_reconcile_interval_seconds, "fleet reconciliation interval"
+    )
+    _validated_poll_seconds(
+        pm_monitor_interval_seconds, "PM continuation monitor interval"
+    )
     if (
-        isinstance(fleet_reconcile_interval_seconds, bool)
-        or not isinstance(fleet_reconcile_interval_seconds, (int, float))
-        or not math.isfinite(float(fleet_reconcile_interval_seconds))
-        or fleet_reconcile_interval_seconds <= 0
-        or fleet_reconcile_interval_seconds > 300
+        type(pm_monitor_lease_seconds) is not int
+        or pm_monitor_lease_seconds < 1
+        or pm_monitor_lease_seconds > 300
     ):
-        raise ValueError("fleet reconciliation interval is invalid")
+        raise ValueError("PM continuation monitor lease is invalid")
     selected_authorizer = authorizer or authorizer_from_environment()
     selected_telemetry = telemetry or Telemetry()
     lifecycle = LifecycleStore(database_url)
@@ -1053,6 +1061,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        pm_monitor_owner_id = _pm_monitor_owner_id()
+        pm_monitor_claim = None
+
         async def reconcile_fleet() -> None:
             while True:
                 with selected_telemetry.operation("fleet.reconcile") as span:
@@ -1070,16 +1081,45 @@ def create_app(
                         )
                 await anyio.sleep(float(fleet_reconcile_interval_seconds))
 
-        try:
-            if fleet_supervisor is None:
-                yield
-            else:
-                async with anyio.create_task_group() as tasks:
-                    tasks.start_soon(reconcile_fleet)
+        async def run_pm_monitor() -> None:
+            nonlocal pm_monitor_claim
+            while True:
+                with selected_telemetry.operation("pm_monitor.sweep") as span:
                     try:
-                        yield
-                    finally:
-                        tasks.cancel_scope.cancel()
+                        if pm_monitor_claim is None:
+                            pm_monitor_claim = await anyio.to_thread.run_sync(
+                                partial(
+                                    continuation_monitor.claim,
+                                    owner_id=pm_monitor_owner_id,
+                                    lease_seconds=pm_monitor_lease_seconds,
+                                )
+                            )
+                        await anyio.to_thread.run_sync(
+                            partial(
+                                continuation_monitor.sweep,
+                                owner_id=pm_monitor_owner_id,
+                                lease_token=pm_monitor_claim.lease_token,
+                            )
+                        )
+                    except (ContinuationAuthorizationError, ContinuationConflict):
+                        pm_monitor_claim = None
+                    except Exception:
+                        pm_monitor_claim = None
+                        selected_telemetry.record_safe_failure(
+                            span, code="pm_monitor_failed"
+                        )
+                await anyio.sleep(float(pm_monitor_interval_seconds))
+
+        try:
+            async with anyio.create_task_group() as tasks:
+                if enable_pm_monitor_background:
+                    tasks.start_soon(run_pm_monitor)
+                if fleet_supervisor is not None:
+                    tasks.start_soon(reconcile_fleet)
+                try:
+                    yield
+                finally:
+                    tasks.cancel_scope.cancel()
         finally:
             if isinstance(selected_d8a_proxy, D8AProxy):
                 await selected_d8a_proxy.close()
@@ -2803,6 +2843,23 @@ def _project_flow_resolver(
             ) from exc
 
     return resolve
+
+
+def _validated_poll_seconds(value: object, label: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or value <= 0
+        or value > 300
+    ):
+        raise ValueError(f"{label} is invalid")
+    return float(value)
+
+
+def _pm_monitor_owner_id() -> str:
+    host = socket.gethostname().replace(":", "-") or "unknown"
+    return f"control-api:{host}:{os.getpid()}:{uuid.uuid4().hex[:12]}"
 
 
 def _request_route(request: Request) -> str:
