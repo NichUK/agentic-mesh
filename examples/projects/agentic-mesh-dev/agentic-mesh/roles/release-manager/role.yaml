@@ -1,6 +1,0 @@
-schema_version: role-runtime-config-v0
-role_id: release-manager
-memory:
-  scope: shared_by_role_instances
-  file: MEMORY.md
-
