@@ -59,6 +59,13 @@ def test_linuxch_compose_contains_the_complete_project_core() -> None:
     ]
     control_mounts = _mount_text(services["control"])
     assert "/var/run/docker.sock" in control_mounts
+    assert "/run/agentic-mesh/document-credentials" in control_mounts
+    assert services["control"]["environment"][
+        "AGENTIC_MESH_V5_DOCUMENT_ROOT_ID"
+    ] == "project-library"
+    assert services["control"]["environment"][
+        "AGENTIC_MESH_V5_DOCUMENT_CREDENTIAL_ROOT"
+    ] == "/run/agentic-mesh/document-credentials"
     assert "/mesh/sources" not in control_mounts
     assert "/mesh/workspaces" not in control_mounts
     assert len(data["volumes"]) == 16
@@ -120,6 +127,7 @@ def test_only_engineering_receives_project_scoped_github_auth() -> None:
 
         assert "GITHUB_TOKEN" not in serialized
         assert "GH_TOKEN" not in serialized
+        assert "document-credentials" not in serialized
         assert "./gitconfig:/etc/gitconfig:ro" in mounts
         if service_id.startswith("engineering-"):
             assert environment["GH_CONFIG_DIR"] == "/run/agentic-mesh/github"
@@ -138,6 +146,12 @@ def test_project_deployment_inputs_are_secret_free_and_linux_first() -> None:
         encoding="utf-8"
     )
     readme = (DEPLOYMENT / "README.md").read_text(encoding="utf-8")
+    refresh = (DEPLOYMENT / "refresh-graph-token.sh").read_text(encoding="utf-8")
+    timer = (
+        DEPLOYMENT
+        / "systemd"
+        / "agentic-mesh-v5-graph-token-refresh.timer"
+    ).read_text(encoding="utf-8")
     sources = json.loads((DEPLOYMENT / "sources.json").read_text(encoding="utf-8"))
 
     assert "LinuxCH" in readme
@@ -146,10 +160,16 @@ def test_project_deployment_inputs_are_secret_free_and_linux_first() -> None:
     assert "not start all fleet-profile services" in readme
     assert "password=" not in environment.lower()
     assert "token=" not in environment.lower()
+    assert "AGENTIC_MESH_DOCUMENT_CREDENTIAL_ROOT=" in environment
     assert "directory = *" in gitconfig
     assert "credential" not in gitconfig
     assert "gh auth git-credential" in github_gitconfig
     assert "safe" not in github_gitconfig
+    assert "az account get-access-token" in refresh
+    assert "printf '%s' \"$token\"" in refresh
+    assert "echo \"$token\"" not in refresh
+    assert "mv -f \"$temporary\" \"$target\"" in refresh
+    assert "OnUnitActiveSec=30min" in timer
     assert "/home/nich/agentic-mesh-projects/agentic-mesh-v5" in environment
     assert sources["projects"]["agentic-mesh-v5"]["repositories"] == {
         "primary": "/mesh/sources/agentic-mesh"

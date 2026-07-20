@@ -71,6 +71,8 @@ services:
     environment:
       AGENTIC_MESH_V5_API_PRINCIPALS_FILE: /run/agentic-mesh/principals.json
       AGENTIC_MESH_V5_CONFIG_ROOT: /mesh/config
+      AGENTIC_MESH_V5_DOCUMENT_CREDENTIAL_ROOT: /run/agentic-mesh/document-credentials
+      AGENTIC_MESH_V5_DOCUMENT_ROOT_ID: project-library
       AGENTIC_MESH_V5_FLEET_MAP: /mesh/runtime/fleet.json
       PYTHONUNBUFFERED: "1"
     command: [api-serve, --host, 0.0.0.0, --port, "8080"]
@@ -94,6 +96,10 @@ services:
       - type: bind
         source: ${AGENTIC_MESH_PRINCIPALS_FILE:?set the external principals file}
         target: /run/agentic-mesh/principals.json
+        read_only: true
+      - type: bind
+        source: ${AGENTIC_MESH_DOCUMENT_CREDENTIAL_ROOT:?set the external document credential root}
+        target: /run/agentic-mesh/document-credentials
         read_only: true
       - type: bind
         source: ./fleet.json

@@ -3,8 +3,9 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 import json
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
+import stat
 from typing import Mapping, Protocol, runtime_checkable
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
@@ -15,8 +16,12 @@ from agentic_mesh_v5.database import DatabaseConfigurationError, DatabaseError, 
 
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
+_MOUNTED_CREDENTIAL = re.compile(
+    r"^(secret|mount|oauth-cache)://([A-Za-z0-9][A-Za-z0-9._/-]{0,255})$"
+)
 _CHUNK_SIZE = 10 * 1024 * 1024
 _MAX_JSON_BYTES = 1024 * 1024
+_MAX_TOKEN_BYTES = 64 * 1024
 
 
 class DocumentStoreError(DatabaseError):
@@ -121,6 +126,54 @@ class DocumentStore(Protocol):
 
 class AccessTokenProvider(Protocol):
     def access_token(self, *, provider: str, reference: str) -> str: ...
+
+
+class MountedAccessTokenProvider:
+    """Resolve project credentials from a refreshable, read-only mount."""
+
+    def __init__(self, root: Path, *, max_token_bytes: int = _MAX_TOKEN_BYTES) -> None:
+        if type(max_token_bytes) is not int or max_token_bytes < 1:
+            raise ValueError("max_token_bytes must be positive")
+        try:
+            resolved = root.resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise ValueError("document credential root is unavailable") from None
+        if not resolved.is_dir():
+            raise ValueError("document credential root must be a directory")
+        self._root = resolved
+        self._max_token_bytes = max_token_bytes
+
+    def access_token(self, *, provider: str, reference: str) -> str:
+        try:
+            selected_provider = _identifier(provider, "credential provider")
+            match = (
+                _MOUNTED_CREDENTIAL.fullmatch(reference)
+                if isinstance(reference, str)
+                else None
+            )
+            if match is None:
+                raise ValueError("credential reference is invalid")
+            scheme, relative = match.groups()
+            parts = relative.split("/")
+            if any(part in {"", ".", ".."} for part in parts):
+                raise ValueError("credential reference is invalid")
+            candidate = (self._root / selected_provider / scheme).joinpath(*parts)
+            resolved = candidate.resolve(strict=True)
+            if not resolved.is_relative_to(self._root):
+                raise ValueError("credential path escaped its mount")
+            metadata = resolved.stat()
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("credential path is not a file")
+            with resolved.open("rb") as stream:
+                raw = stream.read(self._max_token_bytes + 1)
+            if not raw or len(raw) > self._max_token_bytes:
+                raise ValueError("credential value has an invalid size")
+            token = raw.decode("ascii")
+            if any(character.isspace() for character in token):
+                raise ValueError("credential value contains whitespace")
+            return token
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            raise DocumentUnavailable("document credential resolution failed") from None
 
 
 @dataclass(frozen=True, slots=True)

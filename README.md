@@ -47,7 +47,10 @@ start/read, obligation dispatch, document artifact verification, consultation
 and accountable gate evidence, handoff-backed transition preparation/pickup,
 and terminal completion. The acting role comes from the bearer principal, while
 flow and `DocumentStore` adapters are supplied by project configuration rather
-than request payloads. The AMV5-045 qualification drives a compact product,
+than request payloads. In production, the API materialises the OneDrive store
+from the active immutable manifest and a refreshable, read-only external
+credential root; Graph bearer values never enter environment variables or
+worker containers. The AMV5-045 qualification drives a compact product,
 development, QA, and release flow through these APIs and the sponsor CLI,
 including API/worker/PM restart recovery and a reclaimed handoff lease.
 

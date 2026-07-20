@@ -829,6 +829,13 @@ Creates use fail-on-conflict upload sessions and updates require `If-Match`.
 Large content uses ordered 10-MiB ranges; tokens and upload URLs never enter
 runtime records or errors.
 
+The deployed control API materialises this adapter from the active immutable
+project manifest. The manifest provider and external credential reference map
+to a contained file beneath a read-only credential root mounted only into the
+control service. The file is reread for each Graph operation, allowing an
+atomic Linux host refresh from the existing delegated Azure CLI session
+without restarting the API or exposing Graph credentials to role workers.
+
 Stable product errors distinguish missing content, conflict, permission,
 configured size limits, service unavailability, and invalid provider data.
 Graph request/response types stop at the adapter so another document backend

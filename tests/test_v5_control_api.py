@@ -14,6 +14,7 @@ import psycopg
 from psycopg import sql
 import pytest
 
+import agentic_mesh_v5.api as api_module
 from agentic_mesh_v5.api import API_PREFIX
 from agentic_mesh_v5.api import create_app
 from agentic_mesh_v5.api_auth import AuthenticationConfigurationError
@@ -46,6 +47,62 @@ TOKENS = {
     "bravo": "bravo-token-for-tests",
     "viewer": "viewer-token-for-tests",
 }
+
+
+def test_production_document_environment_requires_a_complete_pair(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv(api_module.DOCUMENT_CREDENTIAL_ROOT_ENV, raising=False)
+    monkeypatch.delenv(api_module.DOCUMENT_ROOT_ID_ENV, raising=False)
+    assert api_module._document_store_resolver_from_environment(
+        "postgresql://database/mesh"
+    ) is None
+
+    monkeypatch.setenv(api_module.DOCUMENT_CREDENTIAL_ROOT_ENV, str(tmp_path))
+    with pytest.raises(ValueError, match="must be configured together"):
+        api_module._document_store_resolver_from_environment(
+            "postgresql://database/mesh"
+        )
+
+    monkeypatch.delenv(api_module.DOCUMENT_CREDENTIAL_ROOT_ENV)
+    monkeypatch.setenv(api_module.DOCUMENT_ROOT_ID_ENV, "project-library")
+    with pytest.raises(ValueError, match="must be configured together"):
+        api_module._document_store_resolver_from_environment(
+            "postgresql://database/mesh"
+        )
+
+
+def test_production_document_environment_builds_a_manifest_bound_resolver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Factory:
+        def __init__(self, database_url: str, **options: object) -> None:
+            captured["database_url"] = database_url
+            captured.update(options)
+
+        def create(self, *, project_id: str, root_id: str) -> object:
+            return {"project_id": project_id, "root_id": root_id}
+
+    monkeypatch.setattr(api_module, "OneDriveDocumentStoreFactory", Factory)
+    monkeypatch.setenv(api_module.DOCUMENT_CREDENTIAL_ROOT_ENV, str(tmp_path))
+    monkeypatch.setenv(api_module.DOCUMENT_ROOT_ID_ENV, "project-library")
+
+    resolver = api_module._document_store_resolver_from_environment(
+        "postgresql://database/mesh"
+    )
+
+    assert resolver is not None
+    assert resolver("alpha") == {
+        "project_id": "alpha",
+        "root_id": "project-library",
+    }
+    assert captured["database_url"] == "postgresql://database/mesh"
+    assert captured["token_provider"].__class__.__name__ == (
+        "MountedAccessTokenProvider"
+    )
+    assert captured["transport"].__class__.__name__ == "HttpxTransport"
 
 
 def _record(subject: str, token: str, projects: list[str], scopes: list[str]):

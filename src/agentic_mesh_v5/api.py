@@ -46,6 +46,9 @@ from agentic_mesh_v5.document_store import DocumentNotFound
 from agentic_mesh_v5.document_store import DocumentPermissionDenied
 from agentic_mesh_v5.document_store import DocumentStore
 from agentic_mesh_v5.document_store import DocumentUnavailable
+from agentic_mesh_v5.document_store import HttpxTransport
+from agentic_mesh_v5.document_store import MountedAccessTokenProvider
+from agentic_mesh_v5.document_store import OneDriveDocumentStoreFactory
 from agentic_mesh_v5.d8a_proxy import D8AProxy
 from agentic_mesh_v5.d8a_proxy import D8AProxyError
 from agentic_mesh_v5.fleet import FleetConflict
@@ -105,6 +108,8 @@ from agentic_mesh_v5.usage import UsageStore
 
 API_PREFIX = "/api/v1"
 CONFIG_ROOT_ENV = "AGENTIC_MESH_V5_CONFIG_ROOT"
+DOCUMENT_CREDENTIAL_ROOT_ENV = "AGENTIC_MESH_V5_DOCUMENT_CREDENTIAL_ROOT"
+DOCUMENT_ROOT_ID_ENV = "AGENTIC_MESH_V5_DOCUMENT_ROOT_ID"
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 IDENTIFIER_PATTERN = r"^[A-Za-z0-9._:-]{1,128}$"
 
@@ -2745,13 +2750,37 @@ def app_from_environment() -> FastAPI:
         if not fleet_map
         else DockerContainerFleetSupervisor(Path(fleet_map))
     )
+    document_store_resolver = _document_store_resolver_from_environment(database_url)
     return create_app(
         database_url,
         telemetry=telemetry_from_environment(),
         fleet_supervisor=fleet_supervisor,
         flow_resolver=flow_resolver,
+        document_store_resolver=document_store_resolver,
         config_store_resolver=config_resolver,
     )
+
+
+def _document_store_resolver_from_environment(
+    database_url: str,
+) -> Callable[[str], DocumentStore] | None:
+    credential_root = os.environ.get(DOCUMENT_CREDENTIAL_ROOT_ENV, "").strip()
+    root_id = os.environ.get(DOCUMENT_ROOT_ID_ENV, "").strip()
+    if not credential_root and not root_id:
+        return None
+    if not credential_root or not root_id:
+        raise ValueError(
+            f"{DOCUMENT_CREDENTIAL_ROOT_ENV} and {DOCUMENT_ROOT_ID_ENV} "
+            "must be configured together"
+        )
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", root_id) is None:
+        raise ValueError(f"{DOCUMENT_ROOT_ID_ENV} is invalid")
+    factory = OneDriveDocumentStoreFactory(
+        database_url,
+        token_provider=MountedAccessTokenProvider(Path(credential_root)),
+        transport=HttpxTransport(),
+    )
+    return lambda project_id: factory.create(project_id=project_id, root_id=root_id)
 
 
 def _project_flow_resolver(

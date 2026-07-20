@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Agentic Mesh V5 delegated Graph token
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/home/nich/agentic-mesh-projects/agentic-mesh-v5/state/graph-token-refresh.env
+ExecStart=/home/nich/agentic-mesh-projects/agentic-mesh-v5/source/agentic-mesh/examples/projects/agentic-mesh-v5/deploy/compose/refresh-graph-token.sh
+PrivateTmp=true
+UMask=0077
