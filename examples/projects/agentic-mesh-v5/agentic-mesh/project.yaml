@@ -13,7 +13,7 @@ repositories:
 documents:
   project-library:
     adapter: onedrive
-    drive_id: agentic-mesh-documents
+    drive_id: b!WNjpADQbtEGnINsZbQSc8Tmu-cBzKZNOlzXF3zQHJna9EGc17fFFToBs5M5o5-LP
     root: /Agentic Mesh V5
     credential: graph
 teams:

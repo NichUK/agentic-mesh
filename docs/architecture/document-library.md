@@ -1,6 +1,6 @@
 # Document Library
 
-Status: active V4 guidance
+Status: active V5 guidance
 
 Date: 2026-06-04
 
@@ -28,11 +28,12 @@ document_library:
   versioning: backend
 ```
 
-V4 supports the document library through an adapter boundary. The dogfood
-project uses OneDrive so the same canonical files are visible to role agents,
-the dashboard, Teams Shared Files, and humans. Versioning belongs to the
-backend: Git history for Git-backed libraries and Microsoft version history for
-OneDrive or SharePoint.
+V5 accesses the document library through the manifest-bound `DocumentStore`
+adapter. The dogfood project uses direct Microsoft Graph access to a dedicated
+OneDrive/SharePoint root, so the same canonical files are visible to role
+agents, the dashboard, Teams Shared Files, and humans without a filesystem
+sync. Versioning belongs to the backend: Git history for Git-backed libraries
+and Microsoft version history for OneDrive or SharePoint.
 
 ## Organization
 

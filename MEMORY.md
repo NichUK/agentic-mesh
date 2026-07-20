@@ -3,6 +3,29 @@
 This file records the context needed to resume Agentic Mesh in a fresh chat
 after opening `C:\Dev\agentic-mesh` as the workspace.
 
+## 2026-07-20 - LinuxCH Takeover And Production Documents
+
+- The canonical V5 runtime and restored authoritative Postgres state now live
+  under `/home/nich/agentic-mesh-projects/agentic-mesh-v5` on LinuxCH. The
+  Windows V5 control plane, database, API, and PM were stopped after restore;
+  Linux core services and the warm logical PM became authoritative.
+- Live project `agentic-mesh-v5` work item `amv5-live-001` remains active in
+  `business_analysis`. Its approved brief exists in the isolated worktree, but
+  the handoff is intentionally pending because production `app_from_environment`
+  had not materialised the manifest-bound `DocumentStore`. Released BA queue
+  items remain durable and unacknowledged; no false handoff was recorded.
+- PR #466 (`0ea2406fbd31e594b4ca59db7ca12c2e1b359b85`) gives every
+  project-isolated role container a valid Git safe-directory configuration,
+  while keeping the GitHub credential helper and external GitHub credential
+  mount engineering-only.
+- The `dev-agentic-mesh` Microsoft 365 group resolves to its real SharePoint
+  `Documents` drive, now pinned in the V5 project manifest. A separate empty
+  `/Agentic Mesh V5/work-items/amv5-live-001` tree exists; no V4 document was
+  migrated. Production document wiring uses a project-derived external token
+  path, control-only mount, per-operation token reread, and Linux host refresh
+  timer. This slice must be merged, deployed, and live-verified before the BA
+  artifact and handoff can be accepted.
+
 ## 2026-07-20 - V4 Retired And LinuxCH V5 Boundary
 
 - This section supersedes all earlier transition/cutover wording: V4 is dead.

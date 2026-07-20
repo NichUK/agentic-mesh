@@ -40,6 +40,20 @@ filesystem document mount.
 - Use the existing mature `httpx` dependency behind a small transport protocol.
   Tests use a deterministic fake transport; no live tenant or credential is
   required for acceptance.
+- Materialise production access tokens from one external, read-only credential
+  root. Derive the mounted file from the manifest provider and credential
+  reference, validate containment after resolving links, and read the file on
+  every operation so an atomic host refresh takes effect without restarting the
+  control plane. Never pass an access token through an environment variable.
+- Configure the control API with one conventional document-root id and the
+  external credential root. Both settings are required together; an incomplete
+  production configuration fails at startup rather than silently disabling
+  governance documents.
+- Keep the refresh operation outside the container. The LinuxCH host obtains a
+  fresh delegated Graph token from its existing Azure CLI login, atomically
+  installs it at the project-scoped mounted path with the control-plane UID,
+  and runs the same command on a systemd timer. Workers never receive this
+  credential mount.
 
 ## Acceptance criteria
 
@@ -58,3 +72,18 @@ filesystem document mount.
   correct `Content-Range`, and one final metadata result.
 - Two project document roots with different drives, paths, and credential
   references cannot address or authorize each other's content.
+- The production API resolves governance documents from the active immutable
+  manifest without test-only dependency injection, and refuses a missing root
+  id, missing credential root, malformed reference, escaping link, oversized
+  token, or token containing whitespace.
+- Replacing a mounted token file changes the next Graph request without an API
+  restart. Compose mounts the credential root only into `control`, and its
+  environment contains paths and root ids but no bearer token.
+
+## Live qualification binding
+
+On 2026-07-20 the delegated `nich@quantauma.com` Graph session resolved the
+`dev-agentic-mesh` Microsoft 365 group to its SharePoint `Documents` drive. The
+concrete drive id is pinned in the V5 project manifest. A new, empty
+`/Agentic Mesh V5` root and `work-items/amv5-live-001` folder were created for
+V5; no retired V4 document was copied or treated as migrated V5 state.

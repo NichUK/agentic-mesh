@@ -160,6 +160,20 @@ def _write(tmp_path: Path, value: dict, name: str = "project.yaml") -> Path:
     return path
 
 
+def test_manifest_accepts_the_opaque_graph_drive_id_shape(tmp_path: Path) -> None:
+    value = _manifest()
+    value["documents"]["project-library"]["drive_id"] = (
+        "b!WNjpADQbtEGnINsZbQSc8Tmu-cBzKZNOlzXF3zQHJna9EGc17fFFToBs5M5o5-LP"
+    )
+
+    jsonschema.validate(value, json.loads(SCHEMA.read_text(encoding="utf-8")))
+    manifest = load_project_manifest(_write(tmp_path, value))
+
+    assert manifest.snapshot["documents"]["project-library"]["drive_id"].startswith(
+        "b!"
+    )
+
+
 def test_manifest_schema_and_loader_are_deterministic(tmp_path: Path):
     value = _manifest()
     jsonschema.validate(value, json.loads(SCHEMA.read_text(encoding="utf-8")))

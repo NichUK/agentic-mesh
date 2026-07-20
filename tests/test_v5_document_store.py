@@ -21,6 +21,7 @@ from agentic_mesh_v5.document_store import DocumentStore
 from agentic_mesh_v5.document_store import DocumentTooLarge
 from agentic_mesh_v5.document_store import DocumentUnavailable
 from agentic_mesh_v5.document_store import HttpResponse
+from agentic_mesh_v5.document_store import MountedAccessTokenProvider
 from agentic_mesh_v5.document_store import OneDriveDocumentStore
 from agentic_mesh_v5.document_store import OneDriveDocumentStoreFactory
 from agentic_mesh_v5.project_manifest import ProjectManifestStore
@@ -75,6 +76,87 @@ class Tokens:
 class FailingTokens:
     def access_token(self, *, provider: str, reference: str) -> str:
         raise RuntimeError("provider accidentally included bearer-value")
+
+
+def _mounted_token(
+    root: Path, reference: str, value: bytes, *, provider: str = "graph"
+) -> Path:
+    scheme, relative = reference.split("://", 1)
+    path = root / provider / scheme / Path(*relative.split("/"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(value)
+    return path
+
+
+def test_mounted_tokens_are_project_scoped_and_refresh_without_restart(
+    tmp_path: Path,
+) -> None:
+    alpha_reference = "oauth-cache://projects/alpha/graph"
+    beta_reference = "oauth-cache://projects/beta/graph"
+    alpha = _mounted_token(tmp_path, alpha_reference, b"alpha-token-1")
+    _mounted_token(tmp_path, beta_reference, b"beta-token")
+    provider = MountedAccessTokenProvider(tmp_path)
+
+    assert provider.access_token(
+        provider="graph", reference=alpha_reference
+    ) == "alpha-token-1"
+    assert provider.access_token(
+        provider="graph", reference=beta_reference
+    ) == "beta-token"
+
+    replacement = alpha.with_name("graph.next")
+    replacement.write_bytes(b"alpha-token-2")
+    replacement.replace(alpha)
+    assert provider.access_token(
+        provider="graph", reference=alpha_reference
+    ) == "alpha-token-2"
+
+
+@pytest.mark.parametrize(
+    ("reference", "value"),
+    (
+        ("oauth-cache://projects/alpha/graph", b"token with whitespace"),
+        ("oauth-cache://projects/alpha/graph", b"x" * (64 * 1024 + 1)),
+        ("oauth-cache://projects/../outside", b"token"),
+        ("oauth-cache://projects//alpha/graph", b"token"),
+        ("oauth-cache://projects/missing/graph", None),
+    ),
+    ids=("whitespace", "oversized", "traversal", "empty-segment", "missing"),
+)
+def test_mounted_tokens_fail_closed_without_disclosing_credentials(
+    tmp_path: Path, reference: str, value: bytes | None
+) -> None:
+    if value is not None and ".." not in reference:
+        _mounted_token(tmp_path, reference, value)
+    provider = MountedAccessTokenProvider(tmp_path)
+
+    with pytest.raises(DocumentUnavailable) as error:
+        provider.access_token(provider="graph", reference=reference)
+
+    assert str(error.value) == "document credential resolution failed"
+    assert "token" not in str(error.value)
+    assert str(tmp_path) not in str(error.value)
+
+
+def test_mounted_tokens_reject_a_link_that_escapes_the_credential_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "mounted"
+    root.mkdir()
+    outside = tmp_path / "outside-token"
+    outside.write_bytes(b"outside-token")
+    link = root / "graph" / "oauth-cache" / "projects" / "alpha" / "graph"
+    link.parent.mkdir(parents=True)
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("the test platform does not permit symbolic links")
+
+    provider = MountedAccessTokenProvider(root)
+    with pytest.raises(DocumentUnavailable):
+        provider.access_token(
+            provider="graph", reference="oauth-cache://projects/alpha/graph"
+        )
 
 
 class ScriptedTransport:
