@@ -94,15 +94,16 @@ Separate these concepts:
 - role instance: concrete running worker, for example
   `example-project.engineering.1`
 
-Current example files:
+Current V5 declarations:
 
-- `config/roles/product-manager.yaml`
-- `config/roles/engineering.yaml`
-- `examples/projects/agentic-mesh-v5/agentic-mesh/project.yaml`
-- `examples/projects/example-project/agentic-mesh/project.yaml`
+- `config/v5/organization-config-repository.json` identifies the external
+  configuration repository and mount contract.
+- `examples/projects/agentic-mesh-v5/agentic-mesh/project.yaml` pins the
+  organization release and project override package.
 
-These are starter examples, not final canonical role templates. Runtime code
-must target the V5 runtime model.
+Role templates, prompts, flows, policies, fragments, and tool profiles live in
+the external configuration repository. Do not recreate embedded role or prompt
+copies in this system repository.
 
 ## Product Positioning
 
