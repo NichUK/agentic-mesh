@@ -120,17 +120,23 @@ def test_only_engineering_receives_project_scoped_github_auth() -> None:
 
         assert "GITHUB_TOKEN" not in serialized
         assert "GH_TOKEN" not in serialized
+        assert "./gitconfig:/etc/gitconfig:ro" in mounts
         if service_id.startswith("engineering-"):
             assert environment["GH_CONFIG_DIR"] == "/run/agentic-mesh/github"
-            assert "./gitconfig:/etc/gitconfig:ro" in mounts
+            assert "./gitconfig-github:/mesh/.gitconfig:ro" in mounts
             assert "/run/agentic-mesh/github:ro" in mounts
         else:
             assert "GH_CONFIG_DIR" not in environment
+            assert "./gitconfig-github:/mesh/.gitconfig:ro" not in mounts
             assert "/run/agentic-mesh/github" not in mounts
 
 
 def test_project_deployment_inputs_are_secret_free_and_linux_first() -> None:
     environment = (DEPLOYMENT / ".env.example").read_text(encoding="utf-8")
+    gitconfig = (DEPLOYMENT / "gitconfig").read_text(encoding="utf-8")
+    github_gitconfig = (DEPLOYMENT / "gitconfig-github").read_text(
+        encoding="utf-8"
+    )
     readme = (DEPLOYMENT / "README.md").read_text(encoding="utf-8")
     sources = json.loads((DEPLOYMENT / "sources.json").read_text(encoding="utf-8"))
 
@@ -140,6 +146,10 @@ def test_project_deployment_inputs_are_secret_free_and_linux_first() -> None:
     assert "not start all fleet-profile services" in readme
     assert "password=" not in environment.lower()
     assert "token=" not in environment.lower()
+    assert "directory = *" in gitconfig
+    assert "credential" not in gitconfig
+    assert "gh auth git-credential" in github_gitconfig
+    assert "safe" not in github_gitconfig
     assert "/home/nich/agentic-mesh-projects/agentic-mesh-v5" in environment
     assert sources["projects"]["agentic-mesh-v5"]["repositories"] == {
         "primary": "/mesh/sources/agentic-mesh"
