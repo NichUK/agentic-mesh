@@ -50,7 +50,9 @@ def test_runtime_image_and_project_compose_exclude_live_source_mounts() -> None:
     assert not (ROOT / ".dockerignore").exists()
     assert ignore.splitlines()[0] == "*"
     assert "!src/agentic_mesh_v5/**" in ignore
-    assert "AGENTIC_MESH_V5_IMAGE" in compose
+    assert "AGENTIC_MESH_V5_RUNTIME_IMAGE" in compose
+    assert "AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE" in compose
+    assert "AGENTIC_MESH_V5_WORKER_DEVELOPMENT_IMAGE" in compose
     assert "agentic-mesh-config" not in compose
     assert "/src" not in compose
     assert "build:" not in compose

@@ -1,0 +1,9 @@
+{
+  "projects": {
+    "agentic-mesh-v5": {
+      "repositories": {
+        "primary": "/mesh/sources/agentic-mesh"
+      }
+    }
+  }
+}

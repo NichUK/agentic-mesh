@@ -1,9 +1,86 @@
+name: agentic-mesh-v5
+
+x-worker-environment: &worker-environment
+  AGENTIC_MESH_V5_API_TOKEN_FILE: /run/secrets/api_token
+  AGENTIC_MESH_V5_API_URL: http://control:8080
+  AGENTIC_MESH_V5_CONFIG_ROOT: /mesh/config
+  CODEX_HOME: /codex-home
+  PYTHONUNBUFFERED: "1"
+
+x-worker: &worker
+  restart: unless-stopped
+  env_file:
+    - ${AGENTIC_MESH_V5_RUNTIME_ENV:?set the external runtime environment file}
+  environment: *worker-environment
+  depends_on:
+    control:
+      condition: service_healthy
+  networks: [core]
+  stop_grace_period: 45s
+
 services:
+  database:
+    image: ${AGENTIC_MESH_POSTGRES_IMAGE:?set a digest-pinned Postgres image}
+    container_name: amv5-database
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AGENTIC_MESH_POSTGRES_DB:-agentic_mesh_v5}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_USER: ${AGENTIC_MESH_POSTGRES_USER:-agentic_mesh}
+    secrets: [postgres_password]
+    volumes:
+      - type: bind
+        source: ${AGENTIC_MESH_POSTGRES_DATA_PATH:?set the external Postgres data path}
+        target: /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [core]
+
+  migrate:
+    image: ${AGENTIC_MESH_V5_RUNTIME_IMAGE:?set a digest-pinned V5 runtime image}
+    restart: "no"
+    env_file:
+      - ${AGENTIC_MESH_V5_RUNTIME_ENV:?set the external runtime environment file}
+    command: [database-migrate]
+    depends_on:
+      database:
+        condition: service_healthy
+    networks: [core]
+
+  telemetry:
+    image: ${AGENTIC_MESH_OTEL_IMAGE:?set a digest-pinned OpenTelemetry Collector image}
+    container_name: amv5-telemetry
+    restart: unless-stopped
+    command: [--config=/etc/otelcol/config.yaml]
+    volumes:
+      - type: bind
+        source: ../otel/collector.yaml
+        target: /etc/otelcol/config.yaml
+        read_only: true
+    networks: [core]
+
   control:
-    image: ${AGENTIC_MESH_V5_IMAGE:?set a digest-pinned V5 image}
+    image: ${AGENTIC_MESH_V5_RUNTIME_IMAGE:?set a digest-pinned V5 runtime image}
+    container_name: amv5-control
     restart: unless-stopped
     env_file:
       - ${AGENTIC_MESH_V5_RUNTIME_ENV:?set the external runtime environment file}
+    environment:
+      AGENTIC_MESH_V5_API_PRINCIPALS_FILE: /run/agentic-mesh/principals.json
+      AGENTIC_MESH_V5_CONFIG_ROOT: /mesh/config
+      AGENTIC_MESH_V5_FLEET_MAP: /mesh/runtime/fleet.json
+      PYTHONUNBUFFERED: "1"
+    command: [api-serve, --host, 0.0.0.0, --port, "8080"]
+    group_add:
+      - ${AGENTIC_MESH_DOCKER_GID:?set the Linux host Docker group id}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      telemetry:
+        condition: service_started
     ports:
       - "127.0.0.1:${AGENTIC_MESH_V5_PORT:-18080}:8080"
     volumes:
@@ -12,9 +89,341 @@ services:
         target: /mesh/config
         read_only: true
       - type: bind
-        source: ${AGENTIC_MESH_FLEET_MAP_HOST_PATH:?set the external fleet map}
+        source: ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}
+        target: /mesh/config/state
+      - type: bind
+        source: ${AGENTIC_MESH_PRINCIPALS_FILE:?set the external principals file}
+        target: /run/agentic-mesh/principals.json
+        read_only: true
+      - type: bind
+        source: ./fleet.json
         target: /mesh/runtime/fleet.json
         read_only: true
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
+    networks: [core]
+
+  business-analyst:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-business-analyst-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, business-analyst, --instance, agentic-mesh-v5.business-analyst.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: business_analyst_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-business-analyst:/codex-home
+
+  delivery-manager:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-delivery-manager-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, delivery-manager, --instance, agentic-mesh-v5.delivery-manager.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: delivery_manager_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-delivery-manager:/codex-home
+
+  engineering-1:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_DEVELOPMENT_IMAGE:?set the development worker digest}
+    container_name: amv5-engineering-1
+    environment:
+      <<: *worker-environment
+      GH_CONFIG_DIR: /run/agentic-mesh/github
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, engineering, --instance, agentic-mesh-v5.engineering.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: engineering_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
+      - ${AGENTIC_MESH_GITHUB_CONFIG_PATH}:/run/agentic-mesh/github:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-engineering-1:/codex-home
+
+  engineering-2:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_DEVELOPMENT_IMAGE:?set the development worker digest}
+    container_name: amv5-engineering-2
+    environment:
+      <<: *worker-environment
+      GH_CONFIG_DIR: /run/agentic-mesh/github
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, engineering, --instance, agentic-mesh-v5.engineering.2, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: engineering_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
+      - ${AGENTIC_MESH_GITHUB_CONFIG_PATH}:/run/agentic-mesh/github:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-engineering-2:/codex-home
+
+  enterprise-architect:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-enterprise-architect-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, enterprise-architect, --instance, agentic-mesh-v5.enterprise-architect.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: enterprise_architect_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-enterprise-architect:/codex-home
+
+  platform-engineer:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_OPERATIONS_IMAGE:?set the operations worker digest}
+    container_name: amv5-platform-engineer-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, platform-engineer, --instance, agentic-mesh-v5.platform-engineer.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: platform_engineer_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-platform-engineer:/codex-home
+
+  product-manager:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-product-manager-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, product-manager, --instance, agentic-mesh-v5.product-manager.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: product_manager_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-product-manager:/codex-home
+
+  project-manager:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-project-manager-1
+    labels:
+      io.agentic-mesh.keep-warm: "true"
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, project-manager, --instance, agentic-mesh-v5.project-manager.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: project_manager_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-project-manager:/codex-home
+
+  prompt-engineer:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-prompt-engineer-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, prompt-engineer, --instance, agentic-mesh-v5.prompt-engineer.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: prompt_engineer_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-prompt-engineer:/codex-home
+
+  qa-engineer:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_QA_IMAGE:?set the QA worker digest}
+    container_name: amv5-qa-engineer-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, qa-engineer, --instance, agentic-mesh-v5.qa-engineer.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: qa_engineer_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-qa-engineer:/codex-home
+
+  release-manager:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_OPERATIONS_IMAGE:?set the operations worker digest}
+    container_name: amv5-release-manager-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, release-manager, --instance, agentic-mesh-v5.release-manager.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: release_manager_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-release-manager:/codex-home
+
+  research-analyst:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-research-analyst-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, research-analyst, --instance, agentic-mesh-v5.research-analyst.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: research_analyst_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-research-analyst:/codex-home
+
+  security-architect:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-security-architect-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, security-architect, --instance, agentic-mesh-v5.security-architect.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: security_architect_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-security-architect:/codex-home
+
+  solution-architect:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-solution-architect-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, solution-architect, --instance, agentic-mesh-v5.solution-architect.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: solution_architect_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-solution-architect:/codex-home
+
+  technical-writer:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
+    container_name: amv5-technical-writer-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, technical-writer, --instance, agentic-mesh-v5.technical-writer.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: technical_writer_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-technical-writer:/codex-home
+
+  ux-designer:
+    <<: *worker
+    image: ${AGENTIC_MESH_V5_WORKER_UX_IMAGE:?set the UX worker digest}
+    container_name: amv5-ux-designer-1
+    command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, ux-designer, --instance, agentic-mesh-v5.ux-designer.1, --source-repositories, /mesh/runtime/sources.json]
+    secrets:
+      - source: ux_designer_api_token
+        target: api_token
+    volumes:
+      - ${AGENTIC_MESH_CONFIG_HOST_PATH}:/mesh/config:ro
+      - ${AGENTIC_MESH_CONFIG_STATE_PATH}:/mesh/config/state
+      - ./sources.json:/mesh/runtime/sources.json:ro
+      - ${AGENTIC_MESH_SOURCE_HOST_PATH}:/mesh/sources/agentic-mesh
+      - ${AGENTIC_MESH_WORKSPACE_HOST_PATH}:/mesh/workspaces
+      - codex-ux-designer:/codex-home
+
+networks:
+  core:
+    name: agentic-mesh-v5-core
+
+secrets:
+  postgres_password:
+    file: ${AGENTIC_MESH_POSTGRES_PASSWORD_FILE:?set the external Postgres password file}
+  business_analyst_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/business-analyst.token
+  delivery_manager_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/delivery-manager.token
+  engineering_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/engineering.token
+  enterprise_architect_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/enterprise-architect.token
+  platform_engineer_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/platform-engineer.token
+  product_manager_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/product-manager.token
+  project_manager_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/project-manager.token
+  prompt_engineer_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/prompt-engineer.token
+  qa_engineer_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/qa-engineer.token
+  release_manager_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/release-manager.token
+  research_analyst_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/research-analyst.token
+  security_architect_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/security-architect.token
+  solution_architect_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/solution-architect.token
+  technical_writer_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/technical-writer.token
+  ux_designer_api_token:
+    file: ${AGENTIC_MESH_TOKEN_ROOT}/ux-designer.token
+
+volumes:
+  codex-business-analyst: {name: agentic-mesh-v5-codex-business-analyst-1}
+  codex-delivery-manager: {name: agentic-mesh-v5-codex-delivery-manager-1}
+  codex-engineering-1: {name: agentic-mesh-v5-codex-engineering-1}
+  codex-engineering-2: {name: agentic-mesh-v5-codex-engineering-2}
+  codex-enterprise-architect: {name: agentic-mesh-v5-codex-enterprise-architect-1}
+  codex-platform-engineer: {name: agentic-mesh-v5-codex-platform-engineer-1}
+  codex-product-manager: {name: agentic-mesh-v5-codex-product-manager-1}
+  codex-project-manager: {name: agentic-mesh-v5-codex-project-manager-1}
+  codex-prompt-engineer: {name: agentic-mesh-v5-codex-prompt-engineer-1}
+  codex-qa-engineer: {name: agentic-mesh-v5-codex-qa-engineer-1}
+  codex-release-manager: {name: agentic-mesh-v5-codex-release-manager-1}
+  codex-research-analyst: {name: agentic-mesh-v5-codex-research-analyst-1}
+  codex-security-architect: {name: agentic-mesh-v5-codex-security-architect-1}
+  codex-solution-architect: {name: agentic-mesh-v5-codex-solution-architect-1}
+  codex-technical-writer: {name: agentic-mesh-v5-codex-technical-writer-1}
+  codex-ux-designer: {name: agentic-mesh-v5-codex-ux-designer-1}
