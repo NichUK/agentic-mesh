@@ -370,18 +370,31 @@ import V2, V3, or V4 runtime packages. Automated source-boundary checks run in
 the test suite and can be invoked from the V5 CLI. Reuse begins with an
 inventory and explicit port, rewrite, reference, or reject disposition.
 
-V4 remains the deployed baseline until V5 passes its qualification and cutover
-stories. The unversioned `agentic-mesh` console command continues to target V4
-until that intentional cutover; V5 uses `agentic-mesh-v5` meanwhile.
+V4 originally remained the deployed baseline while V5 was qualified. That
+transition assumption was superseded by the sponsor amendment below.
 
 ### Consequences
 
 - V5 can be installed, imported, tested, and started without V4.
 - Useful V4 concepts can be retained without coupling V5 to V4 modules.
 - Some code may be rewritten before later consolidation behind stable ports.
-- V4 operational fixes remain possible while the V5 backlog progresses.
+- Historical V4 material remains independently inspectable during the V5
+  build, without becoming a runtime dependency.
+
+### Sponsor amendment — 2026-07-20
+
+V4 is dead. There is no migration, dual-run, or cutover. V5 is the only active
+runtime and the unversioned `agentic-mesh` command targets V5. Retained V4
+source, data, images, documentation, and Git history are audit or classified
+reuse evidence only; they are not active launch paths.
+
+The primary V5 platform is Linux Docker on the LinuxCH host. Project manifests
+and project-owned deployment artifacts are canonical. Deployed authoritative
+runtime state uses Postgres; file-backed stores remain optional development and
+test adapters only. This clarifies ADR-003 without replacing its project-owned
+output boundary.
 
 ### Rollback
 
-Remove the V5 package and console entry point while leaving V4 untouched. Do
-not weaken the boundary check to make an implicit V4 dependency pass.
+Roll back a V5 release to its preceding verified immutable V5 release. Do not
+restart V4 or weaken the boundary check to make an implicit dependency pass.

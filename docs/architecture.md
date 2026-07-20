@@ -4,10 +4,14 @@ Agentic Mesh is a project-scoped mesh of role agents, collaboration
 connectors, storage backends, worker/model adapters, and observable runtime
 services.
 
-V4 remains the deployed baseline during the V5 build. V5 is a clean package
-boundary under `src/agentic_mesh_v5`; it cannot import V4 runtime modules.
-Cross-version reuse occurs only through explicit asset classification and
-porting stories so V5 does not inherit V4 execution mechanics accidentally.
+V5 is the only active runtime and product direction. It is a clean package
+boundary under `src/agentic_mesh_v5` and cannot import retired runtime modules.
+V4 is dead and has no migration, dual-run, or cutover path. Historical reuse
+occurs only through explicit asset classification and porting stories.
+
+Linux Docker on the LinuxCH host is the primary deployment topology. The
+project manifest and project-owned deployment artifacts are canonical, while
+authoritative runtime state is stored in Postgres outside container lifetimes.
 
 The current architecture direction is recorded in:
 

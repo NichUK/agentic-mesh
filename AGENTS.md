@@ -30,13 +30,13 @@ Committed architecture decisions:
 - `ADR-003`: Project-scoped build and deployment outputs.
 - `ADR-004`: V3 agent-owned runtime reset.
 - `ADR-005`: Clean V5 replacement boundary.
-- V4 remote-control runtime supersedes V3 for active dogfood/runtime work.
+- The 2026-07-20 sponsor amendment retires V4 without migration or cutover.
 
 Core principles:
 
-- V4 remains the active deployed runtime while V5 is built under
-  `src/agentic_mesh_v5`. New product development follows the ordered V5
-  backlog; V4 changes are limited to operational fixes needed before cutover.
+- V5 under `src/agentic_mesh_v5` is the only active runtime and product
+  direction. V4 is dead: do not start, repair, migrate, dual-run, or recreate
+  it. Retained V4 material is audit or classified reuse evidence only.
 - V5 must not import V4 runtime modules. Reusable V4 assets are explicitly
   classified, then ported, rewritten, referenced, or rejected in later V5
   stories.
@@ -44,14 +44,15 @@ Core principles:
   implementation packages and tests have been removed; no active deployment,
   prompt, Compose profile, or role workflow should depend on them or recreate
   them.
-- V4 agents own work progression. The runtime provides platform services such
+- V5 agents own work progression. The runtime provides platform services such
   as startup, hibernation, connector bridges, document-library access,
   reporting, config materialisation, telemetry, and reliable handoff delivery.
 - Governance is explicit. Agents must consult required RACI roles and
   stakeholders before completing phases, inform roles that must be informed,
   and record governance exceptions when consultation is intentionally skipped.
-- Runtime operational state and read models are stored in Postgres through the
-  V4 database repository interface.
+- Runtime operational state and read models are stored in Postgres through V5
+  repositories. File-backed stores are permitted only as lightweight test or
+  development adapters, never as the authoritative deployed runtime.
 - The document library remains the canonical project knowledge base. Runtime
   database records make work inspectable, recoverable, and observable; they do
   not replace durable project documentation.
@@ -73,6 +74,9 @@ Core principles:
   records, and committed audit snapshots.
 - Project folders own concrete deployment outputs such as Compose, Terraform,
   Helm, connector/team bindings, and local runtime state boundaries.
+- Linux Docker on the LinuxCH host is the primary deployment platform.
+  Windows Docker is a development and qualification platform, not the
+  canonical production topology.
 - Runtime queues are inspectable and append-only by default, with optional
   cloud-native backends.
 - Every deployment should emit OpenTelemetry logs, traces, and metrics.
@@ -94,11 +98,11 @@ Current example files:
 
 - `config/roles/product-manager.yaml`
 - `config/roles/engineering.yaml`
-- `examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml`
+- `examples/projects/agentic-mesh-v5/agentic-mesh/project.yaml`
 - `examples/projects/example-project/agentic-mesh/project.yaml`
 
 These are starter examples, not final canonical role templates. Runtime code
-must target the V4 remote-control runtime model.
+must target the V5 runtime model.
 
 ## Product Positioning
 
@@ -144,7 +148,8 @@ When implementing:
   locally only when a suitable dependency does not exist, creates unacceptable
   product/security/licensing risk, or would break the intended adapter
   boundary.
-- Start local-first with Docker Compose and file-backed adapters.
+- Start Linux-Docker-first with Docker Compose and Postgres. Keep file-backed
+  adapters limited to lightweight development and test use.
 - Keep cloud-native services behind ports/interfaces.
 - Keep queue delivery separate from the event journal.
 - Avoid hard-wiring Azure, AWS, Teams, Codex, or any specific LLM into product
@@ -251,13 +256,10 @@ Before committing:
 - Run `python scripts/check-pr-size.py --base origin/develop --committed-only` before pushing
   a feature branch. If it fails, split the work into smaller PRs before merge.
 - Run `pytest -q` for code changes.
-- Run `python -m agentic_mesh_v4.cli --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json`
-  for a basic V4 runtime read-model smoke after configuring
-  `AGENTIC_MESH_DATABASE_URL` or the `AGENTIC_MESH_DATABASE_*` Postgres
-  environment variables.
-- For source/runtime/project boundary changes, add or update V4 topology tests
-  and run the relevant `tests/test_v4_*.py` coverage. The legacy
-  `validate-topology` command was removed with the V2/V3 packages.
+- Run `python -m agentic_mesh_v5 --json boundary-check` and the relevant V5
+  API/CLI smoke checks for runtime or project-boundary changes.
+- For source/runtime/project boundary changes, add or update V5 boundary and
+  project-isolation tests. No active test may require V4.
 - Run `docker compose ... config --quiet` when Compose outputs change.
 - Update `MEMORY.md` when future agents need the context.
 - Update ADRs or implementation-slice docs when a design decision or accepted
