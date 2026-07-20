@@ -3,10 +3,15 @@
 Agentic Mesh is an enterprise-oriented runtime for composing long-running AI
 role agents into project-scoped collaboration networks.
 
-V4 remains the running remote-control runtime while V5 is built as a clean,
-standalone replacement. V5 code lives under `src/agentic_mesh_v5` and must not
-import V4 runtime modules. Useful V4 assets are classified and ported or
-rewritten through explicit V5 stories rather than coupling the runtimes.
+V5 is the only active runtime and product direction. It lives under
+`src/agentic_mesh_v5` and must not import retired runtime modules. V4 is dead:
+there is no migration, dual-run, or cutover path. Useful historical assets are
+classified and ported or rewritten through explicit V5 stories rather than
+coupling the runtimes.
+
+The primary deployment platform is Linux Docker on the LinuxCH host. Project
+manifests and project-owned deployment artifacts are canonical; Windows Docker
+is used only for development and qualification.
 
 ## Current Runtime Direction
 
@@ -146,67 +151,35 @@ The V5 worker dispatch loop is intentionally introduced later by AMV5-029; when
 added, it must use `ThreadAffinityCoordinator` rather than call provider thread
 start/resume directly.
 
-V4 keeps lifecycle judgement with role agents and reduces the runtime to
-infrastructure: Teams/API ingress, Postgres-backed message queues, Codex
-app-server WebSocket routing, safe-output tools for durable workflow effects,
-dashboard/reporting, hibernation/wake coordination, and telemetry.
+V5 keeps lifecycle judgement with role agents and reduces the runtime to
+infrastructure: API ingress, Postgres-backed queues and state, warm Codex
+workers, durable safe-output operations, hibernation/wake coordination, and
+telemetry.
 
-The V4 spine currently provides:
-
-- the full SDLC starter role set
-- one generated external `AGENTS.md` per role instance
-- one Codex app-server container per role instance
-- Postgres queue/state tables for messages, sessions, threads, turns, events,
-  safe-output calls, memory, artifacts, approvals, handoffs, and releases
-- app-server protocol client boundaries for `thread/start`, `thread/resume`,
-  `turn/start`, `turn/steer`, `turn/interrupt`, `thread/read`, and paginated
-  history reads
-- `/status`, `/agents`, `/work-item/{id}`, `/agent/{role}/thread`, and
-  `/artifact-viewer/{work-item-id}/{artifact}` reporting primitives
-
-The current dogfood status page is:
-
-```text
-http://linuxch:8100/status
-```
-
-Useful local commands:
+Useful development commands:
 
 ```powershell
 pip install -e .[dev]
 pytest -q
-$env:AGENTIC_MESH_DATABASE_URL="postgresql://agentic_mesh:password@localhost:5432/agentic_mesh_v4"
-agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml init-db
-agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml materialize-agent-configs --agent-config-root .tmp/v4-agents --role-templates-dir config/roles
-agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml render-compose --output .tmp/docker-compose.v4.yml
-agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml enqueue-message --target-role project-manager --text "Give me a status update"
-agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json
+$env:AGENTIC_MESH_V5_DATABASE_URL="postgresql://mesh:password@localhost:5432/mesh"
+agentic-mesh --json boundary-check
+agentic-mesh --json database-status
+agentic-mesh api-serve
 ```
 
-The `project-v4.yaml` dogfood command expects the V4 environment to provide
-Postgres connection settings, Graph/Teams credentials, Codex auth mounts,
-`AGENTIC_MESH_ONEDRIVE_TOKEN`,
-`AGENTIC_MESH_ONEDRIVE_DRIVE_ID`, and `AGENTIC_MESH_SPONSOR_TEAMS_USER_ID`.
-
-Validate source/runtime/project boundaries with the active V4 topology rules:
-
-```powershell
-agentic-mesh-v4 --project-config examples/projects/agentic-mesh-dev/agentic-mesh/project-v4.yaml status-json
-```
-
-The V2 and V3 runtime packages and tests have been removed. New work should
-target the V4 package and project topology.
+The canonical LinuxCH deployment is project-owned and must provide Postgres,
+external configuration, Codex OAuth, connector credentials, and project-scoped
+Git credentials through external mounts or secret references. Secrets never
+belong in Git, images, logs, prompts, or database records.
 
 ## Repository Layout
 
-- `src/agentic_mesh_v4/`: active V4 remote-control runtime package
-- `src/agentic_mesh_v5/`: clean V5 replacement under development
+- `src/agentic_mesh_v5/`: active V5 runtime package
 - `tests/test_v5_*.py`: V5 boundary and feature tests
 - `config/v5/organization-config-repository.json`: external V5 package repository reference
-- `tests/test_v4_*.py`: active V4 regression tests
-- `examples/projects/agentic-mesh-dev/deploy/compose/`: dogfood compose
-  deployment, currently V4-first
-- `docs/architecture/v4-remote-control-runtime.md`: V4 reset architecture
+- `examples/projects/agentic-mesh-v5/`: V5 arms-length project declaration
+- `docs/architecture/v5/`: V5 design and classified historical asset evidence
+- `docs/architecture/v4-remote-control-runtime.md`: retired V4 history
 - `docs/architecture/v3-agent-owned-runtime.md`: previous V3 reset architecture
 - `docs/architecture/v2-runtime-reset.md`: previous v2 reset plan and topology
   direction
@@ -257,7 +230,7 @@ Agentic Mesh is intended to be open core.
 
 Open source core should remain useful on its own:
 
-- V4 remote-control runtime kernel
+- V5 durable control plane and role-agent runtime
 - Teams connector, document-library, safe-output, and Codex app-server adapter ports
 - governance-aware role agents and RACI
 - Postgres local backend

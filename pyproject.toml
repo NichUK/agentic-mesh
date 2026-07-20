@@ -32,8 +32,7 @@ dependencies = [
 ]
 
 [project.scripts]
-agentic-mesh = "agentic_mesh_v4.cli:main"
-agentic-mesh-v4 = "agentic_mesh_v4.cli:main"
+agentic-mesh = "agentic_mesh_v5.cli:main"
 agentic-mesh-v5 = "agentic_mesh_v5.cli:main"
 
 [project.optional-dependencies]
@@ -51,3 +50,4 @@ agentic_mesh_v5 = ["migrations/*.sql"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "--ignore-glob=tests/test_v4_*.py"
