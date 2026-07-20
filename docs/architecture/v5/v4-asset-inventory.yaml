@@ -1,4 +1,5 @@
-schema_version: 1
+schema_version: 2
+retired_source_revision: 8a1c902df3ba0b2f46580ecf9b95e270baabe4d1
 allowed_dispositions: [port, rewrite, reference, reject]
 categories:
   runtime:

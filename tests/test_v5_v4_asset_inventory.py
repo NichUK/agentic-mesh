@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import subprocess
 
 import yaml
 
@@ -24,7 +25,9 @@ def _inventory_entries() -> list[dict[str, object]]:
 
 def test_inventory_entries_are_complete_and_source_linked() -> None:
     data = yaml.safe_load(INVENTORY.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
+    retired_revision = str(data["retired_source_revision"])
+    assert re.fullmatch(r"[0-9a-f]{40}", retired_revision)
     allowed = set(data["allowed_dispositions"])
     entries = _inventory_entries()
     sources = [str(item["source"]) for item in entries]
@@ -40,7 +43,21 @@ def test_inventory_entries_are_complete_and_source_linked() -> None:
             re.fullmatch(r"AMV5-\d{3}", story)
             for story in item["target_stories"]
         )
-        assert (ROOT / str(item["source"])).is_file(), item["source"]
+        source = str(item["source"])
+        source_path = PurePosixPath(source)
+        assert not source_path.is_absolute(), source
+        assert ".." not in source_path.parts, source
+        assert "\\" not in source, source
+        if not (ROOT / source).is_file():
+            archived = subprocess.run(
+                ["git", "cat-file", "-e", f"{retired_revision}:{source}"],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+            )
+            assert archived.returncode == 0, (
+                f"{source}: {archived.stderr.decode(errors='replace').strip()}"
+            )
 
 
 def test_inventory_covers_every_active_v4_asset_class() -> None:
