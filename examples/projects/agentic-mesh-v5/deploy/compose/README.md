@@ -12,8 +12,10 @@ Create these under the project state boundary before deployment:
 - `runtime.env`, including the Postgres connection URL and OTLP endpoint;
 - a random Postgres password file;
 - the API principals file and one API token file per role;
-- a per-instance Codex volume seeded from the current authenticated Codex
-  login;
+- one system-scoped Codex `auth.json` created by the official current ChatGPT
+  login and mounted read-write into every role at `/codex-home/auth.json`;
+- one external Codex volume per role instance for that instance's sessions and
+  thread state, created empty rather than seeded with a copied credential;
 - a project-scoped GitHub CLI `hosts.yml` under the configured GitHub directory;
 - a current delegated Graph access token at
   `credentials/documents/graph/oauth-cache/projects/agentic-mesh-v5/graph`
@@ -53,9 +55,12 @@ login. It writes no token to stdout, uses an atomic same-directory rename, and
 installs the file for UID/GID 10001. If interactive Azure reauthentication is
 ever required, the service fails without replacing the last valid token.
 
-The 16 Codex volumes are external because they must exist and contain a valid
-OAuth cache before any role starts. Seed each declared volume from the current
-authenticated Codex home and keep each volume private to its role instance.
+The 16 Codex volumes are external because session and thread state must survive
+hibernation and replacement. Keep each volume private to its role instance.
+Do not copy `auth.json` into them: ChatGPT refresh tokens rotate, so one copied
+home refreshing successfully invalidates every other copy. The single external
+auth file is the official shared cache used by concurrent Codex processes; it
+is outside every project repository and is never mounted into `control`.
 
 ## Validate and start
 

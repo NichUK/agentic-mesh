@@ -25,8 +25,11 @@ the canonical production topology.
   image.
 - Mount the ordinary project source checkout and isolated worktree root only
   into workers that must perform project work.
-- Reuse the current Codex OAuth login by seeding an external per-instance
-  `CODEX_HOME`; do not put OAuth data in Git or images.
+- Reuse the current Codex OAuth login through one external system-scoped
+  `auth.json` mounted into every worker. Keep a separate external
+  per-instance `CODEX_HOME` for sessions and thread state; never seed copied
+  rotating refresh tokens into those homes. Do not put OAuth data in Git or
+  images.
 - Give every role a project-owned system Git configuration that trusts
   repositories only inside its project-isolated container. Git's documented
   `safe.directory = *` setting is container-local and is never applied to the
