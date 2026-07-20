@@ -62,6 +62,7 @@ def test_linuxch_compose_contains_the_complete_project_core() -> None:
     assert "/mesh/sources" not in control_mounts
     assert "/mesh/workspaces" not in control_mounts
     assert len(data["volumes"]) == 16
+    assert all(volume["external"] is True for volume in data["volumes"].values())
     assert len(data["secrets"]) == 16
 
 
@@ -92,6 +93,10 @@ def test_linuxch_fleet_matches_every_role_service_and_tool_profile() -> None:
             "/run/secrets/api_token"
         )
         assert service["secrets"][0]["target"] == "api_token"
+        if service_id == "project-manager":
+            assert "profiles" not in service
+        else:
+            assert service["profiles"] == ["fleet"]
         mounts = _mount_text(service)
         for expected in (
             "/mesh/config:ro",
@@ -131,6 +136,8 @@ def test_project_deployment_inputs_are_secret_free_and_linux_first() -> None:
 
     assert "LinuxCH" in readme
     assert "Windows" not in readme
+    assert "--profile fleet create" in readme
+    assert "not start all fleet-profile services" in readme
     assert "password=" not in environment.lower()
     assert "token=" not in environment.lower()
     assert "/home/nich/agentic-mesh-projects/agentic-mesh-v5" in environment
