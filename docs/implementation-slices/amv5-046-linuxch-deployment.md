@@ -27,9 +27,12 @@ the canonical production topology.
   into workers that must perform project work.
 - Reuse the current Codex OAuth login by seeding an external per-instance
   `CODEX_HOME`; do not put OAuth data in Git or images.
-- Give engineering instances a project-scoped, read-only GitHub CLI credential
-  directory and a non-secret Git credential-helper configuration. Do not mount
-  a general host credential directory.
+- Give every role a project-owned system Git configuration that trusts
+  repositories only inside its project-isolated container. Git's documented
+  `safe.directory = *` setting is container-local and is never applied to the
+  Linux host. Give only engineering instances a separate GitHub credential
+  helper and the project-scoped, read-only GitHub CLI credential directory
+  used for remote operations. Do not mount a general host credential directory.
 - Keep role API tokens, Postgres password, principal hashes, and connector
   credentials outside Git under the project state boundary.
 - Keep external SaaS systems such as GitHub, Azure DevOps, OneDrive, Teams and
@@ -45,8 +48,10 @@ the canonical production topology.
    image without embedding a persona.
 5. Prove every worker mounts external configuration, source bindings,
    workspaces, its own Codex home, and its role API token.
-6. Prove only engineering instances receive the project-scoped GitHub
-   credential mounts, and no GitHub token environment variable exists.
+6. Prove every role can prepare its worktree, the host does not receive the
+   container trust setting, only engineering instances receive the GitHub
+   credential-helper and credential mounts, and no GitHub token environment
+   variable exists.
 7. Run `docker compose config --quiet` with non-secret qualification values.
 8. Deploy to LinuxCH, migrate the empty database, and verify service health,
    queue pickup, warm role execution, hibernation, wake-up, and PM continuity.

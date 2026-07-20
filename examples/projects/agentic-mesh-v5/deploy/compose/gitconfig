@@ -1,5 +1,2 @@
-[credential "https://github.com"]
-	helper = !/usr/bin/gh auth git-credential
 [safe]
-	directory = /mesh/sources/agentic-mesh
-	directory = /mesh/workspaces/*
+	directory = *

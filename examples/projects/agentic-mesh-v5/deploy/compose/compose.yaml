@@ -117,6 +117,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-business-analyst:/codex-home
@@ -134,6 +135,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-delivery-manager:/codex-home
@@ -155,6 +157,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
       - ./gitconfig:/etc/gitconfig:ro
+      - ./gitconfig-github:/mesh/.gitconfig:ro
       - ${AGENTIC_MESH_GITHUB_CONFIG_PATH:?set the project-scoped GitHub config path}:/run/agentic-mesh/github:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
@@ -177,6 +180,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
       - ./gitconfig:/etc/gitconfig:ro
+      - ./gitconfig-github:/mesh/.gitconfig:ro
       - ${AGENTIC_MESH_GITHUB_CONFIG_PATH:?set the project-scoped GitHub config path}:/run/agentic-mesh/github:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
@@ -195,6 +199,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-enterprise-architect:/codex-home
@@ -212,6 +217,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-platform-engineer:/codex-home
@@ -229,6 +235,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-product-manager:/codex-home
@@ -247,6 +254,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-project-manager:/codex-home
@@ -264,6 +272,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-prompt-engineer:/codex-home
@@ -281,6 +290,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-qa-engineer:/codex-home
@@ -298,6 +308,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-release-manager:/codex-home
@@ -315,6 +326,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-research-analyst:/codex-home
@@ -332,6 +344,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-security-architect:/codex-home
@@ -349,6 +362,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-solution-architect:/codex-home
@@ -366,6 +380,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-technical-writer:/codex-home
@@ -383,6 +398,7 @@ services:
       - ${AGENTIC_MESH_CONFIG_HOST_PATH:?set the external config checkout}:/mesh/config:ro
       - ${AGENTIC_MESH_CONFIG_STATE_PATH:?set the external config state path}:/mesh/config/state
       - ./sources.json:/mesh/runtime/sources.json:ro
+      - ./gitconfig:/etc/gitconfig:ro
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-ux-designer:/codex-home
