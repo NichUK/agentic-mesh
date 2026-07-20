@@ -106,6 +106,7 @@ services:
 
   business-analyst:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-business-analyst-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, business-analyst, --instance, agentic-mesh-v5.business-analyst.1, --source-repositories, /mesh/runtime/sources.json]
@@ -122,6 +123,7 @@ services:
 
   delivery-manager:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-delivery-manager-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, delivery-manager, --instance, agentic-mesh-v5.delivery-manager.1, --source-repositories, /mesh/runtime/sources.json]
@@ -138,6 +140,7 @@ services:
 
   engineering-1:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_DEVELOPMENT_IMAGE:?set the development worker digest}
     container_name: amv5-engineering-1
     environment:
@@ -159,6 +162,7 @@ services:
 
   engineering-2:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_DEVELOPMENT_IMAGE:?set the development worker digest}
     container_name: amv5-engineering-2
     environment:
@@ -180,6 +184,7 @@ services:
 
   enterprise-architect:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-enterprise-architect-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, enterprise-architect, --instance, agentic-mesh-v5.enterprise-architect.1, --source-repositories, /mesh/runtime/sources.json]
@@ -196,6 +201,7 @@ services:
 
   platform-engineer:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_OPERATIONS_IMAGE:?set the operations worker digest}
     container_name: amv5-platform-engineer-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, platform-engineer, --instance, agentic-mesh-v5.platform-engineer.1, --source-repositories, /mesh/runtime/sources.json]
@@ -212,6 +218,7 @@ services:
 
   product-manager:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-product-manager-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, product-manager, --instance, agentic-mesh-v5.product-manager.1, --source-repositories, /mesh/runtime/sources.json]
@@ -246,6 +253,7 @@ services:
 
   prompt-engineer:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-prompt-engineer-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, prompt-engineer, --instance, agentic-mesh-v5.prompt-engineer.1, --source-repositories, /mesh/runtime/sources.json]
@@ -262,6 +270,7 @@ services:
 
   qa-engineer:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_QA_IMAGE:?set the QA worker digest}
     container_name: amv5-qa-engineer-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, qa-engineer, --instance, agentic-mesh-v5.qa-engineer.1, --source-repositories, /mesh/runtime/sources.json]
@@ -278,6 +287,7 @@ services:
 
   release-manager:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_OPERATIONS_IMAGE:?set the operations worker digest}
     container_name: amv5-release-manager-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, release-manager, --instance, agentic-mesh-v5.release-manager.1, --source-repositories, /mesh/runtime/sources.json]
@@ -294,6 +304,7 @@ services:
 
   research-analyst:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-research-analyst-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, research-analyst, --instance, agentic-mesh-v5.research-analyst.1, --source-repositories, /mesh/runtime/sources.json]
@@ -310,6 +321,7 @@ services:
 
   security-architect:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-security-architect-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, security-architect, --instance, agentic-mesh-v5.security-architect.1, --source-repositories, /mesh/runtime/sources.json]
@@ -326,6 +338,7 @@ services:
 
   solution-architect:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-solution-architect-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, solution-architect, --instance, agentic-mesh-v5.solution-architect.1, --source-repositories, /mesh/runtime/sources.json]
@@ -342,6 +355,7 @@ services:
 
   technical-writer:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_GENERAL_IMAGE:?set the general worker digest}
     container_name: amv5-technical-writer-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, technical-writer, --instance, agentic-mesh-v5.technical-writer.1, --source-repositories, /mesh/runtime/sources.json]
@@ -358,6 +372,7 @@ services:
 
   ux-designer:
     <<: *worker
+    profiles: [fleet]
     image: ${AGENTIC_MESH_V5_WORKER_UX_IMAGE:?set the UX worker digest}
     container_name: amv5-ux-designer-1
     command: [python, -m, agentic_mesh_v5, role-service, --config-root, /mesh/config, --project, agentic-mesh-v5, --role, ux-designer, --instance, agentic-mesh-v5.ux-designer.1, --source-repositories, /mesh/runtime/sources.json]
@@ -411,19 +426,19 @@ secrets:
     file: ${AGENTIC_MESH_TOKEN_ROOT:?set the external token root}/ux-designer.token
 
 volumes:
-  codex-business-analyst: {name: agentic-mesh-v5-codex-business-analyst-1}
-  codex-delivery-manager: {name: agentic-mesh-v5-codex-delivery-manager-1}
-  codex-engineering-1: {name: agentic-mesh-v5-codex-engineering-1}
-  codex-engineering-2: {name: agentic-mesh-v5-codex-engineering-2}
-  codex-enterprise-architect: {name: agentic-mesh-v5-codex-enterprise-architect-1}
-  codex-platform-engineer: {name: agentic-mesh-v5-codex-platform-engineer-1}
-  codex-product-manager: {name: agentic-mesh-v5-codex-product-manager-1}
-  codex-project-manager: {name: agentic-mesh-v5-codex-project-manager-1}
-  codex-prompt-engineer: {name: agentic-mesh-v5-codex-prompt-engineer-1}
-  codex-qa-engineer: {name: agentic-mesh-v5-codex-qa-engineer-1}
-  codex-release-manager: {name: agentic-mesh-v5-codex-release-manager-1}
-  codex-research-analyst: {name: agentic-mesh-v5-codex-research-analyst-1}
-  codex-security-architect: {name: agentic-mesh-v5-codex-security-architect-1}
-  codex-solution-architect: {name: agentic-mesh-v5-codex-solution-architect-1}
-  codex-technical-writer: {name: agentic-mesh-v5-codex-technical-writer-1}
-  codex-ux-designer: {name: agentic-mesh-v5-codex-ux-designer-1}
+  codex-business-analyst: {name: agentic-mesh-v5-codex-business-analyst-1, external: true}
+  codex-delivery-manager: {name: agentic-mesh-v5-codex-delivery-manager-1, external: true}
+  codex-engineering-1: {name: agentic-mesh-v5-codex-engineering-1, external: true}
+  codex-engineering-2: {name: agentic-mesh-v5-codex-engineering-2, external: true}
+  codex-enterprise-architect: {name: agentic-mesh-v5-codex-enterprise-architect-1, external: true}
+  codex-platform-engineer: {name: agentic-mesh-v5-codex-platform-engineer-1, external: true}
+  codex-product-manager: {name: agentic-mesh-v5-codex-product-manager-1, external: true}
+  codex-project-manager: {name: agentic-mesh-v5-codex-project-manager-1, external: true}
+  codex-prompt-engineer: {name: agentic-mesh-v5-codex-prompt-engineer-1, external: true}
+  codex-qa-engineer: {name: agentic-mesh-v5-codex-qa-engineer-1, external: true}
+  codex-release-manager: {name: agentic-mesh-v5-codex-release-manager-1, external: true}
+  codex-research-analyst: {name: agentic-mesh-v5-codex-research-analyst-1, external: true}
+  codex-security-architect: {name: agentic-mesh-v5-codex-security-architect-1, external: true}
+  codex-solution-architect: {name: agentic-mesh-v5-codex-solution-architect-1, external: true}
+  codex-technical-writer: {name: agentic-mesh-v5-codex-technical-writer-1, external: true}
+  codex-ux-designer: {name: agentic-mesh-v5-codex-ux-designer-1, external: true}

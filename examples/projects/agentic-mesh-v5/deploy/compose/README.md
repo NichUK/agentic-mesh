@@ -16,12 +16,19 @@ Create these under the project state boundary before deployment:
   login;
 - a project-scoped GitHub CLI `hosts.yml` under the configured GitHub directory;
 - an external checkout of `agentic-mesh-config` with its mutable `state/`
-  directory mounted separately; and
+  directory mounted separately (create the empty mountpoint in the checkout
+  before the read-only parent bind is rendered); and
 - the ordinary Agentic Mesh project source checkout plus the isolated worktree
   root.
 
-All secret and state files must be owner-readable only. Do not put their values
-in Git, images, Compose YAML, logs, prompts, memory, or work records.
+All secret and state files must be owner-readable only and owned by the UID that
+reads them in the container. In the runtime image, `mesh` is UID 10001. Do not
+put secret values in Git, images, Compose YAML, logs, prompts, memory, or work
+records.
+
+The 16 Codex volumes are external because they must exist and contain a valid
+OAuth cache before any role starts. Seed each declared volume from the current
+authenticated Codex home and keep each volume private to its role instance.
 
 ## Validate and start
 
@@ -29,6 +36,7 @@ From this directory on LinuxCH:
 
 ```bash
 docker compose --env-file /path/to/project/state/compose.env config --quiet
+docker compose --env-file /path/to/project/state/compose.env --profile fleet create
 docker compose --env-file /path/to/project/state/compose.env up -d
 docker compose --env-file /path/to/project/state/compose.env ps
 ```
@@ -37,6 +45,8 @@ The migration job must finish successfully before control starts. The control
 health endpoint is bound only to loopback at `http://127.0.0.1:18080` by
 default. External ingress and SaaS connectors are separate integrations.
 
-The fleet supervisor may stop idle specialist containers and start the exact
-pre-provisioned containers listed in `fleet.json`. The Project Manager is
-labelled to remain warm.
+The `fleet` profile creates, but does not start, the 15 scale-to-zero specialist
+containers. The normal `up -d` command starts the core and Project Manager only.
+The fleet supervisor starts and stops the exact pre-provisioned containers in
+`fleet.json` after it has recorded the matching durable state transition. Do
+not start all fleet-profile services as an ordinary deployment step.
