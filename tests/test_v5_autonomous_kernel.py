@@ -404,6 +404,7 @@ def test_small_sdlc_project_completes_through_api_and_cli_with_restart_recovery(
             document_store_resolver=lambda project_id: documents
             if project_id == "qualification"
             else None,
+            enable_pm_monitor_background=False,
         )
 
     client = TestClient(app())
@@ -791,7 +792,13 @@ def test_small_sdlc_project_completes_through_api_and_cli_with_restart_recovery(
 
 def test_flow_and_document_adapters_fail_closed(postgres_database: str) -> None:
     MigrationRunner(postgres_database).migrate()
-    client = TestClient(create_app(postgres_database, authorizer=_authorizer()))
+    client = TestClient(
+        create_app(
+            postgres_database,
+            authorizer=_authorizer(),
+            enable_pm_monitor_background=False,
+        )
+    )
     _post(
         client,
         "project-manager",
@@ -847,6 +854,7 @@ def test_flow_and_document_adapters_fail_closed(postgres_database: str) -> None:
             postgres_database,
             authorizer=_authorizer(),
             flow_resolver=invalid_flow_resolver,
+            enable_pm_monitor_background=False,
         )
     )
     invalid_flow = invalid_flow_client.post(
@@ -863,6 +871,7 @@ def test_flow_and_document_adapters_fail_closed(postgres_database: str) -> None:
             postgres_database,
             authorizer=_authorizer(),
             flow_resolver=lambda _project_id: _flow(),
+            enable_pm_monitor_background=False,
         )
     )
     _post(
@@ -888,6 +897,7 @@ def test_flow_and_document_adapters_fail_closed(postgres_database: str) -> None:
             authorizer=_authorizer(),
             flow_resolver=lambda _project_id: _flow(),
             document_store_resolver=lambda _project_id: None,
+            enable_pm_monitor_background=False,
         )
     )
     invalid_documents = client.post(
