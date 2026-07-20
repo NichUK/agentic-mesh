@@ -1,0 +1,24 @@
+{
+  "projects": {
+    "agentic-mesh-v5": {
+      "instances": {
+        "agentic-mesh-v5.business-analyst.1": {"role_id": "business-analyst", "container": "amv5-business-analyst-1"},
+        "agentic-mesh-v5.delivery-manager.1": {"role_id": "delivery-manager", "container": "amv5-delivery-manager-1"},
+        "agentic-mesh-v5.engineering.1": {"role_id": "engineering", "container": "amv5-engineering-1"},
+        "agentic-mesh-v5.engineering.2": {"role_id": "engineering", "container": "amv5-engineering-2"},
+        "agentic-mesh-v5.enterprise-architect.1": {"role_id": "enterprise-architect", "container": "amv5-enterprise-architect-1"},
+        "agentic-mesh-v5.platform-engineer.1": {"role_id": "platform-engineer", "container": "amv5-platform-engineer-1"},
+        "agentic-mesh-v5.product-manager.1": {"role_id": "product-manager", "container": "amv5-product-manager-1"},
+        "agentic-mesh-v5.project-manager.1": {"role_id": "project-manager", "container": "amv5-project-manager-1"},
+        "agentic-mesh-v5.prompt-engineer.1": {"role_id": "prompt-engineer", "container": "amv5-prompt-engineer-1"},
+        "agentic-mesh-v5.qa-engineer.1": {"role_id": "qa-engineer", "container": "amv5-qa-engineer-1"},
+        "agentic-mesh-v5.release-manager.1": {"role_id": "release-manager", "container": "amv5-release-manager-1"},
+        "agentic-mesh-v5.research-analyst.1": {"role_id": "research-analyst", "container": "amv5-research-analyst-1"},
+        "agentic-mesh-v5.security-architect.1": {"role_id": "security-architect", "container": "amv5-security-architect-1"},
+        "agentic-mesh-v5.solution-architect.1": {"role_id": "solution-architect", "container": "amv5-solution-architect-1"},
+        "agentic-mesh-v5.technical-writer.1": {"role_id": "technical-writer", "container": "amv5-technical-writer-1"},
+        "agentic-mesh-v5.ux-designer.1": {"role_id": "ux-designer", "container": "amv5-ux-designer-1"}
+      }
+    }
+  }
+}

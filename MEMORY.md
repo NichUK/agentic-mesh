@@ -3,6 +3,33 @@
 This file records the context needed to resume Agentic Mesh in a fresh chat
 after opening `C:\Dev\agentic-mesh` as the workspace.
 
+## 2026-07-20 - V4 Retired And LinuxCH V5 Boundary
+
+- This section supersedes all earlier transition/cutover wording: V4 is dead.
+  There is no V4 migration, dual-run, or cutover. LinuxCH contains no V4 or
+  Quantauma containers, no V4 Postgres container, and no port-8100 listener.
+  A verified private durable-schema archive and Git history remain audit-only.
+- Reviewed PRs #454 through #463 removed V4 console/deployment paths, all V4
+  tests and source modules, legacy host scripts, embedded prompts, role
+  templates, flows, and schemas. Historical inventory paths resolve against
+  immutable revision `8a1c902df3ba0b2f46580ecf9b95e270baabe4d1`.
+- The unversioned `agentic-mesh` command targets V5. The active unfiltered suite
+  is V5-only and the source boundary check remains clean.
+- Linux Docker on the LinuxCH host is the primary topology. Windows Docker is
+  only a development/qualification environment.
+- Postgres is authoritative for every real V5 deployment. File-backed stores
+  are development/test adapters only. Project manifests and project-owned
+  deployment artifacts remain canonical under ADR-003; changing runtime state
+  stays outside Git in project-scoped storage.
+- Agent prompts, roles, flows, policies, fragments, and tool profiles live only
+  in the external `agentic-mesh-config` repository. The main repository keeps
+  its reference/mount contract and the active system authentication catalog.
+- The canonical LinuxCH Compose slice is defined under
+  `examples/projects/agentic-mesh-v5/deploy/`. It contains Postgres, migration,
+  control, telemetry, and all 16 pre-provisioned role instances. Only
+  engineering receives the project-scoped external GitHub credential mount;
+  Codex homes and role API tokens remain isolated and external.
+
 ## 2026-07-17 - V5 Clean Runtime Boundary
 
 - V4 remains the deployed baseline while the ordered `AMV5-*` backlog builds
