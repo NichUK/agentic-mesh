@@ -18,7 +18,14 @@ official Codex login cache; do not implement OAuth, copy credentials, or inspect
 - refresh existing ChatGPT credentials through Codex during a status probe;
 - redact provider failures and close every probe process deterministically;
 - allow multiple workers to resolve and use the same named cache without
-  copying it.
+  copying it;
+- keep each instance's `CODEX_HOME` volume for sessions and thread state, but
+  overlay the official `auth.json` from one system-scoped, read-write external
+  file. Never clone a rotating ChatGPT refresh token into per-instance homes:
+  one successful refresh invalidates every copied refresh token;
+- require the shared auth file to exist before Compose materialisation and
+  mount it at `/codex-home/auth.json` in every role container. The control
+  plane and project source do not receive the file.
 
 ## Non-goals
 
@@ -47,6 +54,11 @@ official Codex login cache; do not implement OAuth, copy credentials, or inspect
    contain no credential material. The cache path is excluded from `repr`.
 7. An explicit local acceptance test using the current external `CODEX_HOME`
    confirms the existing ChatGPT login without reading credential files.
+8. All LinuxCH role instances mount the same external `auth.json`, while their
+   16 external `CODEX_HOME` volumes remain distinct. Replacing or refreshing
+   the shared file is immediately visible from two different role containers.
+9. A live login/model probe succeeds from two role identities in sequence, and
+   neither reports refresh-token reuse, token expiry, or a copied credential.
 
 ## Test plan
 

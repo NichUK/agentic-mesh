@@ -127,6 +127,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-business-analyst:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   delivery-manager:
     <<: *worker
@@ -145,6 +146,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-delivery-manager:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   engineering-1:
     <<: *worker
@@ -168,6 +170,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-engineering-1:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   engineering-2:
     <<: *worker
@@ -191,6 +194,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-engineering-2:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   enterprise-architect:
     <<: *worker
@@ -209,6 +213,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-enterprise-architect:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   platform-engineer:
     <<: *worker
@@ -227,6 +232,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-platform-engineer:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   product-manager:
     <<: *worker
@@ -245,6 +251,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-product-manager:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   project-manager:
     <<: *worker
@@ -264,6 +271,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-project-manager:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   prompt-engineer:
     <<: *worker
@@ -282,6 +290,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-prompt-engineer:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   qa-engineer:
     <<: *worker
@@ -300,6 +309,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-qa-engineer:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   release-manager:
     <<: *worker
@@ -318,6 +328,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-release-manager:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   research-analyst:
     <<: *worker
@@ -336,6 +347,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-research-analyst:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   security-architect:
     <<: *worker
@@ -354,6 +366,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-security-architect:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   solution-architect:
     <<: *worker
@@ -372,6 +385,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-solution-architect:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   technical-writer:
     <<: *worker
@@ -390,6 +404,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-technical-writer:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
   ux-designer:
     <<: *worker
@@ -408,6 +423,7 @@ services:
       - ${AGENTIC_MESH_SOURCE_HOST_PATH:?set the project source checkout}:/mesh/sources/agentic-mesh
       - ${AGENTIC_MESH_WORKSPACE_HOST_PATH:?set the isolated worktree root}:/mesh/workspaces
       - codex-ux-designer:/codex-home
+      - ${AGENTIC_MESH_CODEX_AUTH_FILE:?set the shared Codex auth file}:/codex-home/auth.json
 
 networks:
   core:

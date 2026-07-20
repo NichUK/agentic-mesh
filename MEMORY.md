@@ -25,6 +25,12 @@ after opening `C:\Dev\agentic-mesh` as the workspace.
   path, control-only mount, per-operation token reread, and Linux host refresh
   timer. This slice must be merged, deployed, and live-verified before the BA
   artifact and handoff can be accepted.
+- Live continuation exposed a Codex authentication failure in the original
+  LinuxCH seeding approach: cloning one `auth.json` into 16 homes cloned a
+  rotating refresh token, and every copy later failed with token-reuse/401
+  errors. The accepted repair overlays one external system-scoped
+  `/codex-home/auth.json` into every role while retaining separate instance
+  volumes for sessions. Never seed per-instance copies of rotating OAuth state.
 
 ## 2026-07-20 - V4 Retired And LinuxCH V5 Boundary
 
